@@ -1,9 +1,10 @@
+
 # Diablo 6 portable GNU Make build system
-# Platforms: Linux, FreeBSD, SmartOS / illumos
+# Platforms: Linux, FreeBSD, illumos (SmartOS, OmniOS, etc.)
 #
 # Linux:   make -j4
 # FreeBSD: gmake -j4
-# SmartOS: gmake -j4
+# illumos: gmake -j4
 #
 # Native FreeBSD make uses the separate BSDmakefile.
 
@@ -31,26 +32,82 @@ CFLAGS += -MMD -MP
 LDFLAGS += -Lobj
 LDLIBS += -lfilter -ldiablo -lm -lz -lcrypto
 
+# Detect whether RADIUS support is enabled in lib/vendor.h.
+# Match an active #define, not a commented-out definition.
+RADIUS_ENABLED := $(shell awk \
+    '/^[[:space:]]*#[[:space:]]*define[[:space:]]+RADIUS_ENABLED([[:space:]]|$$)/ { print 1; exit }' \
+    lib/vendor.h)
+
+# Detect whether Berkeley DB support is enabled in lib/vendor.h.
+DB_ENABLED := $(shell awk \
+    '/^[[:space:]]*#[[:space:]]*define[[:space:]]+DB_ENABLED([[:space:]]|$$)/ { print 1; exit }' \
+    lib/vendor.h)
+
 # Platform-specific settings
 
 ifeq ($(UNAME_S),FreeBSD)
-LDLIBS += -lmd -lradius
+LDLIBS += -lmd
+
+ifeq ($(RADIUS_ENABLED),1)
+LDLIBS += -lradius
+endif
 endif
 
 ifeq ($(UNAME_S),Linux)
 CPPFLAGS += -D_FILE_OFFSET_BITS=64
 endif
 
+# illumos platform configuration
 ifneq ($(filter SunOS illumos,$(UNAME_S)),)
+
 CPPFLAGS += -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64
 CPPFLAGS += -D_XOPEN_SOURCE=600 -D__EXTENSIONS__
-CPPFLAGS += -I/opt/local/include/db4
 
-LDFLAGS += -L/opt/local/lib
-LDLIBS += -lnsl -lsocket -lposix4 -ldb4 -lradius -lmd
+# Berkeley DB 1.85 compatibility auto-detection.
+# Generates obj/db185-config.mk on the first build.
+# Berkeley DB support is optional.
+ifeq ($(DB_ENABLED),1)
 
-# Compatibility implementation required by pkgsrc libradius.a
-SMARTOS_COMPAT_OBJS = obj/compat_srandomdev.o
+DB185_CONFIG := obj/db185-config.mk
+
+$(DB185_CONFIG): compat/detect-db185.sh | obj
+	@echo "Detecting Berkeley DB 1.85 compatibility..."
+	@CC="$(CC)" sh compat/detect-db185.sh > $@.tmp || { rm -f $@.tmp; exit 1; }
+	@mv $@.tmp $@
+
+include $(DB185_CONFIG)
+
+CPPFLAGS += $(DB185_CPPFLAGS)
+LDFLAGS += $(DB185_LDFLAGS)
+LDLIBS += $(DB185_LIBS)
+
+endif
+
+# illumos networking and RADIUS dependencies.
+LDLIBS += -lnsl -lsocket -lposix4 -lmd
+
+# Enable RADIUS dependencies only when requested by vendor.h.
+ifeq ($(RADIUS_ENABLED),1)
+
+LDLIBS += -lradius
+
+# Find the installed RADIUS library.
+RADIUS_LIBDIR := $(firstword $(foreach dir, \
+    /opt/local/lib \
+    /opt/ooce/lib/amd64 \
+    /opt/ooce/lib \
+    /usr/local/lib \
+    /usr/lib/amd64 \
+    /usr/lib, \
+    $(if $(wildcard $(dir)/libradius.so $(dir)/libradius.a),$(dir))))
+
+ifneq ($(RADIUS_LIBDIR),)
+LDFLAGS += -L$(RADIUS_LIBDIR)
+endif
+endif
+# Compatibility implementation for libradius srandomdev().
+ILLUMOS_COMPAT_OBJS = obj/compat_srandomdev.o
+
 endif
 
 # Source files
@@ -116,9 +173,8 @@ BINS := dbin/dreaderd $(addprefix dbin/,$(UTIL_PROGS) $(SUP_PROGS))
 
 all: $(BINS) obj/libdreader.a
 
-# Output directories
-# These are order-only prerequisites so directory timestamp
-# changes do not trigger unnecessary rebuilds.
+# Output directories.
+# Order-only prerequisites prevent unnecessary rebuilds.
 
 obj dbin:
 	mkdir -p $@
@@ -154,7 +210,7 @@ obj/util_%.o: util/%.c $(PROTOS) | obj
 obj/sup_%.o: sup/%.c $(PROTOS) | obj
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-# SmartOS compatibility object
+# illumos compatibility object
 
 obj/compat_srandomdev.o: compat/srandomdev.c | obj
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
@@ -175,8 +231,8 @@ obj/libdreader.a: $(DR_LIB_OBJS)
 
 # Reader daemon
 
-dbin/dreaderd: $(DR_OBJS) $(SMARTOS_COMPAT_OBJS) obj/libfilter.a obj/libdiablo.a | dbin
-	$(CC) $(LDFLAGS) $(DR_OBJS) $(SMARTOS_COMPAT_OBJS) -o $@ $(LDLIBS)
+dbin/dreaderd: $(DR_OBJS) $(ILLUMOS_COMPAT_OBJS) obj/libfilter.a obj/libdiablo.a | dbin
+	$(CC) $(LDFLAGS) $(DR_OBJS) $(ILLUMOS_COMPAT_OBJS) -o $@ $(LDLIBS)
 
 # Utility executables
 
@@ -196,6 +252,20 @@ endef
 
 $(foreach prog,$(SUP_PROGS),$(eval $(call sup_rule,$(prog))))
 
+# Installation
+# Preserve the original Diablo layout under /news.
+# DESTDIR permits staged installations.
+
+PREFIX ?= /news
+DESTDIR ?=
+INSTALL_OWNER ?= news
+INSTALL_GROUP ?= news
+
+install bininstall uninstall: all
+	@PREFIX="$(PREFIX)" DESTDIR="$(DESTDIR)" \
+	  INSTALL_OWNER="$(INSTALL_OWNER)" INSTALL_GROUP="$(INSTALL_GROUP)" \
+	  sh ./install-portable.sh "$@"
+
 # Maintenance
 
 clean:
@@ -203,11 +273,12 @@ clean:
 
 distclean: clean
 
-install bininstall uninstall:
-	@echo 'Installation is not yet ported; consult XMakefile.inst / XMakefile.uninst.' >&2; exit 1
-
 help:
-	@echo 'Targets: all clean distclean help; installation requires original xmake rules.'
+	@echo 'Targets: all clean distclean install bininstall uninstall help'
+	@echo 'Default installation prefix: /news'
+	@echo 'Use PREFIX=/path to override the installation prefix.'
+	@echo 'Use DESTDIR=/path for staged installations.'
 
 # Automatically generated compiler dependencies
 -include $(wildcard obj/*.d)
+
