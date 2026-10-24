@@ -338,7 +338,7 @@ MapArticle(int fd, char *fname, off_t offset, uint32 size, int exp, int *artSize
 	static char *base = NULL;
 	static off_t baseLen = 0;
 
-	gzFile *gzf;
+	gzFile gzf;
 	SpoolArtHdr tah = { 0 };
 	char *p;
 

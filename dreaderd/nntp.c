@@ -76,8 +76,11 @@ void
 NNTPAuthInfo(Connection *conn, char **pptr)
 {
     char *type = parseword(pptr, " \t");
-    char *args = (type) ? parseword(pptr, " \t") : NULL;
+    char *args = NULL;
     int ok = 0;
+
+    if (type != NULL)
+	args = strcasecmp(type, "pass") == 0 ? *pptr : parseword(pptr, " \t");
 
     if (type && args && strlen(args) < 64) {
 	if (strcasecmp(type, "user") == 0) {
@@ -310,6 +313,12 @@ NNArticleRetrieve(Connection *conn, const char *artid, const char *artopts, int 
     ++conn->co_Auth.dr_ArtCount;
 
     conn->co_RequestFlags = ARTFETCH_MSGID;
+    if (conn->co_Auth.dr_ReaderDef->rd_RequireGroupCmd &&
+		conn->co_GroupName == NULL) {
+	MBLogPrintf(conn, &conn->co_TMBuf, "412 Not in a newsgroup\r\n");
+	NNCommand(conn);
+	return;
+    }
     if (artid == NULL) {
 	if (conn->co_GroupName == NULL) {
 	    MBLogPrintf(conn, &conn->co_TMBuf, "412 Not in a newsgroup\r\n");

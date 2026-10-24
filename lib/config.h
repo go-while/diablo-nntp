@@ -537,5 +537,5 @@ uint64_t		i;
 #endif
 
 #ifndef USE_ZLIB
-#define	gzFile	int
+#define	gzFile	void *
 #endif

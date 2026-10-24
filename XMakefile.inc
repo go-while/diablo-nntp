@@ -10,7 +10,7 @@
 .set DLIB	"$(BD)obj/libdiablo.a"
 .set FLIB	"$(BD)obj/libfilter.a"
 .set RLIB	"$(BD)obj/libdreader.a"
-.set CDEFINES	'-DVERS="$(VERS)"' '-DSUBREV="$(SUBREV)"'
+.set CDEFINES	'-DVERS="$(VERS)"' '-DSUBREV="$(SUBREV)"' '-DDEBUG_ZALLOC' '-DDEBUG_MBUF'
 #if __GNUC__
 .set CFLAGS	-g -O2 -Wall -Wstrict-prototypes "-I$(BD)" $(CDEFINES)
 .set LSTATIC
@@ -22,6 +22,7 @@
 #endif
 
 .set LFLAGS	-L$(BD)obj -lfilter -ldiablo -lutil -lm
+.set DR_LFLAGS	${LFLAGS}
 .set IDIR	/news
 .set MDIR	/news/man
 .set INSTALL	install
@@ -45,7 +46,8 @@
 
 #ifdef __linux__
 .set CFLAGS	-g -O2 -Wall -Wstrict-prototypes "-I$(BD)" $(CDEFINES) -D_FILE_OFFSET_BITS=64
-.set LFLAGS "-L$(BD)obj" -lfilter -ldiablo -lm -lz -lrt
+.set LFLAGS	-L$(BD)obj -lfilter -ldiablo -lz -lm
+.set DR_LFLAGS	-L$(BD)obj -ldiablo -ldb -lz -lm -lcrypto /usr/local/lib/libradius.a
 #endif
 
 #ifdef __osf__

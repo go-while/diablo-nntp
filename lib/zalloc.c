@@ -23,6 +23,7 @@
  *    for specific rights granted.
  */
 
+#define DEBUG_ZALLOC_OFF
 #include "defs.h"
 
 #define POOLSIZE	65536
@@ -39,6 +40,18 @@ Prototype void zfree(MemPool **mpool, void *ptr, int bytes);
 Prototype void zfreeStr(MemPool **pmp, char **ps);
 Prototype void allocPool(MemPool **mpool, int bytes);
 Prototype void freePool(MemPool **mpool);
+
+#ifdef DEBUG_ZALLOC
+Prototype void dbg_install_sighandler(void);
+static void dbg_zalloc_add(MemPool *mp, char *dataptr, int bytes);
+static void dbg_zalloc_free(MemPool **pmp, char *dataptr, int bytes);
+static void dbg_zalloc_add_pool(MemPool **pmp, MemPool *mp);
+static void dbg_zalloc_free_pool(MemPool **pmp);
+
+char *__dbg_file;
+char *__dbg_func;
+int __dbg_line;
+#endif
 
 MemPool *initPool(int bytes);
 
@@ -71,6 +84,9 @@ nzalloc(MemPool **pmp, int bytes)
                         *pmn = mn;
                     }
                     mp->mp_Used += bytes;
+#ifdef DEBUG_ZALLOC
+		    dbg_zalloc_add(mp, ptr, bytes);
+#endif
                     return(ptr);
                 }
             }
@@ -204,6 +220,10 @@ zfree(MemPool **pmp, void *ptr, int bytes)
     /* 8 or 16-byte alignment required, depending on the pointer size */
     bytes = (bytes + MEMNODE_SIZE_MASK) & ~MEMNODE_SIZE_MASK;
 
+#ifdef DEBUG_ZALLOC
+    dbg_zalloc_free(pmp, ptr, bytes);
+#endif
+
     while ((mp = *pmp) != NULL) {
 	if ((char *)ptr >= (char *)mp->mp_Base && (char *)ptr < (char *)mp->mp_Base + mp->mp_Size) {
 	    MemNode **pmn;
@@ -292,6 +312,9 @@ allocPool(MemPool **pmp, int bytes)
     mp->mp_First = mp->mp_Base;
     mp->mp_First->mr_Next = NULL;
     mp->mp_First->mr_Bytes = mp->mp_Size;
+#ifdef DEBUG_ZALLOC
+    dbg_zalloc_add_pool(pmp, mp);
+#endif
     *pmp = mp;
 }
 
@@ -300,10 +323,271 @@ freePool(MemPool **pmp)
 {
     MemPool *mp;
 
+#ifdef DEBUG_ZALLOC
+    dbg_zalloc_free_pool(pmp);
+#endif
+
     while ((mp = *pmp) != NULL) {
 	*pmp = mp->mp_Next;
 	pagefree(mp->mp_Base, mp->mp_Size);
 	free(mp);
     }
 }
+
+#ifdef DEBUG_ZALLOC
+
+#define NODE_BUCKETS	512
+
+struct dbg_zalloc_node {
+    char *file;
+    int line;
+    char *func;
+    char *dataptr;
+    int bytes;
+    struct dbg_zalloc_node **pprevnext;
+    struct dbg_zalloc_node *next;
+};
+
+struct dbg_zalloc_pool {
+    char *file;
+    int line;
+    unsigned long id;
+    MemPool *mp;
+    struct dbg_zalloc_node *node[NODE_BUCKETS];
+    struct dbg_zalloc_pool **pprevnext;
+    struct dbg_zalloc_pool *next;
+};
+
+static struct dbg_zalloc_pool *dzpools;
+static int dbg_busy;
+
+static char *
+dbg_size(unsigned long sz, char *tmp)
+{
+    char *suffix = "";
+    char *fmt = "%lu (%.1f%s)";
+    double val;
+
+    if (sz > (1024*1024*1024)) {
+	val = (double)sz / (1024*1024*1024);
+	suffix = "G";
+    } else if (sz > (1024*1024)) {
+	val = (double)sz / (1024*1024);
+	suffix = "M";
+    } else if (sz > 1024) {
+	val = (double)sz / 1024;
+	suffix = "K";
+    } else {
+	val = sz;
+	fmt = "%lu (%.0f%s)";
+    }
+    if (val >= 4)
+	fmt = "%lu (%.0f%s)";
+    snprintf(tmp, 64, fmt, sz, val, suffix);
+    return tmp;
+}
+
+static void
+dbg_dump(int sig)
+{
+    struct dbg_zalloc_node *dzn;
+    struct dbg_zalloc_pool *dzp;
+    MemPool *mp;
+    unsigned long mp_Size, mp_Used;
+    char fn[128];
+    char tmp[128];
+    char tmp1[64], tmp2[64];
+    int i, fd;
+
+    snprintf(fn, sizeof(fn), "/news/run/dump.%ld.%ld",
+			(long)getpid(), (long)time(NULL));
+    fd = open(fn, O_CREAT|O_WRONLY|O_TRUNC, 0666);
+    if (fd < 0)
+	return;
+
+    __sync_synchronize();
+    if (dbg_busy) {
+	snprintf(tmp, sizeof(tmp), "cannot dump - datastructures are busy\n");
+	write(fd, tmp, strlen(tmp));
+	return;
+    }
+
+    for (dzp = dzpools; dzp; dzp = dzp->next) {
+	mp_Size = mp_Used = 0;
+	for (mp = dzp->mp; mp; mp = mp->mp_Next) {
+		mp_Size += mp->mp_Size;
+		mp_Used += mp->mp_Used;
+	}
+	snprintf(tmp, sizeof(tmp),
+		"pool %lu (from %s:%d) size: %s used: %s\n",
+		dzp->id, dzp->file, dzp->line,
+		dbg_size(mp_Size, tmp1), dbg_size(mp_Used, tmp2));
+	write(fd, tmp, strlen(tmp));
+	mp_Used = 0;
+	for (i = 0; i < NODE_BUCKETS; i++) {
+	    for (dzn = dzp->node[i]; dzn; dzn = dzn->next) {
+		snprintf(tmp, sizeof(tmp),
+			"  %s:%d %s allocated %d bytes @ %p\n",
+			dzn->file, dzn->line, dzn->func,
+			dzn->bytes, dzn->dataptr);
+		write(fd, tmp, strlen(tmp));
+		mp_Used += dzn->bytes;
+	    }
+	}
+	snprintf(tmp, sizeof(tmp), "all memnodes: %s\n\n",
+		dbg_size(mp_Used, tmp1));
+	write(fd, tmp, strlen(tmp));
+    }
+    write(fd, "\n", 1);
+    close(fd);
+}
+
+void
+dbg_install_sighandler(void)
+{
+    struct sigaction sa;
+
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = dbg_dump;
+    sa.sa_flags = SA_RESTART;
+    sigaction(SIGUSR2, &sa, NULL);
+}
+
+static struct dbg_zalloc_node *
+dbg_zalloc_find_node( struct dbg_zalloc_pool *dzp, char *dataptr)
+{
+    struct dbg_zalloc_node *dzn;
+    unsigned int h;
+
+    h = (unsigned long)dataptr % NODE_BUCKETS;
+    for (dzn = dzp->node[h]; dzn; dzn = dzn->next) {
+	if (dzn->dataptr == dataptr)
+	    break;
+    }
+    return dzn;
+}
+
+static void
+dbg_zalloc_add(MemPool *mp, char *dataptr, int bytes)
+{
+    struct dbg_zalloc_node *dzn;
+    struct dbg_zalloc_pool *dzp;
+    unsigned long h;
+
+    dzp = (struct dbg_zalloc_pool *)(mp->mp_DzpPtr);
+
+    dzn = malloc(sizeof(*dzn));
+    if (dzn == NULL)
+	kill(getpid(), SIGABRT);
+    dzn->file = __dbg_file;
+    dzn->line = __dbg_line;
+    dzn->func = __dbg_func;
+    dzn->dataptr = dataptr;
+    dzn->bytes = bytes;
+
+    dbg_busy++;
+    __sync_synchronize();
+    h = (unsigned long)dataptr % NODE_BUCKETS;
+    dzn->pprevnext = &dzp->node[h];
+    dzn->next = dzp->node[h];
+    if (dzp->node[h])
+	dzp->node[h]->pprevnext = &dzn->next;
+    dzp->node[h] = dzn;
+    __sync_synchronize();
+    dbg_busy--;
+}
+
+static void
+dbg_zalloc_free(MemPool **pmp, char *dataptr, int bytes)
+{
+    struct dbg_zalloc_node *dzn;
+    struct dbg_zalloc_pool *dzp;
+
+    if (*pmp == NULL)
+	return;
+
+    dzp = (struct dbg_zalloc_pool *)((*pmp)->mp_DzpPtr);
+    dzn = dbg_zalloc_find_node(dzp, dataptr);
+    if (dzn == NULL) {
+	logit(LOG_ERR, "dbg_zalloc_free: "
+			"cannot find dataptr %p", dataptr);
+	return;
+    }
+    dbg_busy++;
+    __sync_synchronize();
+    *(dzn->pprevnext) = dzn->next;
+    if (dzn->next)
+	dzn->next->pprevnext = dzn->pprevnext;
+    __sync_synchronize();
+    dbg_busy--;
+    free(dzn);
+}
+
+static void
+dbg_zalloc_add_pool(MemPool **pmp, MemPool *mp)
+{
+    struct dbg_zalloc_pool *dzp;
+    static unsigned long mempool_id;
+
+    if (*pmp) {
+	mp->mp_DzpPtr = (*pmp)->mp_DzpPtr;
+	mp->mp_DzpId = (*pmp)->mp_DzpId;
+	dzp = (*pmp)->mp_DzpPtr;
+	dzp->mp = mp;
+	return;
+    }
+
+    dzp = calloc(1, sizeof(*dzp));
+    if (dzp == NULL)
+	kill(getpid(), SIGABRT);
+    dzp->file = __dbg_file;
+    dzp->line = __dbg_line;
+    dzp->id = ++mempool_id;
+    dzp->mp = mp;
+
+    mp->mp_DzpPtr = dzp;
+    mp->mp_DzpId = dzp->id;
+    dzp->mp = mp;
+
+    dbg_busy++;
+    __sync_synchronize();
+    dzp->pprevnext = &dzpools;
+    dzp->next = dzpools;
+    if (dzpools)
+	dzpools->pprevnext = &dzp->next;
+    dzpools = dzp;
+    __sync_synchronize();
+    dbg_busy--;
+}
+
+static void
+dbg_zalloc_free_pool(MemPool **pmp)
+{
+    struct dbg_zalloc_pool *dzp;
+    struct dbg_zalloc_node *dzn;
+    int i;
+
+    if (*pmp == NULL)
+	return;
+    dzp = (*pmp)->mp_DzpPtr;
+
+    dbg_busy++;
+    __sync_synchronize();
+    for (i = 0; i < NODE_BUCKETS; i++) {
+	struct dbg_zalloc_node *next;
+	for (dzn = dzp->node[i]; dzn; dzn = next) {
+	    next = dzn->next;
+	    free(dzn);
+	}
+    }
+
+    *(dzp->pprevnext) = dzp->next;
+    if (dzp->next)
+	dzp->next->pprevnext = dzp->pprevnext;
+    __sync_synchronize();
+    dbg_busy--;
+    free(dzp);
+}
+
+#endif /* DEBUG_ZALLOC */
 

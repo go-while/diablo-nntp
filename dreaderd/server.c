@@ -386,57 +386,48 @@ AddServer(char *bindinfo, int txbufsize, int rxbufsize, const char *host, int ty
 {
     ForkDesc *desc;
     int fd;
-    struct sockaddr_in sin;
+    struct addrinfo *src, *dst;
+    struct addrinfo hints;
+    char portbuf [32];
     Connection *conn;
 
     /*
      * connect() to the host (use asynchronous connect())
      */
 
-    bzero(&sin, sizeof(sin));
-    {
-	struct hostent *he = gethostbyname(host);
-        if (he != NULL) {
-	    sin.sin_family = he->h_addrtype;
-	    memmove(&sin.sin_addr, he->h_addr, he->h_length);
-	} else if (strtol(host, NULL, 0) != 0) {
-	    sin.sin_family = AF_INET;
-	    sin.sin_addr.s_addr = inet_addr(host);
-	} else {
-	    logit(LOG_ERR, "hostname lookup failure: %s\n", host);
-	    return(-1);
-	}
-    }
-    sin.sin_port = htons(port);
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_flags = AI_ADDRCONFIG;
+    snprintf(portbuf, sizeof(portbuf), "%d", port);
 
-    if ((fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+    if (getaddrinfo(host, portbuf, &hints, &dst) != 0) {
+	logit(LOG_ERR, "hostname lookup failure: %s\n", host);
+	return(-1);
+    }
+
+    if ((fd = socket(dst->ai_family, dst->ai_socktype, 0)) < 0) {
+        freeaddrinfo(dst);
 	logit(LOG_ERR, "socket() call failed on host %s\n", host);
 	return(-1);
     }
 
     if (bindinfo != NULL) {
-	struct hostent *he;
-	struct sockaddr_in lsin;
-	bzero(&lsin, sizeof(lsin));
-	if ((he = gethostbyname(bindinfo)) != NULL) {
-	    lsin.sin_addr = *(struct in_addr *)he->h_addr;
-	} else {
-	    lsin.sin_addr.s_addr = inet_addr(bindinfo);
-	    if (lsin.sin_addr.s_addr == INADDR_NONE) {
-		logit(LOG_ERR, "Unknown host for bindhost option: %s\n",
+        if (getaddrinfo(bindinfo, NULL, &hints, &src) != 0) {
+	    freeaddrinfo(dst);
+	    logit(LOG_ERR, "Unknown host for bindhost option: %s\n",
 								bindinfo);
-		return(-1);
-	    }
+	    return(-1);
 	}
-	lsin.sin_family = AF_INET;
-	lsin.sin_port = 0;
-	if (bind(fd, (struct sockaddr *) &lsin, sizeof(lsin)) < 0) {
+	if (bind(fd, src->ai_addr, src->ai_addrlen) < 0) {
+	    freeaddrinfo(src);
+	    freeaddrinfo(dst);
 	    logit(LOG_ERR, "failed to bind source address %s (%s)",
 						bindinfo, strerror(errno));
 	    return(-1);
 	}
-
+	freeaddrinfo(src);
     }
+
     {
 	int on = 1;
 	if (setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, (void *)&on, sizeof(on)) < 0) {
@@ -455,14 +446,16 @@ AddServer(char *bindinfo, int txbufsize, int rxbufsize, const char *host, int ty
     }
     fcntl(fd, F_SETFL, O_NONBLOCK);	/* asynchronous connect() */
     errno = 0;
-    if (connect(fd, (struct sockaddr *)&sin, sizeof(sin)) < 0) {
+    if (connect(fd, dst->ai_addr, dst->ai_addrlen) < 0) {
 	if (errno != EINPROGRESS) {
+	    freeaddrinfo(dst);
 	    close(fd);
 	    logit(LOG_ERR, "connect() call failed on host %s:%d: %s\n",
 						host, port, strerror(errno));
 	    return(-1);
 	}
     }
+    freeaddrinfo(dst);
 
     /*
      * add thread.  Preset d_Count to LIMSIZE to prevent the server
@@ -558,7 +551,7 @@ cbQueueReqFindThread(void *cbData, void *data)
     Connection *conn = data;
 
     if (conn->co_RequestHash &&
-	    !HM_CheckForMatch(conn->co_RequestHash, sreq->sr_MsgId, HMOPER_MATCHONE))
+	    !HM_CheckForMatch(conn->co_RequestHash, (mid_t)sreq->sr_MsgId))
 	return(0);
 
     if (conn->co_Retention > 0 && sreq->sr_TimeRcvd &&

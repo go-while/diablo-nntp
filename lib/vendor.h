@@ -72,17 +72,17 @@
 #undef	POST_NNTP_POSTING_DATE_LOCALTIME
 
 /*
- * When posting a message, encrypt the X-Trace line with DES.  Again,
+ * When posting a message, encrypt the X-Trace line with AES256.  Again,
  * highly recommended.
  */
 
-#undef	POST_CRYPTXTRACE
+#define	POST_CRYPTXTRACE
 
 /*
  * Enable RADIUS authentication.  Works on FreeBSD or similar libradius.
  */
 
-#undef	RADIUS_ENABLED
+#define	RADIUS_ENABLED
 
 /*
  * Enable CDB authentication. Needs the CDB libraries installed.
@@ -99,7 +99,7 @@
  *
  */
 
-#undef	DB_ENABLED
+#define	DB_ENABLED
 
 /*
  * Set a path to a Berkeley DB that includes a list of users that
@@ -107,7 +107,7 @@
  *
  */
 
-#undef	REJECT_DB	/* "/news/db/reject.db" */
+#define	REJECT_DB	"/news/db/reject.db"
 
 /*
  * Enable NetRemote authentication.  Works on FreeBSD, requires DES.
@@ -319,6 +319,7 @@
  * MAXFEEDS is the max # of outgoing feeds - 128 by default.
  */
 #undef MAXFORKS		/* 512 */
+#define MAXFORKS	3800
 #undef MAXFEEDS		/* 128 */
 
 /*
@@ -328,5 +329,5 @@
  * usually only contain 1024 filedescriptors. On some systems you can
  * increase this (for example Linux and FreeBSD). Must be a power of two!
  */
-#undef LARGE_FD_SETSIZE /* 1024 */
+#define LARGE_FD_SETSIZE 4096
 

@@ -211,6 +211,10 @@ main(int ac, char **av)
 
     LoadDiabloConfig(ac, av);
 
+#ifdef DEBUG_ZALLOC
+    dbg_install_sighandler();
+#endif
+
     if (strcmp(DRIncomingLogPat, "NONE") == 0)
 	DRIncomingLogPat = NULL;
     else
@@ -1423,6 +1427,8 @@ SendDns(int fd, struct sockaddr_in *rsin, DnsRes *dres)
 
     if (getsockname(fd, (struct sockaddr *)&lsin, &lslen) < 0) {
 	logit(LOG_ERR, "getsockname(%d) call failed: %s", fd, strerror(errno));
+	close(fd);
+	return;
     }
 
     ++ConnectCount;
@@ -1441,6 +1447,7 @@ SendDns(int fd, struct sockaddr_in *rsin, DnsRes *dres)
 	bcopy(&lsin, &dreq.dr_LSin, sizeof(dreq.dr_LSin));
 	if (dres != NULL) {
 	    dreq.dr_ResultFlags = dres->dr_ResultFlags;
+	    dreq.dr_Flags = dres->dr_Flags & DF_RESREQRES;
 	    strcpy(dreq.dr_AuthUser, dres->dr_AuthUser);
 	    strcpy(dreq.dr_AuthPass, dres->dr_AuthPass);
 	    dreq.dr_ByteCount = dres->dr_ByteCount;
@@ -1714,7 +1721,10 @@ HandleDnsThread(ForkDesc *desc)
 	 * calculate the rate limit.
 	 */
 	for (dr = DnsResHash[hi]; dr; dr = dr->dr_HNext) {
-	    if (strcmp(tmpaddr, NetAddrToSt(0, (struct sockaddr *)&dr->dr_Addr, 1, 0, 0)) == 0) {
+	    char *ipname = NetAddrToSt(0, (struct sockaddr *)&dr->dr_Addr, 1, 0, 0);
+	    /* we count per-vserver, not global! */
+	    if (strcmp(tmpaddr, ipname) == 0 &&
+			strcmp(dres.dr_VServer, dr->dr_VServer) == 0) {
 		++hcount;
 		if (*dres.dr_IdentUser && *dr->dr_IdentUser &&
 			strcmp(dres.dr_IdentUser, dr->dr_IdentUser) == 0)
@@ -1725,13 +1735,15 @@ HandleDnsThread(ForkDesc *desc)
 			dres.dr_ReaderDef->rd_MaxConnPerUser) {
 	    for (hmi=0; hmi < DRHSIZE; hmi++) 
 		for (dr = DnsResHash[hmi]; dr; dr = dr->dr_HNext) {
-		    if (*dres.dr_AuthUser && *dr->dr_AuthUser &&
-			    strcmp(dres.dr_AuthUser, dr->dr_AuthUser) == 0)
-			++ucount;
-		    if (strcmp(dres.dr_ReaderName, dr->dr_ReaderName) == 0)
-			++gcount;
-		    if (strcmp(dres.dr_VServer, dr->dr_VServer) == 0)
+		    /* we count per-vserver, not global! */
+		    if (strcmp(dres.dr_VServer, dr->dr_VServer) == 0) {
 			++vcount;
+			if (*dres.dr_AuthUser && *dr->dr_AuthUser &&
+			    strcmp(dres.dr_AuthUser, dr->dr_AuthUser) == 0)
+			    ++ucount;
+			if (strcmp(dres.dr_ReaderName, dr->dr_ReaderName) == 0)
+			    ++gcount;
+		    }
 		}
 	}
 
@@ -1776,8 +1788,9 @@ HandleDnsThread(ForkDesc *desc)
 
 	if (dres.dr_ReaderDef->rd_MaxConnTotal &&
 		NumActive > dres.dr_ReaderDef->rd_MaxConnTotal) {
-	    snprintf(errbuf, sizeof(errbuf), "400 %s: Server connection limit reached%s%s\r\n",
+	    snprintf(errbuf, sizeof(errbuf), "400 %s: Server overload - too many connections (max %d)%s%s\r\n",
 				dres.dr_VServerDef->vs_HostName,
+				dres.dr_ReaderDef->rd_MaxConnTotal,
 				*dres.dr_VServerDef->vs_NewsAdm ? " - " : "",
 				dres.dr_VServerDef->vs_NewsAdm);
 	    error1 = errbuf;
@@ -1795,8 +1808,9 @@ HandleDnsThread(ForkDesc *desc)
 
 	if (dres.dr_ReaderDef->rd_MaxConnPerVs &&
 		vcount > dres.dr_ReaderDef->rd_MaxConnPerVs) {
-	    snprintf(errbuf, sizeof(errbuf), "400 %s: VServer connection limit reached%s%s\r\n",
+	    snprintf(errbuf, sizeof(errbuf), "400 %s: Vserver overload - too many connections (max %d)%s%s\r\n",
 				dres.dr_VServerDef->vs_HostName,
+				dres.dr_ReaderDef->rd_MaxConnPerVs,
 				*dres.dr_VServerDef->vs_NewsAdm ? " - " : "",
 				dres.dr_VServerDef->vs_NewsAdm);
 	    error1 = errbuf;
@@ -1805,8 +1819,9 @@ HandleDnsThread(ForkDesc *desc)
 
 	if (dres.dr_ReaderDef->rd_MaxConnPerGroup &&
 		gcount > dres.dr_ReaderDef->rd_MaxConnPerGroup) {
-	    snprintf(errbuf, sizeof(errbuf), "400 %s: You have reached the connection limit for your access classification%s%s\r\n",
+	    snprintf(errbuf, sizeof(errbuf), "400 %s: Too many connections in your group (max %d)%s%s\r\n",
 				dres.dr_VServerDef->vs_HostName,
+				dres.dr_ReaderDef->rd_MaxConnPerGroup,
 				*dres.dr_VServerDef->vs_NewsAdm ? " - " : "",
 				dres.dr_VServerDef->vs_NewsAdm);
 	    error1 = errbuf;
@@ -1824,8 +1839,9 @@ HandleDnsThread(ForkDesc *desc)
 
 	if (dres.dr_ReaderDef->rd_MaxConnPerHost &&
 		hcount > dres.dr_ReaderDef->rd_MaxConnPerHost) {
-	    snprintf(errbuf, sizeof(errbuf), "400 %s: Your host connection limit reached%s%s\r\n",
+	    snprintf(errbuf, sizeof(errbuf), "400 %s: Too many connections from your host (max %d)%s%s\r\n",
 				dres.dr_VServerDef->vs_HostName,
+				dres.dr_ReaderDef->rd_MaxConnPerHost,
 				*dres.dr_VServerDef->vs_NewsAdm ? " - " : "",
 				dres.dr_VServerDef->vs_NewsAdm);
 	    error1 = errbuf;
@@ -1843,8 +1859,9 @@ HandleDnsThread(ForkDesc *desc)
 	if (dres.dr_ReaderDef->rd_MaxConnPerUser &&
 		(ucount > dres.dr_ReaderDef->rd_MaxConnPerUser ||
 		 icount > dres.dr_ReaderDef->rd_MaxConnPerUser)) {
-	    snprintf(errbuf, sizeof(errbuf), "400 %s: Your per-user connection limit reached%s%s\r\n",
+	    snprintf(errbuf, sizeof(errbuf), "400 %s: Too many connections from your username (max %d)%s%s\r\n",
 				dres.dr_VServerDef->vs_HostName,
+				dres.dr_ReaderDef->rd_MaxConnPerUser,
 				*dres.dr_VServerDef->vs_NewsAdm ? " - " : "",
 				dres.dr_VServerDef->vs_NewsAdm);
 	    error1 = errbuf;
@@ -1859,7 +1876,7 @@ HandleDnsThread(ForkDesc *desc)
 				UserBan.BanLinkSize);
 #endif
 	}
-	if (error1 == NULL) {
+	if (error1 == NULL && !(dres.dr_Flags & (DF_USEPROXIED|DF_HAPROXY))) {
 	    dr = zalloc(&DnsResPool, sizeof(DnsRes));
 	    *dr = dres;
 	    dr->dr_HNext = DnsResHash[hi];
@@ -1955,14 +1972,15 @@ HandleDnsThread(ForkDesc *desc)
 
     if ((dres.dr_Flags & DF_QUIET) == 0) {
 	logit(LOG_INFO,
-	    "connect to %s from %s%s%s%s%s (%s)", 
+	    "connect to %s from %s%s%s%s%s (%s)%s", 
 	    dres.dr_VServerDef->vs_Name,
 	    (dres.dr_AuthUser[0] ? dres.dr_AuthUser : ""),
 	    (dres.dr_AuthUser[0] ? "/" : ""),
 	    (dres.dr_IdentUser[0] ? dres.dr_IdentUser : ""),
 	    (dres.dr_IdentUser[0] ? "@" : ""),
 	    dres.dr_Host,
-	    NetAddrToSt(0, (struct sockaddr *)&desc->d_SaveRSin, 1, 1, 1)
+	    NetAddrToSt(0, (struct sockaddr *)&desc->d_SaveRSin, 1, 1, 1),
+	    (dres.dr_Flags & DF_ISPROXIED) > 0 ? " proxied=1" : ""
 	);
     }
 }
@@ -2022,9 +2040,9 @@ deleteDnsResHash(DnsRes *dres, ForkDesc *desc)
 		    logit(
 			LOG_INFO,
 #ifdef	DREADER_CLIENT_TIMING
-			"closed from %s%s%s%s%s (%s) groups=%u arts=%u bytes=%.0f posts=%d postbytes=%d postfail=%d vserv=%s secs=%d utime=%.3f stime=%.3f",
+			"closed from %s%s%s%s%s (%s) groups=%u arts=%u bytes=%.0f posts=%d postbytes=%d postfail=%d vserv=%s secs=%d utime=%.3f stime=%.3f%s",
 #else
-			"closed from %s%s%s%s%s (%s) groups=%u arts=%u bytes=%.0f posts=%d postbytes=%d postfail=%d vserv=%s secs=%d",
+			"closed from %s%s%s%s%s (%s) groups=%u arts=%u bytes=%.0f posts=%d postbytes=%d postfail=%d vserv=%s secs=%d%s",
 #endif
 			(dr->dr_AuthUser[0] ? dr->dr_AuthUser : ""),
 			(dr->dr_AuthUser[0] ? "/" : ""),
@@ -2042,10 +2060,11 @@ deleteDnsResHash(DnsRes *dres, ForkDesc *desc)
 #ifdef	DREADER_CLIENT_TIMING
 			time(NULL) - dres->dr_TimeStart,
 			desc->d_stime/ticksPerSecond,
-			desc->d_utime/ticksPerSecond
+			desc->d_utime/ticksPerSecond,
 #else
-			time(NULL) - dres->dr_TimeStart
+			time(NULL) - dres->dr_TimeStart,
 #endif
+			(dres->dr_Flags & DF_ISPROXIED) > 0 ? " proxied=1" : ""
 		    );
 		}
 		if (dr->dr_Flags & DF_FEEDONLY) {

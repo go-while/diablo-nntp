@@ -103,13 +103,6 @@ typedef struct direct den_t;
 #ifdef	POST_HIDENNTPPOSTHOST
 #include	<md5.h>
 #endif
-#ifdef	POST_CRYPTXTRACE
-#if __FreeBSD_version > 470100
-#include        <openssl/des.h>
-#else
-#include	<des.h>
-#endif
-#endif
 #ifdef	NETREMOTE_ENABLED
 #if __FreeBSD_version > 470100
 #include        <openssl/des.h>
@@ -776,7 +769,7 @@ typedef struct Buffer {
     int			bu_DataMax;	/* extended maximum	*/
     int			bu_Fd;
 #ifdef USE_ZLIB
-    gzFile		*bu_gzFile;
+    gzFile		bu_gzFile;
     int			bu_gzWrote;
     CompressBuffer	*bu_CBuf;
 #else
@@ -890,6 +883,10 @@ IPList *IPHash;
 
 #ifndef TEST
 #include "obj/lib-protos.h"
+#endif
+
+#if defined(DEBUG_ZALLOC)
+#  include "debug-zalloc.h"
 #endif
 
 /*

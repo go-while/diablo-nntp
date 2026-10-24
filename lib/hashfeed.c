@@ -94,11 +94,10 @@
 
 Prototype hashint_t HM_OldQuickhash(mid_t mid);
 Prototype void HM_MD5MessageID(mid_t mid, unsigned char *res);
-Prototype hashint_t HM_GetHashInt(mid_t mid, int offloc);
-Prototype int HM_CheckForMatch(HashFeed_MatchList *hf, mid_t mid, int hmoper);
-Prototype hashint_t HM_GetHashInt_PC(unsigned char *res, int offloc);
-Prototype int HM_CheckForMatch_PC(HashFeed_MatchList *hf, mid_t mid, unsigned char *res, int hmoper);
-Prototype HashFeed_MatchList * HM_ConfigNode_Sub(HashFeed_MatchList *hf, HashFeed_MatchList *next, char *conf);
+Prototype int HM_CheckForMatch(HashFeed_MatchList *hf, mid_t mid);
+Prototype hashint_t HM_GetHashInt(unsigned char *res, int offloc);
+Prototype int HM_CheckForMatch_PC(HashFeed_MatchList *hf, mid_t mid, unsigned char *res);
+Prototype HashFeed_MatchList * HM_ConfigNode_Sub(HashFeed_MatchList *hf, HashFeed_MatchList *next, char *conf, int offset);
 #endif
 
 
@@ -180,16 +179,13 @@ HM_MD5MessageID(mid_t mid, unsigned char *res)
  */
 
 hashint_t
-HM_GetHashInt(mid_t mid, int offloc)
+HM_GetHashInt(unsigned char *res, int offloc)
 {
-	unsigned char res[16];
 	hashint_t rval;
 
 	if (offloc < 0 || offloc > 12) {
 		return((hashint_t)0);
 	}
-
-	HM_MD5MessageID(mid, res);
 
 	memcpy((void *)&rval, (void *)&res[12 - offloc], sizeof(rval));
 
@@ -205,115 +201,61 @@ HM_GetHashInt(mid_t mid, int offloc)
  */
 
 int 
-HM_CheckForMatch(HashFeed_MatchList *hf, mid_t mid, int hmoper)
+HM_CheckForMatch(HashFeed_MatchList *hf, mid_t mid)
 {
-	hashint_t hval;
+	unsigned char res[16];
 
-	while (hf) {
-		switch (hf->HM_Type) {
-			case	HMTYPE_OLD:	hval = HM_OldQuickhash(mid);
-						break;
-			case	HMTYPE_MD5:	hval = HM_GetHashInt(mid, hf->HM_Offset);
-						break;
-			default:		return(-1);
-		}
-#ifdef	HM_DEBUG
-		fprintf(stderr, "hval %u, %s%d-%d/%d:%d, res %d\n", hval, (hf->HM_Type == HMTYPE_OLD) ? "@" : "", hf->HM_Start, hf->HM_End, hf->HM_ModVal, hf->HM_Offset, (hval % hf->HM_ModVal + 1) >= hf->HM_Start && (hval % hf->HM_ModVal + 1) <= hf->HM_End); 
-#endif
-		if ((hval % hf->HM_ModVal + 1) >= hf->HM_Start &&
-		    (hval % hf->HM_ModVal + 1) <= hf->HM_End) {
-			if (hmoper == HMOPER_MATCHONE) {
-				return(1);
-			}
-		} else {
-			if (hmoper == HMOPER_MATCHALL) {
-				return(0);
-			}
-		}
-		hf = hf->HM_Next;
-	}
-	if (hmoper == HMOPER_MATCHALL) {
-		return(1);
-	}
-	return(0);
+	HM_MD5MessageID(mid, res);
+	return HM_CheckForMatch_PC(hf, mid, res);
 }
-
-
 
 
 
 /*
  * If you are going to do a lot of work on a single Message-ID,
  * like comparing it to all your newsfeed objects, it makes sense
- * to avoid calling HM_CheckForMatch which will call HM_GetHashInt
- * which will call HM_MD5MessageID which will call MD5Update.
+ * to avoid calling HM_CheckForMatch which will call HM_MD5MessageID
+ * which will call MD5Update.
  *
  * Use these PreComputing functions instead.  Call HM_MD5MessageID 
  * to set up the MD5 result first, then you can repeatedly call
- * HM_CheckForMatch_PC which will call HM_GetHashInt_PC, saving the
- * repeated MD5 calls.
- */
-
-/*
- * Pull out a 32-bit value from offset offloc (0-12)
- * for the provided MID (PreCompute version)
- */
-
-hashint_t
-HM_GetHashInt_PC(unsigned char *res, int offloc)
-{
-	hashint_t rval;
-
-	if (offloc < 0 || offloc > 12) {
-		return((hashint_t)0);
-	}
-
-	memcpy((void *)&rval, (void *)&res[12 - offloc], sizeof(rval));
-
-	return(ntohl(rval));
-}
-
-
-
-
-
-/*
- * Check for a match in the referenced HashFeed_MatchList
- * (PreCompute version)
+ * HM_CheckForMatch_PC, saving the repeated MD5 calls.
  */
 
 int 
-HM_CheckForMatch_PC(HashFeed_MatchList *hf, mid_t mid, unsigned char *res, int hmoper)
+HM_CheckForMatch_PC(HashFeed_MatchList *hf, mid_t mid, unsigned char *res)
 {
 	hashint_t hval;
+	int match = 0;
 
 	while (hf) {
 		switch (hf->HM_Type) {
 			case	HMTYPE_OLD:	hval = HM_OldQuickhash(mid);
 						break;
-			case	HMTYPE_MD5:	hval = HM_GetHashInt_PC(res, hf->HM_Offset);
+			case	HMTYPE_MD5:	hval = HM_GetHashInt(res, hf->HM_Offset);
 						break;
 			default:		return(-1);
 		}
 #ifdef	HM_DEBUG
 		fprintf(stderr, "hval %u, %s%d-%d/%d:%d, res %d\n", hval, (hf->HM_Type == HMTYPE_OLD) ? "@" : "", hf->HM_Start, hf->HM_End, hf->HM_ModVal, hf->HM_Offset, (hval % hf->HM_ModVal + 1) >= hf->HM_Start && (hval % hf->HM_ModVal + 1) <= hf->HM_End); 
 #endif
+		char hashmatch = 0;
 		if ((hval % hf->HM_ModVal + 1) >= hf->HM_Start &&
 		    (hval % hf->HM_ModVal + 1) <= hf->HM_End) {
-			if (hmoper == HMOPER_MATCHONE) {
-				return(1);
-			}
-		} else {
-			if (hmoper == HMOPER_MATCHALL) {
-				return(0);
-			}
+				hashmatch = 1;
+		}
+		if (hf->HM_Cascade) {
+			if (hashmatch && match)
+				break;
+			match = 0;
+			hashmatch = 0;
+		}
+		if (hashmatch) {
+			match = 1;
 		}
 		hf = hf->HM_Next;
 	}
-	if (hmoper == HMOPER_MATCHALL) {
-		return(1);
-	}
-	return(0);
+	return match;
 }
 
 
@@ -340,7 +282,7 @@ HM_CheckForMatch_PC(HashFeed_MatchList *hf, mid_t mid, unsigned char *res, int h
  */
 
 HashFeed_MatchList * 
-HM_ConfigNode_Sub(HashFeed_MatchList *hf, HashFeed_MatchList *next, char *conf)
+HM_ConfigNode_Sub(HashFeed_MatchList *hf, HashFeed_MatchList *next, char *conf, int offset)
 {
 	char *ptr;
 
@@ -365,6 +307,8 @@ HM_ConfigNode_Sub(HashFeed_MatchList *hf, HashFeed_MatchList *next, char *conf)
 	}
 	if ((ptr = strchr(conf, ':'))) {
 		hf->HM_Offset = strtol(++ptr, NULL, 10);
+	} else {
+		hf->HM_Offset = offset;
 	}
 	if ((ptr = strchr(conf, '/'))) {
 		hf->HM_ModVal = strtol(++ptr, NULL, 10);

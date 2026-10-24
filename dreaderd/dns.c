@@ -57,7 +57,7 @@ void sigHupDns(int SigNo);
  */
 char *fileAuthenticate(char *user, char *pass, char *conf);
 #ifdef RADIUS_ENABLED
-char *radiusAuthenticate(char *user, char *pass, char *conf);
+char *radiusAuthenticate(char *user, char *pass, const char *ipname, int is_proxied, char *conf);
 #endif
 #ifdef CDB_ENABLED
 extern int cdb_seek(int, char*, unsigned int, unsigned int*);
@@ -181,6 +181,7 @@ DnsTask(int fd, const char *id)
 						ipname, sizeof(ipname));
 
 	    bcopy(&dreq.dr_RSin, &dres.dr_Addr, sizeof(dres.dr_Addr));
+	    dres.dr_Flags = dreq.dr_Flags;
 
 	    /* Do forward DNS doublecheck */
 	    if (hname[0] == 0)
@@ -272,12 +273,14 @@ fileAuthenticate(char *user, char *pass, char *conf)
  *		 "100 Sucess"	success
  */
 char *
-radiusAuthenticate(char *user, char *pass, char *conf)
+radiusAuthenticate(char *user, char *pass, const char *ipname, int is_proxied, char *conf)
 {
     static char result[DEFNAMELEN + 16];
-    char *r = NULL;
+    char *r = NULL, *readerdef = NULL;
     struct rad_handle *h;
-    int rval;
+    int rval, attrtype;
+    const void *attrval;
+    size_t attrlen;
 
     if (! ((h = rad_open()))) {
 	logit(LOG_ERR, "unable to rad_auth_open");
@@ -303,18 +306,38 @@ radiusAuthenticate(char *user, char *pass, char *conf)
 	rad_close(h);
 	return(NULL);
     }
+    if (ipname[0] && rad_put_string(h, RAD_CALLING_STATION_ID, ipname) < 0) {
+	logit(LOG_ERR, "rad_put_string(RAD_CALLING_STATION_ID) failed: %s", rad_strerror(h));
+	rad_close(h);
+	return(NULL);
+    }
+    if (is_proxied && rad_put_string(h, RAD_CONNECT_INFO, "via_proxy=1") < 0) {
+	logit(LOG_ERR, "rad_put_string(RAD_CONNECT_INFO) failed: %s", rad_strerror(h));
+	rad_close(h);
+	return(NULL);
+    }
     if (((rval = rad_send_request(h))) < 0) {
 	logit(LOG_ERR, "rad_send_request failed: %s", rad_strerror(h));
 	rad_close(h);
 	return(NULL);
     }
-    rad_close(h);
-
     if (rval == RAD_ACCESS_ACCEPT) {
-	strcpy(result, "100 Success");
-	r = result;
+        while ((attrtype = rad_get_attr(h, &attrval, &attrlen)) > 0) {
+           if (attrtype == RAD_FILTER_ID) {
+               readerdef = rad_cvt_string(attrval, attrlen);
+           }
+        }
+        if (readerdef) {
+           snprintf(result, sizeof(result), "110 %s", readerdef);
+           free(readerdef);
+	} else {
+    	    strcpy(result, "100 Success");
+       }
+       r = result;
     } else
-	r = NULL;
+       r = NULL;
+
+    rad_close(h);
     return(r);
 }
 #endif
@@ -1342,10 +1365,6 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
     int firstmatch;
     FILE *af = NULL;
     char *realm = NULL;
-#ifdef INET6
-    void *dreq_ptr;
-    int sa_len=0;
-#endif
 
     /* This got trashed, so reset it */
     if (*dreq->dr_AuthUser) {
@@ -1354,49 +1373,18 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
 	strcpy(dres->dr_AuthPass, dreq->dr_AuthPass);
     }
 
-#ifdef INET6
-    switch (dreq->dr_LSin.ss_family) {
-	case AF_INET:
-	    dreq_ptr = &((struct sockaddr_in *)&dreq->dr_LSin)->sin_addr;
-	    sa_len = sizeof(struct in_addr);
-	    break;
-	case AF_INET6:
-	    dreq_ptr = &((struct sockaddr_in6 *)&dreq->dr_LSin)->sin6_addr;
-	    sa_len = sizeof(struct in6_addr);
-	    break;
-    }
-#endif
+    char *lsin = NetAddrToSt(0, (struct sockaddr *)&dreq->dr_LSin, 1, 0, 0);
 
-	/* XXX Doesn't work after INET6 addition!! */
     for (vsp = accessmap.VServerList, acount = 0;
 		acount < accessmap.VServerCount; acount++, vsp++) {
-#ifdef INET6
-	void *vsp_ptr;
-
-	switch (vsp->vs_Interface.ss_family) {
-	    case AF_INET:
-		vsp_ptr = &((struct sockaddr_in *)&vsp->vs_Interface)->sin_addr;
+	int ac, match = 0;
+	for (ac = 0; ac < MAXVSINTERFACE && vsp->vs_Interface[ac][0]; ac++) {
+	    if (CidrMatch(vsp->vs_Interface[ac], lsin)) {
+		match = 1;
 		break;
-	    case AF_INET6:
-		vsp_ptr = &((struct sockaddr_in6 *)&vsp->vs_Interface)->sin6_addr;
-		break;
+	    }
 	}
-
-	if (DebugOpt) {
-	    char buf1[64], buf2[64];
-
-	    inet_ntop(dreq->dr_LSin.ss_family, dreq_ptr, buf1, sizeof(buf1));
-	    inet_ntop(vsp->vs_Interface.ss_family, vsp_ptr, buf2, sizeof(buf2));
-	    logit(LOG_DEBUG, "vserver :  %s (%i) && %s (%i)\n", buf1, dreq->dr_LSin.ss_family, buf2, vsp->vs_Interface.ss_family);
-	}
-
-	if (dreq->dr_LSin.ss_family == vsp->vs_Interface.ss_family && sa_len
-	    && memcmp(vsp_ptr, dreq_ptr, sa_len)==0) {
-#else
-	struct sockaddr_in *sa = (struct sockaddr_in *)&dreq->dr_LSin;
-	struct sockaddr_in *vsa = (struct sockaddr_in *)&vsp->vs_Interface;
-	if (sa->sin_addr.s_addr == vsa->sin_addr.s_addr) {
-#endif
+	if (match) {
 	    strcpy(dres->dr_VServer, vsp->vs_Name);
 	    dres->dr_VServerDef = vsp;
             break;
@@ -1773,6 +1761,7 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
 				*dreq->dr_AuthPass) {
 		stprintf("dns auth radius %s@%s", user, ipname);
 		AuthReader = radiusAuthenticate(user, dreq->dr_AuthPass,
+			ipname, (dres->dr_Flags & DF_ISPROXIED) > 0,
 			dres->dr_AuthDef->au_Radius);
 		stprintf("dns auth search %s", ipname);
 		if (AuthReader != NULL && *AuthReader == '1') {
@@ -2093,7 +2082,12 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
      * we would like to log the correct info in log lines
      */
     if (MatchedAuthenticated <= 0) {
-	dres->dr_AuthUser[0] = 0;
+	if (dres->dr_ReaderDef->rd_IgnoreAuthInfo && *dreq->dr_AuthUser && *dreq->dr_AuthPass) {
+	    snprintf(dres->dr_AuthUser, sizeof(dres->dr_AuthUser),
+			    "!%s", dreq->dr_AuthUser);
+	} else {
+	    dres->dr_AuthUser[0] = 0;
+	}
 	dres->dr_Flags &= ~DF_AUTH;
     } else {
 	dres->dr_Flags |= DF_AUTH;
@@ -2533,6 +2527,10 @@ InstallAccessCache() {
 		    logit(LOG_ERR, "Found 'end' without define in line %d", linecount);
 		    break;
 		case OPT_VSERVER:
+		    if (strcmp(vserver.vs_HostName, "DEFAULT") == 0 &&
+			DOpts.ReaderHostName != NULL)
+			strncpy(vserver.vs_HostName, DOpts.ReaderHostName,
+					sizeof(vserver.vs_HostName) - 1);
 		    if (!*vserver.vs_ClusterName)
 			strcpy(vserver.vs_ClusterName, vserver.vs_HostName);
 		    if (strcmp(vserver.vs_Name, "DEFAULT") == 0) {
@@ -2644,38 +2642,22 @@ InstallAccessCache() {
 		    continue;
 		}
 		if (*val && strcmp(opt, "interface") == 0) {
-#ifdef INET6
-		    int error;
-		    struct addrinfo *res;
-                     
-		    error = getaddrinfo(val, 0, NULL, &res);
-		    if (error != 0)
-			logit(LOG_ERR, "getaddrinfo: %s: %s\n",
-					val, gai_strerror(error));
-		    else {
-			char buf[64]; void *ptr;
-
-			switch (res->ai_family) {
-			    case AF_INET:
-				ptr = &((struct sockaddr_in *) res->ai_addr)->sin_addr;
-				break;
-			    case AF_INET6:
-				ptr = &((struct sockaddr_in6 *) res->ai_addr)->sin6_addr;
-				break;
-			}
-			memcpy(&(vserver.vs_Interface), res->ai_addr, res->ai_addrlen);
-			inet_ntop(res->ai_family, ptr, buf, sizeof(buf));
-			logit(LOG_ERR, "getaddrinfo: %s : %s (%i, %i)\n",
-					val, buf, res->ai_family, res->ai_addrlen);
-			freeaddrinfo(res);
+		    int ac;
+		    for (ac = 0; ac < MAXVSINTERFACE; ac++) {
+			if (vserver.vs_Interface[ac][0] == 0)
+			    break;
 		    }
-#else
-		    struct sockaddr_in *sin = (struct sockaddr_in *)&vserver.vs_Interface;
-
-		    bzero(&vserver.vs_Interface, sizeof(vserver.vs_Interface));
-		    sin->sin_family = AF_INET;
-		    sin->sin_addr.s_addr = inet_addr(val);
-#endif
+		    if (ac == MAXVSINTERFACE) {
+			logit(LOG_ERR, "interface %s: too many interfaces\n",
+					val);
+			continue;
+		    }
+		    if (!IsIpAddr(val)) {
+			logit(LOG_ERR, "interface %s: invalid address\n", val);
+			continue;
+		    }
+		    strncpy(vserver.vs_Interface[ac], val,
+					sizeof(vserver.vs_Interface[0]) - 1);
 		    continue;
 		}
 		if (*val && strcmp(opt, "noxrefhostupdate") == 0) {
@@ -2845,6 +2827,13 @@ InstallAccessCache() {
 		        readerdef.rd_UseProxied = 0;
 		    continue;
 		}
+		if (*val && strcmp(opt, "haproxy") == 0) {
+		    if (*val == 'y' || *val == 'Y' || *val == '1')
+		        readerdef.rd_HaProxy = 1;
+		    else
+		        readerdef.rd_HaProxy = 0;
+		    continue;
+		}
 		if (*val && strcmp(opt, "quiet") == 0) {
 		    if (*val == 'y' || *val == 'Y' || *val == '1')
 			readerdef.rd_Quiet = 1;
@@ -2986,6 +2975,13 @@ InstallAccessCache() {
 			readerdef.rd_LogCmd = 1;
 		    else
 			readerdef.rd_LogCmd = 0;
+		    continue;
+		}
+		if (*val && strcmp(opt, "requiregroupcmd") == 0) {
+		    if (*val == 'y' || *val == 'Y' || *val == '1')
+			readerdef.rd_RequireGroupCmd = 1;
+		    else
+			readerdef.rd_RequireGroupCmd = 0;
 		    continue;
 		}
 #ifdef	IP_TOS
@@ -3493,6 +3489,10 @@ SetAuthDetails(DnsRes *dres, char *which)
       dres->dr_Flags |= DF_USEPROXIED;
     else
       dres->dr_Flags &= ~DF_USEPROXIED;
+    if (dres->dr_ReaderDef->rd_HaProxy)
+      dres->dr_Flags |= DF_HAPROXY;
+    else
+      dres->dr_Flags &= ~DF_HAPROXY;
     if (dres->dr_ReaderDef->rd_Quiet)
 	dres->dr_Flags |= DF_QUIET;
     else

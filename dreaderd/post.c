@@ -33,6 +33,10 @@ char *PostCFilter(char *base, int artLen, Connection *conn);
 char *PostXFilter(char *base, int artLen, Connection *conn);
 #endif
 
+#ifdef	POST_CRYPTXTRACE
+char *aes_encrypt(char *pass, unsigned char *data, size_t data_sz);
+unsigned char *sha256hash(char *);
+#endif
 
 Prototype void NNPostBuffer(Connection *conn);
 Prototype void NNPostCommand1(Connection *conn);
@@ -64,7 +68,11 @@ char *NNPHMangle(char *vserv, char *node, char *cryptpw)
 	/* Safety: in the event we cant md5, then leave some useful
 	   data in md5buf */
 	snprintf(md5buf, sizeof(md5buf), "%s", node);
+#ifdef	POST_CRYPTXTRACE
+	md5hashstr((md5hash_t *)sha256hash(buffer), md5buf);
+#else
 	md5hashstr(md5hash(buffer), md5buf);
+#endif
 	/* Clip the string.  8 digits is enough */
 	md5buf[8] = '\0';
 	snprintf(res, sizeof(res), "%s.%s", md5buf, vserv);
@@ -72,136 +80,16 @@ char *NNPHMangle(char *vserv, char *node, char *cryptpw)
 }
 
 #ifdef	POST_CRYPTXTRACE
-
-/* JG19990908 encrypt (for loose def'n of encrypt, heh) X-Trace, presenting
-   a uuencode-style line that can be decoded by abuse */
-
 char *XTRAMangle(char *xtrace, char *cryptpw)
 {
 	static char res[256];
-	char *rptr, *xptr;
-	int count;
-	unsigned char plain[8], enc[8];
-	des_cblock key;
-	des_key_schedule sched;
-
-	des_string_to_key(cryptpw, &key);
-	des_set_key(&key, sched);
-
-	rptr = res;
-
-	/* Overflow protect; 192 chars expands to 256, overflowing res */
-	if (strlen(xtrace) > 191) {
-		xtrace[191] = '\0';
+	char *c = aes_encrypt(cryptpw, (unsigned char *)xtrace, strlen(xtrace));
+	if (c != NULL) {
+	    snprintf(res, sizeof(res), "%s", c);
+	    free(c);
+	    return res;
 	}
-
-	/* Step thru 'xtrace' 8 chars at a time, encrypt as we go */
-	xptr = xtrace;
-	count = 0;
-	bzero(plain, sizeof(plain));
-	while (*xptr) {
-	    plain[count++ % 8] = *xptr++;
-	    if (! *xptr || (count % 8) == 0) {
-		/* Encrypt block of (up to) 8 and pump out coded ASCII */
-		des_ecb_encrypt((des_cblock *)plain,(des_cblock *)enc, sched, 1);
-		bzero(plain, sizeof(plain));
-		*rptr++ = '0' + (enc[0] & 0x3f);
-		*rptr++ = '0' + (enc[0] >> 6) + ((enc[1] & 0x0f) << 2);
-		*rptr++ = '0' + (enc[1] >> 4) + ((enc[2] & 0x03) << 4);
-		*rptr++ = '0' + (enc[2] >> 2);
-		*rptr++ = '0' + (enc[3] & 0x3f);
-		*rptr++ = '0' + (enc[3] >> 6) + ((enc[4] & 0x0f) << 2);
-		*rptr++ = '0' + (enc[4] >> 4) + ((enc[5] & 0x03) << 4);
-		*rptr++ = '0' + (enc[5] >> 2);
-		*rptr++ = '0' + (enc[6] & 0x3f);
-		*rptr++ = '0' + (enc[6] >> 6) + ((enc[7] & 0x0f) << 2);
-		*rptr++ = '0' + (enc[7] >> 4) + ((time(NULL) & 0x03) << 4);
-	    }
-	}
-	*rptr = '\0';
-	return(res);
-}
-
-char *XTRAUnmangle(char *str, char *cryptpw)
-{
-	static char res[256];
-	char *rptr, *sptr;
-	int count, i;
-	unsigned char plain[8], enc[8];
-	des_cblock key;
-	des_key_schedule sched;
-
-	des_string_to_key(cryptpw, &key);
-	des_set_key(&key, sched);
-
-	if (! strncmp(str, "DXC=", 4)) {
-		str += 4;
-	}
-
-	*res = '\0';
-	if (strlen(str) % 11) {
-		snprintf(res, sizeof(res), "(X-Trace damaged; may not decode OK) ");
-	}
-
-	rptr = res + strlen(res);
-	
-	sptr = str;
-	count = 0;
-	bzero(enc, sizeof(enc));
-	while (*sptr) {
-	    switch (count % 11) {
-		case 0:
-		    enc[0] = (*sptr - '0');
-		    break;
-		case 1:
-		    enc[0] += ((*sptr - '0') & 0x03) << 6;
-		    enc[1] = (*sptr - '0') >> 2;
-		    break;
-		case 2:
-		    enc[1] += ((*sptr - '0') & 0x0f) << 4;
-		    enc[2] = (*sptr - '0') >> 4;
-		    break;
-		case 3:
-		    enc[2] += (*sptr - '0') << 2;
-		    break;
-		case 4:
-		    enc[3] = (*sptr - '0');
-		    break;
-		case 5:
-		    enc[3] += ((*sptr - '0') & 0x03) << 6;
-		    enc[4] = (*sptr - '0') >> 2;
-		    break;
-		case 6:
-		    enc[4] += ((*sptr - '0') & 0x0f) << 4;
-		    enc[5] = (*sptr - '0') >> 4;
-		    break;
-		case 7:
-		    enc[5] += (*sptr - '0') << 2;
-		    break;
-		case 8:
-		    enc[6] = (*sptr - '0');
-		    break;
-		case 9:
-		    enc[6] += ((*sptr - '0') & 0x03) << 6;
-		    enc[7] = (*sptr - '0') >> 2;
-		    break;
-		case 10:
-		    enc[7] += ((*sptr - '0') & 0x0f) << 4;
-		    break;
-	    }
-	    count++;
-	    sptr++;
-	    if (! *sptr || (count % 11) == 0) {
-		/* Decrypt block of (up to) 8 and pump out plain ASCII */
-		des_ecb_encrypt((des_cblock *)enc,(des_cblock *)plain, sched, 0);
-		bzero(enc, sizeof(enc));
-		for (i = 0; i < 8; i++) {
-			*rptr++ = plain[i];
-		}
-	    }
-	}
-	*rptr = '\0';
-	return(res);
+	return "unavailable";
 }
 #endif
 
@@ -618,15 +506,35 @@ NNPostBuffer(Connection *conn)
 	}
 #endif
 
+	char cryptbuf[64];
+	char *cryptpw = NULL;
+	char *cryptgen = NULL;
+	if (*conn->co_Auth.dr_VServerDef->vs_CryptPw) {
+		strncpy(cryptbuf, conn->co_Auth.dr_VServerDef->vs_CryptPw,
+						sizeof(cryptbuf) - 1);
+		cryptbuf[sizeof(cryptbuf) - 1] = 0;
+
+		// support G=generation,P=password format.
+		char *s = strtok(cryptbuf, ",");
+		while (s) {
+			if (strncmp(s, "G=", 2) == 0)
+				cryptgen = s + 2;
+			if (strncmp(s, "P=", 2) == 0)
+				cryptpw = s + 2;
+			s = strtok(NULL, ",");
+		}
+		if (cryptpw == NULL)
+			cryptpw = conn->co_Auth.dr_VServerDef->vs_CryptPw;
+	}
+
 	/*
 	 * Add NNTP-Posting-Host:
 	 */
 	if (! conn->co_Auth.dr_ReaderDef->rd_TurnOffNNPH) {
-	    if (*conn->co_Auth.dr_VServerDef->vs_CryptPw)
+	    if (cryptpw)
 	        MBPrintf(&tmbuf, "NNTP-Posting-Host: %s\r\n",
 		    NNPHMangle(conn->co_Auth.dr_VServerDef->vs_ClusterName,
-			    conn->co_Auth.dr_Host,
-			    conn->co_Auth.dr_VServerDef->vs_CryptPw));
+			    conn->co_Auth.dr_Host, cryptpw));
 	    else
 	        MBPrintf(&tmbuf, "NNTP-Posting-Host: %s\r\n", conn->co_Auth.dr_Host);
 	}
@@ -635,7 +543,7 @@ NNPostBuffer(Connection *conn)
 	 * Add X-Trace:
 	 */
 #ifdef  POST_CRYPTXTRACE
-	if (*conn->co_Auth.dr_VServerDef->vs_CryptPw) {
+	if (cryptpw) {
 	    snprintf(xtrace, sizeof(xtrace), "%lu %s %d %s%s%s%s%s",
 		(unsigned long)t,
 		conn->co_Auth.dr_VServerDef->vs_HostName,
@@ -646,8 +554,12 @@ NNPostBuffer(Connection *conn)
 		*conn->co_Auth.dr_IdentUser ? "@" : "",
 		NetAddrToSt(0, (struct sockaddr *)&conn->co_Auth.dr_Addr, 1, 1, 1)
 	    );
-	    MBPrintf(&tmbuf, "X-Trace: DXC=%s\r\n",
-		XTRAMangle(xtrace, conn->co_Auth.dr_VServerDef->vs_CryptPw));
+	    if (cryptgen) {
+		MBPrintf(&tmbuf, "X-Trace: G=%s,C=%s\r\n", cryptgen,
+		    XTRAMangle(xtrace, cryptpw));
+	    } else {
+		MBPrintf(&tmbuf, "X-Trace: C=%s\r\n", XTRAMangle(xtrace, cryptpw));
+	    }
 	} else
 #endif
 	    MBPrintf(&tmbuf, "X-Trace: %lu %s %d %s%s%s%s%s\r\n",
