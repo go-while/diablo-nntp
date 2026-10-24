@@ -674,7 +674,7 @@ NetAddrToSt(int fd, struct sockaddr *sa, int ip4conv, int port, int v6spec)
 
     if (sa == NULL) {
 	static struct sockaddr_storage res;
-	int salen = sizeof(res);
+	socklen_t salen = sizeof(res);
 
 	sa = (struct sockaddr *)&res;
 	if (getpeername(fd, sa, &salen) != 0) {

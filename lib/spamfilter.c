@@ -101,7 +101,6 @@ SetSpamFilterOpt(void)
 	char *oldopts = DOpts.SpamFilterOpt;
 	int n;
 	int enabled = 0;
-	int nntpPostDisabled = 0;
 	int ftype = 0;
 
 	TermSpamFilter();
@@ -130,7 +129,6 @@ SetSpamFilterOpt(void)
 		case 'D':
 		    ++ptr;
 		    SetSpamFilterTrip(-1, 0);
-		    nntpPostDisabled = 1;
 		    ftype = 0;
 		    break;
 		case 'e':
@@ -600,7 +598,7 @@ dumpSpamFilterMem(FILE *fo, FilterInfo *fi, char *stype, int raw)
 		dt -= 60;
 	    }
 	    if (raw || hits >= 0) {
-		if (!anyinfo)
+		if (!anyinfo) {
 		    fprintf(fo, "Internal spamfilter %s hits\n", stype);
 		    fprintf(fo, "%5s %16s %-15s %8s %-8s   %5s %5s %5s %5s\n",
 				"entry",
@@ -613,6 +611,7 @@ dumpSpamFilterMem(FILE *fo, FilterInfo *fi, char *stype, int raw)
 				"hits",
 				"filtered"
 		    );
+		}
 		anyinfo = 1;
 		fprintf(fo, "%05x %32s %08x.%08x   %5d %5d %5d %5d\n",
 				i,

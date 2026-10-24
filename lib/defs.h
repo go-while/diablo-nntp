@@ -32,9 +32,19 @@
 #      undef __FD_SETSIZE
 #      define __FD_SETSIZE LARGE_FD_SETSIZE
 #    endif
+#  elif defined(__sun)
+     /* illumos supplies a larger fd_set (FD_SETSIZE is normally 65536).
+      * Do not override the system's definition. */
 #  else
-     /* Works on most BSDs */
-#    define FD_SETSIZE LARGE_FD_SETSIZE
+     /* BSD fd_set sizing must be set before <sys/types.h> is included.
+      * Never redefine it after the system has already sized fd_set. */
+#    if defined(FD_SETSIZE)
+#      if FD_SETSIZE < LARGE_FD_SETSIZE
+#        error "FD_SETSIZE is too small: include lib/defs.h before system headers"
+#      endif
+#    else
+#      define FD_SETSIZE LARGE_FD_SETSIZE
+#    endif
 #  endif
 #endif
 

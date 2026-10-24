@@ -36,11 +36,11 @@
  * someone to take up.  JG20000810
  */
 
+#include	"defs.h"
+
 #include	<stdio.h>
 #include	<string.h>
 #include	<ctype.h>
-
-#include	"defs.h"
 
 Prototype int ckaddress(char *addr);
 

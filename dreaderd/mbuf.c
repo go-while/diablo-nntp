@@ -293,10 +293,10 @@ MZWriteIt(Connection *conn, const void *data, int len, int flush)
     }
 
     conn->co_ZStream->avail_in = len;
-    conn->co_ZStream->next_in = (char *)data;
+    conn->co_ZStream->next_in = (Bytef *)data;
 
     conn->co_ZStream->avail_out = sizeof(compoutbuf);
-    conn->co_ZStream->next_out = compoutbuf;
+    conn->co_ZStream->next_out = (Bytef *)compoutbuf;
 
     r = deflate(conn->co_ZStream, flush);
 
@@ -304,7 +304,7 @@ MZWriteIt(Connection *conn, const void *data, int len, int flush)
 	logit(LOG_CRIT, "MZWrite: unable to deflate %d", r);
 	return(-1);
     }
-    if (r == Z_OK && ! &conn->co_ZStream->avail_out) {
+    if (r == Z_OK && conn->co_ZStream->avail_out == 0) {
 	logit(LOG_CRIT, "MZWrite: avail_out zero, this should not happen");
 	return(-1);
     }

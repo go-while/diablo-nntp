@@ -160,7 +160,6 @@ NNTPGroup(Connection *conn, char **pptr)
     int recLen;
     artno_t artBeg, dispArtBeg;
     artno_t artEnd, dispArtEnd;
-    artno_t adjustedArtBeg = 0;
     const char *rec;
     OverInfo *ov;
     struct GroupList *groups = conn->co_Auth.dr_GroupDef->gr_Groups;
@@ -194,24 +193,20 @@ NNTPGroup(Connection *conn, char **pptr)
 
     if (artBeg > artEnd) {
 	artBeg = artEnd;
-	adjustedArtBeg = 1;
     }
 
     if ((ov = GetOverInfo(group)) != NULL) {
 	if (artBeg < artEnd - ov->ov_Head->oh_MaxArts) {
 	    artBeg = artEnd - ov->ov_Head->oh_MaxArts;
-	    adjustedArtBeg = 1;
 	}
 	PutOverInfo(ov);
     } else {
 	if (artBeg < artEnd - DEFMAXARTSINGROUP) {
 	    artBeg = artEnd - DEFMAXARTSINGROUP;
-	    adjustedArtBeg = 1;
 	}
     }
     if (artEnd == 0 && artBeg != 1) {
 	artBeg = 1;
-	adjustedArtBeg = 1;
     }
 
     GroupStats(conn);

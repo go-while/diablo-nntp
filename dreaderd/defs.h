@@ -1,6 +1,6 @@
 
-#include <sys/times.h>
 #include <lib/defs.h>
+#include <sys/times.h>
 #include <sys/uio.h>
 #ifdef	USE_PRCTL
 #include <sys/resource.h>
@@ -325,6 +325,7 @@ typedef struct DnsRes {
 #define	DF_USEPROXIED	0x00000400	/* Use proxy-supplied IP	*/
 #define	DF_HAPROXY	0x00000800	/* Ditto, HAPROXY protocol	*/
 #define	DF_ISPROXIED	0x00001000	/* This is a proxied session	*/
+#define DF_IGNORED_AUTH_LONG 0x00002000 /* unprefixed, full-length ignored AUTHINFO user */
 
 /* Flags to pass from DnsRes -> DnsReq -> DnsRes */
 #define DF_RESREQRES	DF_ISPROXIED

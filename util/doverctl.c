@@ -445,16 +445,17 @@ CleanSpool(char *cleanDir)
 		 * sizes appear to be not evenly distributed wrt second
 		 * char.
 		 */
-	    )
+	    ) {
 		scanDirectory(PatExpand(GroupHomePat), den->d_name, &level);
 		/*
 		 * This is a bit of a hack, but we try to remove the
 		 * directory in case it is empty. If it is not empty, the
-		 * remove should fail silently - at leat we hope so!
+		 * remove should fail silently - at least we hope so!
 		 */
 		if (ForReal && remove(den->d_name) == 0) {
 		    printf("Removed empty directory: %s/%s\n", PatExpand(GroupHomePat), den->d_name);
 		}
+	    }
 	}
 	closedir(dir);
     }

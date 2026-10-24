@@ -49,7 +49,6 @@ void loadDnewsFeeds(FILE *fo, int t, int *count);
 int
 LoadHostAccess(time_t t, int force, int rebuildtime)
 {
-    int timeChanged = 0;
     struct stat st = { 0 };
     pid_t pid;
 
@@ -59,8 +58,6 @@ LoadHostAccess(time_t t, int force, int rebuildtime)
 
     if (!force  && (t / 10 <= HATDSec))
 	return(0);
-
-    timeChanged = 1;
 
     HATDSec = t / 10;
 
@@ -160,17 +157,33 @@ LoadHostAccess(time_t t, int force, int rebuildtime)
 	else if (DebugOpt)
 	    printf("Found %d incoming hosts\n", count);
 
-	fclose(fo);
-
 	/*
-	 * Now rename the newly created cache to its correct name
+	 * An empty cache is valid when the last incoming host is removed.
+	 * Never retain stale authorization entries just because the rebuild
+	 * produced zero records.  Only publish a successfully written file.
 	 */
-	snprintf(buf, sizeof(buf), "%s.new", PatDbExpand(DHostsCachePat));
-	if ((stat(buf, &st) == 0 && st.st_size > 0) ||
-		stat(PatDbExpand(DHostsCachePat), &st) != 0) {
-	    rename(buf, PatDbExpand(DHostsCachePat));
-	} else {
+	{
+	    int writeError = ferror(fo);
+
+	    if (fclose(fo) == EOF)
+		writeError = 1;
+	    if (writeError) {
+		logit(LOG_CRIT, "%s: unable to write host cache", buf);
+		unlink(buf);
+		xflock(lockfd, XLOCK_UN);
+		close(lockfd);
+		exit(1);
+	    }
+	}
+
+	/* Atomically replace the previous cache, including with an empty one. */
+	if (rename(buf, PatDbExpand(DHostsCachePat)) < 0) {
+	    logit(LOG_CRIT, "Cannot replace host cache %s: %s",
+			PatDbExpand(DHostsCachePat), strerror(errno));
 	    unlink(buf);
+	    xflock(lockfd, XLOCK_UN);
+	    close(lockfd);
+	    exit(1);
 	}
 	xflock(lockfd, XLOCK_UN);
 	close(lockfd);
@@ -230,10 +243,11 @@ convHost(char *host, HostAccess *HA, FILE *fo)
 	    for (ai = ai0; ai; ai = ai->ai_next) {
 		if (getnameinfo(ai->ai_addr, ai->ai_addrlen, HA->addrst,
 					sizeof(HA->addrst), NULL,
-					0, NI_NUMERICHOST) == 0)
+					0, NI_NUMERICHOST) == 0) {
 		    HA->testtype |= TESTTYPE_IP;
 		    fwrite(HA, sizeof(*HA), 1, fo);
 		    found++;
+		}
 	    }
 	    freeaddrinfo(ai0);
 	}

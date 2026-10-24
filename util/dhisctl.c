@@ -11,16 +11,12 @@
 
 int VerboseOpt = 0;
 int ShowProgress = 0;
-int DonePause = 0;
-time_t MaxAge = -1;
 char *MsgID = NULL;
 int ExpireArt = 0;
 int UnExpireArt = 0;
-int MustExit = 0;
 char *FileName = NULL;
 char *MsgIdList = NULL;
 int HistoryFd = -1;
-int DoAll = 0;
 int ForReal = 1;
 int StructSizes = 0;
 int HistoryHead = 0;
@@ -28,9 +24,6 @@ int HistoryHead = 0;
 void DumpHeader(int fd);
 void DoEntry(char *msgid);
 void ScanFile(char *fname);
-void ScanAll(void);
-int ServerCmd(char *cmd);
-void Fail(char *fname, char *errmsg);
 
 void
 Usage(void)
@@ -53,15 +46,6 @@ Usage(void)
     printf("\t-d[n]\t- set debug [with optional level]\n");
     printf("\t-V\t- print version and exit\n");
     exit(1);
-}
-
-void
-sigInt(int sigNo)
-{
-    printf("Exit signal caught - exiting\n");
-    ++MustExit;
-    if (MustExit > 3)
-	exit(1);
 }
 
 int
@@ -89,8 +73,12 @@ main(int ac, char **av)
 	ptr += 2;
 	switch(ptr[-1]) {
 	case 'a':
-	    DoAll = 1;
-	    break;
+	    /* This formerly invoked an incomplete scanner which used an
+	     * invalid file descriptor and misinterpreted history records.
+	     * Refuse it before opening or modifying the history file.
+	     */
+	    fprintf(stderr, "dhisctl: -a bulk history scan is unsupported\n");
+	    exit(1);
 	case 'e':
 	    ExpireArt = 1;
 	    break;
@@ -160,8 +148,6 @@ main(int ac, char **av)
 	DoEntry(MsgID);
     if (MsgIdList != NULL)
 	ScanFile(MsgIdList);
-    if (DoAll)
-	ScanAll();
 
     return(0);
 }
@@ -269,140 +255,5 @@ ScanFile(char *fname)
 	DoEntry(buf);
     }
     fclose(f);
-}
-
-void
-ScanAll()
-{
-    char hbuf[4096];
-    int n;
-    int hlen = (sizeof(hbuf) / 5) * 5;
-    uint32 gmt = time(NULL) / 60;
-    off_t seekpos = 0;
-    int totalentries = 0;
-    int okcount = 0;
-    int count = 0;
-    int r;
-    int failed = 0;
-    History *h;
-    int finished = 0;
-    int fd = -1;
-    int hsize = 0;
-
-    seekpos = lseek(fd, hsize * sizeof(int32), 1);
-
-    {
-	struct stat st;
-
-	if (fstat(fd, &st) == -1) {
-	    fprintf(stderr, "Unable to fstat history: %s\n", strerror(errno));
-	    exit(1);
-	}
-	totalentries = (int)(st.st_size - seekpos) / 5;
-	fprintf(stderr, "History entries start at offset %ld, %d records\n",
-						(long)seekpos, totalentries);
-    }
-
-    HistoryOpen(FileName, HGF_FAST|HGF_NOSEARCH|HGF_EXCHECK);
-
-    while (!finished || MustExit) {
-	int i;
-
-	n = read(fd, &hbuf, hlen) / 5;
-
-	for (i = 0; i < n; ++i) {
-	    h = (History *)(hbuf + i * 5);
-
-	    if ((i & 1024) == 0)
-		gmt = time(NULL) / 60;
-
-	    /*
-	     * If we specified a maximum age, then deal with it
-	     */
-	    if (MaxAge != -1) {
-		int32 dgmt = (gmt - h->gmt) * 60;	/* Delta seconds */
-		if (dgmt > MaxAge)
-		    continue;
-	    }
-
-	    if ((r = HistoryAdd(NULL, h)) == 0)
-		++okcount;
-	    else if (r != RCTRYAGAIN)
-		++failed;
-	    else
-		Fail(FileName, "HistoryAdd: write failed!");
-
-	    if (count++ > totalentries)
-		totalentries = count;
-	    if (ShowProgress && ((count % 8192) == 0)) {
-		fprintf(stderr, "%d/%d\r", count, totalentries);
-	    }
-	}
-    }
-    if (DonePause == 3 && ServerCmd("go") == 0)		/* Got signal */
-	Fail(FileName, "Unable to resume diablo server");
-    if (totalentries > 0)
-	fprintf(stderr, "%d/%d\n", count, totalentries);
-}
-
-int
-ServerCmd(char *cmd)
-{
-    FILE *fi;
-    FILE *fo;
-    char buf[256];
-    int r = 0;
-
-    /*
-     * UNIX domain socket
-     */
-
-    {
-	struct sockaddr_un soun;
-	int ufd;
-
-	memset(&soun, 0, sizeof(soun));
-
-	if ((ufd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
-	    perror("udom-socket");
-	    return(r);
-	}
-	soun.sun_family = AF_UNIX;
-	sprintf(soun.sun_path, "%s", PatRunExpand(DiabloSocketPat));
-	if (connect(ufd, (struct sockaddr *)&soun, offsetof(struct sockaddr_un, sun_path[strlen(soun.sun_path)+1])) < 0) {
-	    perror("udom-connect");
-	    return(r);
-	}
-	fo = fdopen(dup(ufd), "w");
-	fi = fdopen(ufd, "r");
-    }
-
-    fprintf(fo, "%s\n", cmd);
-    fprintf(fo, "quit\n");
-    fflush(fo);
-    while (fgets(buf, sizeof(buf), fi) != NULL) {
-	if (VerboseOpt)
-	    printf("%s", buf);
-	if (strncmp(buf, "200", 3) == 0)
-	    r = 1;
-	if (strncmp(buf, "211 Flushing feeds", 18) == 0)
-	    r = 1;
-	if (strcmp(buf, ".\n") == 0)
-	    break;
-    }
-    fclose(fo);
-    fclose(fi);
-    return(r);
-}
-
-void
-Fail(char *fname, char *errmsg)
-{
-    printf("%s\n", errmsg);
-    printf("History rebuild is not complete - keeping old history\n");
-    HistoryClose();
-    if (fname != NULL)
-	remove(fname);
-    exit(1);
 }
 

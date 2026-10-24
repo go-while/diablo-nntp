@@ -1,10 +1,10 @@
 /*  $Revision: 1.1.1.1 $
 **
 */
+#include	"defs.h"
+
 #include <stdio.h>
 #include <sys/types.h>
-
-#include	"defs.h"
 
 /* Stolen from INN */
 
@@ -21,8 +21,7 @@ Prototype void HeaderCleanFrom(char *from);
 **	stuff <address>		address
 */
 void
-HeaderCleanFrom(from)
-    char		*from;
+HeaderCleanFrom(char *from)
 {
     register char	*p;
     register char	*end;

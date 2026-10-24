@@ -145,32 +145,46 @@ char *
 GetSpoolPath(uint16 spool, int gmt, int opt)
 {
     static char path[PATH_MAX];
+    int n;
 
     if (spool > MAX_SPOOL_OBJECTS)
 	return(NULL);
-    if (SpoolObjectMap[spool] && SpoolObjectMap[spool]->so_Path != NULL) {
+    if (SpoolObjectMap[spool] != NULL) {
 	if (*SpoolObjectMap[spool]->so_Path == '/' ||
 			opt == ARTFILE_DIR_REL || opt == ARTFILE_FILE_REL) {
-	    snprintf(path, sizeof(path), "%s", SpoolObjectMap[spool]->so_Path);
+	    n = snprintf(path, sizeof(path), "%s", SpoolObjectMap[spool]->so_Path);
+	    if (n < 0 || (size_t)n >= sizeof(path))
+		goto path_too_long;
 	    if ((strcmp(path, PatExpand(SpoolHomePat)) == 0) && 
 			(opt == ARTFILE_DIR_REL || opt == ARTFILE_FILE_REL))
 		path[0] = 0;
 	} else if (*SpoolObjectMap[spool]->so_Path) {
-	    snprintf(path, sizeof(path), "%s/%s", PatExpand(SpoolHomePat),
+	    n = snprintf(path, sizeof(path), "%s/%s", PatExpand(SpoolHomePat),
 					SpoolObjectMap[spool]->so_Path);
+	    if (n < 0 || (size_t)n >= sizeof(path))
+		goto path_too_long;
 	} else {
-	    snprintf(path, sizeof(path), "%s", PatExpand(SpoolHomePat));
+	    n = snprintf(path, sizeof(path), "%s", PatExpand(SpoolHomePat));
+	    if (n < 0 || (size_t)n >= sizeof(path))
+		goto path_too_long;
 	}
 	if (SpoolObjectMap[spool]->so_SpoolDirs > 0) {
 	    int l = strlen(path);
-	    snprintf(path + l, sizeof(path) - l, "%sN.%02x",
+	    n = snprintf(path + l, sizeof(path) - l, "%sN.%02x",
 			(l == 0) ? "" : "/",
 			(gmt / 10) % SpoolObjectMap[spool]->so_SpoolDirs);
+	    if (n < 0 || (size_t)n >= sizeof(path) - l)
+		goto path_too_long;
 	}
     } else {
 	return("");
     }
     return(path);
+
+path_too_long:
+    logit(LOG_CRIT, "Spool %u pathname exceeds PATH_MAX; refusing a truncated path",
+		(unsigned)spool);
+    exit(1);
 }
 
 /*

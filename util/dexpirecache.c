@@ -224,8 +224,7 @@ addFile(char *name, long size, time_t atime, time_t mtime) {
 	ftmp = fileFree;
 	fileFree = ftmp->h;
 	ftmp->name = (char*) malloc(s);
-	strncpy(ftmp->name, name, s - 1);
-	ftmp->name[s - 1] = '\0';
+	memcpy(ftmp->name, name, s);
 	ftmp->size = size;
 	ftmp->atime = atime;
 	ftmp->mtime = mtime;
@@ -287,8 +286,7 @@ addSLink(char *name, time_t ctime) {
 
 	itmp = (struct InodeQueue*) malloc(sizeof(struct InodeQueue));
 	itmp->name = (char*) malloc(s);
-	strncpy(itmp->name, name, s - 1);
-	itmp->name[s - 1] = '\0';
+	memcpy(itmp->name, name, s);
 	itmp->ctime = ctime;
 
 	if (!inodeBeg) {
@@ -381,15 +379,12 @@ main(int ac, char **av)
 	now=oldest=oldestremoved=fileEnd = time(NULL);
 	for (i = 1; i < ac; ++i) {
         char *ptr = av[i];
-        int v;
 
         if (*ptr != '-') {
             fprintf(stderr, "Unexpected option: %s\n", ptr);
             exit(1);
         }
         ptr += 2;
-
-		v = (*ptr) ? strtol(ptr, NULL, 0) : 1;
 
 		switch(ptr[-1]) {
 			case 'd':

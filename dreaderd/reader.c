@@ -465,8 +465,10 @@ HandleReaderMsg(ForkDesc *desc)
 	} else if (recv_fd >= 0) {
 	    ForkDesc *ndesc;
 	    Connection *conn;
-	    char vsbuf[11];
-	    char hsbuf[31];
+	    char vsbuf[sizeof(conn->co_Auth.dr_VServerDef->vs_Name)];
+	    char hsbuf[sizeof(conn->co_Auth.dr_AuthUser) +
+			sizeof(conn->co_Auth.dr_IdentUser) +
+			sizeof(conn->co_Auth.dr_Host) + 2];
 
 	    if (ReadAccessCache() == 1) {
 		ScanThreads(THREAD_NNTP, UpdateAuthDetails);
@@ -496,6 +498,8 @@ HandleReaderMsg(ForkDesc *desc)
 		*conn->co_Auth.dr_IdentUser ? conn->co_Auth.dr_IdentUser : "",
 		*conn->co_Auth.dr_IdentUser ? "@" : "",
 		conn->co_Auth.dr_Host);
+	    vsbuf[10] = '\0';
+	    hsbuf[30] = '\0';
 	    RTStatusBase(conn->co_Desc->d_Slot, "ACTV %-10s %-30s", vsbuf, hsbuf);
 
 	    StatusUpdate(conn, "(startup)");
@@ -594,8 +598,10 @@ DeleteConnection(Connection *conn)
 	LogServerInfo(conn, TFd);
     } else if (conn->co_Desc->d_Type == THREAD_NNTP) {
 	char statbuf[1024];
-	char vsbuf[11];
-	char hsbuf[31];
+	char vsbuf[sizeof(conn->co_Auth.dr_VServerDef->vs_Name)];
+	char hsbuf[sizeof(conn->co_Auth.dr_AuthUser) +
+		sizeof(conn->co_Auth.dr_IdentUser) +
+		sizeof(conn->co_Auth.dr_Host) + 2];
 
 	snprintf(vsbuf, sizeof(vsbuf), "%s", conn->co_Auth.dr_VServerDef->vs_Name);
 
@@ -605,6 +611,8 @@ DeleteConnection(Connection *conn)
 		*conn->co_Auth.dr_IdentUser ? conn->co_Auth.dr_IdentUser : "",
 		*conn->co_Auth.dr_IdentUser ? "@" : "",
 		conn->co_Auth.dr_Host);
+	vsbuf[10] = '\0';
+	hsbuf[30] = '\0';
 	RTStatusBase(conn->co_Desc->d_Slot, "CLSD %-10s %-30s", vsbuf, hsbuf);
 
 	GroupStats(conn);
@@ -1232,6 +1240,7 @@ NNCommand2(Connection *conn)
               conn->co_Auth.dr_VServerDef->vs_HostName
           );
           NNTerminate(conn);
+          return;
       }
 
       *pt++ = '\0';
@@ -1241,7 +1250,10 @@ NNCommand2(Connection *conn)
       sin.sin_family = AF_INET;
       sin.sin_port = htons(atoi(pt));
       sin.sin_addr.s_addr = inet_addr(ptr);
-      bcopy(&sin, &conn->co_Auth.dr_Addr, sizeof(conn->co_Auth.dr_Addr));
+      /* sockaddr_storage is larger than sockaddr_in.  Copy only the
+       * initialized IPv4 address, leaving the remainder cleared. */
+      memset(&conn->co_Auth.dr_Addr, 0, sizeof(conn->co_Auth.dr_Addr));
+      memcpy(&conn->co_Auth.dr_Addr, &sin, sizeof(sin));
 
       conn->co_Auth.dr_Flags &= ~DF_USEPROXIED;
       conn->co_Auth.dr_Flags |= DF_ISPROXIED;

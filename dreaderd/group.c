@@ -1360,9 +1360,9 @@ MakeOverHFile(OverInfo *ov, artno_t artNo, int create)
     OverData **pod;
     OverData *od;
     int count = 0;
-    int compressed = 0;
     int hfd, tmpfd, zfd, gzflags;
-    unsigned char *zmap, *tmpmap, *zpos, tmpfile[256];
+    unsigned char *zmap, *tmpmap, *zpos;
+    char tmpfile[256];
     struct stat st;
     unsigned long zlen;
     z_stream z;
@@ -1388,7 +1388,6 @@ MakeOverHFile(OverInfo *ov, artno_t artNo, int create)
 	if (hfd < 0 && ! create) {
 	    zfd = xopen(O_RDONLY, 0644, "%s/%s.gz", MyGroupHome, gfname);
 	    if (! (zfd < 0)) {
-		compressed++;
 
 		snprintf(tmpfile, sizeof(tmpfile), "/tmp/dr-gzover.XXXXXXXX");
 		tmpfd = mkstemp(tmpfile);

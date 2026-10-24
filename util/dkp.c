@@ -167,10 +167,8 @@ main(int ac, char **av)
     } else if (deleteMode && key) {
 	KPDBDelete(db, key);
     } else if (writeMode && key && tokval && (val = strchr(tokval, '='))) {
-	int r;
-
 	*val++ = 0;
-	r = KPDBWrite(db, key, tokval, val, 0);
+	(void)KPDBWrite(db, key, tokval, val, 0);
     } else if (readMode && key) {
 	const char *data;
 	int dataLen;

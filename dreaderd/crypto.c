@@ -106,10 +106,13 @@ exit:
 unsigned char *sha256hash(char *input)
 {
 	static unsigned char hash[SHA256_DIGEST_LENGTH];
-	SHA256_CTX sha256;
-	SHA256_Init(&sha256);
-	SHA256_Update(&sha256, (unsigned char *)input, strlen(input));
-	SHA256_Final(hash, &sha256);
+	unsigned int hashlen = 0;
+
+	if (EVP_Digest(input, strlen(input), hash, &hashlen,
+			EVP_sha256(), NULL) != 1 ||
+		hashlen != sizeof(hash)) {
+		fatal("SHA-256 digest calculation failed");
+	}
 	return hash;
 }
 

@@ -1148,7 +1148,7 @@ DoListen(ForkDesc *desc, time_t t)
 #else
 	struct sockaddr_in rsin;
 #endif
-	int rslen = sizeof(rsin);
+	socklen_t rslen = sizeof(rsin);
 	int fd;
 
 	bzero(&rsin, sizeof(rsin));
@@ -1416,7 +1416,7 @@ SendDns(int fd, struct sockaddr_in *rsin, DnsRes *dres)
 #else
     struct sockaddr_in lsin;
 #endif
-    int lslen = sizeof(lsin);
+    socklen_t lslen = sizeof(lsin);
 
     /*
      * Check for auth changes
@@ -1561,7 +1561,10 @@ HandleDnsThread(ForkDesc *desc)
     const char *error1 = NULL;
     const char *error2 = NULL;
     char errbuf[1024], *p;
-    int r, bantime;
+    int r;
+#ifdef READER_BAN_LISTS
+    int bantime;
+#endif
     char tmpaddr[NI_MAXHOST];
 
     errno = 0;
@@ -1619,7 +1622,9 @@ HandleDnsThread(ForkDesc *desc)
 	     */
 
 	    p += 4;
+#ifdef READER_BAN_LISTS
 	    bantime = strtol(p, NULL, 10) * 60;
+#endif
 	    for (; *p && *p != ' '; p++) {
 	    }
 	    for (; *p && *p == ' '; p++) {
@@ -1702,10 +1707,20 @@ HandleDnsThread(ForkDesc *desc)
     /*
      * Add DnsRes to hash table
      */
-    strncpy(tmpaddr, NetAddrToSt(0, (struct sockaddr *)&dres.dr_Addr, 1, 0, 0),
-							sizeof(tmpaddr) - 1);
-    tmpaddr[sizeof(tmpaddr) - 1] = '\0';
-    if (error1 == NULL && tmpaddr != NULL) {
+    tmpaddr[0] = '\0';
+    if (error1 == NULL) {
+	const char *addr = NetAddrToSt(0, (struct sockaddr *)&dres.dr_Addr, 1, 0, 0);
+	if (addr != NULL) {
+	    snprintf(tmpaddr, sizeof(tmpaddr), "%s", addr);
+	} else {
+	    snprintf(errbuf, sizeof(errbuf),
+		"400 %s: Unable to identify client address\r\n",
+		dres.dr_VServerDef->vs_HostName);
+	    error1 = errbuf;
+	    error2 = "InvalidClientAddress";
+	}
+    }
+    if (error1 == NULL) {
 	int hi = shash(tmpaddr) & DRHMASK;
 	int hmi;
 	DnsRes *dr;
@@ -1723,7 +1738,7 @@ HandleDnsThread(ForkDesc *desc)
 	for (dr = DnsResHash[hi]; dr; dr = dr->dr_HNext) {
 	    char *ipname = NetAddrToSt(0, (struct sockaddr *)&dr->dr_Addr, 1, 0, 0);
 	    /* we count per-vserver, not global! */
-	    if (strcmp(tmpaddr, ipname) == 0 &&
+	    if (ipname != NULL && strcmp(tmpaddr, ipname) == 0 &&
 			strcmp(dres.dr_VServer, dr->dr_VServer) == 0) {
 		++hcount;
 		if (*dres.dr_IdentUser && *dr->dr_IdentUser &&
@@ -1739,6 +1754,8 @@ HandleDnsThread(ForkDesc *desc)
 		    if (strcmp(dres.dr_VServer, dr->dr_VServer) == 0) {
 			++vcount;
 			if (*dres.dr_AuthUser && *dr->dr_AuthUser &&
+			    ((dres.dr_Flags ^ dr->dr_Flags) &
+				DF_IGNORED_AUTH_LONG) == 0 &&
 			    strcmp(dres.dr_AuthUser, dr->dr_AuthUser) == 0)
 			    ++ucount;
 			if (strcmp(dres.dr_ReaderName, dr->dr_ReaderName) == 0)
@@ -1772,7 +1789,8 @@ HandleDnsThread(ForkDesc *desc)
 	vcount++;
 
 	if ((dres.dr_Flags & DF_QUIET) == 0)
-	    logit(LOG_INFO, "counters %s%s%s%s%s %s %s tcount=%d/%d vcount=%d/%d gcount=%d/%d hcount=%d/%d ucount=%d/%d icount=%d byte=%d",
+	    logit(LOG_INFO, "counters %s%s%s%s%s%s %s %s tcount=%d/%d vcount=%d/%d gcount=%d/%d hcount=%d/%d ucount=%d/%d icount=%d byte=%d",
+			(dres.dr_Flags & DF_IGNORED_AUTH_LONG ? "!" : ""),
 			(dres.dr_AuthUser[0] ? dres.dr_AuthUser : ""),
 			(dres.dr_AuthUser[0] ? "/" : ""),
 			(dres.dr_IdentUser[0] ? dres.dr_IdentUser : ""),
@@ -1972,8 +1990,9 @@ HandleDnsThread(ForkDesc *desc)
 
     if ((dres.dr_Flags & DF_QUIET) == 0) {
 	logit(LOG_INFO,
-	    "connect to %s from %s%s%s%s%s (%s)%s", 
+	    "connect to %s from %s%s%s%s%s%s (%s)%s",
 	    dres.dr_VServerDef->vs_Name,
+	    (dres.dr_Flags & DF_IGNORED_AUTH_LONG ? "!" : ""),
 	    (dres.dr_AuthUser[0] ? dres.dr_AuthUser : ""),
 	    (dres.dr_AuthUser[0] ? "/" : ""),
 	    (dres.dr_IdentUser[0] ? dres.dr_IdentUser : ""),
@@ -2012,7 +2031,8 @@ deleteDnsResHash(DnsRes *dres, ForkDesc *desc)
 		if (dr->dr_ReaderPid == desc->d_Pid) {
 		    logit(
 			LOG_NOTICE,
-			"killed from %s%s%s%s%s (%s)",
+			"killed from %s%s%s%s%s%s (%s)",
+			(dr->dr_Flags & DF_IGNORED_AUTH_LONG ? "!" : ""),
 			(dr->dr_AuthUser[0] ? dr->dr_AuthUser : ""),
 			(dr->dr_AuthUser[0] ? "/" : ""),
 			(dr->dr_IdentUser[0] ? dr->dr_IdentUser : ""),
@@ -2040,10 +2060,11 @@ deleteDnsResHash(DnsRes *dres, ForkDesc *desc)
 		    logit(
 			LOG_INFO,
 #ifdef	DREADER_CLIENT_TIMING
-			"closed from %s%s%s%s%s (%s) groups=%u arts=%u bytes=%.0f posts=%d postbytes=%d postfail=%d vserv=%s secs=%d utime=%.3f stime=%.3f%s",
+			"closed from %s%s%s%s%s%s (%s) groups=%u arts=%u bytes=%.0f posts=%d postbytes=%d postfail=%d vserv=%s secs=%d utime=%.3f stime=%.3f%s",
 #else
-			"closed from %s%s%s%s%s (%s) groups=%u arts=%u bytes=%.0f posts=%d postbytes=%d postfail=%d vserv=%s secs=%d%s",
+			"closed from %s%s%s%s%s%s (%s) groups=%u arts=%u bytes=%.0f posts=%d postbytes=%d postfail=%d vserv=%s secs=%d%s",
 #endif
+			(dr->dr_Flags & DF_IGNORED_AUTH_LONG ? "!" : ""),
 			(dr->dr_AuthUser[0] ? dr->dr_AuthUser : ""),
 			(dr->dr_AuthUser[0] ? "/" : ""),
 			(dr->dr_IdentUser[0] ? dr->dr_IdentUser : ""),
@@ -2169,7 +2190,6 @@ getVStats(FILE *fo)
     vscount *vslist = NULL;
     vscount *vs;
     rdcount *rd;
-    vscount *pvs = NULL;
     rdcount *prd = NULL;
 
     for (hmi=0; hmi < DRHSIZE; hmi++) 
@@ -2204,7 +2224,7 @@ getVStats(FILE *fo)
 	}
     rcount = 0;
     for (rd = rdlist; rd != NULL; prd = rd, rd = rd->next) {
-	for (vs = rd->vslist; vs != NULL; pvs = vs, vs = vs->next)
+	for (vs = rd->vslist; vs != NULL; vs = vs->next)
 	    fprintf(fo, "reader %s=%d vs %s=%d\n",
 			rd->reader->rd_Name, rd->count,
 			vs->vserver->vs_Name, vs->count);
@@ -2212,7 +2232,7 @@ getVStats(FILE *fo)
     }
     fprintf(fo, "readergroups in use = %d\n", rcount);
     vcount = 0;
-    for (vs = vslist; vs != NULL; pvs = vs, vs = vs->next) {
+    for (vs = vslist; vs != NULL; vs = vs->next) {
 	fprintf(fo, "vserver %s=%d\n", vs->vserver->vs_Name, vs->count);
 	vcount++;
     }

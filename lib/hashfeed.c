@@ -68,6 +68,15 @@
 
 
 
+#ifdef SUBREV
+/* Diablo must size fd_set before any system headers are included. */
+#define MD5_CTX     struct diablo_MD5Context
+#define MD5Init     diablo_MD5Init
+#define MD5Update   diablo_MD5Update
+#define MD5Final    diablo_MD5Final
+#include "defs.h"
+#endif
+
 #include <stdio.h>
 #include <sys/types.h>
 #include <string.h>
@@ -84,14 +93,7 @@
 #endif
 
 #ifdef	SUBREV
-/* Then this is probably Diablo.  We can use its built-in MD5 funcs.  */
-#define	MD5_CTX		struct diablo_MD5Context
-#define	MD5Init		diablo_MD5Init
-#define	MD5Update	diablo_MD5Update
-#define	MD5Final	diablo_MD5Final
-
-#include "defs.h"
-
+/* Diablo uses its built-in MD5 functions. */
 Prototype hashint_t HM_OldQuickhash(mid_t mid);
 Prototype void HM_MD5MessageID(mid_t mid, unsigned char *res);
 Prototype int HM_CheckForMatch(HashFeed_MatchList *hf, mid_t mid);

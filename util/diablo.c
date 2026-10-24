@@ -798,6 +798,7 @@ DiabloServer(int lfd)
 	    exit(1);
 	}
 	gid = gr->gr_gid;
+	ChownGeneralLog(pw->pw_uid, gr->gr_gid);
 	setgroups(1, &gid);
 	setgid(gr->gr_gid);
 	setuid(pw->pw_uid);
@@ -1031,13 +1032,19 @@ DoXClient(FILE *fp, struct sockaddr *res, char *ipst)
 	    xfprintf(fp, "501 syntax error\r\n");
 	    continue;
 	}
+	/* PeerIpName and per-child address tracking are both 64 bytes. */
+	if (strlen(addr) >= sizeof(PeerIpName)) {
+	    freeaddrinfo(ai);
+	    xfprintf(fp, "501 numeric address too long\r\n");
+	    continue;
+	}
 	memcpy(res, ai->ai_addr, ai->ai_addrlen);
 	strncpy(ipst, addr, NI_MAXHOST);
 	ipst[NI_MAXHOST-1] = 0;
 	freeaddrinfo(ai);
 	break;
     }
-    sprintf(PeerIpName, "%s", ipst);
+    memcpy(PeerIpName, ipst, strlen(ipst) + 1);
     bhash(&PeerIpHash, PeerIpName, strlen(PeerIpName));
     if (HasStatusLine)
 	stprintf("%s", ipst);
@@ -1058,7 +1065,7 @@ DoAccept(int lfd)
     char addrst[NI_MAXHOST];
 #ifdef INET6
     struct sockaddr_storage res;
-    int reslen = sizeof(res);
+    socklen_t reslen = sizeof(res);
 #else
     struct sockaddr_in asin;
     ACCEPT_ARG3_TYPE alen = sizeof(asin);
@@ -1099,6 +1106,12 @@ DoAccept(int lfd)
 		strncpy(addrst, inet_ntoa(rsin.sin_addr), sizeof(addrst) - 1);
 		addrst[sizeof(addrst) - 1] = '\0';
 #endif
+		/* Numeric IPv4/IPv6 addresses fit both tracking buffers. */
+		if (strlen(addrst) >= sizeof(PeerIpName)) {
+		    logit(LOG_WARNING, "Rejecting oversized peer address: %s", addrst);
+		    close(fd);
+		    return;
+		}
 		if (DOpts.MaxPerRemote) {
 		    int i;
 
@@ -1125,7 +1138,7 @@ DoAccept(int lfd)
 			ok = -1;
 		    }
 		}
-		sprintf(PeerIpName, "%s", addrst);
+		memcpy(PeerIpName, addrst, strlen(addrst) + 1);
 		bhash(&PeerIpHash, PeerIpName, strlen(PeerIpName));
 	    } else if (DOpts.MaxPerRemote) {
 		ok = -1;
@@ -1343,9 +1356,8 @@ authenticate:
 		ok = 1;
 		++NumForks;
 		PidAry[fds[0]].tr_Pid = pid;
-		strncpy(PidAry[fds[0]].addr, addrst,
-					sizeof(PidAry[fds[0]].addr) - 1);
-		PidAry[fds[0]].addr[sizeof(PidAry[fds[0]].addr) - 1] = '\0';
+		/* The peer address length was checked before forking. */
+		memcpy(PidAry[fds[0]].addr, addrst, strlen(addrst) + 1);
 	    }
 	}
 	close(fd);
@@ -1667,10 +1679,6 @@ DoSession(int fd, int count)
     Buffer *bi;
     FILE *fo;
     char *buf;
-    int streamMode = 0;
-#ifdef	USE_ZLIB
-    int compressMode = 0;
-#endif
     int headerOnly = 0;
     int syntax = 0;
     int unimp = 0;
@@ -2397,7 +2405,6 @@ DoSession(int fd, int count)
 	} else if (strcasecmp(cmd, "mode") == 0) {
 	    char *p = strtok(NULL, " \t\r\n");
 	    if (p && strcasecmp(p, "stream") == 0) {
-		streamMode = 1;
 		xfprintf(fo, "203 StreamOK.\r\n");
 	    } else if (p && strcasecmp(p, "headfeed") == 0) {
 		headerOnly = 1;
@@ -2416,7 +2423,6 @@ DoSession(int fd, int count)
 		bi->bu_CBuf = (CompressBuffer *)malloc(sizeof(CompressBuffer));
                 bzero(bi->bu_CBuf,sizeof(CompressBuffer));
                 inflateInit(&bi->bu_CBuf->z_str);
-                compressMode = 1;
 		xfprintf(fo, "207 Compression enabled\r\n");
 #endif
 	    } else {
@@ -2717,7 +2723,9 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 	int haveApproved = 0;
 	int bytes;
 	int compressedSize = -1;
+#ifdef LOG_FEED_SUPERCEDES
 	int lncount = -1;
+#endif
 	int responded = 0;
 	int headerEndLine;
 	int bodyLines = 0;
@@ -2729,7 +2737,9 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 	char dateBuf[64];
 	char subject[80];
 	char nntpPostingHost[64];
+#ifdef USE_X_ORIGINAL_NPH
 	char nntpXPostingHost[64];
+#endif
 	char control[64];
 	char dist[80];
 	int bps;
@@ -2750,7 +2760,9 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 	npath[0] = 0;
 	dateBuf[0] = 0;
 	nntpPostingHost[0] = 0;
+#ifdef USE_X_ORIGINAL_NPH
 	nntpXPostingHost[0] = 0;
+#endif
 	subject[0] = 0;
 	control[0] = 0;
 	dist[0] = 0;
@@ -2991,9 +3003,11 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		    /* write thru */
 		} else if (hch =='l' && bytes >= 6 &&
 			   strncasecmp(p, "Lines:", 6) == 0) {
+#ifdef LOG_FEED_SUPERCEDES
 		    char lbuf[32];
 		    diablo_strlcpynl(lbuf, p + 6, bytes - 6, sizeof(lbuf));
 		    lncount = strtol(lbuf, NULL, 10);
+#endif
 		    /* write thru */
 		} else if (hch == 'p' && bytes >= 5 &&
 			   strncasecmp(p, "Path:", 5) == 0) {
@@ -3631,7 +3645,17 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 	if (retcode == RCOK) {
 	    int rhist;
 
-#if USE_SYSV_SIGNALS
+#if defined(__linux__)
+	    sigset_t blocked, savedMask;
+	    int maskSaved;
+
+	    sigemptyset(&blocked);
+	    sigaddset(&blocked, SIGHUP);
+	    sigaddset(&blocked, SIGALRM);
+	    maskSaved = (sigprocmask(SIG_BLOCK, &blocked, &savedMask) == 0);
+	    if (!maskSaved)
+		logit(LOG_ERR, "Unable to block article commit signals: %s", strerror(errno));
+#elif USE_SYSV_SIGNALS
 	    sighold(SIGHUP);
 	    sighold(SIGALRM);
 #else
@@ -3696,16 +3720,28 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		responded = 1;
 		retcode = RCREJECT;
 	    }
-#if USE_SYSV_SIGNALS
+#if defined(__linux__)
+	    if (maskSaved && sigprocmask(SIG_SETMASK, &savedMask, NULL) < 0)
+		logit(LOG_ERR, "Unable to restore article commit signals: %s", strerror(errno));
+#elif USE_SYSV_SIGNALS
 	    sigrelse(SIGHUP);
 	    sigrelse(SIGALRM);
 #else
 	    sigsetmask(smask);
 #endif
 	} else if (addRejectToHistory) {
-	    int rhist;
 
-#if USE_SYSV_SIGNALS
+#if defined(__linux__)
+	    sigset_t blocked, savedMask;
+	    int maskSaved;
+
+	    sigemptyset(&blocked);
+	    sigaddset(&blocked, SIGHUP);
+	    sigaddset(&blocked, SIGALRM);
+	    maskSaved = (sigprocmask(SIG_BLOCK, &blocked, &savedMask) == 0);
+	    if (!maskSaved)
+		logit(LOG_ERR, "Unable to block article commit signals: %s", strerror(errno));
+#elif USE_SYSV_SIGNALS
 	    sighold(SIGHUP);
 	    sighold(SIGALRM);
 #else
@@ -3717,10 +3753,13 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 	    h.gmt = t / 60;
 	    h.iter = (unsigned short)-1;
 	    h.exp |= EXPF_EXPIRED;
-	    rhist = HistoryAdd(msgid, &h);
+	    (void)HistoryAdd(msgid, &h);
 	    (void)PreCommit(msgid, PC_POSTCOMM);
 
-#if USE_SYSV_SIGNALS
+#if defined(__linux__)
+	    if (maskSaved && sigprocmask(SIG_SETMASK, &savedMask, NULL) < 0)
+		logit(LOG_ERR, "Unable to restore article commit signals: %s", strerror(errno));
+#elif USE_SYSV_SIGNALS
 	    sigrelse(SIGHUP);
 	    sigrelse(SIGALRM);
 #else
@@ -4113,7 +4152,7 @@ DoCommand(int ufd)
 			if ((cmd = strtok(s2, " \t")) != NULL &&
 			    (opt = strtok(NULL, " \t")) != NULL) {
 			    int cmdErr = 0;
-			    if (SetCommand(fo, cmd, opt, &cmdErr) == 0) {
+			    if (SetCommand(fo, cmd, opt, &cmdErr) == 0 && cmdErr == 0) {
 				CheckConfigOptions(1);
 				fprintf(fo, "Set '%s' to '%s'\n", cmd, opt);
 				InitSpamFilter();

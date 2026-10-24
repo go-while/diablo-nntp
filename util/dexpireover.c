@@ -122,7 +122,7 @@ int expOverListCheckExpired(hash_t *hv);
 int hexCharToInt(char c);
 int getDataEntries(const char *path);
 long long x64write(int d, const void *buf, long long nbytes);
-long long x64read(int d, const void *buf, long long nbytes);
+long long x64read(int d, void *buf, long long nbytes);
 void dumpovmap(OverArt *oa, long long n, char *filename);
 void dumpoh(OverHead *oh, char *filename);
 
@@ -682,8 +682,14 @@ void
 DeleteJunkFile(const char *dirPath, const char *name)
 {
     char path[PATH_MAX];
+    int n;
 
-    snprintf(path, sizeof(path), "%s/%s", dirPath, name);
+    n = snprintf(path, sizeof(path), "%s/%s", dirPath, name);
+    if (n < 0 || (size_t)n >= sizeof(path)) {
+	fprintf(stderr, "Skipping overlong temporary-file pathname: %s/%s\n",
+			dirPath, name);
+	return;
+    }
     if (VerboseOpt)
 	printf("Removing old temp file: %s\n", path);
     if (ForReal)
@@ -968,9 +974,8 @@ ProcessOverviewFile(const char *dirPath, const char *name, int type)
 
 	/* check to see if we might want to compress this file */
 	if (CompressDataOpt && strcmp(path + strlen(path) - 3, ".gz")) {
-	    int expireSecs;
 	    OverExpire save;
-	    expireSecs = GetOverExpire(group->gr_GroupName, &save);
+	    (void)GetOverExpire(group->gr_GroupName, &save);
 	    printf("No .gz on %s artBase %lld\n", path, artBase);
 	    if (artBase >= group->gr_EndNo - save.oe_StoreGZMinFiles * oh.oh_DataEntries) {
 		if (VerboseOpt) {
@@ -1490,7 +1495,6 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
     int ok = 1;
     int tmpfd, gzflags;
     unsigned char *zmap, *tmpmap, *zpos;
-    char *tmpfile;
     unsigned long zlen;
     z_stream z;
     int code;
@@ -1631,8 +1635,9 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
 					group->gr_Iter,
 					&DOpts.ReaderGroupHashMethod));
 		    if ((cfd = open(path, O_RDONLY)) >= 0) {
-			tmpfile = tmpnam(NULL);
-			tmpfd = xopen(O_RDWR|O_CREAT, 0644, tmpfile);
+			/* Atomic creation prevents the tmpnam/open race. */
+			char tmpfile[] = "/tmp/diablo-over-XXXXXX";
+			tmpfd = mkstemp(tmpfile);
 
 			if (! (tmpfd < 0)) {
 			    st.st_size = 0;
@@ -1642,6 +1647,7 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
 			    if (! zmap) {
 		    		printf("Unable to xmap for gzcat %s: %s\n",
 					path, strerror(errno));
+				close(tmpfd);
 			    } else {
 				zpos = zmap + st.st_size - 4;
 				zlen = ((unsigned)zpos[0] & 0xff) |
@@ -1715,6 +1721,8 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
 
 					    cacheBase = (char *)tmpmap;
 					    cacheSize = zlen;
+					    /* The mapping survives closing the descriptor. */
+					    close(tmpfd);
 					}
 				    }
 				}
@@ -2221,7 +2229,7 @@ nearestPower(int n)
 }
 
 void
-ReadDExpOverList()
+ReadDExpOverList(void)
 {
     FILE *DExpOverList;
     hash_t read_buffer[DEXPOVER_READ_BUFFER_SIZE];
@@ -2362,7 +2370,7 @@ x64write(int d, const void *buf, long long nbytes)
 }
 
 long long
-x64read(int d, const void *buf, long long nbytes)
+x64read(int d, void *buf, long long nbytes)
 {
     long long nread, oread = 0LL;
     int rval;
@@ -2371,7 +2379,7 @@ x64read(int d, const void *buf, long long nbytes)
 	if (nread > 1024 * 1024 * 1024LL) {
 	    nread = 1024 * 1024 * 1024LL;
 	}
-	if ((rval = read(d, buf + oread, (int)nread)) < 0) {
+	if ((rval = read(d, (char *)buf + oread, (int)nread)) <= 0) {
 		return(-1LL);
 	}
 	nbytes -= rval;
