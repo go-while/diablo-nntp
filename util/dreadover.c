@@ -168,7 +168,6 @@ void
 DReadOver(char *data)
 {
     const char *gfname;
-    const char *slash;
     char *ptr, *p;
     artno_t artNo = 0;
     artno_t artNoStart = 0;
@@ -199,7 +198,6 @@ DReadOver(char *data)
 	/* Open the overview info file */
 
 	gfname = GFName(data, GRPFTYPE_OVER, 0, 1, 0, &DOpts.ReaderGroupHashMethod);
-	slash = strchr(gfname, '/');
 
 	snprintf(path, sizeof(path), "%s/%s", PatExpand(GroupHomePat), gfname);
 	printf("GROUPINFO:%s:%lld\t%s", data, artNo, gfname);
@@ -288,16 +286,36 @@ DReadOver(char *data)
 
 	if (ViewData) {
 	    static char *buf = NULL;
-	    int buflen = 0;
-	    int n = oa.oa_Bytes + 1;
+	    static int buflen = 0;
+	    int n;
 	    int r;
 
-	    if (n > buflen)
+	    if (oa.oa_Bytes < 0) {
+		fprintf(stderr, "Invalid overview data length: %d\n", oa.oa_Bytes);
+		close(fd1);
+		gzclose(zfd2);
+		return;
+	    }
+	    n = oa.oa_Bytes;
+	    if (n > buflen) {
+		char *newbuf = (char *)realloc(buf, n);
+		if (newbuf == NULL) {
+		    fprintf(stderr, "Unable to allocate %d bytes for overview data\n", n);
+		    close(fd1);
+		    gzclose(zfd2);
+		    return;
+		}
+		buf = newbuf;
 		buflen = n;
-		buf = (char *)realloc(buf, buflen);
-	    gzseek(zfd2, oa.oa_SeekPos, 0);
-	    while ((r = gzread(zfd2, buf, n)) > 0) {
-		printf("%s", buf);
+	    }
+	    if (gzseek(zfd2, oa.oa_SeekPos, SEEK_SET) < 0) {
+		fprintf(stderr, "Unable to seek to overview data\n");
+		close(fd1);
+		gzclose(zfd2);
+		return;
+	    }
+	    while (n > 0 && (r = gzread(zfd2, buf, n)) > 0) {
+		fwrite(buf, 1, r, stdout);
 		n -= r;
 	    }
 	}
@@ -317,7 +335,6 @@ OverDump(char *doGroup)
 {
     char path[PATH_MAX];
     const char *gfname;
-    char *slash;
     char *groupname;
     int recLen;
     int recOff;
@@ -354,7 +371,6 @@ OverDump(char *doGroup)
 	begno = strtoll(KPDBGetField(rec, recLen, "NB", NULL, "0"), NULL, 10);
 	gfname = GFName(groupname, GRPFTYPE_OVER, 0, 1, 0,
 						&DOpts.ReaderGroupHashMethod);
-	slash = strchr(gfname, '/');
 
 	snprintf(path, sizeof(path), "%s/%s", PatExpand(GroupHomePat), gfname);
 

@@ -105,7 +105,6 @@ create_tcp_listen_socket(int port, int opt, char *bindaddr)
 {
 	int s, i, j;
 	struct sockaddr_in sin;
-	struct linger lin;
 
 	(void)memset((char *)&sin, 0, sizeof(sin));
 	sin.sin_port = htons(port);
@@ -115,9 +114,6 @@ create_tcp_listen_socket(int port, int opt, char *bindaddr)
 	} else {
 		sin.sin_addr.s_addr = htonl(INADDR_ANY);
 	}
-
-	lin.l_onoff = 1;
-	lin.l_linger = LIN_DEL;
 
 	if ((s = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
 		DIE("create_tcp_listen_socket: socket");
@@ -155,7 +151,7 @@ accept_tcp_connection(int s, int opt)
 	int ns;
 	struct sockaddr_in sin;
 	struct linger lin;
-	int addrlen = sizeof(sin);
+	socklen_t addrlen = sizeof(sin);
 	struct hostent *host;
 	char *hostname;
 	int ka, kalen = sizeof(ka);

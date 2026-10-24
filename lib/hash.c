@@ -32,7 +32,7 @@ Prototype void bhash(hash_t *h, const char *p, int len);
 Prototype int GFIndex(char c);
 Prototype const char *GFHash(const char *group, GroupHashType *method);
 Prototype const char *GFName(const char *group, int ftype, artno_t artBase, int wantdir, int iter, GroupHashType *method);
-void FindGroupDir(const char *group, char *path);
+static void FindGroupDir(const char *group, char *path, size_t pathsize);
 Prototype int ExtractGroupHashInfo(const char *name, char *Hash, artno_t *artBase, int *iter);
 Prototype char *GetHash(GroupHashType *Hash, char *hashStr);
 Prototype void SetCacheHash(struct CacheHash_t* ch, const char *group, int iter, GroupHashType *method);
@@ -170,7 +170,7 @@ bhash_init(void)
 void 
 bhash_update(const char *p, int len)
 {
-    diablo_MD5Update(&BMD5ctx, p, len);
+    diablo_MD5Update(&BMD5ctx, (const unsigned char *)p, len);
 }
 
 void 
@@ -189,7 +189,7 @@ md5hash(const char *st)
     static md5hash_t digest;
 
     diablo_MD5Init(&HMD5ctx);
-    diablo_MD5Update(&HMD5ctx, st, strlen(st));
+    diablo_MD5Update(&HMD5ctx, (const unsigned char *)st, strlen(st));
     diablo_MD5Final((unsigned char *)&digest, &HMD5ctx);
     return((md5hash_t *)&digest);
 }
@@ -336,7 +336,7 @@ GFHash(const char *group, GroupHashType *hashtype)
 	    char *p = buf;
 	    unsigned char digest[16];
 	    diablo_MD5Init(&HMD5ctx);
-	    diablo_MD5Update(&HMD5ctx, group, strlen(group));
+	    diablo_MD5Update(&HMD5ctx, (const unsigned char *)group, strlen(group));
 	    diablo_MD5Final(digest, &HMD5ctx);
 	    base_encode(digest, 16, &p,
 		(hashtype->gh_type == HASHGRP_64MD5) ?  base64 : base32);
@@ -366,6 +366,7 @@ const char *
 GFName(const char *group, int gftype, artno_t artBase, int wantdir, int iter, GroupHashType *method)
 {
     static char GFBuf[PATH_MAX];
+    int n = -1;
     char ftype[16];
     char itbuf[16];
     char *hashstr = (char *)GFHash(group, method);
@@ -386,7 +387,7 @@ GFName(const char *group, int gftype, artno_t artBase, int wantdir, int iter, Gr
 	    else
 		itbuf[0] = 0;
 	    if (wantdir == 2)
-		snprintf(GFBuf, sizeof(GFBuf), "%s/%02x/%s.%lld.%s%s",
+		n = snprintf(GFBuf, sizeof(GFBuf), "%s/%02x/%s.%lld.%s%s",
 						PatExpand(GroupHomePat),
 						(uint8)hv.h1,
 						ftype,
@@ -395,7 +396,7 @@ GFName(const char *group, int gftype, artno_t artBase, int wantdir, int iter, Gr
 						itbuf
 		);
 	    else if (wantdir == 1)
-		snprintf(GFBuf, sizeof(GFBuf), "%02x/%s.%lld.%s%s",
+		n = snprintf(GFBuf, sizeof(GFBuf), "%02x/%s.%lld.%s%s",
 						(uint8)hv.h1,
 						ftype,
 						artBase,
@@ -403,7 +404,7 @@ GFName(const char *group, int gftype, artno_t artBase, int wantdir, int iter, Gr
 						itbuf
 		);
 	    else
-		snprintf(GFBuf, sizeof(GFBuf), "%s.%lld.%s%s",
+		n = snprintf(GFBuf, sizeof(GFBuf), "%s.%lld.%s%s",
 						ftype,
 						artBase,
 						hashstr,
@@ -460,7 +461,7 @@ GFName(const char *group, int gftype, artno_t artBase, int wantdir, int iter, Gr
 	    }
 	    snprintf(itbuf, sizeof(itbuf), ".%d", iter);
 	    if (wantdir == 2)
-		snprintf(GFBuf, sizeof(GFBuf), "%s/%s/%s%s.%s.%lld",
+		n = snprintf(GFBuf, sizeof(GFBuf), "%s/%s/%s%s.%s.%lld",
 						PatExpand(GroupHomePat),
 						dirbuf,
 						hashstr,
@@ -469,7 +470,7 @@ GFName(const char *group, int gftype, artno_t artBase, int wantdir, int iter, Gr
 						artBase
 		);
 	    else if (wantdir == 1)
-		snprintf(GFBuf, sizeof(GFBuf), "%s/%s%s.%s.%lld",
+		n = snprintf(GFBuf, sizeof(GFBuf), "%s/%s%s.%s.%lld",
 						dirbuf,
 						hashstr,
 						itbuf,
@@ -477,7 +478,7 @@ GFName(const char *group, int gftype, artno_t artBase, int wantdir, int iter, Gr
 						artBase
 		);
 	    else
-		snprintf(GFBuf, sizeof(GFBuf), "%s%s.%s.%lld",
+		n = snprintf(GFBuf, sizeof(GFBuf), "%s%s.%s.%lld",
 						hashstr,
 						itbuf,
 						ftype,
@@ -496,15 +497,15 @@ GFName(const char *group, int gftype, artno_t artBase, int wantdir, int iter, Gr
 		    break;
 	    }
 	    if (wantdir) {
-		FindGroupDir(group, groupPath);
-		snprintf(GFBuf, sizeof(GFBuf), "%s%s.%lld.%s",
+		FindGroupDir(group, groupPath, sizeof(groupPath));
+		n = snprintf(GFBuf, sizeof(GFBuf), "%s%s.%lld.%s",
 						groupPath,
 						ftype,
 						artBase,
 						hashstr
 		);
 	    } else {
-		snprintf(GFBuf, sizeof(GFBuf), "%s.%lld.%s",
+		n = snprintf(GFBuf, sizeof(GFBuf), "%s.%lld.%s",
 						ftype,
 						artBase,
 						hashstr
@@ -513,6 +514,8 @@ GFName(const char *group, int gftype, artno_t artBase, int wantdir, int iter, Gr
 	    break;
 	}
     }
+    if (n < 0 || (size_t)n >= sizeof(GFBuf))
+	fatal("GFName: generated pathname too long for newsgroup %s", group);
     if (DebugOpt > 4)
 	printf("GFName:%s\n", GFBuf);
     return(GFBuf);
@@ -540,23 +543,33 @@ SetCacheHash(struct CacheHash_t* ch, const char *group, int iter, GroupHashType 
     }
 }
 
-void
-FindGroupDir(const char *group, char *path)
+static void
+FindGroupDir(const char *group, char *path, size_t pathsize)
 {
     const char *p = group;
     const char *q = p;
+    size_t used = 0;
 
+    if (pathsize < 2)
+	fatal("FindGroupDir: destination buffer too small");
     *path = 0;
     while ((p = strchr(p, '.')) != NULL) {
-	if (p - q <= 1) {
+	size_t component = (size_t)(p - q);
+
+	if (component <= 1) {
 	    p++;
 	    continue;
 	}
-	strncat(path, q, p - q);
-	strcat(path, "/");
+	/* Need space for the component, trailing slash and NUL. */
+	if (used > pathsize - 2 || component > pathsize - used - 2)
+	    fatal("FindGroupDir: pathname too long for newsgroup %s", group);
+	memcpy(path + used, q, component);
+	used += component;
+	path[used++] = '/';
+	path[used] = 0;
 	p++;
 	q = p;
-    }    
+    }
 }
 
 /*

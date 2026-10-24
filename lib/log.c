@@ -7,6 +7,7 @@
 #include "defs.h"
 
 Prototype void OpenLog(const char *ident, int option);
+Prototype void ChownGeneralLog(uid_t uid, gid_t gid);
 Prototype void CloseLog(LogInfo *LI, int killit);
 Prototype void Log(LogInfo *LI, int priority, const char *ctl, ...);
 Prototype void VLog(LogInfo *LI, int priority, const char *ctl, va_list va);
@@ -114,7 +115,9 @@ openLog(LogInfo *LI)
 		LI->Fd = fopen(Fname, "a");
 		if (LI->Fd == NULL) {
 		    fprintf(stderr, "Unable to open log file: %s\n", Fname);
-		    logit(LOG_ERR, "Unable to open log file: %s\n", Fname);
+		    /* Do not log this failure through the log we cannot open. */
+		    syslog(LOG_ERR, "Unable to open log file: %s: %s",
+			Fname, strerror(errno));
 	            LI->UseSyslog = 1;
 		} else {
 		    if (stat(Fname, &st) == 0)
@@ -126,6 +129,31 @@ openLog(LogInfo *LI)
 	}
     }
 
+}
+
+/*
+ * The feeder opens its general log as root during startup, then drops
+ * privileges to news.  Make a root-created regular log writable by the
+ * runtime user before the privilege change.  Use the open descriptor to
+ * avoid races with log rotation or pathname substitution.  Do not change
+ * ownership of an existing log belonging to a different account.
+ */
+void
+ChownGeneralLog(uid_t uid, gid_t gid)
+{
+    struct stat st;
+
+    if (geteuid() != 0 || GeneralLog.Fd == NULL || GeneralLog.UseSyslog)
+        return;
+    if (fstat(fileno(GeneralLog.Fd), &st) != 0) {
+        syslog(LOG_ERR, "Unable to stat general log: %s", strerror(errno));
+        return;
+    }
+    if (!S_ISREG(st.st_mode) || st.st_uid != 0)
+        return;
+    if (fchown(fileno(GeneralLog.Fd), uid, gid) != 0)
+        syslog(LOG_ERR, "Unable to chown general log to %lu:%lu: %s",
+            (unsigned long)uid, (unsigned long)gid, strerror(errno));
 }
 
 void

@@ -238,7 +238,10 @@ NNPostBuffer(Connection *conn)
 		 * If somebody realm authenticated, then they are
 		 * unconditionally allowed to use that address to post
 		 */
-		if (! (strchr(ptr, '@') && *conn->co_Auth.dr_AuthUser && ! strcasecmp(ptr, conn->co_Auth.dr_AuthUser))) {
+		if (! (strchr(ptr, '@') &&
+		       !(conn->co_Auth.dr_Flags & DF_IGNORED_AUTH_LONG) &&
+		       *conn->co_Auth.dr_AuthUser &&
+		       ! strcasecmp(ptr, conn->co_Auth.dr_AuthUser))) {
 			/*
 			 * Otherwise we sanity check the address
 			 */
@@ -544,10 +547,11 @@ NNPostBuffer(Connection *conn)
 	 */
 #ifdef  POST_CRYPTXTRACE
 	if (cryptpw) {
-	    snprintf(xtrace, sizeof(xtrace), "%lu %s %d %s%s%s%s%s",
+	    snprintf(xtrace, sizeof(xtrace), "%lu %s %d %s%s%s%s%s%s",
 		(unsigned long)t,
 		conn->co_Auth.dr_VServerDef->vs_HostName,
 		(int)getpid(),              /* should probably be slot id */
+		(conn->co_Auth.dr_Flags & DF_IGNORED_AUTH_LONG ? "!" : ""),
 		*conn->co_Auth.dr_AuthUser ? conn->co_Auth.dr_AuthUser : "",
 		*conn->co_Auth.dr_AuthUser ? "/" : "",
 		*conn->co_Auth.dr_IdentUser ? conn->co_Auth.dr_IdentUser : "",
@@ -562,10 +566,11 @@ NNPostBuffer(Connection *conn)
 	    }
 	} else
 #endif
-	    MBPrintf(&tmbuf, "X-Trace: %lu %s %d %s%s%s%s%s\r\n",
+	    MBPrintf(&tmbuf, "X-Trace: %lu %s %d %s%s%s%s%s%s\r\n",
 		(unsigned long)t,
 		conn->co_Auth.dr_VServerDef->vs_HostName,
 		(int)getpid(),		/* should probably be slot id */
+		(conn->co_Auth.dr_Flags & DF_IGNORED_AUTH_LONG ? "!" : ""),
 		*conn->co_Auth.dr_AuthUser ? conn->co_Auth.dr_AuthUser : "",
 		*conn->co_Auth.dr_AuthUser ? "/" : "",
 		*conn->co_Auth.dr_IdentUser ? conn->co_Auth.dr_IdentUser : "",

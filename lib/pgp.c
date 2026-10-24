@@ -30,7 +30,7 @@ const char *
 PGPVerify(Control *ctl, const char *art, int artLen)
 {
     const char *badCmd = "Unable to exec pgp verification program\n";
-    int fds[2];
+    int fds[3];
     pid_t pid;
 
     if (DebugOpt) {

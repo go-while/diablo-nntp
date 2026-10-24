@@ -174,7 +174,7 @@
  *
  */
 
-#ifdef sun
+#if defined(__sun) || defined(sun)
 
 #if !defined(__SVR4)
 
@@ -201,9 +201,6 @@
  * solaris
  */
 
-#define FDPASS_USES_CMSG	0	/* solaris uses a different	*/
-#define FDPASS_USES_ACC		1	/* structural field names	*/
-
 #define USE_PCOMMIT_SHM		1	/* precommit cache in sysv shmem */
 #define DO_PCOMMIT_POSTCACHE	1	/* do precommit post caching	 */
 #define USE_PCOMMIT_RW_MAP	1
@@ -215,7 +212,7 @@
 #define USE_SYSV_SIGNALS	1
 #define USE_STRINGS_H		1
 #define HAVE_SNPRINTF		1
-#define HAVE_STRSEP		0
+#define HAVE_STRSEP		1	/* provided by illumos libc */
 #define NEED_TERMIOS		1	/* for TIOCNOTTY */
 #define USE_POLL		1	/* poll() syscall		 */
 #define HAS_USLEEP		1	/* < 1 second sleeps		 */
@@ -449,7 +446,7 @@ uint64_t		i;
 #endif
 
 #ifndef ACCEPT_ARG3_TYPE
-#define ACCEPT_ARG3_TYPE	int
+#define ACCEPT_ARG3_TYPE	socklen_t
 #endif
 #ifndef HAS_UTIMES
 #define HAS_UTIMES		0

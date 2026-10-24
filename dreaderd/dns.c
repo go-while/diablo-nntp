@@ -15,7 +15,7 @@
 #include <lber.h>
 #include <ldap.h>
 #endif
-#ifdef DB_ENABLED
+#if defined(DB_ENABLED) || defined(REJECT_DB)
 #  if defined(__linux__) || defined(__sun)
 #    include <db_185.h>
 #  else
@@ -102,6 +102,86 @@ sigHupDns(int SigNo)
     DnsTerminate++;
 }
 
+/*
+ * dr_Host is a fixed-size field in the DNS worker's reply structure.
+ * Never store a partial DNS name: use the complete numeric address when a
+ * verified hostname will not fit.  Callers must first validate that the
+ * numeric address fits (which it does for ordinary IPv4 and IPv6 addresses).
+ */
+static void
+StoreDnsHost(DnsRes *dres, const char *hostname, const char *ipname)
+{
+    const char *name = hostname;
+    size_t len;
+
+    if (name == NULL || (len = strlen(name)) >= sizeof(dres->dr_Host)) {
+        name = ipname;
+        if (name == NULL) {
+            dres->dr_Host[0] = '\0';
+            return;
+        }
+        len = strlen(name);
+    }
+    /* DnsTask rejects unrepresentable numeric addresses. */
+    if (len < sizeof(dres->dr_Host))
+        memcpy(dres->dr_Host, name, len + 1);
+    else
+        dres->dr_Host[0] = '\0';
+}
+
+/*
+ * Normally ignored AUTHINFO usernames are recorded as "!user" for
+ * accounting and diagnostics.  A 63-byte username cannot fit that prefix
+ * in the fixed-size DNS worker result.  Preserve the entire name and mark
+ * the exceptional representation separately to avoid accounting aliases.
+ */
+static int
+StoreIgnoredAuthUser(const DnsReq *dreq, DnsRes *dres)
+{
+    const char *end = memchr(dreq->dr_AuthUser, '\0',
+                            sizeof(dreq->dr_AuthUser));
+    size_t len;
+
+    if (end == NULL)
+        return 0;
+
+    len = (size_t)(end - dreq->dr_AuthUser);
+    dres->dr_Flags &= ~DF_IGNORED_AUTH_LONG;
+    if (len + 2 <= sizeof(dres->dr_AuthUser)) {
+        dres->dr_AuthUser[0] = '!';
+        memcpy(dres->dr_AuthUser + 1, dreq->dr_AuthUser, len + 1);
+    } else {
+        /* Only the 63-byte case reaches here for valid DnsReq data. */
+        if (len + 1 > sizeof(dres->dr_AuthUser))
+            return 0;
+        memcpy(dres->dr_AuthUser, dreq->dr_AuthUser, len + 1);
+        dres->dr_Flags |= DF_IGNORED_AUTH_LONG;
+    }
+    return 1;
+}
+
+/*
+ * Append the configured realm only if the entire authenticated identity
+ * fits both fixed-size IPC fields.  Rejecting an overlong identity is
+ * preferable to validating a silently truncated username/realm.
+ */
+static int
+AppendDefaultRealm(DnsReq *dreq, DnsRes *dres, const char *realm)
+{
+    size_t userLen = strlen(dres->dr_AuthUser);
+    size_t realmLen = strlen(realm);
+    size_t totalLen = userLen + 1 + realmLen + 1;
+
+    if (totalLen > sizeof(dres->dr_AuthUser) ||
+        totalLen > sizeof(dreq->dr_AuthUser))
+        return 0;
+
+    dres->dr_AuthUser[userLen] = '@';
+    memcpy(dres->dr_AuthUser + userLen + 1, realm, realmLen + 1);
+    memcpy(dreq->dr_AuthUser, dres->dr_AuthUser, totalLen);
+    return 1;
+}
+
 /* -------------------------------------------------------------------*/
 
 /*
@@ -183,24 +263,32 @@ DnsTask(int fd, const char *id)
 	    bcopy(&dreq.dr_RSin, &dres.dr_Addr, sizeof(dres.dr_Addr));
 	    dres.dr_Flags = dreq.dr_Flags;
 
-	    /* Do forward DNS doublecheck */
-	    if (hname[0] == 0)
-		snprintf(dres.dr_Host, sizeof(dres.dr_Host), "%s", ipname);
-	    else if (TestForwardLookup(hname, ipname,
-					(struct sockaddr *)&dreq.dr_RSin) < 0)
-		dres.dr_DnsMismatch = 1;
-	    else
-		snprintf(dres.dr_Host, sizeof(dres.dr_Host), "%s", hname);
-
 	    /*
-	     * call test
+	     * dr_Host is only 64 bytes in the DNS response.  A complete
+	     * numeric address must fit before we evaluate access rules;
+	     * a truncated address is not a reliable client identity.
 	     */
-	    if (DebugOpt)
-		printf("call test, DnsTest %s (%s)\n", ipname, hname);
-	    if (hname[0])
-		DnsTest(&dreq, &dres, hname, NULL, ipname);
-	    else
-		DnsTest(&dreq, &dres, NULL, NULL, ipname);
+	    if (strlen(ipname) >= sizeof(dres.dr_Host)) {
+		logit(LOG_ERR, "Client numeric address exceeds DNS result capacity");
+		dres.dr_Code = 0;
+	    } else {
+		/* Do forward DNS doublecheck */
+		if (hname[0] == 0)
+		    StoreDnsHost(&dres, ipname, ipname);
+		else if (TestForwardLookup(hname, ipname,
+					(struct sockaddr *)&dreq.dr_RSin) < 0)
+		    dres.dr_DnsMismatch = 1;
+		else
+		    StoreDnsHost(&dres, hname, ipname);
+
+		/* Test the full hostname against access rules (not dr_Host). */
+		if (DebugOpt)
+		    printf("call test, DnsTest %s (%s)\n", ipname, hname);
+		if (hname[0])
+		    DnsTest(&dreq, &dres, hname, NULL, ipname);
+		else
+		    DnsTest(&dreq, &dres, NULL, NULL, ipname);
+	    }
 	}
 	write(fd, &dres, sizeof(dres));
 	stprintf("dns idle");
@@ -1405,7 +1493,7 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
     /*
      * For logging purposes, put something here
      */
-    snprintf(dres->dr_Host, sizeof(dres->dr_Host), "%s", ipname);
+    StoreDnsHost(dres, ipname, ipname);
 
     /*
      * If we have specified a separate access file for a vserver,
@@ -1487,7 +1575,7 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
 		if (strcasecmp(ipname, alp->ad_Pattern) != 0)
 		    continue;
 	    }
-	    snprintf(dres->dr_Host, sizeof(dres->dr_Host), "%s", ipname);
+	    StoreDnsHost(dres, ipname, ipname);
 	    MatchType = 1;
 	} else if (strncmp(alp->ad_Pattern, "db:", 3) == 0) {
 	/*
@@ -1505,7 +1593,7 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
 	    if (res == NULL || strcmp(res, "110 0") == 0)
 		continue;
 	    MatchType = 1;
-	    snprintf(dres->dr_Host, sizeof(dres->dr_Host), "%s", ipname);
+	    StoreDnsHost(dres, ipname, ipname);
 #else
 	    logit(LOG_ERR, "db: option in dreader.access not enabled - ignoring");
 	    continue;
@@ -1524,7 +1612,7 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
 		    continue;
 	    }
 	    MatchType = 2;
-	    snprintf(dres->dr_Host, sizeof(dres->dr_Host), "%s", fqdn);
+	    StoreDnsHost(dres, fqdn, ipname);
 	}
 	if (*alp->ad_IdentUser) {
 	    if (!DoneIdent && !*dres->dr_IdentUser) {
@@ -1564,7 +1652,7 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
 	 * Do we log with the hostname
 	 */
 	if (dres->dr_ReaderDef->rd_UseVerifiedDns && fqdn && *fqdn)
-	    snprintf(dres->dr_Host, sizeof(dres->dr_Host), "%s", fqdn);
+	    StoreDnsHost(dres, fqdn, ipname);
 
 	/*
 	 *  We can optionally deny an entry that doesn't have a DNS entry
@@ -1595,7 +1683,7 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
 	 */
 	if (dres->dr_ReaderDef->rd_UseVerifiedDns && !dres->dr_DnsMismatch &&
 						fqdn && *fqdn)
-	    snprintf(dres->dr_Host, sizeof(dres->dr_Host), "%s", fqdn);
+	    StoreDnsHost(dres, fqdn, ipname);
 		
 
 	/*
@@ -1654,15 +1742,13 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
 	    if (*dres->dr_AuthDef->au_AddRealm) {
 		realm = strchr(dreq->dr_AuthUser, '@');
 		if (*dreq->dr_AuthUser && ! realm) {
-		    int offset;
-
-		    offset = strlen(dres->dr_AuthUser);
-		    if (offset < sizeof(dres->dr_AuthUser) - 4) {
-			snprintf(dres->dr_AuthUser + offset,
-				sizeof(dres->dr_AuthUser) - offset,
-				"@%s", dres->dr_AuthDef->au_AddRealm);
-			snprintf(dreq->dr_AuthUser, sizeof(dreq->dr_AuthUser),
-						"%s", dres->dr_AuthUser);
+		    if (!AppendDefaultRealm(dreq, dres,
+				    dres->dr_AuthDef->au_AddRealm)) {
+			logit(LOG_ERR, "AUTHINFO username plus default realm is too long");
+			if (af != NULL)
+			    fclose(af);
+			dres->dr_Code = 0;
+			return;
 		    }
 		}
 	    }
@@ -2083,8 +2169,11 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
      */
     if (MatchedAuthenticated <= 0) {
 	if (dres->dr_ReaderDef->rd_IgnoreAuthInfo && *dreq->dr_AuthUser && *dreq->dr_AuthPass) {
-	    snprintf(dres->dr_AuthUser, sizeof(dres->dr_AuthUser),
-			    "!%s", dreq->dr_AuthUser);
+	    if (!StoreIgnoredAuthUser(dreq, dres)) {
+		logit(LOG_ERR, "Unterminated ignored AUTHINFO username");
+		dres->dr_Code = 0;
+		return;
+	    }
 	} else {
 	    dres->dr_AuthUser[0] = 0;
 	}
@@ -2383,7 +2472,7 @@ readAccessLine(FILE *af, char *fname, AccessDef *adef)
  */
 
 void
-InstallAccessCache() {
+InstallAccessCache(void) {
     struct stat st;
     char buf[1024];
     int linecount = 0;
@@ -3156,7 +3245,7 @@ InstallAccessCache() {
  * we use the static mmap area for all threads
  */
 int
-ReadAccessCache() {
+ReadAccessCache(void) {
     int vsf;
     int grf;
     int auf;

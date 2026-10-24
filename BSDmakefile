@@ -2,7 +2,9 @@
 # Keep GNU Make and BSD Make build definitions in sync.
 .OBJDIR: ${.CURDIR}
 CC ?= clang
-CPPFLAGS += -I. -DVERS=\"6\" -DSUBREV=\"CUR-20170901-00\" -DDEBUG_ZALLOC -DDEBUG_MBUF
+# Shared release version defaults; command-line values take precedence.
+.include "build-version.mk"
+CPPFLAGS += -I. -DVERS=\"${VERS}\" -DSUBREV=\"${SUBREV}\" -DDEBUG_ZALLOC -DDEBUG_MBUF
 CFLAGS += -O2 -pipe -Wall -Wstrict-prototypes -fcommon -MMD -MP
 LDFLAGS += -Lobj
 LDLIBS += -lfilter -ldiablo -lm -lmd -lradius -lz -lcrypto
@@ -19,6 +21,8 @@ UTIL_OBJS = ${UTIL_PROGS:S,^,obj/util_,g:S,$,.o,g}
 SUP_OBJS = ${SUP_PROGS:S,^,obj/sup_,g:S,$,.o,g}
 PROTOS = obj/lib-protos.h obj/filter-protos.h obj/dreaderd-protos.h
 BINS = dbin/dreaderd ${UTIL_PROGS:S,^,dbin/,g} ${SUP_PROGS:S,^,dbin/,g}
+# Editing the shared version defaults rebuilds objects with updated version strings.
+${LIB_OBJS} ${FILTER_OBJS} ${DR_OBJS} ${UTIL_OBJS} ${SUP_OBJS}: build-version.mk
 .MAIN: all
 .PHONY: all clean distclean install bininstall uninstall help
 all: ${BINS} obj/libdreader.a

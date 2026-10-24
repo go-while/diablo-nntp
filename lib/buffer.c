@@ -246,7 +246,7 @@ bgets(Buffer *b, int *pbytes)
 			    goto err_or_eof;
 			}   
 			b->bu_CBuf->orig = b->bu_CBuf->orig + (double)nc;
-			b->bu_CBuf->z_str.next_in = b->bu_CBuf->cb_Buf; 
+			b->bu_CBuf->z_str.next_in = (Bytef *)b->bu_CBuf->cb_Buf;
 			rc = nc + b->bu_CBuf->z_str.avail_in;
 			b->bu_CBuf->z_str.avail_in = rc;
 		    } else {
@@ -254,7 +254,7 @@ bgets(Buffer *b, int *pbytes)
 		    }
 		    decompcount = b->bu_DataMax-b->bu_End;
 		    b->bu_CBuf->z_str.avail_out = decompcount;
-		    b->bu_CBuf->z_str.next_out = b->bu_Data + b->bu_End;
+		    b->bu_CBuf->z_str.next_out = (Bytef *)(b->bu_Data + b->bu_End);
 
 		    code = inflate(&b->bu_CBuf->z_str, Z_PARTIAL_FLUSH);
 
@@ -321,7 +321,7 @@ bgets(Buffer *b, int *pbytes)
 					b->bu_CBuf->z_str.next_in,
 					b->bu_CBuf->z_str.avail_in
 				);
-				b->bu_CBuf->z_str.next_in = b->bu_CBuf->cb_Buf;
+				b->bu_CBuf->z_str.next_in = (Bytef *)b->bu_CBuf->cb_Buf;
 			    }
 			}
 		    }

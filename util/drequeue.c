@@ -60,7 +60,7 @@ main(int ac, char **av)
     {
         int l = strlen(PatExpand(SpoolHomePat)) + 1;
         MySpoolHome = malloc(l);
-        snprintf(MySpoolHome, l, PatExpand(SpoolHomePat));
+        snprintf(MySpoolHome, l, "%s", PatExpand(SpoolHomePat));
     }
 
     for (i = 1; i < ac; ++i) {

@@ -599,8 +599,10 @@ CtlCancel(Connection *conn, Control *ctl, const char **cmd, const char *art, con
     char *ptr;
     int isValidCancel = 0;
     int validGroups = 0;
+#ifdef NOTDEF
     const char *xtrace;
     int xtLen = 0;
+#endif
     int count = 0;
 
     /*
@@ -608,7 +610,9 @@ CtlCancel(Connection *conn, Control *ctl, const char **cmd, const char *art, con
      * if found.
      */
 
+#ifdef NOTDEF
     xtrace = locateXTrace(art, body - art, &xtLen);
+#endif
 
     /*
      * Find a valid overview records, check headers on first, and cancel

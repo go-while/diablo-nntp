@@ -10,9 +10,6 @@
 
 #include "defs.h"
 
-#define TYPE_NORMAL     1
-#define TYPE_XREPLIC    2
-
 #define SF_NOSTREAM	0x0001
 #define SF_REALTIME	0x0002
 #define SF_NOBATCH	0x0004
@@ -322,7 +319,6 @@ processDspoolout(const char *fname, char *qFile)
 		    int maxq = -1;
 		    int port = -1;
 		    int maxr = MaxRun;
-		    int type = TYPE_NORMAL;
 		    int delay = 0;
 		    int flags = 0;
 		    int qskip = 0;
@@ -342,7 +338,9 @@ processDspoolout(const char *fname, char *qFile)
 			    if (strtol(maxqStr, NULL, 0) > 0) {
 				maxq = strtol(maxqStr, NULL, 0);
 			    } else if (strcmp(maxqStr, "xreplic") == 0) {
-				type = TYPE_XREPLIC;
+				/* Legacy keyword, intentionally accepted as a no-op.
+				 * XREPLIC has not been supported since Diablo 1.08.
+				 */
 			    } else if (strcmp(maxqStr, "nostream") == 0) {
 				flags |= SF_NOSTREAM;
 			    } else if (strcmp(maxqStr, "headfeed") == 0) {
@@ -451,7 +449,7 @@ processDspoolout(const char *fname, char *qFile)
 			li.li_TOS = tos;
 			li.li_LogArts = logarts;
 			li.li_BindAddress = obip;
-			li.li_MaxStream = 0;
+			li.li_MaxStream = maxstream;
 			li.li_Compress = compress;
 			li.li_QueueSkip = qskip;
 

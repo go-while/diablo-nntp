@@ -22,8 +22,11 @@ endif
 AR ?= ar
 RANLIB ?= ranlib
 
+# Version defaults shared with BSDmakefile; override with VERS=... SUBREV=...
+include build-version.mk
+
 # Compiler settings
-CPPFLAGS += -I. -DVERS=\"6\" -DSUBREV=\"CUR-20170901-00\"
+CPPFLAGS += -I. -DVERS=\"$(VERS)\" -DSUBREV=\"$(SUBREV)\"
 CPPFLAGS += -DDEBUG_ZALLOC -DDEBUG_MBUF
 
 CFLAGS ?= -O2 -g -Wall -Wstrict-prototypes -fcommon
@@ -32,16 +35,14 @@ CFLAGS += -MMD -MP
 LDFLAGS += -Lobj
 LDLIBS += -lfilter -ldiablo -lm -lz -lcrypto
 
-# Detect whether RADIUS support is enabled in lib/vendor.h.
-# Match an active #define, not a commented-out definition.
-RADIUS_ENABLED := $(shell awk \
-    '/^[[:space:]]*#[[:space:]]*define[[:space:]]+RADIUS_ENABLED([[:space:]]|$$)/ { print 1; exit }' \
-    lib/vendor.h)
-
-# Detect whether Berkeley DB support is enabled in lib/vendor.h.
-DB_ENABLED := $(shell awk \
-    '/^[[:space:]]*#[[:space:]]*define[[:space:]]+DB_ENABLED([[:space:]]|$$)/ { print 1; exit }' \
-    lib/vendor.h)
+# Detect optional vendor features without embedding AWK regex parentheses
+# inside a GNU make $(shell ...) expression. Older GNU make versions may
+# misparse the original inline expressions, even for `make clean`.
+RADIUS_ENABLED := $(shell awk -v option=RADIUS_ENABLED -f compat/detect-vendor-option.awk lib/vendor.h)
+DB_ENABLED := $(shell awk -v option=DB_ENABLED -f compat/detect-vendor-option.awk lib/vendor.h)
+REJECT_DB_ENABLED := $(shell awk -v option=REJECT_DB -f compat/detect-vendor-option.awk lib/vendor.h)
+# Either DB authentication or the rejection database uses dbopen().
+DB185_REQUIRED := $(if $(filter 1,$(DB_ENABLED) $(REJECT_DB_ENABLED)),1,)
 
 # Platform-specific settings
 
@@ -55,6 +56,11 @@ endif
 
 ifeq ($(UNAME_S),Linux)
 CPPFLAGS += -D_FILE_OFFSET_BITS=64
+# libdb-devel supplies libdb.so and the Berkeley DB 1.85 dbopen() shim.
+# Neither feature is required when both DB_ENABLED and REJECT_DB are off.
+ifeq ($(DB185_REQUIRED),1)
+LDLIBS += -ldb
+endif
 endif
 
 # illumos platform configuration
@@ -65,8 +71,8 @@ CPPFLAGS += -D_XOPEN_SOURCE=600 -D__EXTENSIONS__
 
 # Berkeley DB 1.85 compatibility auto-detection.
 # Generates obj/db185-config.mk on the first build.
-# Berkeley DB support is optional.
-ifeq ($(DB_ENABLED),1)
+# Either DB authentication or REJECT_DB requires the dbopen() library.
+ifeq ($(DB185_REQUIRED),1)
 
 DB185_CONFIG := obj/db185-config.mk
 
@@ -166,6 +172,9 @@ SUP_OBJS := $(addprefix obj/sup_,$(addsuffix .o,$(SUP_PROGS)))
 PROTOS := obj/lib-protos.h obj/filter-protos.h obj/dreaderd-protos.h
 
 BINS := dbin/dreaderd $(addprefix dbin/,$(UTIL_PROGS) $(SUP_PROGS))
+
+# Editing the shared version defaults rebuilds objects with updated version strings.
+$(LIB_OBJS) $(FILTER_OBJS) $(DR_OBJS) $(UTIL_OBJS) $(SUP_OBJS): build-version.mk
 
 # Main targets
 

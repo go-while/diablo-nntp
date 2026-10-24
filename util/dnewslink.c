@@ -650,7 +650,8 @@ main(int ac, char **av)
 	    char buf[1024];
 	    char relPath[1024];
 	    char msgId[1024];
-	    char path[1024];
+	    /* A queue pathname plus the four-character ".tmp" suffix. */
+	    char path[sizeof(CurrentBatchFile) + sizeof(".tmp")];
 	    off_t fileOff = 0;
 	    int fileSize = 0;
 	    int sentFileSize = 0;
@@ -2142,7 +2143,7 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 		break;
 	    }
 	    if (!defers && ((s = LocateStream(ptr, STATE_CHECK)) != NULL)) {
-		char cst[12];
+		char cst[16];
 		delMe = 1;
 		StrnCpyNull(msgId, s->st_MsgId, 1024);
 		if (stage && !*stage)
@@ -2150,7 +2151,7 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 		StrnCpyNull(reason, ptr, MAXREASON);
 		r = T_DEFERIT;
 		if (s->st_CompSize > 0)
-		    sprintf(cst, " C%d", s->st_CompSize);
+		    snprintf(cst, sizeof(cst), " C%d", s->st_CompSize);
 		else
 		    cst[0] = 0;
 		sprintf(buf,"%s %s %lld,%d %c%s", s->st_RelPath, s->st_MsgId,
@@ -2411,13 +2412,20 @@ dl_logit(const char *ctl, ...)
 {
     va_list va;
     char buf[1024];
+    int prefix_len;
+    size_t used;
 
-    sprintf(buf, "%s:%s ", 
-	((HostName) ? HostName : "<unknown>"),
-	((CurrentBatchFile) ? CurrentBatchFile : "<unknown>")
-    );
+    prefix_len = snprintf(buf, sizeof(buf), "%s:%s ",
+        HostName ? HostName : "<unknown>",
+        CurrentBatchFile[0] ? CurrentBatchFile : "<unknown>");
+    if (prefix_len < 0)
+        return;
+    used = (size_t)prefix_len;
+    if (used >= sizeof(buf))
+        used = sizeof(buf) - 1;
+
     va_start(va, ctl);
-    vsprintf(buf + strlen(buf), ctl, va);
+    vsnprintf(buf + used, sizeof(buf) - used, ctl, va);
     va_end(va);
     logit(LOG_NOTICE, "%s", buf);
     if (DebugOpt > 0)
@@ -2549,11 +2557,11 @@ flushCompressBuffer(int cfd)
 {
 #ifdef	USE_ZLIB
     if (CompressBufInPos > 0) {
-	Z_Strm.next_in = CompressBufIn;
+	Z_Strm.next_in = (Bytef *)CompressBufIn;
 	Z_Strm.avail_in = CompressBufInPos;
 	RawBytes += CompressBufInPos;
 	while (Z_Strm.avail_in) {
-	    Z_Strm.next_out = CompressBufOut;
+	    Z_Strm.next_out = (Bytef *)CompressBufOut;
 	    Z_Strm.avail_out = sizeof(CompressBufOut);
 	    if (deflate(&Z_Strm, Z_SYNC_FLUSH) != Z_OK)
 		logit(LOG_ERR, "deflate error: %s", Z_Strm.msg);

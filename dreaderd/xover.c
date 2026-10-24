@@ -128,7 +128,7 @@ NNTPXOver(Connection *conn, char **pptr)
 void 
 NNTPXZver(Connection *conn, char **pptr)
 {
-    if (!conn->co_Auth.dr_ReaderDef->rd_XzverLevel < 0) {
+    if (conn->co_Auth.dr_ReaderDef->rd_XzverLevel < 0) {
 	MBLogPrintf(conn, &conn->co_TMBuf, "500 \"xzver\" not enabled\r\n");
 	NNCommand(conn);
 	return;

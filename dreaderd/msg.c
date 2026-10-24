@@ -118,10 +118,15 @@ RecvMsg(int from_fd, int *recv_fd, DnsRes *dres)
 	return(result);
     }
 
+    if (msg.msg_flags & MSG_CTRUNC) {
+	logit(LOG_ERR, "recvmsg control message truncated");
+	return(-1);
+    }
     if (msg.msg_controllen) {
 	if ((cmsg = CMSG_FIRSTHDR(&msg))) {
-            if (! cmsg->cmsg_type == SCM_RIGHTS) {
-	        logit(LOG_ERR, "recvmsg got unknown control message %d", cmsg->cmsg_type);
+            if (cmsg->cmsg_level != SOL_SOCKET || cmsg->cmsg_type != SCM_RIGHTS ||
+                cmsg->cmsg_len < CMSG_LEN(sizeof(*recv_fd))) {
+	        logit(LOG_ERR, "recvmsg got invalid control message %d", cmsg->cmsg_type);
 	        return(-1);
 	    }
 	    memcpy(recv_fd, CMSG_DATA(cmsg), sizeof(*recv_fd));

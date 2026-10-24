@@ -29,6 +29,8 @@
 
 
 
+#include "defs.h"
+
 #include <stdio.h>
 #include <string.h>
 #include <sys/types.h>
@@ -46,8 +48,6 @@
 
 #define	LOWBYTE(x)	((x) & 0xff)
 
-
-#include "defs.h"
 
 Prototype int diablo_minigzip(char *file);
 Prototype int dominigzip(int ifd, int ofd, const char *outbase, uint32_t mtime, off_t *osize);
@@ -193,7 +193,7 @@ diablo_minigzip(char *file)
 {
 	char outtmp[PATH_MAX + 1], outname[PATH_MAX + 1];
 	char outbase[PATH_MAX + 1], *ptr;
-	int ifd, ofd;
+	int ifd, ofd, n;
 	struct stat sb, isb;
 	off_t osize;
 	struct timeval tv[2];
@@ -204,23 +204,29 @@ diablo_minigzip(char *file)
 	}
 
 	/* Final output file filename */
-	snprintf(outname, sizeof(outname), "%s.gz", file);
+	n = snprintf(outname, sizeof(outname), "%s.gz", file);
+	if (n < 0 || (size_t)n >= sizeof(outname))
+		return(-1);
 
 	/* Figure output tmp filename */
 	if ((ptr = strrchr(outname, '/'))) {
 		*ptr = '\0';
-		snprintf(outtmp, sizeof(outtmp), "%s/.%s", outname, ptr + 1);
+		n = snprintf(outtmp, sizeof(outtmp), "%s/.%s", outname, ptr + 1);
 		*ptr = '/';
 	} else {
-		snprintf(outtmp, sizeof(outtmp), ".%s", file);
+		n = snprintf(outtmp, sizeof(outtmp), ".%s", file);
 	}
+	if (n < 0 || (size_t)n >= sizeof(outtmp))
+		return(-1);
 
 	/* Base name of input filename (gzip likes this) */
 	if ((ptr = strrchr(file, '/'))) {
-		snprintf(outbase, sizeof(outbase), "%s", ptr + 1);
+		n = snprintf(outbase, sizeof(outbase), "%s", ptr + 1);
 	} else {
-		snprintf(outbase, sizeof(outbase), "%s", file);
+		n = snprintf(outbase, sizeof(outbase), "%s", file);
 	}
+	if (n < 0 || (size_t)n >= sizeof(outbase))
+		return(-1);
 
 	/* Output tmp file exists - do not proceed */
 	if (! stat(outtmp, &sb)) {
