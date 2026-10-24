@@ -41,6 +41,7 @@
 #		   Default: No crypting of X-Trace:
 #
 # interface	 : IP address for which we accept connections for this vserver
+#		   May be a cidr ip/mask. Max 4 per vserver.
 #		   Default: All interfaces
 #		   This option is more useful when used in addition to the
 #		   'accessfile' directive and can effectively allow true
@@ -208,12 +209,14 @@
 #		  option above.
 # controlpost	 : client is allowed to post non-cancel Control: messages
 #		   (default is 'yes')
-# maxconnperhost : Maximum connections from a specific IP address (across all
-#                  reader definitions
+# maxconn:         Max connections (counted globally)
+# maxconnpervs:    Max connections to the current vserver
+# maxconnperhost : Maximum connections from a specific IP address (per vserver)
 # maxconnpergroup: Max connections allowed for hosts matching this group
+#                  (readerdef, really) (per vserver).
 # maxconnperuser : Max connections for a specific user. This option is only
 #                  valid if the user name is available (via ident or
-#                  AUTHINFO - see authdef)
+#                  AUTHINFO - see authdef) (per vserver)
 #
 # ignoreauthinfo : Ignore any AUTHINFO data supplied by the client. This
 #		   allows clients to match an IP range even when they

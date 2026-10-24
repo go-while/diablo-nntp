@@ -11,6 +11,8 @@
  *    for specific rights granted.
  */
 
+#define DEBUG_MBUF_OFF
+#define DEBUG_ZALLOC_OFF
 #include "defs.h"
 
 Prototype void MBFlush(Connection *conn, MBufHead *mh);

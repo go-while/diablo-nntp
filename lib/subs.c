@@ -789,28 +789,39 @@ enabled(char *st)
 HashFeed_MatchList *
 DiabHashFeedParse(MemPool **pool, char *hashconfig)
 {
-    char *ptr;
-    HashFeed_MatchList *new, *cfgnext = NULL;
+    char *ptr, sep;
+    HashFeed_MatchList *new, *ret = NULL;
+    HashFeed_MatchList **cfgnext = &ret;
+    char cascade = 0;
 
-    for (;;) {
-	if (! hashconfig || ! *hashconfig) {
-	    return(cfgnext);
-	}
+    while (hashconfig && *hashconfig) {
 
-	if ((ptr = strchr(hashconfig, ','))) {
+	if ((ptr = strpbrk(hashconfig, ",|&"))) {
+	    sep = *ptr;
 	    *ptr = '\0';
+	} else {
+	    sep = 0;
 	}
+
 	if (! ((new = zalloc(pool, sizeof(HashFeed_MatchList))))) {
 	    return(NULL);
 	}
-	HM_ConfigNode_Sub(new, cfgnext, hashconfig);
-	cfgnext = new;
+	int offloc = cascade ? 4 : 0;
+	HM_ConfigNode_Sub(new, NULL, hashconfig, offloc);
+	new->HM_Cascade = cascade;
+	*cfgnext = new;
+	cfgnext = &(new->HM_Next);
 
-	if (ptr) {
-	    *ptr++ = ',';
-	}
+	if (sep == '|' || sep == '&')
+	    cascade = 1;
+	else
+	    cascade = 0;
+		
+	if (ptr)
+	    *ptr++ = sep;
         hashconfig = ptr;
     }
+    return ret;
 }
 
 int

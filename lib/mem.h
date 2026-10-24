@@ -18,5 +18,9 @@ typedef struct MemPool {
     MemNode		*mp_First;
     int			mp_Size;
     int			mp_Used;
+#ifdef DEBUG_ZALLOC
+    unsigned long	mp_DzpId;
+    void		*mp_DzpPtr;
+#endif
 } MemPool;
 

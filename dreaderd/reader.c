@@ -499,10 +499,14 @@ HandleReaderMsg(ForkDesc *desc)
 	    RTStatusBase(conn->co_Desc->d_Slot, "ACTV %-10s %-30s", vsbuf, hsbuf);
 
 	    StatusUpdate(conn, "(startup)");
-	    if (conn->co_Auth.dr_ResultFlags & DR_REQUIRE_DNS)
+	    if (conn->co_Auth.dr_ResultFlags & DR_REQUIRE_DNS) {
 		NNAuthDone(conn);
-	    else
+	    } else {
 		NNWriteHello(conn);
+		if (conn->co_Auth.dr_ResultFlags & DR_REQUIRE_DNS) {
+	          FD_SET(ndesc->d_Fd, &WFds);
+                }
+	    }
 	} else {
 	    if (DebugOpt)
 		printf("recvmsg(): EOF1\n");
@@ -552,6 +556,14 @@ InitConnection(ForkDesc *desc, DnsRes *dres)
 
     if (dres)
 	conn->co_Auth = *dres;
+
+    /*
+     * Default support for large article numbers (>2147483647)
+     * This doesn't conform to RFC3977 paragraph 6, which says
+     * "Article numbers MUST lie between 1 and 2,147,483,647, inclusive."
+     * but most clients support it anyway.
+     */
+    conn->co_Numbering = CON_RFC977;
 
     conn->co_Desc = desc;
     conn->co_MemPool = pool;
@@ -709,6 +721,9 @@ WelcomeString(char *base, Vserver *vs, const char *servertype)
 {
     static char r[512];
     int l = 0;
+    char *shorthost = vs->vs_HostName;
+    char *e = strchr(shorthost, '.');
+    int shlen = e ? e - shorthost : strlen(shorthost);
 
     r[0] = 0;
     while (l < sizeof(r) && *base) {
@@ -722,6 +737,9 @@ WelcomeString(char *base, Vserver *vs, const char *servertype)
 		    break;
 		case 'h':
 		    l += snprintf(&r[l], 512 - l, "%s", vs->vs_HostName);
+		    break;
+		case 'H':
+		    l += snprintf(&r[l], 512 - l, "%.*s", shlen, vs->vs_HostName);
 		    break;
 		case 'o':
 		    l += snprintf(&r[l], 512 - l, "%s", vs->vs_Org);
@@ -769,6 +787,11 @@ NNWriteHello(Connection *conn)
     }
 
     ClientSetTCPOpts(conn);
+
+    if (conn->co_Auth.dr_Flags & DF_HAPROXY) {
+      NNCommand(conn);
+      return;
+    }
 
     if (*conn->co_Auth.dr_VServerDef->vs_Welcome)
 	MBLogPrintf(conn,
@@ -1104,10 +1127,10 @@ NNCommand2(Connection *conn)
     ++conn->co_FCounter;
 
     /*
-     * if there is still output pending, do not process the next
-     * command.
+     * if there is still more than 256K of output pending,
+     * do not process the next command.
      */
-    if (conn->co_TMBuf.mh_Bytes > 0 && !conn->co_TMBuf.mh_WError)
+    if (conn->co_TMBuf.mh_Bytes > (256*1024) && !conn->co_TMBuf.mh_WError)
 	return;
 
     /*
@@ -1148,6 +1171,56 @@ NNCommand2(Connection *conn)
         LogCmd(conn, '<', "authinfo pass **unlogged**");
     }
 
+#ifdef INET6
+    /*
+     *  HAProxy PROXY protocol.
+     *  Syntax: PROXY TCP[46] srcaddr dstaddr srcport dstport
+     */
+    if (conn->co_Auth.dr_Flags & DF_HAPROXY) {
+      struct addrinfo hints, *ai;
+      char *cmd;
+      char *srcaddr = NULL, *srcport = NULL;
+      char *dstaddr = NULL, *dstport = NULL;
+      char *proto = NULL;
+
+      cmd = parseword(&ptr, " ");
+      proto = parseword(&ptr, " ");
+      srcaddr = parseword(&ptr, " ");
+      dstaddr = parseword(&ptr, " ");
+      srcport = parseword(&ptr, " ");
+      dstport = parseword(&ptr, " ");
+      if (!proto || (strcmp(proto, "TCP4") != 0 &&
+                     strcmp(proto, "TCP6") != 0)) {
+        proto = NULL;
+      }
+
+      if (strcmp(cmd, "PROXY") == 0 && proto &&
+          srcaddr && srcport && dstaddr && dstport) {
+        memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_flags = AI_NUMERICHOST|AI_NUMERICSERV;
+	if (getaddrinfo(srcaddr, srcport, &hints, &ai) == 0) {
+          memcpy(&conn->co_Auth.dr_Addr, ai->ai_addr, ai->ai_addrlen);
+          conn->co_Auth.dr_Flags &= ~DF_HAPROXY;
+          conn->co_Auth.dr_Flags |= DF_ISPROXIED;
+          conn->co_Auth.dr_ResultFlags = DR_REQUIRE_DNS;
+	  freeaddrinfo(ai);
+	  return;
+	}
+      }
+
+      MBLogPrintf(conn,
+          &conn->co_TMBuf,
+          "400 %s: failed to read haproxy PROXY v1 header.\r\n",
+          conn->co_Auth.dr_VServerDef->vs_HostName
+      );
+      NNTerminate(conn);
+
+      return;
+    }
+#endif
+
     if (conn->co_Auth.dr_Flags & DF_USEPROXIED) {
       struct sockaddr_in sin;
       char *pt = NULL;
@@ -1171,6 +1244,7 @@ NNCommand2(Connection *conn)
       bcopy(&sin, &conn->co_Auth.dr_Addr, sizeof(conn->co_Auth.dr_Addr));
 
       conn->co_Auth.dr_Flags &= ~DF_USEPROXIED;
+      conn->co_Auth.dr_Flags |= DF_ISPROXIED;
       conn->co_Auth.dr_ResultFlags = DR_REQUIRE_DNS;
       return;
     }

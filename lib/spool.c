@@ -391,7 +391,7 @@ findSpoolGrp(const char *msgid, GroupList *groups, int size, int ngcount, int ar
     for (ex = ExBase; ex; ex = ex->ex_Next) {
 	if (WildGroupFind(ex->ex_Wild, groups)) {
 	    if (msgid != NULL && ex->ex_MetaSpool->ms_HashFeed &&
-			!HM_CheckForMatch(ex->ex_MetaSpool->ms_HashFeed, (mid_t)msgid, HMOPER_MATCHONE))
+			!HM_CheckForMatch(ex->ex_MetaSpool->ms_HashFeed, (mid_t)msgid))
 		continue;
 	    if (size && ex->ex_MetaSpool->ms_MaxSize && size >
 					ex->ex_MetaSpool->ms_MaxSize)

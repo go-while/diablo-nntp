@@ -20,6 +20,8 @@ void NNGetLocal1(Connection *conn);
 void
 NNSpoolCommand1(Connection *conn)
 {
+    char smaxage[32];
+
     ServReq *sreq = conn->co_SReq;
 
     if (DebugOpt)
@@ -32,7 +34,10 @@ NNSpoolCommand1(Connection *conn)
 	    MBPrintf(&conn->co_TMBuf, "whereis %s REL\r\n", sreq->sr_MsgId);
 	NNGetLocal1(conn) ;
     } else {
-	MBPrintf(&conn->co_TMBuf, "article %s\r\n", sreq->sr_MsgId);
+	smaxage[0] = 0;
+	if (sreq->sr_MaxAge)
+	    snprintf(smaxage, sizeof(smaxage), " a%d", sreq->sr_MaxAge);
+	MBPrintf(&conn->co_TMBuf, "article %s%s\r\n", sreq->sr_MsgId, smaxage);
 	conn->co_ServerArticleRequestedCount++;
 	NNSpoolResponse1(conn);
     }

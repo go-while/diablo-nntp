@@ -4,7 +4,8 @@
 .set OSRCS	thread.c reader.c dns.c mbuf.c subs.c list.c feed.c \
 		xover.c nntp.c misc.c post.c server.c group.c spool.c \
 		cache.c rtstatus.c control.c wildorcmp.c cancel.c \
-		post-addr-ck.c cleanfrom.c msg.c dfa.c filealloc.c
+		post-addr-ck.c cleanfrom.c msg.c dfa.c filealloc.c \
+		crypto.c
 .set SRCS	main.c $(OSRCS)
 .set LIBOBJS	$(OSRCS:"*.c":"$(BD)obj/dr_*.o")
 .set OBJS	$(SRCS:"*.c":"$(BD)obj/dr_*.o")
@@ -15,7 +16,7 @@
 all:	$(PROTOS) $(PROG) $(RLIB)
 
 $(PROG) : $(OBJS)
-	$(CC) $(CFLAGS) %(right) -o %(left) $(LFLAGS)
+	$(CC) $(CFLAGS) %(right) -o %(left) $(DR_LFLAGS)
 
 $(OBJS) : $(SRCS)
 	$(CC) $(CFLAGS) %(right) -o %(left) -c

@@ -3,6 +3,7 @@
 #include <lib/defs.h>
 #include <sys/uio.h>
 #ifdef	USE_PRCTL
+#include <sys/resource.h>
 #include <sys/prctl.h>
 #endif
 
@@ -115,6 +116,8 @@ typedef struct ForkDesc {
 
 #define DEFNAMELEN	128
 
+#define MAXVSINTERFACE	4
+
 typedef struct Vserver {		/* Define a virtual server	*/
     char vs_Name[DEFNAMELEN];
     char vs_ClusterName[64];
@@ -123,8 +126,8 @@ typedef struct Vserver {		/* Define a virtual server	*/
     char vs_NewsAdm[64];
     char vs_Org[128];
     char vs_AbuseTo[64];
-    char vs_CryptPw[32];
-    struct sockaddr_storage vs_Interface;
+    char vs_CryptPw[64];
+    char vs_Interface[MAXVSINTERFACE][48];
     char vs_AccessFile[128];
     int vs_NoXrefHostUpdate;
     int vs_NoReadPath;
@@ -170,6 +173,7 @@ typedef struct ReaderDef {		/* Define a reader group	*/
     int rd_Feed;
     int rd_Status;
     int rd_UseProxied;
+    int rd_HaProxy;
     int rd_Quiet;
     int rd_ControlPost;
     int rd_MaxConnTotal;
@@ -203,6 +207,7 @@ typedef struct ReaderDef {		/* Define a reader group	*/
     int rd_MaxAgePolicy;
     int rd_TurnOffNNPH;
     int rd_XzverLevel;
+    int rd_RequireGroupCmd;
 } ReaderDef;
 
 typedef struct AccessDef {		/* Define the access list	*/
@@ -243,7 +248,8 @@ typedef struct DnsReq {
     struct sockaddr_storage dr_LSin;	/* local interface		*/
     struct sockaddr_storage dr_RSin;	/* remote ip:port		*/
     char dr_AuthUser[64];		/* authinfo user		*/
-    char dr_AuthPass[16];		/* authinfo pass		*/
+    char dr_AuthPass[64];		/* authinfo pass		*/
+    int dr_Flags;			/* flags to pass res->req->res	*/
     int dr_ResultFlags;			/* see #defines below		*/
     double dr_ByteCount;		/* how many bytes sent - stats	*/
     int dr_GrpCount;			/* number of groups entered	*/
@@ -293,7 +299,7 @@ typedef struct DnsRes {
     char dr_VServer[DEFNAMELEN];	/* the virtual server		*/
     char dr_IdentUser[16];		/* the ident username		*/
     char dr_AuthUser[64];		/* the authinfo user		*/
-    char dr_AuthPass[16];		/* the authinfo pass		*/
+    char dr_AuthPass[64];		/* the authinfo pass		*/
     int dr_DnsMismatch;			/* Fwd/Rev DNS don't match	*/
     int dr_ResultFlags;			/* see #defines above		*/
     int dr_StaticAuth;			/* don't change auth details	*/
@@ -317,6 +323,11 @@ typedef struct DnsRes {
 #define	DF_GROUPLOG	0x00000100	/* log groups accessed by user  */
 #define	DF_AUTH		0x00000200	/* user valid with AUTHINFO	*/
 #define	DF_USEPROXIED	0x00000400	/* Use proxy-supplied IP	*/
+#define	DF_HAPROXY	0x00000800	/* Ditto, HAPROXY protocol	*/
+#define	DF_ISPROXIED	0x00001000	/* This is a proxied session	*/
+
+/* Flags to pass from DnsRes -> DnsReq -> DnsRes */
+#define DF_RESREQRES	DF_ISPROXIED
 
 /*
  * MBuf - structure used to manage read and write buffers
@@ -690,4 +701,6 @@ struct SharedInfo {
 };
 
 #include <obj/dreaderd-protos.h>
+
+#include <lib/debug-mbuf.h>
 

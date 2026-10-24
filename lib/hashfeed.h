@@ -102,5 +102,6 @@ typedef struct HashFeed_MatchList {
     hashint_t			HM_ModVal;	/* Mod value for hash (0-n) */
     char			HM_Offset;	/* Offset val for HMTYPE_MD5 */
     char			HM_Type;	/* Hash type */
+    char			HM_Cascade;	/* Signals final &hashmatch of this set */
     struct HashFeed_MatchList	*HM_Next;	/* Next list ptr */
 } HashFeed_MatchList;

@@ -896,77 +896,57 @@ EnterGroup(int pass, const char *groupName, artno_t begNo, artno_t endNo, artno_
 int
 ConnectToHost(const char *host, int port)
 {
-    int fd;
-    struct sockaddr_in lsin;
-    struct sockaddr_in rsin;
+    int fd, e;
+    struct addrinfo hints, *src = NULL, *dst;
+    char portbuf[16];
+    char addrbuf[64];
 
-    bzero(&lsin, sizeof(lsin));
-    bzero(&rsin, sizeof(rsin));
-    lsin.sin_port = 0;
-    if (BindPort != NULL) {
-	struct servent *sen;
-	int port;
-	if ((port = strtol(BindPort, NULL, 0)) != 0) {
-	    lsin.sin_port = htons(port);
-	} else { 
-	    if ((sen = getservbyname(BindPort, "tcp")) != NULL) {
-		lsin.sin_port = sen->s_port;
-	    } else {
-		fprintf(stderr, "Unknown service: %s\n", BindPort);
-		exit(1);
-	    }
-	}
-    }
-    lsin.sin_family = AF_INET;
-    if (BindHost == NULL) {
-	lsin.sin_addr.s_addr = INADDR_ANY;
-    } else {
-	if (strtol(BindHost, NULL, 0) > 0) {
-	    lsin.sin_addr.s_addr = inet_addr(BindHost);
-	} else {
-	    struct hostent *he;
-                
-	    if ((he = gethostbyname(BindHost)) != NULL) {
-		lsin.sin_addr = *(struct in_addr *)he->h_addr;
-	    } else { 
-		fprintf(stderr, "Unknown bind host: %s\n", BindHost);
-		exit(1);
-	    }
-	}
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_flags = AI_ADDRCONFIG;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+
+    snprintf(portbuf, sizeof(portbuf), "%d", port);
+    e = getaddrinfo(host, portbuf, &hints, &dst);
+    if (e != 0) {
+	fprintf(stderr, "Cannot resolve %s:%s: %s\n",
+			host, portbuf, gai_strerror(e));
+	exit(1);
     }
 
-    errno = 0;
-    if ((fd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+    fd = socket(dst->ai_family, dst->ai_socktype, 0);
+    freeaddrinfo(dst);
+    if (fd < 0)
 	return(-1);
 
-    if (bind(fd, (struct sockaddr *)&lsin, sizeof(lsin)) < 0) {
-	close(fd);
-	return(-1);
-    }
+    if (BindHost != NULL || BindPort != NULL) {
+	e = getaddrinfo(BindHost, BindPort, &hints, &src);
+	if (e != 0) {
+	    fprintf(stderr, "Cannot resolve bindhost/bindport %s%s%s: %s\n",
+			BindHost ? BindHost : "", BindPort ? ":" : "",
+			BindPort ? BindPort : "", gai_strerror(e));
+	    freeaddrinfo(src);
+	    close(fd);
+	    exit(1);
+	}
 
-    rsin.sin_port = htons(port);
-    rsin.sin_family = AF_INET;
-
-    {
-	struct hostent *he;
-	if ((he = gethostbyname(host)) != NULL) {
-	    memcpy(&rsin.sin_addr, he->h_addr, he->h_length);
-	} else {
-	    rsin.sin_addr.s_addr = inet_addr(host);
-	    if (rsin.sin_addr.s_addr == INADDR_NONE) {
-		printf("host %s lookup failure\n", host);
-		close(fd);
-		return(-1);
-	    }
-        }
+	if (bind(fd, src->ai_addr, src->ai_addrlen) < 0) {
+	    freeaddrinfo(src);
+	    close(fd);
+	    return(-1);
+	}
+	freeaddrinfo(src);
     }
 
     if (DebugOpt) {
-	fprintf(stderr, "Connecting to %s (%s)\n", host, inet_ntoa(rsin.sin_addr));
+	getnameinfo(dst->ai_addr, dst->ai_addrlen,
+			addrbuf, sizeof(addrbuf), NULL, 0, NI_NUMERICHOST);
+	fprintf(stderr, "Connecting to %s (%s)\n", host, addrbuf);
 	fflush(stderr);
     }
 
-    if (connect(fd, (struct sockaddr *)&rsin, sizeof(rsin)) < 0) {
+    if (connect(fd, dst->ai_addr, dst->ai_addrlen) < 0) {
 	if (DebugOpt) {
 	    fprintf(stderr, "connection failed: %s\n", strerror(errno));
 	    fflush(stderr);

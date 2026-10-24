@@ -82,7 +82,7 @@ int LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char
 int SendArticle(const char *data, int fsize, FILE *fo, int doHead, int doBody);
 void ArticleFileInit(void);
 #ifdef USE_ZLIB
-int ArticleFile(History *h, off_t *pbpos, int clvl, gzFile **cfile);
+int ArticleFile(History *h, off_t *pbpos, int clvl, gzFile *cfile);
 #else
 int ArticleFile(History *h, off_t *pbpos, int clvl, char **cfile);
 #endif
@@ -981,6 +981,70 @@ DiabloServer(int lfd)
 }
 
 /*
+ * DOXCLIENT()	- handle the XCLIENT command loop.
+ */
+
+void
+DoXClient(FILE *fp, struct sockaddr *res, char *ipst)
+{
+    char buf[256];
+    struct addrinfo *ai, hints;
+    char *addr, *p;
+
+    xfprintf(fp, "200 %s XCLIENT session ready (DIABLO %s-%s)\r\n",
+				DOpts.FeederHostName, VERS, SUBREV);
+    while (1) {
+	fflush(fp);
+	if (fgets(buf, sizeof(buf), fp) == NULL) {
+	    logit(LOG_WARNING, "unexpected EOF on XCLIENT session from %s",ipst);
+	    exit(1);
+	}
+	if (strncasecmp(buf, "quit", 4) == 0 &&
+            (buf[4] == '\r' || buf[4] == '\n')) {
+		xfprintf(fp, "205 Bye.\r\n");
+		fflush(fp);
+		exit(0);
+	}
+
+	if (strncasecmp(buf, "xclient", 7) != 0) {
+	    xfprintf(fp, "501 expected XCLIENT\r\n");
+	    continue;
+	}
+
+	addr = buf + 7;
+	while (*addr == ' ' || *addr == '\t')
+	    addr++;
+	p = addr;
+	while (*p != 0 && *p != ' ' && *p != '\t' && *p != '\r' && *p != '\n')
+	    p++;
+	if (*p == 0 || addr == p) {
+	    xfprintf(fp, "501 syntax error\r\n");
+	    continue;
+	}
+	*p = 0;
+
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_flags = AI_NUMERICHOST;
+	if (getaddrinfo(addr, "119", &hints, &ai) != 0) {
+	    xfprintf(fp, "501 syntax error\r\n");
+	    continue;
+	}
+	memcpy(res, ai->ai_addr, ai->ai_addrlen);
+	strncpy(ipst, addr, NI_MAXHOST);
+	ipst[NI_MAXHOST-1] = 0;
+	freeaddrinfo(ai);
+	break;
+    }
+    sprintf(PeerIpName, "%s", ipst);
+    bhash(&PeerIpHash, PeerIpName, strlen(PeerIpName));
+    if (HasStatusLine)
+	stprintf("%s", ipst);
+}
+
+
+/*
  * DOACCEPT()	- accept and deal with a new connection
  */
 
@@ -1125,6 +1189,7 @@ DoAccept(int lfd)
 		    nice(FeedPriority(HLabel));
 
 		FeedFo = fdopen(fds[1], "w");
+authenticate:
 #ifdef INET6
 		if ((HName = Authenticate(fd, (struct sockaddr *)&res, addrst, HLabel)) == NULL) {
 #else
@@ -1153,6 +1218,21 @@ DoAccept(int lfd)
 		    );
 		    exit(0);
 		}
+
+		if (strcmp(HLabel, "%XCLIENT") == 0) {
+		    FILE *fp = fdopen(fd, "r+");
+		    if (fp == NULL) {
+			logit(LOG_CRIT, "fdopen() of socket failed");
+			exit(1);
+		    }
+#ifdef INET6
+		    DoXClient(fp, (struct sockaddr *)&res, addrst);
+#else
+		    DoXClient(fp, (struct sockaddr *)&asin, addrst);
+#endif
+		    goto authenticate;
+		}
+
 		if (HLabel[0] == 0) {
 		    FILE *fo = fdopen(fd, "w");
 
@@ -1206,10 +1286,11 @@ DoAccept(int lfd)
 			exit(0);
 		}
 
-		logit(LOG_INFO, "Connection %d from %s %s",
+		logit(LOG_INFO, "Connection %d from %s %s [%s]",
 		    fds[0],
 		    HName,
-		    addrst
+		    addrst,
+		    HLabel
 		);
 
 		/*
@@ -3299,7 +3380,7 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 	    h.gmt = SpoolDirTime();
 	    if (spool <= 100) {
 #ifdef USE_ZLIB
-		gzFile *cfile = NULL;
+		gzFile cfile = NULL;
 #else
 		char *cfile = NULL;
 #endif
@@ -4396,7 +4477,7 @@ ArticleFileInit(void)
 
 int
 #ifdef USE_ZLIB
-ArticleFile(History *h, off_t *pbpos, int clvl, gzFile **cfile)
+ArticleFile(History *h, off_t *pbpos, int clvl, gzFile *cfile)
 #else
 ArticleFile(History *h, off_t *pbpos, int clvl, char **cfile)
 #endif
@@ -4651,7 +4732,7 @@ MapArticle(int fd, char *fname, char **base, History *h, int *extra, int *artSiz
 
     if (*compressedFormat) {
 #ifdef USE_ZLIB
-	gzFile *gzf;
+	gzFile gzf;
 	char *p;
 
 	if ((uint8)tah.Magic1 != STORE_MAGIC1 &&

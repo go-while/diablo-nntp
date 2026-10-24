@@ -315,14 +315,14 @@ feedHashFeedOK(HashFeed_MatchList *hashfeed, unsigned char *md5hash, const char 
 {
     if (! hashfeed)
 	return(0);
-    return(!HM_CheckForMatch_PC(hashfeed, (mid_t)msgid, md5hash, HMOPER_MATCHONE));
+    return(!HM_CheckForMatch_PC(hashfeed, (mid_t)msgid, md5hash));
 }
 
 int
 ArtHashIsFiltered(const char *msgid)
 {
     if(IFBase && IFBase->nf_HashFeed) {
-      return(!HM_CheckForMatch(IFBase->nf_HashFeed, (mid_t)msgid, HMOPER_MATCHONE));
+      return(!HM_CheckForMatch(IFBase->nf_HashFeed, (mid_t)msgid));
     }
     return(0);
 }
@@ -2622,7 +2622,7 @@ DumpFeedInfo(FILE *fo, char *label)
     fprintf(fo, "  ReadOnly       : %d\n", nf->nf_ReadOnly);
     fprintf(fo, "  WhereIs        : %d\n", nf->nf_WhereIs);
     for (hfptr = nf->nf_HashFeed, nhf = 0; hfptr; hfptr = hfptr->HM_Next) {
-	fprintf(fo, "  HashFeed       : %d %s%d-%d/%d:%d\n", nhf++, (hfptr->HM_Type == HMTYPE_OLD) ? "@" : "", hfptr->HM_Start, hfptr->HM_End, hfptr->HM_ModVal, hfptr->HM_Offset);
+	fprintf(fo, "  HashFeed       : %d %s%s%d-%d/%d:%d\n", nhf++, (hfptr->HM_Cascade) ? "|" : " ", (hfptr->HM_Type == HMTYPE_OLD) ? "@" : "", hfptr->HM_Start, hfptr->HM_End, hfptr->HM_ModVal, hfptr->HM_Offset);
     }
 
     fprintf(fo, "  IncomingPriority: %d\n", nf->nf_IncomingPriority);
