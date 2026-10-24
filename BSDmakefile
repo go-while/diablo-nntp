@@ -87,10 +87,18 @@ dbin/${prog}: obj/sup_${prog}.o obj/libfilter.a obj/libdiablo.a
 clean:
 	rm -rf obj dbin
 distclean: clean
-install bininstall uninstall:
-	@echo 'Installation is not yet ported; consult XMakefile.inst / XMakefile.uninst.' >&2; exit 1
+PREFIX?= /news
+DESTDIR?=
+INSTALL_USER?= news
+INSTALL_GROUP?= news
+
+install bininstall: all
+	sh ./install-portable.sh ${.TARGET} "${PREFIX}" "${DESTDIR}" "${INSTALL_USER}" "${INSTALL_GROUP}"
+
+uninstall:
+	sh ./install-portable.sh uninstall "${PREFIX}" "${DESTDIR}" "${INSTALL_USER}" "${INSTALL_GROUP}"
 help:
-	@echo 'Targets: all clean distclean help; installation requires original xmake rules.'
+	@echo 'Targets: all clean distclean help; installation: install bininstall uninstall; PREFIX=/news DESTDIR= optional.'
 .for dep in ${LIB_OBJS} ${FILTER_OBJS} ${DR_OBJS} ${UTIL_OBJS} ${SUP_OBJS}
 .if exists(${dep:R}.d)
 .include "${dep:R}.d"
