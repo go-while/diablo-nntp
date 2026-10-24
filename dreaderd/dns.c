@@ -16,7 +16,7 @@
 #include <ldap.h>
 #endif
 #ifdef DB_ENABLED
-#  ifdef __linux__
+#  if defined(__linux__) || defined(__sun)
 #    include <db_185.h>
 #  else
 #    include <db.h>
