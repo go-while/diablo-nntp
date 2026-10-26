@@ -186,10 +186,33 @@ func TestDnewslinkBatchTemplatePercentLabel(t *testing.T) {
 	}
 }
 
+// TestDnewslinkLiteralPercentLabel checks that a queue label is copied literally
+// when no batch sequence is selected; percent signs are template syntax only with -S.
+func TestDnewslinkLiteralPercentLabel(t *testing.T) {
+	const label = "feed%label"
+	peer, got := newPeer(t, &fakeserver.PeerOptions{})
+	newsfeeds := strings.Replace(OutNewsfeeds, "label "+OutLabel+"\n", "label "+label+"\n", 1)
+	s := NewSite(t, SiteOptions{Newsfeeds: newsfeeds})
+	ids := s.Inject(t, "e2e.test", 1)
+	s.waitQueue(t, label, 1)
+	out := s.dnewslink(t, peer, label)
+	if !slices.Equal(got.list(), ids) {
+		t.Errorf("peer accepted %q, want %q\ndnewslink output:\n%s", got.list(), ids, out)
+	}
+}
+
 func TestDnewslinkRejectsInvalidBatchTemplate(t *testing.T) {
 	s := NewSite(t, SiteOptions{NoStart: true})
 	_, err := s.TryRun("dnewslink", "-b", "bad%p", "-S", "0", "-h", "127.0.0.1", "-P", "119")
 	if err == nil {
 		t.Fatal("dnewslink accepted an unsupported batch-template conversion")
+	}
+}
+
+func TestDnewslinkRejectsExcessiveBatchTemplateWidth(t *testing.T) {
+	s := NewSite(t, SiteOptions{NoStart: true})
+	_, err := s.TryRun("dnewslink", "-b", "%999999999d", "-S", "0", "-h", "127.0.0.1", "-P", "119")
+	if err == nil {
+		t.Fatal("dnewslink accepted an excessive batch-template width")
 	}
 }
