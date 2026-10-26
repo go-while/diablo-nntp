@@ -61,11 +61,17 @@ main(int ac, char **av)
 	}
     } else {
 	int i;
+	int sent = 0;
 
 	for (i = 1; i < ac; ++i) {
 	    char *ptr = av[i];
-	    if (*ptr != '-' || i > 1)
-		fprintf(fo, "%s%s", ptr, (i + 1 < ac) ? " " : "");
+	    if (sent == 0 && *ptr == '-') {
+		/* options before the command: skip -C file */
+		if (ptr[1] == 'C' && ptr[2] == 0)
+		    ++i;
+		continue;
+	    }
+	    fprintf(fo, "%s%s", sent++ ? " " : "", ptr);
 	}
 	fprintf(fo, "\n");
 	fprintf(fo, "quit\n");
