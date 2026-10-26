@@ -12,8 +12,8 @@ re-checked yet.
 Status values: **open**, **PR** (fix waiting for review, with its number), **fixed** (with
 the PR that fixed it), **decision** (needs the maintainer to decide), **won't fix**.
 
-Last updated 2026-10-26, after #5, #6, #8 and #10 to #16 were merged. Cancel-Lock
-verification (F-01) is in #19, diablo-ctl in #17.
+Last updated 2026-10-26, after #5, #6, #8, #10 to #26 were merged. Open: #7 (I/O
+integrity, in review), #9 (dnewslink connlife), #27 (dreaderd spool server address).
 
 | ID | Severity | Summary | Status |
 |---|---|---|---|
@@ -39,9 +39,9 @@ verification (F-01) is in #19, diablo-ctl in #17.
 | [D-20](#d-20-strncpy-truncation-warning-in-dreaderddnsc) | Low | `strncpy` truncation warning in `dreaderd/dns.c` (GCC 16) | open |
 | [D-21](#d-21-dactivekp-write-errors-now-exit-the-process) | — | dactive.kp write errors now exit the process (#7) | decision |
 | [D-22](#d-22-gnu-make-install-ignores-prefix-and-destdir) | High | GNU Make `install`/`uninstall` ignore `PREFIX` and `DESTDIR` (live `/news` used) | fixed (#16) |
-| [D-23](#d-23-feederreader-sample-config-is-ignored) | Medium | `samples/feeder+reader/diablo.config` has no `version 2.0`: every directive ignored | open |
+| [D-23](#d-23-feederreader-sample-config-is-ignored) | Medium | `samples/feeder+reader/diablo.config` has no `version 2.0`: every directive ignored | fixed (#26) |
 | [D-24](#d-24-sample-dreaderaccess-allows-1008-not-localhost) | Medium | Sample `dreader.access` allows 1.0.0.0/8, not localhost | open |
-| [D-25](#d-25-installed-config-files-are-read-only-symlinks-into-samples) | Medium | Installed config files are read-only symlinks into `samples/`; edits are lost on reinstall | open |
+| [D-25](#d-25-installed-config-files-are-read-only-symlinks-into-samples) | Medium | Installed config files are read-only symlinks into `samples/`; edits are lost on reinstall | fixed (#21) |
 | [D-26](#d-26-iter-written-as-decimal-read-as-hex) | Medium | Overview `ITER` written as decimal, read as hex by `dexpireover` | open |
 | [D-27](#d-27-documentation-is-stale-or-wrong) | Medium | INSTALL, README.md, README.READER: xmake, missing Linux steps, news user, PGP | open |
 | [D-28](#d-28-man-pages) | Low | Man pages: none fully accurate, 17 programs without one, broken SEE ALSO | open |
@@ -50,9 +50,12 @@ verification (F-01) is in #19, diablo-ctl in #17.
 | [D-31](#d-31-option-parsing-bugs-in-utilities) | Low | Option parsing bugs in utilities (`-C file`, `dilookup -f`, `dhisexpire -o`, ...) | open |
 | [D-32](#d-32-drcmd-exits-1-after-a-good-status) | Low | `drcmd` exits 1 after a good `status` reply | open |
 | [D-33](#d-33-dreaderd--b-host-without-port-binds-a-random-port) | Low | `dreaderd -B host` without a port binds a random port; `-P`/`-B` drop the config bind settings | open |
-| [D-34](#d-34-installed-adm-scripts-are-not-executable) | Low | Installed adm scripts are mode 444; no `/news/adm`; csh needed | open |
-| [D-35](#d-35-samples-with-wrong-directives-or-options) | Low | Samples with wrong directives or options (dexpire.ctl, diablo.config, crontab, dcontrol.ctl) | open |
+| [D-34](#d-34-installed-adm-scripts-are-not-executable) | Low | Installed adm scripts are mode 444; no `/news/adm`; csh needed | fixed (#21, #22) |
+| [D-35](#d-35-samples-with-wrong-directives-or-options) | Low | Samples with wrong directives or options (dexpire.ctl, diablo.config, crontab, dcontrol.ctl) | open (crontab part fixed in #22) |
 | [D-36](#d-36-dgrpctl-checkgroups-exec) | Low | `dgrpctl checkgroups exec`: new groups without S/GD, lock order | open |
+| [D-37](#d-37-articles-lost-when-the-spool-directory-is-removed) | High | Articles accepted (235) but lost when their spool directory is removed while diablo writes into it | fixed (#24) |
+| [D-38](#d-38-dexpire-removes-the-directory-diablo-writes-into) | High | `dexpire` removes a spool's newest directory, the one diablo writes into | fixed (#25) |
+| [D-39](#d-39-dreaderd-spool-server-address-may-be-udp) | Medium | dreaderd connects its spool servers with the first `getaddrinfo()` result, which is UDP on FreeBSD | PR (#27) |
 
 Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315).
 
@@ -168,6 +171,7 @@ documents it) installed into the live `/news`, `gmake DESTDIR=... uninstall` rem
 `samples/feeder+reader/diablo.config` has no `version 2.0` line, so `lib/config.c` skips every
 directive silently: `feederbindport 120` and `active on` don't apply, and diablo binds 119 next
 to dreaderd. Verified (no `version` line). The other two samples got it in 6-CUR-20261024-BWH.
+Fixed in #26.
 
 ### D-24 Sample dreader.access allows 1.0.0.0/8, not localhost
 `samples/dreader.access:415` has `access 1/8 ro`: that is the APNIC block 1.0.0.0/8, and there is
@@ -178,6 +182,10 @@ no localhost or RFC 1918 entry, so the first `telnet localhost 119` is refused. 
 (mode 444) and overwrites `samples/*` on every install or bininstall, so edits made through the
 symlink are lost. The installed `dactive.kp` is a 1998 sample with 44 comp.sys.amiga groups.
 From review.
+
+Fixed in #21: config files are installed as real 0640 copies and never overwritten; symlinks
+from an earlier install become real files before `samples/` is replaced; `dactive.kp` starts
+empty. Tests: `TestInstallConfigFiles`, `TestInstallConvertsConfigSymlinks`.
 
 ### D-26 ITER written as decimal, read as hex
 `dreaderd/group.c:904` and `util/dcancel.c` write `ITER` with `%06d`; `util/dexpireover.c:414`
@@ -243,6 +251,10 @@ diablo.config. From review.
 nothing creates `/news/adm`, but `crontab.sample` runs `cd adm; ./$i`. All adm scripts are
 csh, which Debian, Ubuntu and Alpine don't install by default. From review.
 
+Fixed in #21 (scripts installed executable into `<prefix>/adm`; a changed script gets the new
+version as `.new`) and #22 (the scripts are POSIX sh). Tests: `TestInstallConfigFiles`,
+`TestAdm*`.
+
 ### D-35 Samples with wrong directives or options
 `samples/dexpire.ctl` says `dexpireover -w` compresses (it's `-z`); `samples/diablo.config:60`
 `path_dspoolctl %s/dspoolctl` (file is `dspool.ctl`); `samples/feeder/diablo.config`
@@ -251,25 +263,55 @@ csh, which Debian, Ubuntu and Alpine don't install by default. From review.
 `old.biweekly.atrim.dexpire`; the `dcontrol.ctl` header describes `mail`/empty-value semantics
 the code doesn't implement. From review.
 
+#22 removed `biweekly.atrim.dexpire` and gave `crontab.sample` absolute paths; the other
+points are open.
+
 ### D-36 dgrpctl checkgroups exec
 New groups created by `checkgroups exec` get no S or GD fields, and the lock order is wrong when
 modifying (`util/dgrpctl.c:770-790`). From review.
+
+### D-37 Articles lost when the spool directory is removed
+`util/diablo.c` `ArticleFile()` keeps the spool file it writes into open, and `lib/xopen.c`
+caches the current directory. When the directory was removed (by dexpire, see D-38, or by
+hand), diablo kept appending to the unlinked file and answered 235, but the article was gone
+(STAT 430) and the log showed IOError and "Missing dir" lines. Found by the maintainer on a
+ZFS feeder. Fixed in #24: a cached file with no links left is reopened, the directory cache is
+reset, and a missing directory is created again ("spool directory ... was missing, created
+it"). Test: `TestSpoolDirRemovedWhileWriting`.
+
+### D-38 dexpire removes the directory diablo writes into
+`util/dexpire.c` `cleanupDirectories()` removes the oldest directories of a partition until
+`minfree` is met, and could reach the newest one, which diablo is writing into. With a large
+`minfree` and ZFS, which reports freed space late, it emptied whole partitions. Fixed in #25:
+each partition's newest directory is kept ("Keeping ..."). Test: `TestDexpireKeepsNewestDir`.
+
+### D-39 dreaderd spool server address may be UDP
+`dreaderd/server.c` `AddServer()` calls `getaddrinfo()` without `ai_socktype` and connects to
+the first result. FreeBSD lists the UDP address first, so the reader could not reach its spool
+servers. Found by the maintainer on FreeBSD; fix in #27 (`SOCK_STREAM`).
 
 ## Feature requests
 
 ### F-01 Cancel-Lock (RFC 8315)
 Generate `Cancel-Lock` for local posts in dreaderd and verify `Cancel-Key` before executing a
 cancel or supersede. The maintainer's main reason not to replace INN with diablo plus
-dreaderd yet. Verification is in PR #19 (`readercanlock`); generation on POST follows.
+dreaderd yet.
 
-Design (agent-chatroom, 2026-10-26):
-- **Verification:** in `CtlCancel` (`dreaderd/control.c`). Cancels and Supersedes both go
-  through it, and the target's headers are in the overview data.
-- **Generation:** in `NNPostBuffer` (`dreaderd/post.c`).
-- **Crypto:** OpenSSL HMAC, already linked. It reproduces INN's test vectors, so the locks are
-  byte-identical to INN's.
-- **Config:** `readercanlock off|log|auth|require` in diablo.config; `canlockadmin`,
-  `canlockuser` and `addcanlockuser` in dreader.access.
-- **Plan:** three PRs (verification, generation, a key tool).
+**Verification: done in #19.** `CtlCancel` (`dreaderd/control.c`) checks the Cancel-Key of a
+cancel or supersede against the target's Cancel-Lock (`lib/canlock.c`; sha256, sha512 and
+sha1). `readercanlock` in diablo.config:
 
-Waiting for the maintainer's answers on the defaults, sha1 and secret storage.
+- `require-auth` (default): executed only when the target has a Cancel-Lock and the Cancel-Key
+  matches it; a target without a lock is not cancelled.
+- `auth`: a target with a Cancel-Lock needs a matching key; a target without one is cancelled.
+- `none`: no cancel or supersede is executed.
+- `all`: no checks (the behaviour before #19).
+
+A cancel that arrives before its target is dropped unless the mode is `all`. Trackonly mode
+is refused with a Cancel-Lock check enabled. Tests: `TestCanLockVectors`, `TestCancelLock*`.
+Upgrades: a reader that relied on unchecked cancels must set `readercanlock all`.
+
+**Generation: open.** Adding `Cancel-Lock` (and `Cancel-Key` on a poster's own cancels) in
+`NNPostBuffer` (`dreaderd/post.c`) with OpenSSL HMAC, byte-identical to INN's locks; then a
+key tool. Waiting for the decision on sha1 (INN still generates it next to sha256) and on
+secret storage.
