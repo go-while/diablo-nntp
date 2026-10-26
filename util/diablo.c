@@ -761,11 +761,11 @@ DiabloServer(int lfd)
     }
     if (DOpts.FeederBindHost != NULL &&
 				strchr(DOpts.FeederBindHost, ':') != NULL)
-	logit(LOG_INFO, "Listening on [%s]:%s\n",
+	logit(LOG_INFO, "Listening on [%s]:%s",
 			DOpts.FeederBindHost ? DOpts.FeederBindHost : "ALL",
 			DOpts.FeederPort);
     else
-	logit(LOG_INFO, "Listening on %s:%s\n",
+	logit(LOG_INFO, "Listening on %s:%s",
 			DOpts.FeederBindHost ? DOpts.FeederBindHost : "ALL",
 			DOpts.FeederPort);
 
