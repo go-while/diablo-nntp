@@ -351,6 +351,7 @@ main(int ac, char **av)
     int eNoBat = 0;
     int retainedCfd = -1;
     int retire = 0;
+    const char *configOverride = NULL;
 
     TimeNow = time(NULL);
     OpenLog("newslink", (DebugOpt > 0? LOG_PERROR: 0) | LOG_NDELAY | LOG_PID);
@@ -373,8 +374,7 @@ main(int ac, char **av)
 	    BatchFileCtl = (*ptr) ? ptr : av[++i];
 	    break;
 	case 'C':
-	    if (*ptr == 0)
-		++i;
+	    configOverride = (*ptr) ? ptr : av[++i];
 	    break;
 	case 'c':
 	    CloseReopenAfter = strtol(((*ptr) ? ptr : av[++i]), NULL, 0);
@@ -1289,6 +1289,37 @@ main(int ac, char **av)
     if (NotifyOpt != NULL) {
 	RegisterNotify(NotifyOpt, 0);
 	CloseNotify(&NotifyFd, &NotifyLockFd, NotifyOpt);
+    }
+
+    /* A clean, time-based retirement should not leave a realtime feed
+     * unattended until the next cron invocation of dspoolout.  The queue
+     * lock and connection have already been released.  Ask dspoolout to
+     * launch just this label's realtime worker, rereading dnewsfeeds and
+     * using its normal nonblocking queue-lock check.  Its -J mode does
+     * not rotate queues or launch batch workers; cron remains the fallback
+     * if fork/exec fails.  Never respawn on signals or failed connections.
+     */
+    if (retire && ConnLife > 0 && RealTimeOpt && !TermFlag &&
+	BatchSeq < 0 && !PipeOpt) {
+	pid_t pid = fork();
+	if (pid == 0) {
+	    char binPath[1024];
+	    int n = snprintf(binPath, sizeof(binPath),
+		"%s/dbin/dspoolout", NewsHome);
+	    if (n > 0 && (size_t)n < sizeof(binPath)) {
+		if (configOverride != NULL)
+		    execl(binPath, "dspoolout", "-C", configOverride,
+			"-J", BatchFileCtl, (char *)NULL);
+		else
+		    execl(binPath, "dspoolout", "-J", BatchFileCtl, (char *)NULL);
+	    } else {
+		errno = ENAMETOOLONG;
+	    }
+	    dl_logit("connlife replacement failed: %s", strerror(errno));
+	    _exit(127);
+	}
+	if (pid < 0)
+	    dl_logit("connlife replacement fork failed: %s", strerror(errno));
     }
     exit(0);
 }
