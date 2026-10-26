@@ -1,0 +1,64 @@
+.\" $Revision: 1.0 $
+.TH PGPVERIFY 8
+.SH NAME
+pgpverify \- verify the PGP signature of a control message
+.SH SYNOPSIS
+.B pgpverify
+[
+.B \-d[level]
+]
+[
+.B \-k
+.I keyring
+]
+[
+.I program
+[
+.I args
+] ]
+<
+.I article
+.SH DESCRIPTION
+.B pgpverify
+reads a news article on standard input, rebuilds the text signed by its
+.B X-PGP-Sig
+header (as created by signcontrol) and checks the signature.
+On success it prints the first word of the signer's user id, for example
+.BR news.announce.newgroups ,
+and exits 0.
+.B dreaderd
+runs it for control messages that dcontrol.ctl marks
+.BR verify-<signer> ,
+with the arguments from
+.B pgpverifyargs
+in diablo.config.
+.PP
+By default GnuPG's
+.B gpgv
+(1.x or 2.x) is used.  It is looked for as gpgv, gpgv2 and gpgv1 in
+/usr/bin, /usr/local/bin, /opt/local/bin, /usr/pkg/bin and /opt/ooce/bin.
+A
+.I program
+named
+.B pgp
+is run as PGP 2.x ("pgp \-f") instead.
+.SH OPTIONS
+.TP
+.B \-k keyring
+The keyring to trust.  Default: path_home/pgp/trustedkeys.gpg if it exists,
+else gpgv's default in ~news/.gnupg.  It must be in the classic keyring
+format; gpgv 1.x cannot read a keybox (.kbx).
+.TP
+.B \-d[level]
+Show the verifier command and its status output on standard error.  Level 2
+also keeps the temporary files pgpverify.msg.* and pgpverify.sig.* in
+$TMPDIR (default /tmp).
+.SH "EXIT STATUS"
+0 good signature; 1 no X-PGP-Sig header; 2 malformed header or verifier not
+runnable; 3 bad signature or signer key not in the keyring.
+.SH FILES
+/news/pgp/trustedkeys.gpg
+.SH "SEE ALSO"
+dreaderd(8),
+diablo-files(5),
+README.PGP for the keyring setup with examples

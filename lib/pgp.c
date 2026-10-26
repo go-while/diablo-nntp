@@ -85,6 +85,31 @@ PGPVerify(Control *ctl, const char *art, int artLen)
 	    buf[n] = 0;
 
 	    /*
+	     * No answer: pgpverify's exit status says why.
+	     */
+	    close(fds[0]);
+	    fds[0] = -1;
+	    {
+		int status = 0;
+
+		waitpid(pid, &status, 0);
+		pid = -1;
+		if (n == 0 && WIFEXITED(status)) {
+		    switch (WEXITSTATUS(status)) {
+		    case 1:
+			badCmd = "pgp signature header (X-PGP-Sig) missing\n";
+			break;
+		    case 3:
+			badCmd = "pgp signature bad, or signer key not in keyring\n";
+			break;
+		    default:
+			badCmd = "pgp header parsing failed, or verifier not runnable\n";
+			break;
+		    }
+		}
+	    }
+
+	    /*
 	     * if non-null answer, pgp-verify succeeded
 	     */
 	    if (n) {
@@ -95,12 +120,12 @@ PGPVerify(Control *ctl, const char *art, int artLen)
 			printf("pgp label mismatch:%s:%s:\n", buf, ctl->ct_Verify);
 		    badCmd = "pgp parsed ok, but label did not match\n";
 		}
-	    } else {
-		badCmd = "pgp header parsing failed\n";
 	    }
 	}
-	close(fds[0]);
-	waitpid(pid, NULL, 0);
+	if (fds[0] >= 0)
+	    close(fds[0]);
+	if (pid > 0)
+	    waitpid(pid, NULL, 0);
     } else {
 	logit(LOG_ERR, "Unable to run %s", DOpts.PgpVerifyArgs[0]);
     }
