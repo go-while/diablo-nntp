@@ -21,6 +21,8 @@ type hashfeedMode struct {
 var hashfeedModes = []hashfeedMode{
 	{name: "md5-offset-0", selector: "%d/2"},
 	{name: "md5-offset-4", selector: "%d/2:4", offset: 4},
+	{name: "md5-offset-8", selector: "%d/2:8", offset: 8},
+	{name: "md5-offset-12", selector: "%d/2:12", offset: 12},
 	{name: "legacy-quickhash", selector: "@%d/2", legacy: true},
 }
 
