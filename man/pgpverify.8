@@ -45,7 +45,8 @@ is run as PGP 2.x ("pgp \-f") instead.
 .SH OPTIONS
 .TP
 .B \-k keyring
-The keyring to trust.  Default: path_home/pgp/trustedkeys.gpg if it exists,
+The keyring to trust (a relative name is taken from the current
+directory).  Default: path_home/pgp/trustedkeys.gpg if it exists,
 else gpgv's default in ~news/.gnupg.  It must be in the classic keyring
 format; gpgv 1.x cannot read a keybox (.kbx).
 .TP

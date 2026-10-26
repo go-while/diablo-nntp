@@ -242,9 +242,9 @@ FindGpgv(void)
 }
 
 /*
- * PutStripped() - write text with trailing blanks removed from each line.
- *		   OpenPGP clear signatures, which signcontrol produces,
- *		   are computed over text without trailing whitespace.
+ * PutStripped() - write text with trailing blanks removed from each line,
+ *		   as signcontrol and INN's pgpverify do (PGP's clear
+ *		   signatures ignore trailing whitespace).
  */
 
 static void
@@ -319,17 +319,7 @@ VerifyGpgv(char **argv, const char *keyring, const char *version,
 	PutStripped(fo, FindHeader(name, "\n"));
     }
     fprintf(fo, "\n");
-    /*
-     * In a clear-signed message the line break before the signature block
-     * is not part of the signed text, so drop the body's final newline.
-     */
-    if (BodyLen > 0 && Body[BodyLen - 1] == '\n') {
-	Body[BodyLen - 1] = 0;
-	PutStripped(fo, Body);
-	Body[BodyLen - 1] = '\n';
-    } else {
-	PutStripped(fo, Body);
-    }
+    PutStripped(fo, Body);	/* including its final newline, as signed */
     fclose(fo);
 
     /*
@@ -361,6 +351,16 @@ VerifyGpgv(char **argv, const char *keyring, const char *version,
 	snprintf(defring, sizeof(defring), "%s/pgp/trustedkeys.gpg", NewsHome);
 	if (access(defring, R_OK) == 0)
 	    keyring = defring;
+    } else if (keyring[0] != '/') {
+	/* gpgv looks for a relative --keyring in its GnuPG home, not here */
+	char cwd[PATH_MAX];
+
+	if (getcwd(cwd, sizeof(cwd)) != NULL) {
+	    int n = snprintf(defring, sizeof(defring), "%s/%s", cwd, keyring);
+
+	    if (n > 0 && (size_t)n < sizeof(defring))
+		keyring = defring;
+	}
     }
     n = 0;
     while (argv[n] != NULL && n < 10) {
