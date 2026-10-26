@@ -28,7 +28,7 @@ jobs:
       # Installs the build packages, creates the news user diablo switches to, and builds
       # with RADIUS off (Linux has no BSD libradius).
       - name: Build
-        run: sudo tests/e2e/ci/build-on-host
+        run: sudo E2E_FAKE_SENDMAIL=1 tests/e2e/ci/build-on-host
 
       - name: Build log
         if: always()
