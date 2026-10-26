@@ -40,7 +40,7 @@ jobs:
           - language: actions
             build-mode: none
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # Packages, the news user, and RADIUS off in lib/vendor.h, as for the e2e tests.
       # This first build runs as root through sudo, which the CodeQL tracer can't follow,
