@@ -34,6 +34,9 @@ type ReaderOptions struct {
 
 	// PlainBind passes -P as "127.0.0.1:port" instead of "[127.0.0.1]:port".
 	PlainBind bool
+
+	// NoStart writes the site and its groups but doesn't start dreaderd.
+	NoStart bool
 }
 
 // DefaultReaderAccess lets 127.0.0.1 read and post and PeerIP feed.
@@ -109,6 +112,10 @@ func NewReaderSite(tb testing.TB, o ReaderOptions) *Site {
 	}
 	for _, g := range groups {
 		s.Run(tb, "dgrpctl", "newgroup", g, "y")
+	}
+
+	if o.NoStart {
+		return s
 	}
 
 	// "[host]:port" by default: before the -P fix (jrehmer/diablo-nntp PR "dreaderd: -P/-B

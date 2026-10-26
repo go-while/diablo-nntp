@@ -45,6 +45,10 @@ type SiteOptions struct {
 	// Setup runs after the files are written and before diablo starts, e.g. to change a
 	// file's mode.
 	Setup func(tb testing.TB, s *Site)
+
+	// NoStart writes the site but doesn't start diablo (s.Proc stays nil), e.g. for a test
+	// that starts it with diablo-ctl.
+	NoStart bool
 }
 
 // Site is one running diablo server with its own path_home in a temporary directory.
@@ -131,6 +135,9 @@ func NewSite(tb testing.TB, o SiteOptions) *Site {
 	}
 	if o.Setup != nil {
 		o.Setup(tb, s)
+	}
+	if o.NoStart {
+		return s
 	}
 
 	args := append([]string{"-d", "-p", PathHost, "-h", PathHost, "-P", s.Addr}, o.Args...)
