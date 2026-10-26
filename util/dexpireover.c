@@ -411,7 +411,7 @@ main(int ac, char **av)
 	    artno_t endNo = strtoll(KPDBGetField(rec, recLen, "NE", NULL, "-1"), NULL, 10);
 	    int lmts = (int)strtoul(KPDBGetField(rec, recLen, "LMTS", NULL, "0"), NULL, 16);
 	    int cts = (int)strtoul(KPDBGetField(rec, recLen, "CTS", NULL, "0"), NULL, 16);
-	    int iter = (int)strtoul(KPDBGetField(rec, recLen, "ITER", NULL, "0"), NULL, 16);
+	    int iter = (int)strtoul(KPDBGetField(rec, recLen, "ITER", NULL, "0"), NULL, 10);	/* written as %06d */
 	    Group *grp;
 
 	    if (cts == 0)	/* enter non-zero cts only if group has no CTS field */
