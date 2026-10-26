@@ -347,6 +347,7 @@ DumpArticleFromCache(Connection *conn, const char *map, int size, int grpIter, a
     char line[8192];
     char *vserver;
     char *buf;
+    char *eol;
     char ch;
 
     if (conn->co_Auth.dr_VServerDef)
@@ -406,25 +407,33 @@ DumpArticleFromCache(Connection *conn, const char *map, int size, int grpIter, a
 	buf = (char *)&map[b];
 	ch = tolower(*buf);
 
-	if (inHeader && *vserver &&
+	/*
+	 * eol: end of this header line without its CR/LF.  Every scan
+	 * below stops there, so a header with nothing after the host
+	 * (Xref:) or nothing at all (Path:) is passed on unchanged.
+	 */
+	eol = buf + (i - b);
+	while (eol > buf && (eol[-1] == '\r' || eol[-1] == '\n'))
+	    eol--;
+
+	if (inHeader && *vserver && eol - buf >= 5 &&
 		!conn->co_Auth.dr_VServerDef->vs_NoXrefHostUpdate &&
 		ch == 'x' && strncasecmp(buf, "Xref:", 5) == 0) {
 	    char *ptr;
 
 	    ptr = (char *)buf + 5;
-	    while (isspace((int)*ptr))
+	    while (ptr < eol && isspace((int)*ptr))
 		ptr++;
-	    while (!isspace((int)*ptr))
+	    while (ptr < eol && !isspace((int)*ptr))
 		ptr++;
-	    while (isspace((int)*ptr))
+	    while (ptr < eol && isspace((int)*ptr))
 		ptr++;
 	    /* ptr should point to first group name */
-	    if (*ptr) {
+	    if (ptr < eol) {
 		int len;
-		int e = i - 1;
-		while (map[e] == '\r' || map[e] == '\n')
-		    e--;
-		len = (e - b + 1) - (ptr - buf);
+		int e;
+
+		len = eol - ptr;
 		if (len > sizeof(line) - 100)
 		    len = sizeof(line) - 100;
 		sprintf(line, "Xref: %s ", vserver); 
@@ -435,23 +444,22 @@ DumpArticleFromCache(Connection *conn, const char *map, int size, int grpIter, a
             }
 
 	}
-	if (inHeader && *vserver && ch == 'p' &&
+	if (inHeader && *vserver && ch == 'p' && eol - buf >= 5 &&
 		!conn->co_Auth.dr_VServerDef->vs_NoReadPath &&
 				strncasecmp(buf, "Path:", 5) == 0) {
 	    char *ptr;
 	    int vsl = strlen(vserver);
 
 	    ptr = (char *)buf + 5;
-	    while (isspace((int)*ptr))
+	    while (ptr < eol && isspace((int)*ptr))
 		ptr++;
-	    if (ptr && *ptr && (strncmp(vserver, ptr, vsl) ||
-				((ptr[vsl] != '\0') &&
-				 (ptr[vsl] != '!')))) {
+	    if (ptr < eol && (eol - ptr <= vsl ||
+				strncmp(vserver, ptr, vsl) ||
+				ptr[vsl] != '!')) {
 		int len;
-		int e = i - 1;
-		while (map[e] == '\r' || map[e] == '\n')
-		    e--;
-		len = (e - b + 1) - (ptr - buf);
+		int e;
+
+		len = eol - ptr;
 		if (len > sizeof(line) - 100)
 		    len = sizeof(line) - 100;
 		sprintf(line, "Path: %s!", vserver); 
