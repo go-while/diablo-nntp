@@ -397,6 +397,7 @@ AddServer(char *bindinfo, int txbufsize, int rxbufsize, const char *host, int ty
 
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = AI_ADDRCONFIG;
     snprintf(portbuf, sizeof(portbuf), "%d", port);
 
