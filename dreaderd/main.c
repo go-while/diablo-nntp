@@ -1739,7 +1739,12 @@ HandleDnsThread(ForkDesc *desc)
         if (r == 1)
 	    ClearOldAccessMap();
 
-        if (dres.dr_Code == 0) {
+        if (dres.dr_Code == 0 && dres.dr_AuthUser[0] && dres.dr_AuthPass[0]) {
+	    /* AUTHINFO USER/PASS that no access entry accepts (RFC 4643) */
+	    snprintf(errbuf, sizeof(errbuf), "481 Authentication failed\r\n");
+	    error1 = errbuf;
+	    error2 = "AuthFailed";
+        } else if (dres.dr_Code == 0) {
 	    snprintf(errbuf, sizeof(errbuf), "502 %s: Access denied to your node%s%s\r\n",
 		    dres.dr_VServerDef->vs_HostName,
 		    *dres.dr_VServerDef->vs_NewsAdm ? " - " : "",

@@ -22,13 +22,16 @@ Prototype void NNTPGroup(Connection *conn, char **pptr);
 Prototype void NNTPLast(Connection *conn, char **pptr);
 Prototype void NNTPNext(Connection *conn, char **pptr);
 Prototype void NNTPStat(Connection *conn, char **pptr);
+Prototype int SelectGroup(Connection *conn, const char *group);
+Prototype int NoCurrentArticle(Connection *conn);
+Prototype int IsArticleNumber(const char *s);
 Prototype void NNExecuteOnRange(Connection *conn, const char *artid, int mode);
 Prototype int GoodRC(Connection *conn);
 Prototype const char *GoodResId(Connection *conn);
 Prototype void DumpOVHeaders(Connection *conn, const char *ovdata, int ovlen);
 
 void NNArticleRetrieve(Connection *conn, const char *artid, const char *artopts, int mode);
-void NNArticleRetrieveByArtNo(Connection *conn, artno_t artNo);
+void NNArticleRetrieveByArtNo(Connection *conn, artno_t artNo, int current);
 
 void
 NNTPQuit(Connection *conn, char **pptr)
@@ -81,6 +84,22 @@ NNTPAuthInfo(Connection *conn, char **pptr)
 
     if (type != NULL)
 	args = strcasecmp(type, "pass") == 0 ? *pptr : parseword(pptr, " \t");
+
+    /*
+     * RFC 4643: no second login after a successful one (502), and PASS
+     * only after USER (482).
+     */
+    if (conn->co_Auth.dr_AuthPass[0] &&
+		(conn->co_Auth.dr_Flags & DF_AUTHREQUIRED) == 0) {
+	MBLogPrintf(conn, &conn->co_TMBuf, "502 Already authenticated\r\n");
+	NNCommand(conn);
+	return;
+    }
+    if (type && strcasecmp(type, "pass") == 0 && *conn->co_Auth.dr_AuthUser == 0) {
+	MBLogPrintf(conn, &conn->co_TMBuf, "482 Authentication commands issued out of sequence\r\n");
+	NNCommand(conn);
+	return;
+    }
 
     if (type && args && strlen(args) < 64) {
 	if (strcasecmp(type, "user") == 0) {
@@ -157,12 +176,8 @@ void
 NNTPGroup(Connection *conn, char **pptr)
 {
     char *group = parseword(pptr, " \t");
-    int recLen;
-    artno_t artBeg, dispArtBeg;
-    artno_t artEnd, dispArtEnd;
-    const char *rec;
-    OverInfo *ov;
-    struct GroupList *groups = conn->co_Auth.dr_GroupDef->gr_Groups;
+    artno_t dispArtBeg;
+    artno_t dispArtEnd;
 
     ++conn->co_Auth.dr_GrpCount;
 
@@ -173,16 +188,41 @@ NNTPGroup(Connection *conn, char **pptr)
 	NNCommand(conn);
 	return;
     }
-    if (groups != NULL && !GroupFindWild(group, groups)) {
+    if (SelectGroup(conn, group) < 0) {
 	MBLogPrintf(conn, &conn->co_TMBuf, "411 No such group %s\r\n", group);
 	NNCommand(conn);
 	return;
     }
-    if ((rec = KPDBReadRecord(KDBActive, group, KP_LOCK, &recLen)) == NULL) {
-	MBLogPrintf(conn, &conn->co_TMBuf, "411 No such group %s\r\n", group);
-	NNCommand(conn);
-	return;
-    }
+    dispArtBeg = artno_nb(conn->co_ArtBeg, conn->co_ArtEnd, conn->co_Numbering);
+    dispArtEnd = artno_ne(conn->co_ArtBeg, conn->co_ArtEnd, conn->co_Numbering);
+
+    MBLogPrintf(conn, &conn->co_TMBuf, "211 %lld %lld %lld %s\r\n",
+	dispArtEnd - dispArtBeg + 1, dispArtBeg, dispArtEnd, group
+    );
+    NNCommand(conn);
+}
+
+/*
+ * SelectGroup() - make group the current group, as GROUP and LISTGROUP do:
+ *		   check the reader's group access, read the active record,
+ *		   fix up the range and set the current article to the first.
+ *		   Returns 0, or -1 if there is no such group (for this
+ *		   reader).
+ */
+int
+SelectGroup(Connection *conn, const char *group)
+{
+    int recLen;
+    artno_t artBeg;
+    artno_t artEnd;
+    const char *rec;
+    OverInfo *ov;
+    struct GroupList *groups = conn->co_Auth.dr_GroupDef->gr_Groups;
+
+    if (groups != NULL && !GroupFindWild(group, groups))
+	return(-1);
+    if ((rec = KPDBReadRecord(KDBActive, group, KP_LOCK, &recLen)) == NULL)
+	return(-1);
     artBeg = strtoll(KPDBGetField(rec, recLen, "NB", NULL, "-1"), NULL,10);
     artEnd = strtoll(KPDBGetField(rec, recLen, "NE", NULL, "-1"), NULL,10);
     KPDBUnlock(KDBActive, rec);
@@ -212,20 +252,43 @@ NNTPGroup(Connection *conn, char **pptr)
     GroupStats(conn);
     conn->co_ClientGroupCount++;
 
-    zfreeStr(&conn->co_MemPool, &conn->co_GroupName);
-    conn->co_GroupName = zallocStr(&conn->co_MemPool, group);
+    if (conn->co_GroupName != group) {
+	zfreeStr(&conn->co_MemPool, &conn->co_GroupName);
+	conn->co_GroupName = zallocStr(&conn->co_MemPool, group);
+    }
 
     conn->co_ArtNo = artBeg;
-    conn->co_ArtBeg = dispArtBeg = artBeg;
-    conn->co_ArtEnd = dispArtEnd = artEnd;
+    conn->co_ArtBeg = artBeg;
+    conn->co_ArtEnd = artEnd;
+    return(0);
+}
 
-    dispArtBeg = artno_nb(artBeg, artEnd, conn->co_Numbering);
-    dispArtEnd = artno_ne(artBeg, artEnd, conn->co_Numbering);
+/*
+ * NoCurrentArticle() - the selected group has no current article (it is
+ *			empty, or the current number is outside it): RFC 3977
+ *			answers 420 then.
+ */
+int
+NoCurrentArticle(Connection *conn)
+{
+    return(conn->co_ArtEnd < conn->co_ArtBeg ||
+	   conn->co_ArtNo < conn->co_ArtBeg ||
+	   conn->co_ArtNo > conn->co_ArtEnd);
+}
 
-    MBLogPrintf(conn, &conn->co_TMBuf, "211 %lld %lld %lld %s\r\n",
-	dispArtEnd - dispArtBeg + 1, dispArtBeg, dispArtEnd, group
-    );
-    NNCommand(conn);
+/*
+ * IsArticleNumber() - s is a non-empty string of digits.
+ */
+int
+IsArticleNumber(const char *s)
+{
+    if (s == NULL || *s == 0)
+	return(0);
+    for (; *s; ++s) {
+	if (!isdigit((int)(unsigned char)*s))
+	    return(0);
+    }
+    return(1);
 }
 
 void 
@@ -235,6 +298,16 @@ NNTPLast(Connection *conn, char **pptr)
 
     if (parseword(pptr, " \t") != NULL) {
 	MBLogPrintf(conn, &conn->co_TMBuf, "501 Usage error\r\n");
+	NNCommand(conn);
+	return;
+    }
+    if (conn->co_GroupName == NULL) {
+	MBLogPrintf(conn, &conn->co_TMBuf, "412 No newsgroup selected\r\n");
+	NNCommand(conn);
+	return;
+    }
+    if (NoCurrentArticle(conn)) {
+	MBLogPrintf(conn, &conn->co_TMBuf, "420 No current article selected\r\n");
 	NNCommand(conn);
 	return;
     }
@@ -267,6 +340,16 @@ NNTPNext(Connection *conn, char **pptr)
 
     if (parseword(pptr, " \t") != NULL) {
 	MBLogPrintf(conn, &conn->co_TMBuf, "501 Usage error\r\n");
+	NNCommand(conn);
+	return;
+    }
+    if (conn->co_GroupName == NULL) {
+	MBLogPrintf(conn, &conn->co_TMBuf, "412 No newsgroup selected\r\n");
+	NNCommand(conn);
+	return;
+    }
+    if (NoCurrentArticle(conn)) {
+	MBLogPrintf(conn, &conn->co_TMBuf, "420 No current article selected\r\n");
 	NNCommand(conn);
 	return;
     }
@@ -320,14 +403,23 @@ NNArticleRetrieve(Connection *conn, const char *artid, const char *artopts, int 
 	    NNCommand(conn);
 	    return;
 	}
-	NNArticleRetrieveByArtNo(conn, conn->co_ArtNo);
-    } else if (isdigit((int)artid[0])) {
+	if (NoCurrentArticle(conn)) {
+	    MBLogPrintf(conn, &conn->co_TMBuf, "420 No current article selected\r\n");
+	    NNCommand(conn);
+	    return;
+	}
+	NNArticleRetrieveByArtNo(conn, conn->co_ArtNo, 1);
+    } else if (artid[0] != '<' && !IsArticleNumber(artid)) {
+	/* neither an article number nor a message-id (RFC 3977 3.2.1) */
+	MBLogPrintf(conn, &conn->co_TMBuf, "501 Syntax error: article number or message-id\r\n");
+	NNCommand(conn);
+    } else if (artid[0] != '<') {
 	if (conn->co_GroupName == NULL) {
 	    MBLogPrintf(conn, &conn->co_TMBuf, "412 Not in a newsgroup\r\n");
 	    NNCommand(conn);
 	    return;
 	}
-	NNArticleRetrieveByArtNo(conn, artno_input(conn->co_ArtBeg, conn->co_ArtEnd, strtoll(artid, NULL, 10), conn->co_Numbering));
+	NNArticleRetrieveByArtNo(conn, artno_input(conn->co_ArtBeg, conn->co_ArtEnd, strtoll(artid, NULL, 10), conn->co_Numbering), 0);
     } else {
 	artid = MsgId(artid, NULL);
 	if (strcmp(artid, "<>") == 0) {
@@ -348,7 +440,7 @@ NNArticleRetrieve(Connection *conn, const char *artid, const char *artopts, int 
 }
 
 void
-NNArticleRetrieveByArtNo(Connection *conn, artno_t artNo)
+NNArticleRetrieveByArtNo(Connection *conn, artno_t artNo, int current)
 {
     const char *ovdata;
     const char *msgid;
@@ -419,6 +511,9 @@ NNArticleRetrieveByArtNo(Connection *conn, artno_t artNo)
 		MBPrintf(&conn->co_TMBuf, ".\r\n");
 	    NNCommand(conn);
 	}
+    } else if (current) {
+	MBLogPrintf(conn, &conn->co_TMBuf, "420 Current article number is invalid\r\n");
+	NNCommand(conn);
     } else {
 	MBLogPrintf(conn, &conn->co_TMBuf, "423 No such article number in this group\r\n");
 	NNCommand(conn);

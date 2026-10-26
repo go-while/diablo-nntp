@@ -472,6 +472,7 @@ typedef struct Connection {
     struct activeCacheEnt *co_ListCachePtr;
     struct GroupList *co_ListCacheGroups;
     int		co_ArtMode;	/* current article mode		*/
+    int		co_ListStrict;	/* OVER/HDR (RFC 3977), not XOVER/XHDR */
     artno_t	co_ArtNo;	/* current article number	*/
     artno_t	co_ArtBeg;
     artno_t	co_ArtEnd;
@@ -555,6 +556,7 @@ typedef struct Connection {
 #define COM_NEWNEWS	14
 
 #define	COM_XZVER	15
+#define	COM_ACTIVETIMES	16		/* list active.times		*/
 
 #define	ARTFETCH_MSGID	0x01		/* Request was by Message-ID */
 #define	ARTFETCH_ARTNO	0x02		/* Request was by article number */

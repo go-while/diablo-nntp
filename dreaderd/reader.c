@@ -720,7 +720,7 @@ NNAuthDone(Connection *conn)
 		conn->co_Auth.dr_ReaderName);
 	NNCommand(conn);
     } else {
-	MBLogPrintf(conn, &conn->co_TMBuf, "502 Authentication error\r\n");
+	MBLogPrintf(conn, &conn->co_TMBuf, "481 Authentication failed\r\n");
 	NNTerminate(conn);
     }
 }
@@ -1018,14 +1018,14 @@ Command Cmds[] = {
     { 
 	"hdr",
 	CMDF_AUTH|0	     |CMDF_READER,
-	NNTPXHdr,
+	NNTPHdr,
 	"header [range|MessageID]",
 	DRBC_XHDR
     },
     { 
 	"over",
 	CMDF_AUTH|0	     |CMDF_READER,
-	NNTPXOver,
+	NNTPOver,
 	"[range]",
 	DRBC_XOVER
     },
@@ -1390,9 +1390,8 @@ NNTPHelp(Connection *conn, char **pptr)
  *
  * A feed connection starts in transit mode (COF_SERVER): IHAVE, and MODE
  * STREAM with CHECK and TAKETHIS; MODE READER switches to reader mode
- * unless the connection is feed-only.  Not listed because they don't
- * follow RFC 3977: HDR (answers 221 and "n (none)", not 225), LIST
- * ACTIVE.TIMES (not implemented) and LIST HEADERS (not implemented).
+ * unless the connection is feed-only.  Not listed: HDR, whose message-id
+ * form isn't implemented (RFC 3977 requires it), and with it LIST HEADERS.
  * AUTHINFO USER is listed while this connection needs authentication.
  */
 void
@@ -1411,7 +1410,7 @@ NNTPCapabilities(Connection *conn, char **pptr)
 	if (flags & DF_READ) {
 	    MBPrintf(&conn->co_TMBuf, "READER\r\n");
 	    MBPrintf(&conn->co_TMBuf, "OVER\r\n");
-	    MBPrintf(&conn->co_TMBuf, "LIST ACTIVE NEWSGROUPS OVERVIEW.FMT DISTRIB.PATS\r\n");
+	    MBPrintf(&conn->co_TMBuf, "LIST ACTIVE ACTIVE.TIMES NEWSGROUPS OVERVIEW.FMT DISTRIB.PATS\r\n");
 	    if (conn->co_Auth.dr_ReaderDef->rd_AllowNewnews)
 		MBPrintf(&conn->co_TMBuf, "NEWNEWS\r\n");
 	}

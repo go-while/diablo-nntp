@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"slices"
 	"strings"
 	"testing"
 
@@ -30,12 +29,13 @@ func readCaps(tb testing.TB, c *client.Conn) (map[string][]string, []string) {
 
 // TestReaderCapabilities: dreaderd answers CAPABILITIES (RFC 3977 §5.2) with what the
 // connection can use, and everything it lists works. A reader connection (read and post):
-// READER, OVER, LIST with ACTIVE NEWSGROUPS OVERVIEW.FMT DISTRIB.PATS, POST; no MODE-READER,
-// IHAVE, STREAMING or HDR (HDR doesn't follow RFC 3977 yet). A feed-only connection (transit
+// READER, OVER, LIST with ACTIVE ACTIVE.TIMES NEWSGROUPS OVERVIEW.FMT DISTRIB.PATS, POST; no
+// MODE-READER, IHAVE, STREAMING or HDR (HDR has no message-id form yet). A feed-only connection (transit
 // mode): IHAVE and STREAMING, no READER and no MODE-READER; MODE STREAM gets 203 there and
 // 501 on the reader connection. Then nntp-testkit's conformance
-// checks run against the reader; the capabilities, mode-reader and mode-stream-capability
-// checks must pass, the other results are logged. Before, CAPABILITIES got "500 What?".
+// checks run against the reader, and none may fail (before the reply-code fixes for D-44 to
+// D-47: listgroup, no-group, no-current-article and over-errors). Before, CAPABILITIES got
+// "500 What?".
 func TestReaderCapabilities(t *testing.T) {
 	st, spool := spoolStore(t)
 	post, _ := newPeer(t, &fakeserver.PeerOptions{})
@@ -119,9 +119,7 @@ func TestReaderCapabilities(t *testing.T) {
 			failed = append(failed, r.Name)
 		}
 	}
-	for _, name := range []string{"capabilities", "mode-reader", "mode-stream-capability"} {
-		if slices.Contains(failed, name) {
-			t.Errorf("conformance check %q failed", name)
-		}
+	if len(failed) > 0 {
+		t.Errorf("conformance checks failed: %q", failed)
 	}
 }
