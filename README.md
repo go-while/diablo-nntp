@@ -293,8 +293,10 @@ Both GNU Make and native FreeBSD Make use the shared installation script:
 | Component | Default Path |
 |---|---|
 | Executables | `/news/dbin/` |
-| Sample configurations | `/news/samples/` |
-| Configuration symlinks | `/news/` |
+| Sample configurations (read-only reference) | `/news/samples/` |
+| Configuration files (`diablo.config`, `dnewsfeeds`, `dreader.access`, ...) | `/news/` |
+| Active file (`dactive.kp`, created empty) | `/news/` |
+| Cron and maintenance scripts | `/news/adm/` |
 | Article spool | `/news/spool/` |
 | Queue | `/news/dqueue/` |
 | Runtime files | `/news/run/` |
@@ -315,13 +317,17 @@ make install
 
 A live installation requires appropriate permissions and the configured `news` user and group.
 
+`install` copies the configuration files from `samples/` into `/news` as real files, mode 0640 (owner and group `news`, as `dreader.access` can hold secrets), but only those that don't exist yet: an existing configuration file is never overwritten, and one readable by everyone gets a note recommending `chmod 640`. `dactive.kp` is created empty (`samples/dactive.kp` is only an example). The scripts from `samples/adm` go to `/news/adm` with their execute bit; a locally changed script is kept and the new version is installed next to it as `<name>.new`.
+
+Earlier installs symlinked the configuration files to `samples/`, which every install replaces. `install` and `bininstall` turn such symlinks into real files with the content in use, before `samples/` is updated, so a reinstall can't change the configuration.
+
 ### Binary Installation
 
 ```sh
 gmake bininstall
 ```
 
-This installs the applicable files without creating default configuration symlinks, making it suitable for updating an existing installation.
+This installs the executables, samples, scripts and manual pages without creating configuration files, making it suitable for updating an existing installation.
 
 ### Custom Installation Prefix
 
