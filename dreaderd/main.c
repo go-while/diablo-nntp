@@ -389,26 +389,28 @@ main(int ac, char **av)
     if (BindBase == NULL) {
 	BindList *bl = calloc(sizeof(BindList), 1);
 
-	bl->bl_Host = DOpts.ReaderBindHost;
-	bl->bl_Port = DOpts.ReaderPort;
-
 	bl->bl_Next = BindBase;
 	BindBase = bl;
+    }
+
+    /*
+     * -B host and -P port take the missing half from diablo.config
+     * (readerbindhost, readerbindport)
+     */
+    {
+	BindList *bl;
+
+	for (bl = BindBase; bl; bl = bl->bl_Next) {
+	    if (bl->bl_Host == NULL)
+		bl->bl_Host = DOpts.ReaderBindHost;
+	    if (bl->bl_Port == NULL)
+		bl->bl_Port = DOpts.ReaderPort;
+	}
     }
 
     MaxConnects = DOpts.ReaderThreads * DOpts.ReaderForks;
 
     MyGroupHome = strdup(PatExpand(GroupHomePat));
-
-    if (BindBase == NULL) {
-	BindList *bl = calloc(sizeof(BindList), 1);
-
-	bl->bl_Host = DOpts.ReaderBindHost;
-	bl->bl_Port = DOpts.ReaderPort;
-
-	bl->bl_Next = BindBase;
-	BindBase = bl;
-    }
 
     /*
      * To stdout, not an error, no arguments == user requesting 
