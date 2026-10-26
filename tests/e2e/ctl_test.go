@@ -30,10 +30,63 @@ func ctlPath(tb testing.TB, s *Site) string {
 	if p == "" {
 		p = filepath.Join(s.Bin, "..", "samples", "adm", "diablo-ctl")
 	}
-	if _, err := os.Stat(p); err != nil {
+	b, err := os.ReadFile(p)
+	if err != nil {
 		tb.Skipf("no diablo-ctl at %s (set %s)", p, EnvCtl)
 	}
+	// Before it was limited to its own site, diablo-ctl stopped "the oldest diablo of the
+	// user": on a host with a live site of the same user, that's the live one.
+	if bytes.Contains(b, []byte("pgrep -o -x diablo")) {
+		tb.Skipf("%s is an old diablo-ctl that may stop other sites' daemons", p)
+	}
 	return p
+}
+
+// EnvSleep makes the test binary a stand-in process that only sleeps (see TestMain and
+// startSleeper).
+const EnvSleep = "E2E_SLEEP"
+
+func TestMain(m *testing.M) {
+	if d := os.Getenv(EnvSleep); d != "" {
+		if dur, err := time.ParseDuration(d); err == nil {
+			time.Sleep(dur)
+		}
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
+// startSleeper starts a copy of the test binary called name in directory dir, where it
+// sleeps; diablo-ctl takes it for a dnewslink worker of the site whose dqueue dir is. The
+// returned channel is closed when the process has exited.
+func startSleeper(tb testing.TB, dir, name string) (*exec.Cmd, <-chan struct{}) {
+	tb.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		tb.Fatal(err)
+	}
+	b, err := os.ReadFile(self)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	exe := filepath.Join(tb.TempDir(), name)
+	if err := os.WriteFile(exe, b, 0o755); err != nil {
+		tb.Fatal(err)
+	}
+	cmd := exec.Command(exe)
+	cmd.Args[0] = name // as dspoolout starts dnewslink; busybox pgrep -x matches argv[0]
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), EnvSleep+"=5m")
+	if err := cmd.Start(); err != nil {
+		tb.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(done) }()
+	tb.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		<-done
+	})
+	return cmd, done
 }
 
 // ctl runs diablo-ctl with the site's diablo.config and conf, and returns its output and
@@ -190,4 +243,72 @@ func TestDiabloCtlReader(t *testing.T) {
 	}
 	out, code = ctl(t, s, ctlp, conf, "status")
 	wantCtl(t, out, code, 3, "status after stop")
+}
+
+// TestDiabloCtlOnlyItsOwnSite: diablo-ctl stop acts on its own site only. Another site of the
+// same user, started first, keeps its diablo and its dnewslink worker; the site's own worker
+// is stopped. diablo writes <path_log>/diablo.pid and removes it on exit. Before, diablo-ctl
+// took the oldest diablo of the user for the site's master, so it waited for, then killed,
+// the other site's diablo, and it stopped every dnewslink of the user.
+func TestDiabloCtlOnlyItsOwnSite(t *testing.T) {
+	other := NewSite(t, SiteOptions{})
+	_, otherLinkDone := startSleeper(t, filepath.Join(other.Dir, "dqueue"), "dnewslink")
+
+	s := NewSite(t, SiteOptions{NoStart: true})
+	ctlp := ctlPath(t, s)
+	conf := filepath.Join(s.Dir, "diablo-ctl.test.conf")
+	s.WriteFile(t, "diablo-ctl.test.conf", "DIABLO_BIN='"+s.Bin+"'\n"+
+		"DIABLO_DAEMONS='diablo'\n"+
+		"DIABLO_OPTS='-p "+PathHost+" -h "+PathHost+" -P "+s.Addr+"'\n"+
+		"DIABLO_STOP_WAIT=5\n")
+	t.Cleanup(func() { ctl(t, s, ctlp, conf, "stop") })
+
+	out, code := ctl(t, s, ctlp, conf, "start")
+	wantCtl(t, out, code, 0, "start")
+	pidFile := filepath.Join(s.Dir, "log", "diablo.pid")
+	b, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatalf("no diablo.pid after start: %v", err)
+	}
+	pid := strings.TrimSpace(string(b))
+	if _, err := strconv.Atoi(pid); err != nil {
+		t.Fatalf("diablo.pid: %q", b)
+	}
+	out, code = ctl(t, s, ctlp, conf, "status")
+	wantCtl(t, out, code, 0, "status while running")
+	if !strings.Contains(out, "(pid "+pid+")") {
+		t.Errorf("status: %q, want the pid from diablo.pid (%s)", out, pid)
+	}
+	_, ownLinkDone := startSleeper(t, filepath.Join(s.Dir, "dqueue"), "dnewslink")
+
+	out, code = ctl(t, s, ctlp, conf, "stop")
+	wantCtl(t, out, code, 0, "stop")
+	if _, err := os.Stat(pidFile); err == nil {
+		t.Errorf("diablo.pid still there after stop")
+	}
+
+	select {
+	case <-otherLinkDone:
+		t.Errorf("diablo-ctl stop of one site stopped another site's dnewslink\n%s", out)
+	default:
+	}
+	p := other.Peer(t)
+	if !strings.HasPrefix(p.Greeting, "200 ") {
+		t.Fatalf("other site's greeting after diablo-ctl stop: %q", p.Greeting)
+	}
+	expect(t, p, 205, "QUIT")
+	select {
+	case <-other.Proc.Done():
+		t.Errorf("other site's diablo is gone after diablo-ctl stop\n%s", out)
+	default:
+	}
+
+	// The site's own worker: only where diablo-ctl can see a process's working directory.
+	if runtime.GOOS == "linux" || runtime.GOOS == "freebsd" || runtime.GOOS == "illumos" || runtime.GOOS == "solaris" {
+		select {
+		case <-ownLinkDone:
+		case <-time.After(testkit.Deadline()):
+			t.Errorf("diablo-ctl stop left the site's own dnewslink running\n%s", out)
+		}
+	}
 }

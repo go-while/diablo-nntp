@@ -39,6 +39,7 @@ test fails.
 | `TestDexpireKeepsNewestDir` | diablo, dexpire | `dexpire -a` keeps a spool's newest directory even when it is older than `keeptime` (diablo may be writing into it): the article in it stays readable and the next one is stored. **Fails** on main before jrehmer/diablo-nntp#25 |
 | `TestSpoolDirRemovedWhileWriting` | diablo | the spool directory a connection writes into is removed (as dexpire can do); the next article on the same connection is stored (235, then STAT 223) in a recreated directory. **Fails** on main before jrehmer/diablo-nntp#24 (235, then STAT 430: the article was lost) |
 | `TestDiabloCtlFeeder`, `TestDiabloCtlReader` | samples/adm/diablo-ctl | status (3 when stopped), start, a second start ("already running"), restart, stop (port closed), stop again; skipped without the script (`DIABLO_CTL`, default: `samples/adm/diablo-ctl` next to `DIABLO_BIN`) |
+| `TestDiabloCtlOnlyItsOwnSite` | samples/adm/diablo-ctl, diablo | `diablo-ctl stop` acts on its own site only: another site of the same user, started first, keeps its diablo and its dnewslink worker (a stand-in in its dqueue); the site's own worker is stopped; diablo writes `log/diablo.pid` and removes it on exit. **Fails** on main before #31: diablo-ctl reported and killed the other site's diablo and dnewslink. The diablo-ctl tests skip an old diablo-ctl that still looks for "the oldest diablo of the user" |
 | `TestCanLockVectors` | (Go only) | the Go Cancel-Lock helpers reproduce INN's test vectors (tests/lib/canlock-t.c) |
 | `TestCancelLock`, `TestCancelLockSupersedes`, `TestCancelLockEarlyCancel`, `TestCancelLockTrackonlyRefused` | dreaderd | `readercanlock` (RFC 8315): cancels and supersedes against Cancel-Lock in each mode (require-auth, auth, none, all), matching, wrong and missing keys, sha1 in a folded lock with a comment, early cancels, and the trackonly refusal; skipped without readercanlock support |
 | `TestDnewslinkConnlife` | diablo, dspoolout, dnewslink | realtime feed with `connlife 8` (skipped without `dnewslink -K`): one TCP session across a queue rotation; after connlife, retirement at the next rotation and a replacement at once (`dspoolout -J`); no descriptor growth over three replacements; every article reaches the peer once, in order. Linux only (reads /proc) |
@@ -63,6 +64,12 @@ DIABLO_BIN=$PWD/../../dbin go test ./...
 Without `DIABLO_BIN` every test is skipped. `NNTP_TEST_DEADLINE` (default
 `60s`) bounds every blocking step, so a hung server fails the test instead of
 hanging it.
+
+Prefer a test machine. Each test starts its own daemons in a temporary
+directory on free ports, and the tests only signal processes of their own
+sites. But they run as `news`, like a live site, and a bug there can reach the
+live daemons: before jrehmer/diablo-nntp#31, `TestDiabloCtl*` (through
+diablo-ctl) stopped the live diablo, dreaderd and dnewslink of the same user.
 
 Run the tests as an ordinary user or as `news`, not as root. As an ordinary
 user, `diablo`'s switch to `news` fails and it keeps running as that user,

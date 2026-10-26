@@ -12,8 +12,13 @@
 # <path_home>/diablo-ctl.conf when it exists.  See samples/adm/diablo-ctl.conf.
 #
 # Run it as root (the daemons bind their port, then switch to the news user)
-# or as the user the daemons run as.  POSIX sh; uses pgrep/pkill with -x,
-# never -f.
+# or as the user the daemons run as.  POSIX sh.
+#
+# It only ever signals this site's processes, so several sites can run as
+# the same user: the daemons through their control sockets (path_run) and
+# their pid files in path_log (diablo.pid, dreaderd.pid), realtime dnewslink
+# workers by their working directory (this site's path_dqueue).  A diablo
+# too old to write diablo.pid is stopped through its control socket only.
 #
 # Exit status: 0 ok, 1 failure, 2 usage, 3 status: a requested daemon is not
 # running.
@@ -67,6 +72,8 @@ fi
 [ -n "${DIABLO_BIN:-}" ] && [ -x "$DIABLO_BIN/dpath" ] || { say "no diablo binaries found; set DIABLO_BIN"; exit 1; }
 
 home=$("$DIABLO_BIN/dpath" home) || { say "dpath cannot read diablo.config"; exit 1; }
+logdir=$("$DIABLO_BIN/dpath" log) || { say "dpath cannot read diablo.config"; exit 1; }
+dqueue=$(cd "$("$DIABLO_BIN/dpath" dqueue 2>/dev/null)" 2>/dev/null && pwd -P) || dqueue=""
 if [ -z "$conf" ] && [ -r "$home/diablo-ctl.conf" ]; then
     . "$home/diablo-ctl.conf"
 fi
@@ -110,21 +117,49 @@ up() {
     [ -n "$reply" ]
 }
 
-# masterpid <daemon>: the pid of the daemon's master process, or nothing.
-# dreaderd writes <path_log>/dreaderd.pid; diablo writes no pid file, so its
-# master is the oldest diablo process of DIABLO_USER.
+# masterpid <daemon>: the pid of this site's master process, from its pid
+# file in path_log, or nothing.  Only a live process with the daemon's name
+# counts.  Never "the oldest diablo of the user": that may be another site's.
 masterpid() {
-    case $1 in
-	dreaderd)
-	    pf="$("$DIABLO_BIN/dpath" log)/dreaderd.pid"
-	    if [ -r "$pf" ]; then
-		p=$(tr -dc '0-9' < "$pf")
-		[ -n "$p" ] && kill -0 "$p" 2>/dev/null && { echo "$p"; return; }
-	    fi
-	    pgrep -o -x dreaderd -U "$DIABLO_USER" 2>/dev/null ;;
-	diablo)
-	    pgrep -o -x diablo -U "$DIABLO_USER" 2>/dev/null ;;
-    esac
+    pf="$logdir/$1.pid"
+    [ -r "$pf" ] || return 0
+    p=$(tr -dc '0-9' < "$pf")
+    [ -n "$p" ] && kill -0 "$p" 2>/dev/null || return 0
+    if [ -r "/proc/$p/comm" ]; then
+	c=$(cat "/proc/$p/comm")		# Linux
+    else
+	c=$(ps -o comm= -p "$p" 2>/dev/null)	# BSD, illumos
+    fi
+    c=${c##*/}
+    [ "$c" = "$1" ] && echo "$p"
+}
+
+# pidtext <daemon>: the master's pid for messages.
+pidtext() {
+    p=$(masterpid "$1")
+    echo "${p:-unknown}"
+}
+
+# cwdof <pid>: the working directory of a process, or nothing where the
+# system doesn't tell (pwdx: Linux, illumos; /proc: Linux; procstat: FreeBSD).
+cwdof() {
+    if command -v pwdx >/dev/null 2>&1; then
+	pwdx "$1" 2>/dev/null | sed -n 's/^[0-9]*: //p'
+    elif [ -r "/proc/$1/cwd" ]; then
+	readlink "/proc/$1/cwd" 2>/dev/null
+    elif command -v procstat >/dev/null 2>&1; then
+	procstat -h -f "$1" 2>/dev/null | awk '$3 == "cwd" { print $NF }'
+    fi
+}
+
+# sitelinks: this site's dnewslink workers.  dspoolout starts them in
+# path_dqueue and they stay there; workers of other sites, and workers whose
+# working directory can't be read, are left alone.
+sitelinks() {
+    [ -n "$dqueue" ] || return 0
+    for p in $(pgrep -x dnewslink -U "$DIABLO_USER" 2>/dev/null); do
+	[ "$(cwdof "$p")" = "$dqueue" ] && echo "$p"
+    done
 }
 
 # waitgone <pid> <seconds>: wait until pid has exited; 1 if it is still there.
@@ -141,7 +176,7 @@ waitgone() {
 start_one() {
     d=$1
     if up "$d"; then
-	say "$d is already running (pid $(masterpid "$d"))"
+	say "$d is already running (pid $(pidtext "$d"))"
 	return 0
     fi
     [ -n "${DIABLO_NOFILE:-}" ] && ulimit -n "$DIABLO_NOFILE"
@@ -171,7 +206,7 @@ start_one() {
 	sleep 1
 	n=$((n + 1))
     done
-    say "$d started (pid $(masterpid "$d"))"
+    say "$d started (pid $(pidtext "$d"))"
 }
 
 stop_one() {
@@ -189,27 +224,45 @@ stop_one() {
 	diablo) "$DIABLO_BIN/dicmd" exit >/dev/null 2>&1 ;;
 	dreaderd) "$DIABLO_BIN/drcmd" exit >/dev/null 2>&1 ;;
     esac
-    if [ -n "$pid" ] && ! waitgone "$pid" "$DIABLO_STOP_WAIT"; then
-	say "$d (pid $pid) still running after ${DIABLO_STOP_WAIT}s: SIGTERM"
-	kill -TERM "$pid" 2>/dev/null
-	if ! waitgone "$pid" 5; then
-	    say "$d (pid $pid) still running: SIGKILL"
-	    kill -KILL "$pid" 2>/dev/null
-	    waitgone "$pid" 5 || { say "cannot stop $d (pid $pid)"; return 1; }
+    if [ -n "$pid" ]; then
+	if ! waitgone "$pid" "$DIABLO_STOP_WAIT"; then
+	    say "$d (pid $pid) still running after ${DIABLO_STOP_WAIT}s: SIGTERM"
+	    kill -TERM "$pid" 2>/dev/null
+	    if ! waitgone "$pid" 5; then
+		say "$d (pid $pid) still running: SIGKILL"
+		kill -KILL "$pid" 2>/dev/null
+		waitgone "$pid" 5 || { say "cannot stop $d (pid $pid)"; return 1; }
+	    fi
 	fi
+    else
+	# No pid file: wait until the control socket stops answering, but
+	# signal nothing (whatever pgrep finds may belong to another site).
+	n=0
+	while up "$d"; do
+	    if [ "$n" -ge "$DIABLO_STOP_WAIT" ]; then
+		say "$d still answers after ${DIABLO_STOP_WAIT}s and has no pid file in $logdir; stop it by hand"
+		return 1
+	    fi
+	    sleep 1
+	    n=$((n + 1))
+	done
     fi
     for k in $kids; do
 	kill -0 "$k" 2>/dev/null && kill -TERM "$k" 2>/dev/null
     done
     if [ "$d" = diablo ]; then
 	# Realtime dnewslink workers (started by dspoolout) keep running
-	# without diablo; stop them too.  dspoolout from cron starts them again.
-	pkill -TERM -x dnewslink -U "$DIABLO_USER" 2>/dev/null
-	n=0
-	while pgrep -x dnewslink -U "$DIABLO_USER" >/dev/null 2>&1 && [ "$n" -lt 10 ]; do
-	    sleep 1
-	    n=$((n + 1))
-	done
+	# without diablo; stop this site's.  dspoolout from cron starts them
+	# again.
+	links=$(sitelinks)
+	if [ -n "$links" ]; then
+	    kill -TERM $links 2>/dev/null
+	    n=0
+	    while [ -n "$(sitelinks)" ] && [ "$n" -lt 10 ]; do
+		sleep 1
+		n=$((n + 1))
+	    done
+	fi
     fi
     say "$d stopped"
 }
@@ -221,7 +274,7 @@ status_one() {
 	    diablo) line=$("$DIABLO_BIN/dicmd" status 2>/dev/null | head -1) ;;
 	    dreaderd) line=$("$DIABLO_BIN/drcmd" status 2>/dev/null | head -1) ;;
 	esac
-	say "$d is running (pid $(masterpid "$d")): $line"
+	say "$d is running (pid $(pidtext "$d")): $line"
 	return 0
     fi
     say "$d is not running"
