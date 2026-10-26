@@ -173,12 +173,14 @@ main(int ac, char **av)
 	 * create new header if necessary
 	 */
 	if (he == NULL) {		/* new header		      */
-	    he = malloc(sizeof(Header));
+	    if ((he = malloc(sizeof(Header))) == NULL)
+		exit(2);
 	    nl = 1;
 	    *PHe = he;
 	    PHe = &he->he_Next;
 	    he->he_Next = NULL;
-	    he->he_Name = malloc(1);
+	    if ((he->he_Name = malloc(1)) == NULL)
+		exit(2);
 	    he->he_Name[0] = 0;
 	}
 
@@ -186,9 +188,13 @@ main(int ac, char **av)
 	 * append data buffer to header
 	 */
 	{
-	    int r = strlen(he->he_Name);
-	    he->he_Name = realloc(he->he_Name, r + l + 1);
-	    strcpy(he->he_Name + r, buf);
+	    size_t r = strlen(he->he_Name);
+	    char *name = realloc(he->he_Name, r + l + 1);
+
+	    if (name == NULL)
+		exit(2);
+	    memcpy(name + r, buf, l + 1);
+	    he->he_Name = name;
 	}
 
 	/*
@@ -269,7 +275,7 @@ main(int ac, char **av)
 
     if (argcount == 0) {
 	if ((prog = FindGpgv()) == NULL) {
-	    fprintf(stderr, "pgpverify: no gpgv, gpgv2 or gpgv1 found\n");
+	    fprintf(stderr, "pgpverify: no gpgv2, gpgv or gpgv1 found\n");
 	    exit(2);
 	}
 	argv[argcount++] = (char *)prog;
@@ -285,8 +291,10 @@ main(int ac, char **av)
 }
 
 /*
- * FindGpgv() - locate gpgv (GnuPG 2.x usually, 1.x on older systems),
- *		gpgv2 or gpgv1 in the usual binary directories.
+ * FindGpgv() - locate gpgv2, gpgv (GnuPG 2.x usually, 1.x on older
+ *		systems and in pkgsrc's gnupg) or gpgv1 in the usual binary
+ *		directories.  gpgv2 first: where both are installed, gpgv
+ *		is often 1.4, which can't check newer key types (Ed25519).
  */
 
 static const char *
@@ -294,7 +302,7 @@ FindGpgv(void)
 {
     static const char *dirs[] = { "/usr/bin", "/usr/local/bin", "/opt/local/bin",
 				  "/usr/pkg/bin", "/opt/ooce/bin", NULL };
-    static const char *names[] = { "gpgv", "gpgv2", "gpgv1", NULL };
+    static const char *names[] = { "gpgv2", "gpgv", "gpgv1", NULL };
     static char path[PATH_MAX];
     int n;
     int d;
@@ -431,7 +439,7 @@ VerifyGpgv(char **argv, const char *keyring, const char *version,
 	}
     }
     n = 0;
-    while (argv[n] != NULL && n < 10) {
+    while (n < 10 && argv[n] != NULL) {
 	gargv[n] = argv[n];
 	++n;
     }
