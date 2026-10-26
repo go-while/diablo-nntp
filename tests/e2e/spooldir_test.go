@@ -12,8 +12,13 @@ import (
 // the same connection is still stored: diablo recreates the directory and changes into it
 // again. Before, it kept retrying inside the removed directory and rejected the article with
 // "IOError/Missing-dir" (436).
+//
+// diablo logs to a file in the site (path_generallog): on illumos, syslog has no LOG_PERROR,
+// so in -d mode the log lines never reach stderr.
 func TestSpoolDirRemovedWhileWriting(t *testing.T) {
-	s := NewSite(t, SiteOptions{})
+	s := NewSite(t, SiteOptions{
+		Config: map[string]string{"path_generallog": "%s/general.log"},
+	})
 	p := s.Peer(t)
 	first := msgID(t)
 	expect(t, p, 335, "IHAVE %s", first)
@@ -40,7 +45,9 @@ func TestSpoolDirRemovedWhileWriting(t *testing.T) {
 	if again, _ := filepath.Glob(filepath.Join(s.Dir, "spool", "news", "D.*")); len(again) == 0 {
 		t.Errorf("spool directory not recreated")
 	}
-	if e := s.Proc.Stderr(); !strings.Contains(e, "was missing, created it") && !strings.Contains(e, "was removed while open") {
-		t.Errorf("no log line about the recreated spool directory")
+	logged, _ := os.ReadFile(filepath.Join(s.Dir, "log", "general.log"))
+	e := string(logged) + s.Proc.Stderr()
+	if !strings.Contains(e, "was missing, created it") && !strings.Contains(e, "was removed while open") {
+		t.Errorf("no log line about the recreated spool directory in log/general.log or stderr:\n%s", logged)
 	}
 }
