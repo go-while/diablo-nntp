@@ -68,11 +68,16 @@ Run the tests as an ordinary user or as `news`, not as root. As an ordinary
 user, `diablo`'s switch to `news` fails and it keeps running as that user,
 which owns the test sites.
 
-The tests need a system where 127.0.0.2 can be used as a source address
-(Linux routes all of 127.0.0.0/8 to the loopback interface; on FreeBSD and
-macOS add the alias first, e.g. `ifconfig lo0 alias 127.0.0.2`).
+The tests need a system where 127.0.0.2 can be used as a source address.
+Linux routes all of 127.0.0.0/8 to the loopback interface. Elsewhere add the
+address first:
 
-`ci/build-on-host` installs the build packages (apt, dnf or apk), creates the
+- FreeBSD and macOS: `ifconfig lo0 alias 127.0.0.2/32`
+- illumos (SmartOS, OmniOS): `ipadm create-addr -T static -a 127.0.0.2/32 lo0/e2e`
+
+`TestDnewslinkConnlife` reads `/proc` and is skipped off Linux.
+
+`ci/build-on-host` installs the build packages (apt, dnf, zypper, pacman, apk or emerge), creates the
 `news` user, turns RADIUS off and builds; run it as root from the top of a
 throwaway copy of the source tree. The test binary can be built elsewhere
 with `CGO_ENABLED=0 go test -c` and copied to a machine without Go.
