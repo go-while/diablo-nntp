@@ -520,6 +520,7 @@ spool_file(char *spoolFile, int pass, NewslinkInfo *li, int flags)
     char maxStreamStr[32];
     char compressStr[32];
     char delayStr[32];
+    char connlifeStr[32];
 
     if (VerboseOpt)
 	printf("spool_file(%s, %d, %s, %d)\n",
@@ -534,6 +535,7 @@ spool_file(char *spoolFile, int pass, NewslinkInfo *li, int flags)
     sprintf(maxStreamStr, "-nop");
     sprintf(compressStr, "-nop");
     sprintf(delayStr, "-nop");
+    sprintf(connlifeStr, "-nop");
 
     if (li->li_TransmitBuf > 0 && li->li_TransmitBuf < 16 * 1024 * 1024)
 	sprintf(txBufSizeStr, "-T%d", li->li_TransmitBuf);
@@ -547,6 +549,8 @@ spool_file(char *spoolFile, int pass, NewslinkInfo *li, int flags)
 	sprintf(compressStr, "-Z%d", li->li_Compress);
     if (li->li_DelayFeed > 0)
 	sprintf(delayStr, "-W%d", li->li_DelayFeed);
+    if (li->li_ConnLife > 0 && li->li_RealTime)
+	sprintf(connlifeStr, "-K%d", li->li_ConnLife);
 
     /*
      * Outbound article logging.
@@ -851,7 +855,7 @@ spool_file(char *spoolFile, int pass, NewslinkInfo *li, int flags)
 			printf("dspoolout: run realtime %s\n", spoolFile);
 
 		    if (VerboseOpt)
-			printf("%s %s%s %s%s %s%s %s%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s\n",
+			printf("%s %s%s %s%s %s%s %s%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s\n",
 				"dnewslink",
 				"-h", li->li_HostName,
 				"-b", spoolFile,
@@ -873,6 +877,7 @@ spool_file(char *spoolFile, int pass, NewslinkInfo *li, int flags)
 				txBufSizeStr,
 				rxBufSizeStr,
 				delayStr,
+				connlifeStr,
 				maxStreamStr
 			    );
 		    if (ForReal && fork() == 0) {
@@ -912,6 +917,7 @@ spool_file(char *spoolFile, int pass, NewslinkInfo *li, int flags)
 				txBufSizeStr,
 				rxBufSizeStr,
 				delayStr,
+				connlifeStr,
 				maxStreamStr,
 				NULL
 			    );

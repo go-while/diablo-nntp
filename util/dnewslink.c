@@ -272,6 +272,10 @@ char LastErrBuf[256];
 int CBFIndex;
 int BatchSeq = -1;
 int NumBatches = 1;
+int ConnLife = 0;
+int RotatedBatch = 0;
+int IdleRetire = 0;
+time_t ProcessStarted = 0;
 int HeaderSize = 0;
 int NotifyFd = -1;
 int NotifyLockFd = -1;
@@ -295,6 +299,8 @@ int WouldHaveRefiled;
 int HasStatusLine;
 
 void sigTerm(int sigNo);
+static time_t monotonicSeconds(void);
+static void closeOutboundSession(int cfd);
 
 void
 Usage(char *progname)
@@ -311,6 +317,7 @@ Usage(char *progname)
 	    "-D              - detect delete-out-from-under\n"
 	    "-d[#]           - debug option\n"
 	    "-H              - (header only) incl Bytes: hdr, pass body only for control msgs\n"
+	    "-K #            - persistent realtime connection lifetime (seconds)\n"
 	    "-h host         - specify remote host\n"
 	    "-i              - disable streaming & streaming check\n"
 	    "-L              - generate Lines: header\n"
@@ -342,6 +349,8 @@ main(int ac, char **av)
 {
     int i;
     int eNoBat = 0;
+    int retainedCfd = -1;
+    int retire = 0;
 
     TimeNow = time(NULL);
     OpenLog("newslink", (DebugOpt > 0? LOG_PERROR: 0) | LOG_NDELAY | LOG_PID);
@@ -392,6 +401,9 @@ main(int ac, char **av)
 	    break;
 	case 'I':
 	    NoCheckOpt = 1;
+	    break;
+	case 'K':
+	    ConnLife = strtol(((*ptr) ? ptr : av[++i]), NULL, 0);
 	    break;
 	case 'L':
 	    GenLinesHeader = 1;
@@ -475,6 +487,13 @@ main(int ac, char **av)
     LogAfterCount += LogAfter;
     CloseReopenCount += CloseReopenAfter;
 
+    if (ConnLife < 0 || (ConnLife > 0 && !RealTimeOpt)) {
+	Usage(av[0]);
+    }
+    /* Persistence uses a time limit, not -c's article-count reconnect. */
+    if (ConnLife > 0)
+	CloseReopenCount = -1;
+
     if (BatchFileCtl == NULL || HostName == NULL || i > ac) {
 	Usage(av[0]);
     }
@@ -518,7 +537,10 @@ main(int ac, char **av)
 	exit(0);
     }
 
-    while (--NumBatches >= 0) {
+    /* Legacy realtime feeds still honor the historical -N batch limit.
+     * -K opts in to time-based process lifetime and socket reuse instead.
+     */
+    while (ConnLife > 0 || --NumBatches >= 0) {
 	time_t ddTime;
 	time_t ddCount = 0;
 	time_t cdflushTime;
@@ -526,6 +548,8 @@ main(int ac, char **av)
 	int cfd = -1;
 
 	HeaderSize = 0;
+	RotatedBatch = 0;
+	IdleRetire = 0;
 
 	Stats->SentStats.ConnectTotal = 0;
 	Stats->SentStats.OfferedTotal = 0;
@@ -589,6 +613,11 @@ main(int ac, char **av)
 		    eNoBat = 1;
 		    dl_logit("no batchfile");
 		}
+		/* Without -N's bounded iterations, do not spin on an
+		 * unavailable realtime queue.  dspoolout can restart us.
+		 */
+		if (ConnLife > 0)
+		    break;
 		continue;
 	    }
 
@@ -624,6 +653,8 @@ main(int ac, char **av)
 		}
 		if (st.st_nlink == 0) {
 		    close(fd);
+		    if (ConnLife > 0)
+			break;
 		    continue;
 		}
 		eNoBat = 0;
@@ -646,7 +677,15 @@ main(int ac, char **av)
 	 * Connect to remote, send news
 	 */
 
-	if ((cfd = connectTo(HostName, NULL, Port)) >= 0) {
+	if (retainedCfd >= 0) {
+	    cfd = retainedCfd;
+	    retainedCfd = -1;
+	} else {
+	    cfd = connectTo(HostName, NULL, Port);
+	    if (cfd >= 0 && ConnLife > 0 && ProcessStarted == 0)
+		ProcessStarted = monotonicSeconds();
+	}
+	if (cfd >= 0) {
 	    char buf[1024];
 	    char relPath[1024];
 	    char msgId[1024];
@@ -1004,6 +1043,8 @@ main(int ac, char **av)
 			    credtime(OUR_DELAY);
 			    (void)RefilePendingStreams(NULL); /* retry */
 			    if ((cfd = connectTo(HostName, NULL, Port)) >= 0) {
+			if (ConnLife > 0 && ProcessStarted == 0)
+			    ProcessStarted = monotonicSeconds();
 				connectCount = 0;
 				if (CloseReopenCount > 0)
 				    CloseReopenCount = Stats->SentStats.OfferedTotal +
@@ -1205,24 +1246,27 @@ main(int ac, char **av)
 	     */
 
 	    if (cfd >= 0) {
-		char *ptr;
-
-		commandResponse(cfd, &ptr, "quit\r\n");
-		flushCompressBuffer(cfd);
-		flushCommandBuffer(cfd);
-		close(cfd);
-		clearCommandBuffer();
-		KillFd = -1;
-		/* normal quit, do not set cfd to -1 	     */
-		/* this allows us to go on to the next batch */
-
-#ifdef	USE_ZLIB
-		if (CompressOn > 0) {
-		    int r;
-		    if ((r = deflateEnd(&Z_Strm)) != Z_OK)
-			logit(LOG_ERR, "deflateEnd error: %s", Z_Strm.msg);
+		/* Queue handoff is safe only after readline confirmed rotation,
+		 * every streaming response was collected, and no queue entry
+		 * needs to be refiled.  Keep protocol/compression state intact.
+		 */
+		if (ConnLife > 0 && RotatedBatch && !TermFlag &&
+		    NumBatches != 0 && StreamPend == 0 && StreamRetry == 0 &&
+		    WouldHaveRefiled == 0 && !WritesLosing) {
+		    if (monotonicSeconds() - ProcessStarted >= ConnLife) {
+			retire = 1;
+			dl_logit("connlife expired; retiring after queue rotation");
+		    } else {
+			retainedCfd = cfd;
+		    }
 		}
-#endif
+		if (IdleRetire) {
+		    retire = 1;
+		    dl_logit("connlife expired; retiring with empty queue");
+		}
+		if (retainedCfd < 0)
+		    closeOutboundSession(cfd);
+		/* Preserve the original nonnegative cfd for outer-loop flow. */
 	    }
 
 	    logStats("final");
@@ -1233,9 +1277,13 @@ main(int ac, char **av)
 	    readreset(fd);
 	    close(fd);
 	}
-	if (cfd < 0 || TermFlag)
+	if (cfd < 0 || TermFlag || retire || NumBatches == 0)
 	    break;
     } /* while, on NumBatches */
+
+    /* A saved socket must not survive an aborted next-queue open/lock. */
+    if (retainedCfd >= 0)
+	closeOutboundSession(retainedCfd);
 
     if (Logfd != NULL) fclose(Logfd);
     if (NotifyOpt != NULL) {
@@ -1243,6 +1291,38 @@ main(int ac, char **av)
 	CloseNotify(&NotifyFd, &NotifyLockFd, NotifyOpt);
     }
     exit(0);
+}
+
+/* Connection age is deliberately independent of queue rotation count. */
+static time_t
+monotonicSeconds(void)
+{
+    struct timespec ts;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) == 0)
+	return(ts.tv_sec);
+    return(time(NULL));
+}
+
+static void
+closeOutboundSession(int cfd)
+{
+    char *ptr;
+
+    commandResponse(cfd, &ptr, "quit\r\n");
+    flushCompressBuffer(cfd);
+    flushCommandBuffer(cfd);
+    close(cfd);
+    clearCommandBuffer();
+    KillFd = -1;
+#ifdef USE_ZLIB
+    if (CompressOn > 0) {
+	int r = deflateEnd(&Z_Strm);
+	if (r != Z_OK)
+	    logit(LOG_ERR, "deflateEnd error: %s", Z_Strm.msg);
+	CompressOn = 0;
+    }
+#endif
 }
 
 void
@@ -3010,6 +3090,12 @@ readline(int fd, char *buf, int size, time_t t)
     int loopCounter = 0;
     static int usleeptime = 100000;
 
+    /* A scheduled empty-queue retirement must not consume a new entry
+     * that races with shutdown; the next worker must read it instead.
+     */
+    if (IdleRetire)
+	return(-1);
+
     if (fd < 0 || fd >= MAXFILEDES) {
 	dl_logit("readline: bad fd: %d", fd);
 	return(-1);
@@ -3106,6 +3192,7 @@ readline(int fd, char *buf, int size, time_t t)
 		 */
 		if (stat(CurrentBatchFile,&st) == 0 &&
 				st.st_ino != CurSt.st_ino) {
+		    RotatedBatch = 1;
 		    /*
 		     * do not attempt to remove the batchfile if we would have
 		     * had to refile some of our entries.
@@ -3114,6 +3201,17 @@ readline(int fd, char *buf, int size, time_t t)
 			AttemptRemoveRenamedFile(&CurSt, BatchFileCtl);
 		    break;
 		}
+	    }
+
+	    /* A genuinely empty active queue can be handed to a replacement
+	     * safely without rotation: this worker has delivered no records
+	     * from it.  This also bounds idle process lifetime.
+	     */
+	    if (ConnLife > 0 && ProcessStarted > 0 &&
+		monotonicSeconds() - ProcessStarted >= ConnLife &&
+		fstat(fd, &st) == 0 && st.st_size == 0) {
+		IdleRetire = 1;
+		break;
 	    }
 
 	    /*
