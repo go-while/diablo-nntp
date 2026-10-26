@@ -499,8 +499,12 @@
 #
 #  connlife		N
 #	Optional persistent realtime NNTP session lifetime in seconds.
-#	For example, 86400 retires a realtime dnewslink after 24 hours,
-#	at the next safe queue handoff (or when the active queue is empty).
+#	For example, 86400 retires a realtime dnewslink after about 24
+#	hours.  Retirement happens at a safe queue handoff, i.e. a queue
+#	rotation by dspoolout, so the lifetime is rounded to the rotation
+#	nearest N seconds (with the usual once-a-minute dspoolout, 300
+#	means 5 minutes give or take 30 seconds); or once N has passed
+#	while the active queue is empty.
 #	Normal queue rotations keep the same TCP session and MODE STREAM.
 #	At retirement dnewslink sends QUIT and exits; dspoolout restarts it.
 #	The batch/backlog workers, maxparallel, and maxqueue are unchanged.

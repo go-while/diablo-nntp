@@ -275,6 +275,7 @@ int ConnLife = 0;
 int RotatedBatch = 0;
 int IdleRetire = 0;
 time_t ProcessStarted = 0;
+time_t LastHandoff = 0;	/* last kept queue rotation (or session start) */
 int HeaderSize = 0;
 int NotifyFd = -1;
 int NotifyLockFd = -1;
@@ -1252,11 +1253,22 @@ main(int ac, char **av)
 		if (ConnLife > 0 && RotatedBatch && !TermFlag &&
 		    NumBatches != 0 && StreamPend == 0 && StreamRetry == 0 &&
 		    WouldHaveRefiled == 0 && !WritesLosing) {
-		    if (monotonicSeconds() - ProcessStarted >= ConnLife) {
+		    time_t now = monotonicSeconds();
+		    time_t since = now - (LastHandoff ? LastHandoff : ProcessStarted);
+
+		    /* Retirement is only possible at a rotation, and the next
+		     * one is about "since" seconds away.  Retire at the
+		     * rotation nearest connlife rather than the first one after
+		     * it: otherwise a worker started just after a rotation is a
+		     * second short of connlife at each multiple and serves a
+		     * whole extra rotation interval (connlife 60 gave ~120 s).
+		     */
+		    if ((now - ProcessStarted) + since / 2 >= ConnLife) {
 			retire = 1;
 			dl_logit("connlife expired; retiring after queue rotation");
 		    } else {
 			retainedCfd = cfd;
+			LastHandoff = now;
 		    }
 		}
 		if (IdleRetire) {
