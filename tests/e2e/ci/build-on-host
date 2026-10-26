@@ -1,0 +1,39 @@
+#!/bin/sh
+
+##  Install build packages and build Diablo for the e2e tests on a Linux
+##  test machine.  Run as root from the top of a Diablo source tree copy:
+##
+##      tests/e2e/ci/build-on-host
+##
+##  RADIUS is turned off in this copy's lib/vendor.h: Linux has no BSD
+##  libradius (radlib.h).  The binaries end up in dbin/.  The news user and
+##  group are created when missing (diablo switches to them at startup).
+
+set -eu
+
+. /etc/os-release
+echo "== $PRETTY_NAME"
+
+if command -v apt-get >/dev/null; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get -qq update
+    apt-get -qq install -y build-essential libssl-dev libdb5.3-dev zlib1g-dev >/dev/null
+elif command -v dnf >/dev/null; then
+    dnf -q -y install gcc make findutils libdb-devel openssl-devel zlib-devel \
+        shadow-utils >/dev/null
+elif command -v apk >/dev/null; then
+    apk add -q build-base openssl-dev db-dev zlib-dev
+else
+    echo "no supported package manager" >&2
+    exit 1
+fi
+
+getent group news >/dev/null || groupadd -r news
+id news >/dev/null 2>&1 || useradd -r -g news -d /var/tmp -s /bin/sh news
+
+sed -i 's/^#define[[:space:]]*RADIUS_ENABLED/#undef RADIUS_ENABLED/' lib/vendor.h
+
+jobs=$(nproc 2>/dev/null || echo 1)
+make -j"$jobs" > build.log 2>&1 || { tail -40 build.log; exit 1; }
+echo "warnings: $(grep -c 'warning:' build.log || true)"
+ls dbin | wc -l | sed 's/^/executables: /'
