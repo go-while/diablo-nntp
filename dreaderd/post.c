@@ -51,6 +51,7 @@ int CheckGroupModeration(const char *group);
 void GenerateDistribution(MBufHead *mbuf, char *newsGrps);
 int BreakIfBadGroup(char *groups, Connection *conn);
 int CheckValidRestrictedGroup(const char *group);
+const char *PostRefusedGroup(char *groups, char *pstatus);
 int HeaderCmp(const char *big, const char *little, char **errMsg);
 
 /* JG19990908 don't publicize NNPH's, but still present a NNPH field that
@@ -164,6 +165,9 @@ NNPostBuffer(Connection *conn)
     int haveFrom = 0;
     int haveDate = 0;
     int haveApproved = 0;
+    const char *refused;
+    char refusedStatus = 0;
+    static char refusedMsg[MAXGNAME + 64];
     int haveNewsgroups = 0;
     int haveOrganization = 0;
     int haveDist = 0;
@@ -406,6 +410,16 @@ NNPostBuffer(Connection *conn)
 
     if (haveNewsgroups == 0) {
 	errMsg = "441 Required \"Newsgroups\" header is missing\r\n";
+    } else if ((refused = PostRefusedGroup(newsGrps2, &refusedStatus)) != NULL) {
+	/*
+	 * Like INN: status "n" means no local posting (articles from
+	 * peers are still accepted), "x" no posting at all.  This is a
+	 * permission, so it applies with or without checkpostgroups.
+	 */
+	snprintf(refusedMsg, sizeof(refusedMsg),
+	    "441 Posting to %s is not allowed (status %c)\r\n",
+	    refused, refusedStatus);
+	errMsg = refusedMsg;
     } else if (conn->co_Auth.dr_ReaderDef->rd_CheckPostGroups &&
 	       BreakIfBadGroup(newsGrps2, conn) != 0) {
 	errMsg = "441 Nonexistent newsgroup(s)\r\n";
@@ -796,6 +810,58 @@ NNPostResponse2(Connection *conn)
     } else if (len < 0) {
 	NNServerTerminate(conn);
     } /* else we haven't gotten the reponse yet */
+}
+
+/*
+ * PostRefusedGroup() -	the first group in the comma-separated list whose
+ *			status forbids local posting ("n" or "x"), or NULL.
+ *			*pstatus gets that status character.
+ */
+
+const char *
+PostRefusedGroup(char *groups, char *pstatus)
+{
+    static char name[MAXGNAME + 1];
+    int i = 0;
+
+    while (groups[i]) {
+	int j;
+	char c;
+
+	for (j = i; groups[j] && groups[j] != ','; ++j)
+	    ;
+	c = groups[j];
+	groups[j] = 0;
+
+	if (j > i && j - i <= MAXGNAME) {
+	    const char *rec;
+	    int recLen;
+
+	    rec = KPDBReadRecord(KDBActive, groups + i, KP_LOCK, &recLen);
+	    if (rec != NULL) {
+		int slen = 0;
+		const char *s = KPDBGetField(rec, recLen, "S", &slen, NULL);
+		int k;
+
+		for (k = 0; s && k < slen; ++k) {
+		    if (s[k] == 'n' || s[k] == 'x') {
+			*pstatus = s[k];
+			snprintf(name, sizeof(name), "%s", groups + i);
+			break;
+		    }
+		}
+		KPDBUnlock(KDBActive, rec);
+		if (s && k < slen) {
+		    groups[j] = c;
+		    return(name);
+		}
+	    }
+	}
+	i = j;
+	if ((groups[j] = c) == ',')
+	    ++i;
+    }
+    return(NULL);
 }
 
 /*
