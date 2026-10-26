@@ -62,7 +62,6 @@
 #define INF_DEBUG       199     /* Debug output */
 
 #define MAXCLINE	8192
-#define MAXFILEDES	32
 
 #define OUR_DELAY	1
 #define THEIR_DELAY	2
@@ -1304,7 +1303,22 @@ main(int ac, char **av)
 	pid_t pid = fork();
 	if (pid == 0) {
 	    char binPath[1024];
-	    int n = snprintf(binPath, sizeof(binPath),
+	    long fdLimit = sysconf(_SC_OPEN_MAX);
+	    long inheritedFd;
+	    int n;
+
+	    /* P2 re-execs dspoolout from this long-lived worker.  Without
+	     * closing inherited files, each replacement carries forward all
+	     * article-cache, queue, log and socket descriptors, causing fd
+	     * numbers to grow on every connlife cycle.  Keep stdio, which
+	     * dspoolout uses for its configured cron-style output log.
+	     */
+	    if (fdLimit < 0)
+		fdLimit = 1024;
+	    for (inheritedFd = 3; inheritedFd < fdLimit; ++inheritedFd)
+		close((int)inheritedFd);
+
+	    n = snprintf(binPath, sizeof(binPath),
 		"%s/dbin/dspoolout", NewsHome);
 	    if (n > 0 && (size_t)n < sizeof(binPath)) {
 		if (configOverride != NULL)
@@ -3051,21 +3065,26 @@ typedef struct {
     int	 rb_Len;
 } RBlock;
 
-RBlock *RBlockAry[MAXFILEDES];
+/* Only one queue file is read at a time.  The old array indexed by
+ * descriptor number rejected valid queue fds >= 32 once the article
+ * cache and logging had consumed the lower descriptor numbers.
+ */
+static RBlock *QueueReadBlock;
+static int QueueReadFd = -1;
 MemPool	*BMemPool;
 
 void
 readreset(int fd)
 {
-    RBlock *rbs;
-
-    if (fd < 0 || fd >= MAXFILEDES) {
+    if (fd < 0) {
 	dl_logit("readreset: bad fd: %d", fd);
 	return;
     }
-    if ((rbs = RBlockAry[fd]) != NULL) {
-	zfree(&BMemPool, rbs, sizeof(RBlock));
-	RBlockAry[fd] = NULL;
+    if (QueueReadFd == fd) {
+	if (QueueReadBlock != NULL)
+	    zfree(&BMemPool, QueueReadBlock, sizeof(RBlock));
+	QueueReadBlock = NULL;
+	QueueReadFd = -1;
     }
 }
 
@@ -3127,13 +3146,24 @@ readline(int fd, char *buf, int size, time_t t)
     if (IdleRetire)
 	return(-1);
 
-    if (fd < 0 || fd >= MAXFILEDES) {
+    if (fd < 0) {
 	dl_logit("readline: bad fd: %d", fd);
 	return(-1);
     }
-    if ((rbs = RBlockAry[fd]) == NULL) {
-	rbs = zalloc(&BMemPool, sizeof(RBlock));
-	RBlockAry[fd] = rbs;
+    if (QueueReadFd != fd) {
+	/* A new input queue must never reuse buffered bytes from a prior
+	 * queue, regardless of its operating-system descriptor number.
+	 */
+	if (QueueReadBlock != NULL)
+	    zfree(&BMemPool, QueueReadBlock, sizeof(RBlock));
+	QueueReadBlock = NULL;
+	QueueReadFd = fd;
+    }
+    if (QueueReadBlock == NULL)
+	QueueReadBlock = zalloc(&BMemPool, sizeof(RBlock));
+    if ((rbs = QueueReadBlock) == NULL) {
+	dl_logit("readline: unable to allocate queue buffer");
+	return(-1);
     }
     
     /*

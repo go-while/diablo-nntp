@@ -814,6 +814,10 @@ spool_file(char *spoolFile, int pass, NewslinkInfo *li, int flags)
 			if (li->li_Priority > 0)
 			    nice(li->li_Priority);
 
+			/* The parent uses this descriptor only to test the lock.
+			 * Do not pass a second open queue handle to dnewslink.
+			 */
+			close(fd);
 			snprintf(binPath, sizeof(binPath), "%s/dbin/dnewslink", NewsHome);
 
 			    execl(binPath, "dnewslink",
@@ -904,6 +908,10 @@ spool_file(char *spoolFile, int pass, NewslinkInfo *li, int flags)
 			if (li->li_Priority > 0)
 			    nice(li->li_Priority);
 
+			/* The parent uses this descriptor only to test the lock.
+			 * Do not pass a second open queue handle to dnewslink.
+			 */
+			close(fd);
 			snprintf(binPath, sizeof(binPath), "%s/dbin/dnewslink", NewsHome);
 
 			    /*
