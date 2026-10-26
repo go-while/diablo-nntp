@@ -91,6 +91,10 @@ main(int ac, char **av) {
 	}
 	ptr += 2;
 	switch(ptr[-1]) {
+	case 'C':		/* parsed by LoadDiabloConfig */
+	    if (*ptr == 0)
+		++i;
+	    break;
 	case 'H':
 	    halflife = strtol((*ptr) ? ptr : av[++i], NULL, 0);
 	    break;

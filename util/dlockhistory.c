@@ -54,7 +54,7 @@ main(int argc, char **argv) {
     char *HistoryFile;
     int SleepTime = 5;
     int Opened = 0;
-    char ch;
+    int ch;
     struct stat st;
     int PrevIno = -1;
     int Force = 0;
@@ -63,7 +63,7 @@ main(int argc, char **argv) {
     int All = 0;
 
     optind = 1;
-    while ((ch = getopt(argc, argv, "afsV")) != -1) {
+    while ((ch = getopt(argc, argv, "afs:V")) != -1) {
 	switch(ch) {
 	    case 'a':
 		All = 1;

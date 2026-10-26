@@ -12,12 +12,12 @@
 void
 Usage(char *progname)
 {
-    printf("Usage: %s [-B] [-C file] [-c n] [-D[n]] [-l] [-N] [-r] [-V]\n", progname);
+    printf("Usage: %s [-B] [-C file] [-c n] [-d[n]] [-l] [-N] [-r] [-V]\n", progname);
     printf("    where:\n");
     printf("\t-B\tenable working on body filter\n");
     printf("\t-C file\tset different diablo.config location\n");
     printf("\t-c n\tclear a specific table entry (-1 clears all)\n");
-    printf("\t-D[n]\tenable and set debug level\n");
+    printf("\t-d[n]\tenable and set debug level\n");
     printf("\t-l\tdump contents of spam cache\n");
     printf("\t-N\tenable working on nph filter\n");
     printf("\t-r\talso show expired entries\n");
@@ -30,8 +30,8 @@ main(int ac, char **av)
     int i;
     int dumpCache = 0;
     char *ptr;
-    int bodyCache = 1;
-    int postHostCache = 1;
+    int bodyCache = 0;
+    int postHostCache = 0;
     int clearEntry = 0;
     int clearVal = -1;
     int raw = 0;
@@ -58,6 +58,7 @@ main(int ac, char **av)
 		Usage(av[0]);
 	    clearEntry = 1;
 	    clearVal = strtol(ptr, NULL, 0);
+	    break;
 	case 'd':
 	    DebugOpt = (*ptr) ? strtol(ptr, NULL, 0) : 1;
 	    break;

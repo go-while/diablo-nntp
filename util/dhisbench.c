@@ -112,6 +112,7 @@ main(int ac, char **av)
 		    exit(1);
 		}
 		DOpts.HashSize = n;
+		break;
 	    case 'l':
 		if (*ptr == 'f') {
 		    ptr++;

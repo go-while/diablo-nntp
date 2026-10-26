@@ -47,6 +47,10 @@ main(int ac, char **av)
 	    exit(1);
 	}
     }
+    if (i + 1 >= ac) {
+	puts("plock [-r][-t] <file> <program...>");
+	exit(1);
+    }
     if ((fd = open(av[i], O_RDWR|O_CREAT, 0600)) < 0) {
 	printf("unable to open/create %s\n", av[i]);
 	exit(1);
