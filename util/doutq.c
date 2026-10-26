@@ -116,7 +116,8 @@ ScanSeq(char *name, char *host, int m)
 	    return;
 	}
 	bzero(path, sizeof(path));
-	read(fd, path, sizeof(path) - 1);
+	if (read(fd, path, sizeof(path) - 1) < 0)
+	    path[0] = 0;
 	close(fd);
     }
     if (sscanf(path, "%d %d", &b, &e) != 2) {

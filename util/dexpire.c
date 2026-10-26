@@ -586,7 +586,10 @@ removeDirectory(char *partname, char *dirname, int *count, int *ccount, double *
 	else
 	    c++;
     }
-    chdir(pwd);
+    if (chdir(pwd) < 0) {
+	fprintf(stderr, "Unable to chdir(\"%s\"): %s\n", pwd, strerror(errno));
+	exit(1);
+    }
     return(c);
 }
 
@@ -1157,8 +1160,10 @@ updateHistory(void)
 			    bpos + sizeof(History) * i + offsetof(History, exp),
 			    0
 			);
-			if (!NotForReal)
-			    write(HistoryFd, &h->exp, sizeof(h->exp));
+			if (!NotForReal &&
+			    WriteAll(HistoryFd, &h->exp, sizeof(h->exp)) < 0)
+			    fprintf(stderr, "history write failed: %s\n",
+							strerror(errno));
 
 			if (WriteHashesToFileOpt == 1)
 			    fwrite(&h->hv, sizeof(hash_t), 1, DExpOverList);

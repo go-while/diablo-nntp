@@ -1510,10 +1510,13 @@ MakeOverHFile(OverInfo *ov, artno_t artNo, int create)
 			    close(tmpfd);
 			    tmpfd = -1;
 		        } else {
-		            ftruncate(tmpfd, zlen);
-		            tmpmap = xmap(NULL, zlen, PROT_READ|PROT_WRITE, MAP_SHARED, tmpfd, 0);
+		            /* a mapping past the end of the file would fault */
+		            if (ftruncate(tmpfd, zlen) < 0)
+		                tmpmap = NULL;
+		            else
+		                tmpmap = xmap(NULL, zlen, PROT_READ|PROT_WRITE, MAP_SHARED, tmpfd, 0);
 	    	            if (! tmpmap) {
-		                logit(LOG_ERR, "Unable to xmap for gztmp /tmp/%s: %s",
+		                logit(LOG_ERR, "Unable to xmap for gztmp %s/%s: %s",
 			            MyGroupHome,
 		                    gfname,
 		                    strerror(errno)

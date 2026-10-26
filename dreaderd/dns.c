@@ -355,8 +355,7 @@ fileAuthenticate(char *user, char *pass, char *conf)
 	logit(LOG_ERR, "unable to open auth file %s", conf);
 	return(NULL);
     }
-    while (!feof(fp)) {
-	fgets(buffer, sizeof(buffer), fp);
+    while (fgets(buffer, sizeof(buffer), fp) != NULL) {
 	if ((ptr = strrchr(buffer, '\n'))) {
 	    *ptr = '\0';
 	}
@@ -2395,7 +2394,7 @@ sigSegVDNS(int sigNo)
 {
     if (DFd >= 0)
         close(DFd);
-    nice(20);
+    NiceBestEffort(20);
     for (;;)
         ;
 }   
@@ -3278,7 +3277,7 @@ InstallAccessCache(void) {
     rename(rdnewbuf, PatDbExpand(DRReaderCachePat));
     rename(ranewbuf, PatDbExpand(DRAccessCachePat));
 
-    write(tfp, &tfp, 1);
+    WriteBestEffort(tfp, &tfp, 1);
     xflock(tfp, XLOCK_UN);
     close(tfp);
 }

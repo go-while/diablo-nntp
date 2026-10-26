@@ -176,7 +176,10 @@ main(int ac, char **av)
     }
     for (i = 0; i < AddForks + LookupForks; i++) {
 	ForkMap tsmap = { 0 };
-	write(mapfd, &tsmap, sizeof(tsmap));
+	if (WriteAll(mapfd, &tsmap, sizeof(tsmap)) < 0) {
+	    fprintf(stderr, "Cannot write %s: %s\n", StatsPath, strerror(errno));
+	    exit(1);
+	}
     }
     StatsMap = xmap(NULL, sizeof(ForkMap) * (AddForks + LookupForks),
 				PROT_READ|PROT_WRITE, MAP_SHARED, mapfd, 0);

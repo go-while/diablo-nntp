@@ -578,7 +578,11 @@ ScanDirectories(void)
     if (VerboseOpt)
 	printf("Scanning group directories\n");
 
-    chdir(PatExpand(GroupHomePat));
+    if (chdir(PatExpand(GroupHomePat)) < 0) {
+	fprintf(stderr, "Unable to chdir(\"%s\"): %s\n",
+				PatExpand(GroupHomePat), strerror(errno));
+	exit(1);
+    }
     if ((dir = opendir(".")) != NULL) {
 	den_t *den;
 	struct stat st;
@@ -1200,7 +1204,8 @@ ExpireByDays(Group *group, int fd, OverHead *oh, int expireSecs)
 		    copy.oa_ArtNo = -2;		/* EXPIRED */
 		    if (ForReal) {
 			lseek(fd, (off_t)oh->oh_HeadSize + i * sizeof(OverArt), 0);
-			write(fd, &copy, sizeof(OverArt));
+			if (WriteAll(fd, &copy, sizeof(OverArt)) < 0)
+			    printf("overview write failed: %s\n", strerror(errno));
 		    }
 		    ++count;
 		}
@@ -1316,7 +1321,8 @@ ExpireBySpool(Group *group, int fd, OverHead *oh)
 		    copy.oa_ArtNo = -2;		/* EXPIRED */
 		    if (ForReal) {
 			lseek(fd, oh->oh_HeadSize + i * sizeof(OverArt), 0);
-			write(fd, &copy, sizeof(OverArt));
+			if (WriteAll(fd, &copy, sizeof(OverArt)) < 0)
+			    printf("overview write failed: %s\n", strerror(errno));
 		    }
 		    ++count;
 		}
@@ -1428,7 +1434,8 @@ ExpireFromFile(Group *group, int fd, OverHead *oh, int expireSecs)
 		    copy.oa_ArtNo = -2;		/* EXPIRED */
 		    if (ForReal) {
 			lseek(fd, oh->oh_HeadSize + i * sizeof(OverArt), 0);
-			write(fd, &copy, sizeof(OverArt));
+			if (WriteAll(fd, &copy, sizeof(OverArt)) < 0)
+			    printf("overview write failed: %s\n", strerror(errno));
 		    }
 		    ++count;
 		}
@@ -1661,8 +1668,11 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
 				    xunmap((void *)zmap, st.st_size);
 				    close(tmpfd);
 				} else {
-				    ftruncate(tmpfd, zlen);
-				    tmpmap = xmap(NULL, zlen, PROT_READ|PROT_WRITE, MAP_SHARED, tmpfd, 0);
+				    /* a mapping past the end of the file would fault */
+				    if (ftruncate(tmpfd, zlen) < 0)
+					tmpmap = NULL;
+				    else
+					tmpmap = xmap(NULL, zlen, PROT_READ|PROT_WRITE, MAP_SHARED, tmpfd, 0);
 				    if (! tmpmap) {
 					printf("Unable to xmap for gztmp %s: %s\n", tmpfile, strerror(errno));
 					xunmap((void *)zmap, st.st_size);
@@ -1980,7 +1990,8 @@ rewriteDataFile(Group *group, const char *cacheBase, int cacheSize, const OverAr
 	ob->oa_SeekPos = lseek(fc->fc_Fd, 0L, 1);
 	if (write(fc->fc_Fd, cacheBase + oa->oa_SeekPos, oa->oa_Bytes + 1) != oa->oa_Bytes + 1) {
 	    lseek(fc->fc_Fd, ob->oa_SeekPos, 0);
-	    ftruncate(fc->fc_Fd, ob->oa_SeekPos);
+	    if (ftruncate(fc->fc_Fd, ob->oa_SeekPos) < 0)
+		printf("truncate failed %s: %s\n", group->gr_GroupName, strerror(errno));
 	    ob->oa_ArtNo = -2;
 	    ob->oa_SeekPos = 0;
 	    ob->oa_Bytes = 0;

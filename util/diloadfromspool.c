@@ -383,9 +383,16 @@ ScanSpool(uint16 spoolobj)
 		}
 		FileAry[FileIdx++] = strdup(den->d_name);
 	    } else if (sscanf(den->d_name, "N.%x", &sd) == 1) {
-		chdir(den->d_name);
+		if (chdir(den->d_name) < 0) {
+		    fprintf(stderr, "Unable to chdir(%s): %s\n",
+					den->d_name, strerror(errno));
+		    continue;
+		}
 		ScanSpool(spoolobj);
-		chdir("..");
+		if (chdir("..") < 0) {
+		    fprintf(stderr, "Unable to chdir(..): %s\n", strerror(errno));
+		    exit(1);
+		}
 	    }
 	}
 	closedir(dir);

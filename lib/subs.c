@@ -38,6 +38,9 @@ Prototype char *dtlenstr(time_t t);
 Prototype int MakeGroupDirectory(char *path);
 Prototype char *strdupfree(char **st, char *val, char *empty);
 Prototype char *safestr(char *st, char *noval);
+Prototype int WriteAll(int fd, const void *buf, size_t bytes);
+Prototype void WriteBestEffort(int fd, const void *buf, size_t bytes);
+Prototype void NiceBestEffort(int inc);
 Prototype int enabled(char *st);
 Prototype HashFeed_MatchList *DiabHashFeedParse(MemPool **mp, char *hashconfig);
 Prototype int MoveFile(char *from, char *to);
@@ -923,4 +926,54 @@ TimeSpec(char *t, char *def)
 	    tt = -1;
     }
     return(tt);
+}
+
+/*
+ * WriteAll() - write all of buf, retrying after a short write or EINTR.
+ *		Returns 0, or -1 with errno set.
+ */
+int
+WriteAll(int fd, const void *buf, size_t bytes)
+{
+    const char *p = buf;
+
+    while (bytes > 0) {
+	ssize_t n = write(fd, p, bytes);
+
+	if (n < 0) {
+	    if (errno == EINTR)
+		continue;
+	    return(-1);
+	}
+	if (n == 0) {
+	    errno = EIO;
+	    return(-1);
+	}
+	p += n;
+	bytes -= n;
+    }
+    return(0);
+}
+
+/*
+ * WriteBestEffort() - for messages whose loss changes nothing, such as
+ *		an error line to a client that is disconnected next.
+ */
+void
+WriteBestEffort(int fd, const void *buf, size_t bytes)
+{
+    if (WriteAll(fd, buf, bytes) < 0)
+	return;
+}
+
+/*
+ * NiceBestEffort() - change the priority; a refusal (lowering it needs
+ *		root) is not an error for the callers.  Safe in a signal
+ *		handler.
+ */
+void
+NiceBestEffort(int inc)
+{
+    if (nice(inc) == -1)
+	return;
 }

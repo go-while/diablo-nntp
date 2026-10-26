@@ -408,7 +408,7 @@ dbg_dump(int sig)
     __sync_synchronize();
     if (dbg_busy) {
 	snprintf(tmp, sizeof(tmp), "cannot dump - datastructures are busy\n");
-	write(fd, tmp, strlen(tmp));
+	WriteBestEffort(fd, tmp, strlen(tmp));
 	return;
     }
 
@@ -422,7 +422,7 @@ dbg_dump(int sig)
 		"pool %lu (from %s:%d) size: %s used: %s\n",
 		dzp->id, dzp->file, dzp->line,
 		dbg_size(mp_Size, tmp1), dbg_size(mp_Used, tmp2));
-	write(fd, tmp, strlen(tmp));
+	WriteBestEffort(fd, tmp, strlen(tmp));
 	mp_Used = 0;
 	for (i = 0; i < NODE_BUCKETS; i++) {
 	    for (dzn = dzp->node[i]; dzn; dzn = dzn->next) {
@@ -430,15 +430,15 @@ dbg_dump(int sig)
 			"  %s:%d %s allocated %d bytes @ %p\n",
 			dzn->file, dzn->line, dzn->func,
 			dzn->bytes, dzn->dataptr);
-		write(fd, tmp, strlen(tmp));
+		WriteBestEffort(fd, tmp, strlen(tmp));
 		mp_Used += dzn->bytes;
 	    }
 	}
 	snprintf(tmp, sizeof(tmp), "all memnodes: %s\n\n",
 		dbg_size(mp_Used, tmp1));
-	write(fd, tmp, strlen(tmp));
+	WriteBestEffort(fd, tmp, strlen(tmp));
     }
-    write(fd, "\n", 1);
+    WriteBestEffort(fd, "\n", 1);
     close(fd);
 }
 
