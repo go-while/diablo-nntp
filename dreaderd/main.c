@@ -251,7 +251,10 @@ main(int ac, char **av)
 		    if (p != NULL && (p = strrchr(p, ':')) != NULL)
 			bl->bl_Port = strdup(p + 1);
 		} else if (strrchr(ptr, ':')) {
-		    bl->bl_Port = strdup(strrchr(ptr, ':') + 1);
+		    char *p = strrchr(ptr, ':');
+
+		    bl->bl_Port = strdup(p + 1);
+		    *p = 0;	/* host:port - the host ends at the colon */
 		    bl->bl_Host = strdup(SanitiseAddr(ptr));
 		} else {
 		    bl->bl_Host = strdup(SanitiseAddr(ptr));
@@ -306,7 +309,10 @@ main(int ac, char **av)
 		    if (p != NULL && (p = strrchr(p, ':')) != NULL)
 			bl->bl_Port = strdup(p + 1);
 		} else if (strrchr(ptr, ':')) {
-		    bl->bl_Port = strdup(strrchr(ptr, ':') + 1);
+		    char *p = strrchr(ptr, ':');
+
+		    bl->bl_Port = strdup(p + 1);
+		    *p = 0;	/* host:port - the host ends at the colon */
 		    bl->bl_Host = strdup(SanitiseAddr(ptr));
 		} else {
 		    bl->bl_Port = strdup(ptr);
