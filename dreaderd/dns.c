@@ -2170,11 +2170,9 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
 
     if (AuthReader && strncmp(AuthReader, "110 ", 4) == 0) {
 	AuthReader += 4;
-	strncpy(dres->dr_ReaderName, AuthReader, sizeof(dres->dr_ReaderName) - 1);
-	dres->dr_ReaderName[sizeof(dres->dr_ReaderName) - 1] = '\0';
+	snprintf(dres->dr_ReaderName, sizeof(dres->dr_ReaderName), "%s", AuthReader);
     } else {
-	strncpy(dres->dr_ReaderName, matchedalp->ad_Reader, sizeof(dres->dr_ReaderName) - 1);
-	dres->dr_ReaderName[sizeof(dres->dr_ReaderName) - 1] = '\0';
+	snprintf(dres->dr_ReaderName, sizeof(dres->dr_ReaderName), "%s", matchedalp->ad_Reader);
     }
 
     SetAuthDetails(dres, dres->dr_ReaderName);
