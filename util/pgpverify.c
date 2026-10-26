@@ -30,6 +30,7 @@ typedef struct Header {
 } Header;
 
 char *FindHeader(const char *name, char *def);
+static int CountHeader(const char *name);
 static const char *FindGpgv(void);
 static int VerifyGpgv(char **argv, const char *keyring, const char *version,
 		      char *sheaders, const char *signature);
@@ -41,6 +42,8 @@ Header *HBase = NULL;
 Header **PHe = &HBase;
 char *argv[12];
 
+/* The article (read into memory first), and its signed body. */
+static FILE *In = NULL;
 /* Signed body of the article, read after the headers. */
 static char *Body = NULL;
 static size_t BodyLen = 0;
@@ -115,10 +118,45 @@ main(int ac, char **av)
     }
 
     /*
+     * Read the whole article first.  A NUL byte or a bare CR can make the
+     * text we verify differ from what dreaderd acts on (C strings stop at a
+     * NUL, the control handlers go by length), so such an article can't be
+     * verified at all.  lib/pgp.c has already turned CRLF into LF.
+     */
+
+    {
+	char *art = NULL;
+	size_t artLen = 0;
+	size_t n;
+	size_t k;
+
+	while ((n = fread(buf, 1, sizeof(buf), stdin)) > 0) {
+	    if ((art = realloc(art, artLen + n + 1)) == NULL)
+		exit(2);
+	    memcpy(art + artLen, buf, n);
+	    artLen += n;
+	}
+	if (art == NULL || artLen == 0)
+	    exit(1);
+	for (k = 0; k < artLen; ++k) {
+	    if (art[k] == 0) {
+		fprintf(stderr, "pgpverify: NUL byte in the article, can't verify\n");
+		exit(3);
+	    }
+	    if (art[k] == '\r' && (k + 1 == artLen || art[k + 1] != '\n')) {
+		fprintf(stderr, "pgpverify: bare CR in the article, can't verify\n");
+		exit(3);
+	    }
+	}
+	if ((In = fmemopen(art, artLen, "r")) == NULL)
+	    exit(2);
+    }
+
+    /*
      * Scan headers in message
      */
 
-    while (fgets(buf, sizeof(buf), stdin) != NULL) {
+    while (fgets(buf, sizeof(buf), In) != NULL) {
 	int l;
 
 	if ((l = strlen(buf)) == 1)	/* blank line, end of headers */
@@ -170,7 +208,7 @@ main(int ac, char **av)
     {
 	size_t n;
 
-	while ((n = fread(buf, 1, sizeof(buf), stdin)) > 0) {
+	while ((n = fread(buf, 1, sizeof(buf), In)) > 0) {
 	    Body = realloc(Body, BodyLen + n + 1);
 	    memcpy(Body + BodyLen, buf, n);
 	    BodyLen += n;
@@ -197,6 +235,33 @@ main(int ac, char **av)
 
     if (version == NULL || sheaders == NULL || signature == NULL)
 	exit(2);
+
+    /*
+     * Each signed header, and X-PGP-Sig itself, must occur once.  We verify
+     * the first occurrence, but dreaderd acts on the last Control:, From:
+     * and Newsgroups:, so a duplicate could carry an unsigned value through
+     * a good signature.  As INN's pgpverify, but case-insensitively, since
+     * header names are (and dreaderd matches them that way).
+     */
+
+    if (CountHeader("X-PGP-Sig") > 1) {
+	fprintf(stderr, "pgpverify: duplicate X-PGP-Sig header, can't verify\n");
+	exit(3);
+    }
+    {
+	char *copy = strdup(sheaders);
+	char *name;
+
+	if (copy == NULL)
+	    exit(2);
+	for (name = strtok(copy, ","); name; name = strtok(NULL, ",")) {
+	    if (CountHeader(name) > 1) {
+		fprintf(stderr, "pgpverify: duplicate signed header %s, can't verify\n", name);
+		exit(3);
+	    }
+	}
+	free(copy);
+    }
 
     /*
      * Choose the verifier: the one given, else gpgv found on the system.
@@ -286,7 +351,7 @@ VerifyGpgv(char **argv, const char *keyring, const char *version,
     char sigfile[PATH_MAX];
     char homeenv[PATH_MAX];
     char defring[PATH_MAX];
-    char *gargv[16];
+    char *gargv[20];	/* up to 10 from argv, 6 of ours, NULL */
     char *env[2];
     char buf[1024];
     int mfd;
@@ -533,6 +598,24 @@ VerifyPgp2(char **argv, const char *version, char *sheaders,
  * FindHeader() - header body (after the colon), matched case-insensitively
  *		  as header names are.
  */
+
+/*
+ * CountHeader() - how many headers called name (case-insensitive) the
+ *		   article has.
+ */
+static int
+CountHeader(const char *name)
+{
+    Header *he;
+    int l = strlen(name);
+    int n = 0;
+
+    for (he = HBase; he; he = he->he_Next) {
+	if (strncasecmp(he->he_Name, name, l) == 0 && he->he_Name[l] == ':')
+	    ++n;
+    }
+    return(n);
+}
 
 char *
 FindHeader(const char *name, char *def)
