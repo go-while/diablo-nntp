@@ -275,13 +275,17 @@ func TestModerationMailsModerator(t *testing.T) {
 	}
 }
 
-// TestModerationApprovedGoesIn: a POST with Approved: goes straight to the outgoing server,
-// from any reader. Changes with the "approve" PR: readerdef without "approve yes" gets 441.
+// ApproveAccess is DefaultReaderAccess with "approve yes" for the reading and posting
+// readerdef: it may post with Approved: (#42).
+var ApproveAccess = strings.Replace(DefaultReaderAccess, "    post yes\n", "    post yes\n    approve yes\n", 1)
+
+// TestModerationApprovedGoesIn: a POST with Approved: from a reader with "approve yes" goes
+// straight to the outgoing server, without mail to the moderator.
 func TestModerationApprovedGoesIn(t *testing.T) {
-	m := newModerationReader(t, ModOptions{})
+	m := newModerationReader(t, ModOptions{Access: ApproveAccess})
 	id, line := m.postArticle(t, ModGroup, "Approved: poster@example.invalid")
 	if !strings.HasPrefix(line, "240 ") {
-		t.Fatalf("approved POST to %s: %q, want 240 (today's behaviour)", ModGroup, line)
+		t.Fatalf("approved POST to %s with approve yes: %q, want 240", ModGroup, line)
 	}
 	p := m.waitPost(t, 1, "the approved post at the outgoing server")
 	if head, _ := splitArticle(p[0]); headerValue(head, "Message-ID") != id {
@@ -400,21 +404,25 @@ func TestFeederUnapprovedModerated(t *testing.T) {
 // PLANNED: the tests below are for the maintainer's moderation PRs (agent-chatroom
 // 20261026-112934Z). Remove the skip when the PR is in, and adjust names and texts to it.
 
-// TestModerationApproveRequired (PLANNED, "approve" PR): readerdef "approve yes|no", default
-// no: a POST with Approved: from a reader without "approve yes" gets 441; with it, the post
-// goes in.
+// TestModerationApproveRequired (#42): readerdef "approve yes|no", default no. A POST with
+// Approved: from a reader without "approve yes" gets 441, to a moderated group and (as in
+// INN) to an unmoderated one, and nothing is mailed or passed on; with it, the post goes in.
+// Before #42 any reader's Approved: post went straight into the moderated group.
 func TestModerationApproveRequired(t *testing.T) {
-	t.Skip("PLANNED: readerdef approve (moderation PR 1)")
 	m := newModerationReader(t, ModOptions{})
-	_, line := m.postArticle(t, ModGroup, "Approved: poster@example.invalid")
-	if !strings.HasPrefix(line, "441") {
-		t.Errorf("Approved: without approve yes: %q, want 441", line)
+	for _, g := range []string{ModGroup, "e2e.test"} {
+		_, line := m.postArticle(t, g, "Approved: poster@example.invalid")
+		if !strings.HasPrefix(line, "441") {
+			t.Errorf("Approved: to %s without approve yes: %q, want 441", g, line)
+		}
 	}
-	m.noPost(t, "approved post without approve yes")
+	m.noPost(t, "approved posts without approve yes")
+	if m.Mail != nil && len(m.Mail.mails()) != 0 {
+		t.Errorf("refused approved post was mailed to a moderator")
+	}
 
-	access := strings.Replace(DefaultReaderAccess, "    post yes\n", "    post yes\n    approve yes\n", 1)
-	m2 := newModerationReader(t, ModOptions{Access: access})
-	_, line = m2.postArticle(t, ModGroup, "Approved: poster@example.invalid")
+	m2 := newModerationReader(t, ModOptions{Access: ApproveAccess})
+	_, line := m2.postArticle(t, ModGroup, "Approved: poster@example.invalid")
 	if !strings.HasPrefix(line, "240") {
 		t.Errorf("Approved: with approve yes: %q, want 240", line)
 	}
