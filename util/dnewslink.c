@@ -308,7 +308,7 @@ static void closeOutboundSession(int cfd);
 
 /* Expand only the batch-template syntax used by dspoolout.  A literal percent
  * is written as %% and a sequence template has exactly one %d conversion,
- * optionally with a zero flag and width.  Never pass the template to printf.
+ * optionally with a zero flag and width up to 20. Never pass it to printf.
  */
 static int
 ExpandBatchFile(char *dst, size_t dstSize, const char *batchTemplate, int sequence)
@@ -319,6 +319,15 @@ ExpandBatchFile(char *dst, size_t dstSize, const char *batchTemplate, int sequen
 
 	if (dstSize == 0)
 		return (-1);
+	/* Without a sequence, -b names the queue literally (often a feed label). */
+	if (sequence < 0) {
+		size_t length = strlen(batchTemplate);
+
+		if (length >= dstSize)
+			return (-1);
+		memcpy(dst, batchTemplate, length + 1);
+		return (0);
+	}
 
 	while (*p) {
 		if (*p != '%') {
@@ -349,9 +358,11 @@ ExpandBatchFile(char *dst, size_t dstSize, const char *batchTemplate, int sequen
 			while (*p >= '0' && *p <= '9') {
 				int digit = *p - '0';
 
-				if (width > (INT_MAX - digit) / 10)
+				if (width > (20 - digit) / 10)
 					return (-1);
 				width = width * 10 + digit;
+				if (width > 20)
+					return (-1);
 				haveWidth = 1;
 				++p;
 			}
