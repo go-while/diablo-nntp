@@ -737,6 +737,7 @@ KPDBWrite(KPDB *kpdb, const char *key, const char *tok, const char *data, int lo
 
     {
 	int copyOld = 0;
+	int delOff = -1;
 	int aval = 0;
 	int cval = 0;
 	char astr[9];
@@ -800,6 +801,12 @@ KPDBWrite(KPDB *kpdb, const char *key, const char *tok, const char *data, int lo
 	    int l = kpdb->kp_CacheLen + strlen(tok) + strlen(data) + 8;
 	    char *p = zalloc(&SysMemPool, l);
 
+	    /* Delete the record we merge from, as found by the lookup under
+	     * the append lock.  lockoff is from the first lookup and may be
+	     * 0 (a miss) or a record another writer has since replaced.
+	     */
+	    delOff = kpdb->kp_Cache - kpdb->kp_MapBase;
+
 	    bcopy("+00000000", p, 9);
 	    bcopy(kpdb->kp_Cache + 9, p + 9, kpdb->kp_CacheLen - 9);
 
@@ -854,7 +861,7 @@ KPDBWrite(KPDB *kpdb, const char *key, const char *tok, const char *data, int lo
 	    failedOp = "append counter update";
 	    goto append_failed;
 	}
-	if (copyOld && KPDBWriteAt(kpdb->kp_Fd, "-", 1, lockoff) < 0) {
+	if (copyOld && KPDBWriteAt(kpdb->kp_Fd, "-", 1, delOff) < 0) {
 	    writeError = errno;
 	    failedOp = "old record deletion";
 	    goto append_failed;
