@@ -431,7 +431,11 @@ CleanSpool(char *cleanDir)
     if (VerboseOpt)
 	printf("Scanning group directories\n");
 
-    chdir(PatExpand(GroupHomePat));
+    if (chdir(PatExpand(GroupHomePat)) < 0) {
+	fprintf(stderr, "Unable to chdir(\"%s\"): %s\n",
+				PatExpand(GroupHomePat), strerror(errno));
+	exit(1);
+    }
     if ((dir = opendir(".")) != NULL) {
 	den_t *den;
 	struct stat st;
@@ -508,7 +512,10 @@ scanDirectory(const char *dirpath, char *dirname, int *level)
 	}
 	closedir(dir2);
     }
-    chdir("..");
+    if (chdir("..") < 0) {
+	fprintf(stderr, "Unable to chdir(..): %s\n", strerror(errno));
+	exit(1);
+    }
 }
 
 void

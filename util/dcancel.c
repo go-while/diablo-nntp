@@ -547,7 +547,11 @@ rewriteFile(HistoryList *hl_file)
 	        printf("Copying article at offset %lld to offset %d\n",
 					(long long)filepos, h.boffset);
 		lseek(oldf, filepos, SEEK_SET);
-		read(oldf, artBuf, artHdr.StoreLen);
+		if (read(oldf, artBuf, artHdr.StoreLen) != artHdr.StoreLen) {
+		    fprintf(stderr, "Error reading article in %s (%s)\n",
+							opath, strerror(errno));
+		    break;
+		}
 		if (write(newf, artBuf, artHdr.StoreLen) != artHdr.StoreLen) {
 		    fprintf(stderr, "Error writing article in %s (%s)\n",
 							npath, strerror(errno));
@@ -744,9 +748,11 @@ again:
 		    if (save.oe_InitArts == 0)
 			save.oe_InitArts = DEFARTSINGROUP;
 
-		    ftruncate(ov->ov_OFd, 0);
 		    st.st_size = sizeof(oh) + sizeof(OverArt) * save.oe_InitArts;
-		    ftruncate(ov->ov_OFd, st.st_size);
+		    if (ftruncate(ov->ov_OFd, 0) < 0 ||
+			ftruncate(ov->ov_OFd, st.st_size) < 0)
+			fprintf(stderr, "%s: overview truncate failed: %s\n",
+						group, strerror(errno));
 		    fsync(ov->ov_OFd);
 		    lseek(ov->ov_OFd, 0L, 0);
 		    bzero(&oh, sizeof(oh));
@@ -756,7 +762,9 @@ again:
 		    oh.oh_MaxArts = save.oe_InitArts;
 		    strncpy(oh.oh_Gname, group, sizeof(oh.oh_Gname) - 1);
 		    oh.oh_DataEntries = save.oe_DataSize;
-		    write(ov->ov_OFd, &oh, sizeof(oh));
+		    if (WriteAll(ov->ov_OFd, &oh, sizeof(oh)) < 0)
+			fprintf(stderr, "%s: overview header write failed: %s\n",
+						group, strerror(errno));
 		    fsync(ov->ov_OFd);
 		}
 		hflock(ov->ov_OFd, 0, XLOCK_UN);
@@ -836,8 +844,8 @@ CancelOverArt(OverInfo *ov, artno_t artNo)
 
 	    copy.oa_ArtNo = -1;		/* CANCELED! */
 	    lseek(ov->ov_OFd, ovpos, 0);
-	    write(ov->ov_OFd, &copy, sizeof(copy));
-	    r = 1;
+	    if (WriteAll(ov->ov_OFd, &copy, sizeof(copy)) == 0)
+		r = 1;
 	}
 	hflock(ov->ov_OFd, 0, XLOCK_UN);
     }

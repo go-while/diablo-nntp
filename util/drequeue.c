@@ -104,8 +104,7 @@ main(int ac, char **av)
 
     LoadNewsFeed(0, 1, hlabel);
 
-    while (!feof(stdin)) {
-	fgets(buf, sizeof(buf), stdin);
+    while (fgets(buf, sizeof(buf), stdin) != NULL) {
         s1 = strtok(buf, " \t\n");
         if (s1 == NULL)
             continue;
@@ -254,8 +253,10 @@ flushFeedOut(Feed *fe)
 	 * that we do not get garbaged feed files.
 	 */
 	int n = write(fe->fe_Fd, fe->fe_Buf, fe->fe_BufIdx);
-	if (n >= 0 && n != fe->fe_BufIdx) {
-	    ftruncate(fe->fe_Fd, lseek(fe->fe_Fd, 0L, 1) - n);
+	if (n >= 0 && n != fe->fe_BufIdx &&
+	    ftruncate(fe->fe_Fd, lseek(fe->fe_Fd, 0L, 1) - n) < 0) {
+	    logit(LOG_ERR, "%s: queue file truncate failed: %s",
+					fe->fe_Label, strerror(errno));
 	}
 	if (n != fe->fe_BufIdx && fe->fe_Failed == 0) {
 	    fe->fe_Failed = 1;

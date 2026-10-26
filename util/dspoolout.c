@@ -279,8 +279,8 @@ processDnewsfeeds(const char *qFile)
 	    char sysline[256];
 
 	    snprintf(sysline, sizeof(sysline), "%s/dbin/dicmd flush", NewsHome);
-	    if (ForReal)
-		system(sysline);
+	    if (ForReal && system(sysline) != 0)
+		printf("%s failed\n", sysline);
 	}
     }
 }
@@ -504,7 +504,8 @@ processDspoolout(const char *fname, char *qFile)
 	    char sysline[256];
 
 	    snprintf(sysline, sizeof(sysline), "%s/dbin/dicmd flush", NewsHome);
-	    system(sysline);
+	    if (system(sysline) != 0)
+		printf("%s failed\n", sysline);
 	}
     }
 }
@@ -603,7 +604,8 @@ spool_file(char *spoolFile, int pass, NewslinkInfo *li, int flags)
 
 	xflock(fd, XLOCK_EX);		/* lock and leave locked */
 	memset(buf, 0, sizeof(buf));
-	read(fd, buf, sizeof(buf) - 1);
+	if (read(fd, buf, sizeof(buf) - 1) < 0)
+	    buf[0] = 0;
 	sscanf(buf, "%d %d %lx", &begSeq, &endSeq, &newTime);
     }
 
@@ -708,8 +710,10 @@ spool_file(char *spoolFile, int pass, NewslinkInfo *li, int flags)
 
 	    sprintf(buf, "%5d %5d %08lx\n", begSeq, endSeq, newTime);
 	    lseek(fd, 0L, 0);
-	    write(fd, buf, strlen(buf));
-	    ftruncate(fd, lseek(fd, 0L, 1));
+	    if (WriteAll(fd, buf, strlen(buf)) < 0 ||
+		ftruncate(fd, lseek(fd, 0L, 1)) < 0)
+		printf("%s: sequence file update failed: %s\n",
+						spoolFile, strerror(errno));
 	}
     }
 
@@ -812,7 +816,7 @@ spool_file(char *spoolFile, int pass, NewslinkInfo *li, int flags)
 			}
 
 			if (li->li_Priority > 0)
-			    nice(li->li_Priority);
+			    NiceBestEffort(li->li_Priority);
 
 			/* The parent uses this descriptor only to test the lock.
 			 * Do not pass a second open queue handle to dnewslink.
@@ -906,7 +910,7 @@ spool_file(char *spoolFile, int pass, NewslinkInfo *li, int flags)
 			    sleep(li->li_StartDelay);
 
 			if (li->li_Priority > 0)
-			    nice(li->li_Priority);
+			    NiceBestEffort(li->li_Priority);
 
 			/* The parent uses this descriptor only to test the lock.
 			 * Do not pass a second open queue handle to dnewslink.

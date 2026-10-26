@@ -95,7 +95,10 @@ connectnews(char *hostname, char *port) {
 	exit(1);
     }
     setvbuf(fp, NULL, _IOLBF, 0);
-    fgets((char *)&line, 512, fp);
+    if (fgets((char *)&line, 512, fp) == NULL) {
+	printf("No response from server\n");
+	exit(2);
+    }
     if (verbose)
 	printf("%s", line);
     if (strncmp(line, "200 ", 4) != 0 && strncmp(line, "201 ", 4) != 0) {
@@ -184,7 +187,8 @@ newsquit(void) {
     fflush(fp);
     fprintf(fp,"QUIT\r\n");
     rewind(fp);
-    fgets((char *)&line, 512, fp);
+    if (fgets((char *)&line, 512, fp) == NULL)
+	line[0] = 0;
     if (verbose)
 	printf("%s", line);
     if (strncmp(line, "205 ", 4) != 0 && strncmp(line, "238 ", 4) != 0) {

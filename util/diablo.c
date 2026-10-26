@@ -575,9 +575,15 @@ DiabloServer(int lfd)
 
 	DDUseSyslog = 1;
 
-	freopen("/dev/null", "w", stdout);
-	freopen("/dev/null", "w", stderr);
-	freopen("/dev/null", "r", stdin);
+	{
+	    int bad = 0;
+
+	    bad += (freopen("/dev/null", "w", stdout) == NULL);
+	    bad += (freopen("/dev/null", "w", stderr) == NULL);
+	    bad += (freopen("/dev/null", "r", stdin) == NULL);
+	    if (bad)
+		logit(LOG_ERR, "unable to redirect stdio to /dev/null");
+	}
 #if USE_TIOCNOTTY
 	{
 	    int fd = open("/dev/tty", O_RDWR);
@@ -1021,7 +1027,8 @@ DiabloServer(int lfd)
     sleep(2);
 
     if (ShutdownCleanup && (strcmp(ShutdownCleanup, "NONE") != 0)) {
-	system(ShutdownCleanup);
+	if (system(ShutdownCleanup) != 0)
+	    logit(LOG_ERR, "shutdown cleanup %s failed", ShutdownCleanup);
     }
     FinishRetain(RET_PAUSE);
     FinishRetain(RET_CLOSE);
@@ -1182,7 +1189,7 @@ DoAccept(int lfd)
 			    DOpts.FeederHostName,
 			    DOpts.MaxPerRemote
 			);
-			write(fd, buf, strlen(buf));
+			WriteBestEffort(fd, buf, strlen(buf));
 			ok = -1;
 		    }
 		}
@@ -1198,7 +1205,7 @@ DoAccept(int lfd)
 	    char buf[256];
 	    snprintf(buf, sizeof(buf), "502 %s: temporary server error\r\n",
 						DOpts.FeederHostName);
-	    write(fd, buf, strlen(buf));
+	    WriteBestEffort(fd, buf, strlen(buf));
 	    sleep(2);
 	    ok = -1;
 	}
@@ -1247,7 +1254,7 @@ DoAccept(int lfd)
 		OpenLog("diablo", (DebugOpt ? LOG_PERROR : 0)|LOG_PID|LOG_NDELAY);
 
 		if (HLabel[0] != 0)
-		    nice(FeedPriority(HLabel));
+		    NiceBestEffort(FeedPriority(HLabel));
 
 		FeedFo = fdopen(fds[1], "w");
 authenticate:
@@ -1382,8 +1389,9 @@ authenticate:
 		    remove(path);
 		    if ((tfd = open(path, O_EXCL|O_CREAT|O_TRUNC|O_RDWR, 0600)) >= 0) {
 			close(tfd);
-			freopen(path, "a", stderr);
-			freopen(path, "a", stdout);
+			if (freopen(path, "a", stderr) == NULL ||
+			    freopen(path, "a", stdout) == NULL)
+			    logit(LOG_ERR, "unable to redirect output to %s", path);
 			printf("Debug label %s pid %d\n", HLabel, (int)getpid());
 		    } else {
 			printf("Unable to create %s\n", path);
@@ -1709,7 +1717,9 @@ flushFeedOut(Feed *fe)
 	    }
 	}
 	if (n >= 0 && n != fe->fe_BufIdx) {
-	    ftruncate(fe->fe_Fd, lseek(fe->fe_Fd, 0L, 1) - n);
+	    if (ftruncate(fe->fe_Fd, lseek(fe->fe_Fd, 0L, 1) - n) < 0)
+		logit(LOG_ERR, "%s: queue file truncate failed: %s",
+					fe->fe_Label, strerror(errno));
 	}
 	if (n != fe->fe_BufIdx && fe->fe_Failed == 0) {
 	    fe->fe_Failed = 1;
@@ -3482,7 +3492,9 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		    artHdr.ArtHdrLen = headerLen;
 		    artHdr.ArtLen = bsize(buffer);
 		    artHdr.StoreLen = h.bsize + 1;
-		    write(artFd, &artHdr, sizeof(artHdr));
+		    if (WriteAll(artFd, &artHdr, sizeof(artHdr)) < 0)
+			logit(LOG_CRIT, "spool article header write failed: %s",
+							strerror(errno));
 		    bsetfd(buffer, artFd);
 #ifdef USE_ZLIB
 		    if (cfile != NULL)
@@ -3523,7 +3535,9 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		filePos = lseek(artFd, 0, SEEK_CUR);
 		lseek(artFd, bpos, SEEK_SET);
 		artHdr.StoreLen = compressedSize;
-		write(artFd, &artHdr, sizeof(artHdr));
+		if (WriteAll(artFd, &artHdr, sizeof(artHdr)) < 0)
+		    logit(LOG_CRIT, "spool article header write failed: %s",
+							strerror(errno));
 		lseek(artFd, filePos, SEEK_SET);
 	    }
 #endif
@@ -4218,7 +4232,8 @@ DoCommand(int ufd)
 		    const char *f1 = PatDbExpand(DumpHistPat);
 
 		    if (f1 && (strcmp(f1, "NONE") != 0)) {
-			system(f1);
+			if (system(f1) != 0)
+			    logit(LOG_ERR, "dumphist %s failed", f1);
 		    } else {
 			fprintf(fo, "400 No dumphist program configured\n");
 		    }
@@ -4813,8 +4828,9 @@ ArticleFileClose(int i)
 {
     AFCache *aftmp = &AFAry[i];
 
-    if (aftmp->af_AppendOff < aftmp->af_FileSize)
-	ftruncate(aftmp->af_Fd, aftmp->af_AppendOff);
+    if (aftmp->af_AppendOff < aftmp->af_FileSize &&
+	ftruncate(aftmp->af_Fd, aftmp->af_AppendOff) < 0)
+	logit(LOG_ERR, "spool file truncate failed: %s", strerror(errno));
     close(aftmp->af_Fd);
     bzero(aftmp, sizeof(AFCache));
     aftmp->af_Fd = -1;

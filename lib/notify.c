@@ -96,7 +96,7 @@ ListenNotify(int *NotifyFd, int *NotifyLockFd, char *l)
 	    return(0);
 	}
 	n = sprintf(buf, "%d\n", getpid());
-	write(*NotifyLockFd, buf, n);
+	WriteBestEffort(*NotifyLockFd, buf, n);
     }
     if ((*NotifyFd = socket(AF_UNIX, SOCK_DGRAM, 0)) < 0) {
 	logit(LOG_ERR, "Cannot obtain notify socket: %s", strerror(errno));

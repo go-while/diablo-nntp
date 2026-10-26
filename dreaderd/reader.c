@@ -1497,7 +1497,7 @@ sigSegVReader(int sigNo)
 	if (FD_ISSET(i, &RFds) || FD_ISSET(i, &WFds))
 	    close(i);
 
-    nice(20);
+    NiceBestEffort(20);
     if (DOpts.ReaderCrashHandler == NULL ||
 			strcasecmp(DOpts.ReaderCrashHandler, "none") == 0) {
 	/* Chew spare CPU cycles and try to be noticed? :-) */
@@ -1509,7 +1509,8 @@ sigSegVReader(int sigNo)
 	if (fork())
 	   return;
 	snprintf(cmdbuf, sizeof(cmdbuf), "%s %d", DOpts.ReaderCrashHandler, getpid());
-	system(cmdbuf);
+	if (system(cmdbuf) != 0)
+	    logit(LOG_ERR, "crash handler %s failed", cmdbuf);
 
 	for (;;)
 	    sleep(60);

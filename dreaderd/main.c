@@ -755,7 +755,8 @@ main(int ac, char **av)
 	    logit(LOG_ERR, "unable to create %s\n", PidFile);
 	    exit(1);
 	}
-	write(fd, buf, strlen(buf));
+	if (WriteAll(fd, buf, strlen(buf)) < 0)
+	    logit(LOG_ERR, "unable to write %s: %s", PidFile, strerror(errno));
 	close(fd);
     }
 
@@ -1127,7 +1128,7 @@ main(int ac, char **av)
 	    for (pc = NeedClosing; pc != NULL; ppc = pc, pc = pc->next) {
 		if (pc->when > timenow)
 		    continue;
-		write(pc->fd, pc->msgbuf, strlen(pc->msgbuf));
+		WriteBestEffort(pc->fd, pc->msgbuf, strlen(pc->msgbuf));
 		close(pc->fd);
 		pc->fd = -1;
 		++FailCount;
@@ -1200,7 +1201,7 @@ DoListen(ForkDesc *desc, time_t t)
 					DOpts.ReaderHostName,
 					(DOpts.NewsAdmin != NULL) ? " - " : "",
 					safestr(DOpts.NewsAdmin, ""));
-	    write(fd, errbuf, strlen(errbuf));
+	    WriteBestEffort(fd, errbuf, strlen(errbuf));
 	    close(fd);
 	    fd = -1;
 	    ++ConnectCount;
@@ -1214,7 +1215,7 @@ DoListen(ForkDesc *desc, time_t t)
 					DOpts.ReaderHostName,
 					(DOpts.NewsAdmin != NULL) ? " - " : "",
 					safestr(DOpts.NewsAdmin, ""));
-	    write(fd, errbuf, strlen(errbuf));
+	    WriteBestEffort(fd, errbuf, strlen(errbuf));
 	    close(fd);
 	    fd = -1;
 	    ++ConnectCount;
@@ -1517,11 +1518,12 @@ SendDns(int fd, struct sockaddr_in *rsin, DnsRes *dres)
 	else
 	    best->d_FdPend = fd;
 	bcopy(rsin, &best->d_SaveRSin, sizeof(best->d_SaveRSin));
-	write(best->d_Fd, &dreq, sizeof(dreq));
 	/* 
-	 * ignore return code.  If DNS process died, it
+	 * A failure is only logged.  If the DNS process died, it
 	 * will be cleaned up later.
 	 */
+	if (WriteAll(best->d_Fd, &dreq, sizeof(dreq)) < 0)
+	    logit(LOG_ERR, "DNS request to worker failed: %s", strerror(errno));
     } else if (dres != NULL && dres->dr_ResultFlags == DR_SESSEXIT_RPT) {
 	/*
 	 * Only the end-of-session accounting of a finished session: the
@@ -1538,7 +1540,7 @@ SendDns(int fd, struct sockaddr_in *rsin, DnsRes *dres)
 	        DOpts.ReaderHostName,
 		(DOpts.NewsAdmin != NULL) ? " - " : "",
 		safestr(DOpts.NewsAdmin, ""));
-	write(fd, errbuf, strlen(errbuf));
+	WriteBestEffort(fd, errbuf, strlen(errbuf));
 	close(fd);
 	fd = -1;
 	++FailCount;
@@ -1759,7 +1761,7 @@ HandleDnsThread(ForkDesc *desc)
 		    NumPending, DOpts.ReaderDns,
 		    NumActive, MaxConnects
 		    );
-	    write(desc->d_FdPend, errbuf, strlen(errbuf));
+	    WriteBestEffort(desc->d_FdPend, errbuf, strlen(errbuf));
 	    close(desc->d_FdPend);
 	    desc->d_FdPend = -1;
 	    --NumActive;
@@ -2008,7 +2010,7 @@ HandleDnsThread(ForkDesc *desc)
 	    );
 	}
 	if (!DelayedClose) {
-	    write(desc->d_FdPend, error1, strlen(error1));
+	    WriteBestEffort(desc->d_FdPend, error1, strlen(error1));
 	    close(desc->d_FdPend);
 	    desc->d_FdPend = -1;
 	    ++FailCount;
@@ -2059,7 +2061,7 @@ HandleDnsThread(ForkDesc *desc)
 	    DOpts.ReaderHostName,
 	    (DOpts.NewsAdmin != NULL) ? " - " : "",
 	    safestr(DOpts.NewsAdmin, ""));
-	write(desc->d_FdPend, errbuf, strlen(errbuf));
+	WriteBestEffort(desc->d_FdPend, errbuf, strlen(errbuf));
 	close(desc->d_FdPend);
 	desc->d_FdPend = -1;
 	++FailCount;

@@ -426,8 +426,8 @@ DumpArticle(char *fname, History *h, const char *msgid)
 		    if (StripCR && wireFormat && i > 0 &&
 					ptr[i-1] == '\r' && ptr[i] == '\n') {
 			if (!QuietOpt) {
-			    write(1, ptr + i - lineLen, lineLen - 1);
-			    write(1, "\n", 1);
+			    WriteBestEffort(1, ptr + i - lineLen, lineLen - 1);
+			    WriteBestEffort(1, "\n", 1);
 			}
 			if (lineLen == 1)
 			    break;
@@ -448,14 +448,14 @@ DumpArticle(char *fname, History *h, const char *msgid)
 		    }
 		}
 		if ((!StripCR || !wireFormat) && !QuietOpt)
-		    write(1, ptr, i);
+		    WriteBestEffort(1, ptr, i);
 	    } else {
 		if (StripCR && wireFormat) {
 		    for (i = 0; i < artSize; ++i) {
 			if (i > 0 && ptr[i-1] == '\r' && ptr[i] == '\n') {
 			    if (!QuietOpt) {
-				write(1, ptr + i - lineLen, lineLen - 1);
-				write(1, "\n", 1);
+				WriteBestEffort(1, ptr + i - lineLen, lineLen - 1);
+				WriteBestEffort(1, "\n", 1);
 			    }
 			    lineLen = 0;
 			} else {
@@ -463,7 +463,7 @@ DumpArticle(char *fname, History *h, const char *msgid)
 			}
 		    }
 		} else if (!QuietOpt) {
-		    write(1, ptr, artSize);
+		    WriteBestEffort(1, ptr, artSize);
 		}
 	    }
 	    fflush(stdout);

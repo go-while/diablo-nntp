@@ -75,7 +75,8 @@ FeedStatsFindSlot(char *hostname)
 	fs.RecStats.TimeStart = time(NULL);
 	fs.SpoolStats.TimeStart = time(NULL);
 	fs.version = FS_VERSION;
-	write(FSSFd, &fs, sizeof(fs));
+	if (WriteAll(FSSFd, &fs, sizeof(fs)) < 0)
+	    logit(LOG_ERR, "feed stats: write failed: %s", strerror(errno));
     }
     if (fs.version != FS_VERSION) {
 	logit(LOG_CRIT, "Feed stats db '%s' has wrong version - please delete",
@@ -98,7 +99,8 @@ FeedStatsFindSlot(char *hostname)
 	fs.region = count;
 	strcpy(fs.hostname, hostname);
 	lseek(FSSFd, count * sizeof(FeedStats), SEEK_SET);
-	write(FSSFd, &fs, sizeof(fs));
+	if (WriteAll(FSSFd, &fs, sizeof(fs)) < 0)
+	    logit(LOG_ERR, "feed stats: write failed: %s", strerror(errno));
     }
     Stats = xmap(NULL, sizeof(FeedStats), PROT_READ|PROT_WRITE,
 			MAP_SHARED, FSSFd, count * sizeof(FeedStats));

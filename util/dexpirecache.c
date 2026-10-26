@@ -68,7 +68,8 @@ removeFiles(struct FileQueue *node, int val) {
 
 	if (val<freeblocks) {
 		if (trnct && node->size) {
-			truncate(node->name,0);
+			if (truncate(node->name,0) < 0)
+				unlink(node->name);
 		} else {
 			unlink(node->name);
 		}

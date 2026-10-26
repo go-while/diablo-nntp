@@ -131,7 +131,7 @@ LoadHostAccess(time_t t, int force, int rebuildtime)
 	    exit(0);
 	}
 	sprintf(buf, "%d", (int)getpid());
-	write(lockfd, buf, strlen(buf));
+	WriteBestEffort(lockfd, buf, strlen(buf));
 
 	snprintf(buf, sizeof(buf), "%s.new", PatDbExpand(DHostsCachePat));
 
