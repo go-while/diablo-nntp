@@ -1,0 +1,275 @@
+# Known Issues
+
+Findings about Diablo 6 since the 6-CUR-20261024-BWH release (2026-10-24). They come from
+the end-to-end tests in `tests/e2e` (PR #11), builds on 21 systems (FreeBSD, SmartOS, 19
+Linux distributions, Debian GNU/Hurd), and code review. [REVIEW.md](REVIEW.md) tracks how
+much of the code has been reviewed.
+
+Line numbers refer to `main` at `ed3ce67` unless a PR is named. "Verified" means checked
+against the code by reading it; "from review" means reported by a review pass and not
+re-checked yet.
+
+Status values: **open**, **PR** (fix waiting for review, with its number), **fixed** (with
+the PR that fixed it), **decision** (needs the maintainer to decide), **won't fix**.
+
+Last updated 2026-10-26, after #5, #6, #8 and #10 to #16 were merged. Cancel-Lock
+verification (F-01) is in #19, diablo-ctl in #17.
+
+| ID | Severity | Summary | Status |
+|---|---|---|---|
+| [D-01](#d-01-host-cache-never-rebuilt-after-a-start-without-dhostscache) | Medium | Host cache never rebuilt after a start without `dhosts.cache` | fixed (#10) |
+| [D-02](#d-02-privilege-drop-results-not-checked) | Medium | `setgroups`/`setgid`/`setuid` results not checked | fixed (#6) |
+| [D-03](#d-03-non-root-start-refused-after-d-02) | High | A non-root start refused after the first D-02 fix | fixed (#6, 5a6e877) |
+| [D-04](#d-04-write-through-a-null-pointer-in-feedwrite) | High | Write through a NULL pointer in `FeedWrite()` | fixed (#8) |
+| [D-05](#d-05-const-strchr-warnings-with-glibc-243) | Low | `const strchr()` warnings with glibc 2.43 or later | fixed (#8) |
+| [D-06](#d-06-dreaderd-writes-400-too-busy-after-a-205) | Medium | dreaderd writes "400 too busy" after a session's 205 | fixed (#12) |
+| [D-07](#d-07-dreaderd-cleanup-can-close-another-clients-descriptor) | Medium | dreaderd cleanup can close another client's descriptor | fixed (#12) |
+| [D-08](#d-08-dreaderd--p-hostport-does-not-bind) | Low | `dreaderd -P host:port` (and `-B`) does not bind | fixed (#13) |
+| [D-09](#d-09-dreaderd-does-not-build-with-musl) | Medium | dreaderd does not build with musl (Alpine): `loff_t` | fixed (#14) |
+| [D-10](#d-10-diablo--b-falls-through-into--a) | Low | `diablo -b fd` falls through into `-A` | fixed (#15) |
+| [D-11](#d-11-kpdb-deletes-the-wrong-record-on-a-race) | High | KPDB deletes the wrong record on a create/update race | open (in #7, review) |
+| [D-12](#d-12-a-dead-dns-worker-can-be-picked-for-a-new-client) | High | A dead DNS worker can be picked for a new client | open (in #7, review) |
+| [D-13](#d-13-interrupted-kpdb-sort-marker-is-negative-as-int) | Medium | Interrupted KPDB sort marker `FFFFFFFF` is negative as `int` | open (in #7, review) |
+| [D-14](#d-14-a-damaged-cachehits-is-refused-forever) | Medium | A damaged `cache.hits` is refused forever | open (in #7, review) |
+| [D-15](#d-15-dreaderd-has-no-capabilities) | Medium | dreaderd has no `CAPABILITIES` (RFC 3977) | open |
+| [D-16](#d-16-linux-build-fails-with-the-default-libvendorh) | Medium | Linux build fails with the default `lib/vendor.h` (RADIUS) | decision |
+| [D-17](#d-17-unchecked-results-under-_fortify_source) | Low | 80 `-Wunused-result` warnings under `_FORTIFY_SOURCE` | open |
+| [D-18](#d-18-debian-gnuhurd-build) | Low | Debian GNU/Hurd build: `PATH_MAX`, `setpgrp`, `db_185.h` | open |
+| [D-19](#d-19-changelog-links-a-missing-document) | Low | CHANGELOG links the missing `BUILD-PORTABLE-MAKE.md` | open |
+| [D-20](#d-20-strncpy-truncation-warning-in-dreaderddnsc) | Low | `strncpy` truncation warning in `dreaderd/dns.c` (GCC 16) | open |
+| [D-21](#d-21-dactivekp-write-errors-now-exit-the-process) | — | dactive.kp write errors now exit the process (#7) | decision |
+| [D-22](#d-22-gnu-make-install-ignores-prefix-and-destdir) | High | GNU Make `install`/`uninstall` ignore `PREFIX` and `DESTDIR` (live `/news` used) | fixed (#16) |
+| [D-23](#d-23-feederreader-sample-config-is-ignored) | Medium | `samples/feeder+reader/diablo.config` has no `version 2.0`: every directive ignored | open |
+| [D-24](#d-24-sample-dreaderaccess-allows-1008-not-localhost) | Medium | Sample `dreader.access` allows 1.0.0.0/8, not localhost | open |
+| [D-25](#d-25-installed-config-files-are-read-only-symlinks-into-samples) | Medium | Installed config files are read-only symlinks into `samples/`; edits are lost on reinstall | open |
+| [D-26](#d-26-iter-written-as-decimal-read-as-hex) | Medium | Overview `ITER` written as decimal, read as hex by `dexpireover` | open |
+| [D-27](#d-27-documentation-is-stale-or-wrong) | Medium | INSTALL, README.md, README.READER: xmake, missing Linux steps, news user, PGP | open |
+| [D-28](#d-28-man-pages) | Low | Man pages: none fully accurate, 17 programs without one, broken SEE ALSO | open |
+| [D-29](#d-29-dreaderd--sdigits-sets-a-mangled-receive-buffer) | Low | `dreaderd -S<digits>` also sets a mangled receive buffer | open |
+| [D-30](#d-30-diablo--x-sets-the-xref-host-not-xrefsync) | Low | `diablo -x` sets the Xref host, not xrefsync | open |
+| [D-31](#d-31-option-parsing-bugs-in-utilities) | Low | Option parsing bugs in utilities (`-C file`, `dilookup -f`, `dhisexpire -o`, ...) | open |
+| [D-32](#d-32-drcmd-exits-1-after-a-good-status) | Low | `drcmd` exits 1 after a good `status` reply | open |
+| [D-33](#d-33-dreaderd--b-host-without-port-binds-a-random-port) | Low | `dreaderd -B host` without a port binds a random port; `-P`/`-B` drop the config bind settings | open |
+| [D-34](#d-34-installed-adm-scripts-are-not-executable) | Low | Installed adm scripts are mode 444; no `/news/adm`; csh needed | open |
+| [D-35](#d-35-samples-with-wrong-directives-or-options) | Low | Samples with wrong directives or options (dexpire.ctl, diablo.config, crontab, dcontrol.ctl) | open |
+| [D-36](#d-36-dgrpctl-checkgroups-exec) | Low | `dgrpctl checkgroups exec`: new groups without S/GD, lock order | open |
+
+Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315).
+
+## Details
+
+### D-01 Host cache never rebuilt after a start without dhosts.cache
+`util/diablo.c` waited for the startup rebuild with `waitpid()` but left `HostCachePid` set,
+and the main loop only rebuilds while it is 0. After a first start (or a deleted cache),
+peers added to or removed from `dnewsfeeds` were ignored until a restart.
+Test: `TestHostCacheRebuildAfterFreshStart`.
+
+### D-02 Privilege drop results not checked
+`diablo`, `dreaderd` and `dstart` ignored the results of `setgroups`, `setgid` and `setuid`.
+A failure while root left the daemon running as root.
+
+### D-03 Non-root start refused after D-02
+The first D-02 fix exited on any failure, but `setgroups()` is root-only, so a start as an
+ordinary user (or as `news`) now exited: "Unable to set supplementary groups to news". Fixed
+by changing user only when `geteuid() == 0`. Found by every e2e test (they run as `news`).
+
+### D-04 Write through a NULL pointer in FeedWrite()
+`lib/newsfeed.c`. Found and fixed by the maintainer.
+
+### D-05 const strchr() warnings with glibc 2.43 or later
+11 `-Wdiscarded-qualifiers` warnings on Fedora 46 and Arch (glibc returns `const char *` for
+a `const` argument).
+
+### D-06 dreaderd writes 400 too busy after a 205
+At session end the reader child hands the descriptor back to the master for accounting
+(`DR_SESSEXIT_RPT`). With no free DNS worker, `SendDns()` wrote `400 Server too busy` to the
+client that had already received `205` for QUIT, and closed the descriptor the caller closes
+again. Reproduced on every run with `readerdns 1`, and on Rocky 10 with plain sequential
+connects. Test: `TestReaderQuitWhileConnecting`.
+
+### D-07 dreaderd cleanup can close another client's descriptor
+`SendDns()` recorded the accounting descriptor in `d_FdPend`; the caller closes it and the
+accounting reply never clears it. When that DNS worker died later, the `wait3()` cleanup
+closed whatever descriptor had reused the number. No test (needs a worker to die).
+
+### D-08 dreaderd -P host:port does not bind
+For an unbracketed `host:port`, `-P` and `-B` passed the whole string as the host to
+`getaddrinfo()` and dreaderd exited; only `[host]:port` worked. In the 2017 source too.
+Test: `TestReaderBindHostPort`.
+
+### D-09 dreaderd does not build with musl
+`dreaderd/filealloc.c` casts to `loff_t`, a glibc type. Alpine 3.22 to 3.24 built 38 of 39
+programs, without dreaderd.
+
+### D-10 diablo -b falls through into -A
+`case 'b'` had no `break`. dstart passes `-b<fd>`, so the news admin became the descriptor
+number ("contact 5"); `-b <fd>` swallowed the next argument.
+
+### D-11 KPDB deletes the wrong record on a race
+In #7 (`lib/kpdb.c:857` on that branch), the `-` delete marker is written at `lockoff` from
+the first, unlocked lookup instead of the record the locked second lookup found. A create
+race writes `-` at offset 0 (the header) and leaves two live records; two writers on one
+record also leave duplicates. Needs no I/O error. Details in the #7 review.
+
+### D-12 A dead DNS worker can be picked for a new client
+In #7 (`dreaderd/main.c:1615` on that branch), the new EOF path sets `d_Count = 0` before
+`wait3()` reaps the worker, so `SendDns()` can choose it: the pending client's descriptor
+leaks and the new client hangs. Details in the #7 review.
+
+### D-13 Interrupted KPDB sort marker is negative as int
+In #7, an interrupted sort leaves `FFFFFFFF` in the append counter; `int cval` makes it -1,
+so the sort runs without the forced remap. Use `0FFFFFFF`, as the creation header does.
+
+### D-14 A damaged cache.hits is refused forever
+In #7, `OpenCacheHits()` re-initializes only for a bad magic; a structurally bad file (the
+state the old growth bug left) disables scoreboard caching until an admin deletes it.
+
+### D-15 dreaderd has no CAPABILITIES
+`CAPABILITIES` answers `500 What?`. Clients that need it can't detect `READER`, `OVER`,
+`MODE-READER`, `STREAMING` or `AUTHINFO`, and nntp-testkit's RFC 3977 conformance checks
+skip almost everything (MODE STREAM works but isn't advertised).
+
+### D-16 Linux build fails with the default lib/vendor.h
+`RADIUS_ENABLED`, `DB_ENABLED` and `REJECT_DB` come from the XS4ALL site-configuration patch
+(30_diablo-xs4all-config.patch). Linux has no BSD libradius (`radlib.h`), so the default
+build fails there. The maintainer keeps them as admin opt-ins; the README should say to turn
+RADIUS off on Linux (`tests/e2e/ci/build-on-host` does).
+
+### D-17 Unchecked results under _FORTIFY_SOURCE
+Ubuntu and Gentoo enable `_FORTIFY_SOURCE` by default: 122 to 133 `-Wunused-result` warnings
+on 6-CUR-20261024-BWH, 80 after #5 to #9 (mostly `write()` in `util/` and
+`dreaderd/main.c`). Debian, Fedora, RHEL-family and openSUSE show none.
+
+### D-18 Debian GNU/Hurd build
+`PATH_MAX` is undefined on Hurd (`lib/defs.h:580`); `dreaderd/main.c` uses `setpgrp(0, 0)`
+because `USE_SYSV_SETPGRP` isn't set for Hurd; `dreaderd/dns.c:19` picks `db_185.h` only for
+`__linux__`/`__sun`. Low priority for the maintainer.
+
+### D-19 CHANGELOG links a missing document
+`CHANGELOG.md` links `BUILD-PORTABLE-MAKE.md`, which isn't in the repository. The maintainer
+has the file.
+
+### D-20 strncpy truncation warning in dreaderd/dns.c
+GCC 16 (Fedora 46): `-Wstringop-truncation` at `dreaderd/dns.c:2143`, copying 127 bytes into
+`dr_ReaderName`.
+
+### D-21 dactive.kp write errors now exit the process
+With #7, `KPDBFatalIO` calls `exit(1)` on any failed dactive.kp write, which is on the
+per-article path of diablo children and dreaderd feeds. A full disk now stops those
+processes instead of silently corrupting the file. Probably intended; needs a decision.
+
+### D-22 GNU make install ignores PREFIX and DESTDIR
+`install-portable.sh` reads PREFIX, DESTDIR, owner and group as arguments; the GNU `Makefile`
+passed them as environment variables. `gmake DESTDIR=/tmp/stage install` (as README.md
+documents it) installed into the live `/news`, `gmake DESTDIR=... uninstall` removed the live
+`/news/dbin/*`. BSDmakefile passes arguments. Verified, and tested before/after on Debian 13.
+
+### D-23 feeder+reader sample config is ignored
+`samples/feeder+reader/diablo.config` has no `version 2.0` line, so `lib/config.c` skips every
+directive silently: `feederbindport 120` and `active on` don't apply, and diablo binds 119 next
+to dreaderd. Verified (no `version` line). The other two samples got it in 6-CUR-20261024-BWH.
+
+### D-24 Sample dreader.access allows 1.0.0.0/8, not localhost
+`samples/dreader.access:415` has `access 1/8 ro`: that is the APNIC block 1.0.0.0/8, and there is
+no localhost or RFC 1918 entry, so the first `telnet localhost 119` is refused. From review.
+
+### D-25 Installed config files are read-only symlinks into samples
+`install-portable.sh` symlinks `/news/diablo.config` and the other config files to `samples/*`
+(mode 444) and overwrites `samples/*` on every install or bininstall, so edits made through the
+symlink are lost. The installed `dactive.kp` is a 1998 sample with 44 comp.sys.amiga groups.
+From review.
+
+### D-26 ITER written as decimal, read as hex
+`dreaderd/group.c:904` and `util/dcancel.c` write `ITER` with `%06d`; `util/dexpireover.c:414`
+reads it with base 16. From iteration 10 on they disagree, and the value is used for overview
+data file names, so dexpireover may work on the wrong files. Verified (the format mismatch);
+the consequences still need tracing.
+
+### D-27 Documentation is stale or wrong
+- INSTALL: "XMake is required", `xmake install`, config files "in /news/etc" (they are read
+  from `/news`), `/news/logs` (is `/news/log`), no `/news/run`, `/news/feeds`, csh.
+- README.md: no Linux step to turn RADIUS off (D-16); package lists only for dnf, without
+  compiler; no step to create user, group and `/news`; a non-default PREFIX doesn't change
+  runtime paths (`/news` is compiled in, `-C`/`DIABLO_CONFIG_PATH` needed); names
+  `compat/illumos_radlib.h` (is `compat/smartos_radlib.h`); CHANGELOG says the installer does
+  `clean`/`distclean` (Make targets).
+- README.READER: PGP setup for pgp 2.6.3i from dead FTP sites; the default `PGP_PATH` makes
+  Big-8 control verification never pass on modern systems.
+- README.SERVER: dead download and bug-report addresses. TUNING_NOTES: `quadhr.expire`, old
+  MAXFORKS and hsize, a leftover `<<<DONE TO HERE>>>`.
+From review.
+
+### D-28 Man pages
+Checked all 24 pages against the code; none is fully accurate. 17 built programs have no page
+(didate, diconvhist, diload, dspaminfo, pgpverify, dprimehostcache, dstart, dclient,
+dlockhistory, dfeedtest, dhisbench, dhisctl, dexpirecache, dcancel, dexpirescoring, plock,
+showlocks); `-C` and `-V` are undocumented almost everywhere; the shared SEE ALSO footer lists
+missing pages and leaves out existing ones. Largest gaps: diablo.8 (options, NNTP commands,
+stale expire and logging sections), dicmd.8 and drcmd.8 (most commands missing),
+diablo-files.5 (almost no diablo.config directives, a "ME" label that doesn't exist, obsolete
+diablo.hosts lookup), dspoolout.8, dnewslink.8, dexpire.8. From review; the per-page list is in
+the description of the pull request that added this file.
+
+### D-29 dreaderd -S<digits> sets a mangled receive buffer
+In `dreaderd/main.c` `case 'S'`, the digit cases set TxBufSize and fall through into `case 'R'`,
+which skips one character and sets RxBufSize from the rest: `-S8192` sets a 192-byte receive
+buffer. Verified.
+
+### D-30 diablo -x sets the Xref host, not xrefsync
+`util/diablo.c` `case 'x'` calls `SetCommand("feederxrefhost", ...)` like `-X`, so
+`feederxrefsync` can't be set from the command line, although Usage says `-x xrefsync`.
+Verified.
+
+### D-31 Option parsing bugs in utilities
+- `dilookup -f FILE` / `-h FILE` use `*ptr ? ptr : ptr + 1` and only work by accident (reading
+  past the option string). Verified.
+- `-C file` with a space: drequeue, dfeedinfo and dreadover take the file name as the next
+  argument (label, host or ID); dicmd and drcmd skip only `-C`. From review.
+- `dhisexpire -o file` with a space silently uses `.bak` and takes `file` as the history file;
+  `drequeue -d` eats the label; `diloadfromspool -e` requires `-F` and `-u`. From review.
+
+### D-32 drcmd exits 1 after a good status
+`util/drcmd.c` exits 0 only after a `.` line, and dreaderd sends none after `status`, so
+`drcmd status` exits 1 even when dreaderd answers. Verified (found while writing diablo-ctl,
+which works around it).
+
+### D-33 dreaderd -B host without port binds a random port
+With INET6 the `-B host` branch passes a NULL port; the `readerbindport` fallback exists only in
+the non-INET6 branch. Any `-P`/`-B` also drops `readerbindhost`/`readerbindport` from
+diablo.config. From review.
+
+### D-34 Installed adm scripts are not executable
+`install-portable.sh` copies `samples/` with mode 444 (xmake kept 755 for executable sources);
+nothing creates `/news/adm`, but `crontab.sample` runs `cd adm; ./$i`. All adm scripts are
+csh, which Debian, Ubuntu and Alpine don't install by default. From review.
+
+### D-35 Samples with wrong directives or options
+`samples/dexpire.ctl` says `dexpireover -w` compresses (it's `-z`); `samples/diablo.config:60`
+`path_dspoolctl %s/dspoolctl` (file is `dspool.ctl`); `samples/feeder/diablo.config`
+`internalfilter 16` (invalid) and `feederfilter /news/dbin/filter/spamfilter` (never built);
+`crontab.sample` `biweekly.*` also matches `biweekly.atrim.dexpire`, a duplicate of
+`old.biweekly.atrim.dexpire`; the `dcontrol.ctl` header describes `mail`/empty-value semantics
+the code doesn't implement. From review.
+
+### D-36 dgrpctl checkgroups exec
+New groups created by `checkgroups exec` get no S or GD fields, and the lock order is wrong when
+modifying (`util/dgrpctl.c:770-790`). From review.
+
+## Feature requests
+
+### F-01 Cancel-Lock (RFC 8315)
+Generate `Cancel-Lock` for local posts in dreaderd and verify `Cancel-Key` before executing a
+cancel or supersede. The maintainer's main reason not to replace INN with diablo plus
+dreaderd yet. Verification is in PR #19 (`readercanlock`); generation on POST follows.
+
+Design (agent-chatroom, 2026-10-26):
+- **Verification:** in `CtlCancel` (`dreaderd/control.c`). Cancels and Supersedes both go
+  through it, and the target's headers are in the overview data.
+- **Generation:** in `NNPostBuffer` (`dreaderd/post.c`).
+- **Crypto:** OpenSSL HMAC, already linked. It reproduces INN's test vectors, so the locks are
+  byte-identical to INN's.
+- **Config:** `readercanlock off|log|auth|require` in diablo.config; `canlockadmin`,
+  `canlockuser` and `addcanlockuser` in dreader.access.
+- **Plan:** three PRs (verification, generation, a key tool).
+
+Waiting for the maintainer's answers on the defaults, sha1 and secret storage.
