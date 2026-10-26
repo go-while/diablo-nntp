@@ -44,6 +44,18 @@ sudo dnf install zlib-devel libdb-devel openssl-devel
 
 These supply the zlib, Berkeley DB, and OpenSSL headers and libraries required by the tested Linux configuration. `libdb-devel` is needed when `DB_ENABLED` is enabled in `lib/vendor.h` or `REJECT_DB` is enabled in `lib/vendor.h`. Other Linux distributions may use different package names.
 
+### SmartOS Build Packages
+
+On SmartOS (pkgsrc), install the following before building:
+
+```sh
+pkgin -y install gcc13 gmake db4 openssl libradius
+```
+
+`libradius` provides `radlib.h`, which the default `lib/vendor.h` needs because `RADIUS_ENABLED` is defined there. Without it the build stops with `radlib.h: No such file or directory`; install `libradius` or disable `RADIUS_ENABLED`. `db4` is needed when `DB_ENABLED` or `REJECT_DB` is enabled. Add `git` to clone the repository, and `gnupg` or `gnupg2` for `pgpverify` (see `README.PGP`).
+
+This list was tested on a fresh `base-64-lts` 25.4.0 zone: `gmake -j8` built all 39 programs with no warnings.
+
 ### Optional Features
 
 Optional functionality is controlled through `lib/vendor.h`.
