@@ -251,7 +251,10 @@ main(int ac, char **av)
 		    if (p != NULL && (p = strrchr(p, ':')) != NULL)
 			bl->bl_Port = strdup(p + 1);
 		} else if (strrchr(ptr, ':')) {
-		    bl->bl_Port = strdup(strrchr(ptr, ':') + 1);
+		    char *p = strrchr(ptr, ':');
+
+		    bl->bl_Port = strdup(p + 1);
+		    *p = 0;	/* host:port - the host ends at the colon */
 		    bl->bl_Host = strdup(SanitiseAddr(ptr));
 		} else {
 		    bl->bl_Host = strdup(SanitiseAddr(ptr));
@@ -306,7 +309,10 @@ main(int ac, char **av)
 		    if (p != NULL && (p = strrchr(p, ':')) != NULL)
 			bl->bl_Port = strdup(p + 1);
 		} else if (strrchr(ptr, ':')) {
-		    bl->bl_Port = strdup(strrchr(ptr, ':') + 1);
+		    char *p = strrchr(ptr, ':');
+
+		    bl->bl_Port = strdup(p + 1);
+		    *p = 0;	/* host:port - the host ends at the colon */
 		    bl->bl_Host = strdup(SanitiseAddr(ptr));
 		} else {
 		    bl->bl_Port = strdup(ptr);
@@ -897,10 +903,11 @@ main(int ac, char **av)
 			    );
 			    close(desc->d_FdPend);
 			    desc->d_FdPend = -1;
-			    NumPending -= desc->d_Count; /* note: d_Count may already be 0 */
-			    NumActive -= desc->d_Count;
-			    desc->d_Count = 0;
 			}
+			/* also for an in-flight accounting request (no pending descriptor) */
+			NumPending -= desc->d_Count; /* note: d_Count may already be 0 */
+			NumActive -= desc->d_Count;
+			desc->d_Count = 0;
 		    } else if (desc->d_Type == THREAD_READER) {
 			if (!Exiting)
 			    logit(LOG_CRIT, "Lost reader process %d", (int)pid);
@@ -1485,13 +1492,30 @@ SendDns(int fd, struct sockaddr_in *rsin, DnsRes *dres)
 	    dreq.dr_SessionLength = time(NULL) - dres->dr_TimeStart;
 	}
 
-        best->d_FdPend = fd;
+	/*
+	 * An accounting hand-back (DR_SESSEXIT_RPT) is closed by the caller
+	 * right after this; don't keep its number as a pending descriptor
+	 * that a dying worker's cleanup would close later.
+	 */
+	if (dres != NULL && dres->dr_ResultFlags == DR_SESSEXIT_RPT)
+	    best->d_FdPend = -1;
+	else
+	    best->d_FdPend = fd;
 	bcopy(rsin, &best->d_SaveRSin, sizeof(best->d_SaveRSin));
 	write(best->d_Fd, &dreq, sizeof(dreq));
 	/* 
 	 * ignore return code.  If DNS process died, it
 	 * will be cleaned up later.
 	 */
+    } else if (dres != NULL && dres->dr_ResultFlags == DR_SESSEXIT_RPT) {
+	/*
+	 * Only the end-of-session accounting of a finished session: the
+	 * client already got its 205.  Never write to it; the caller
+	 * closes the descriptor.
+	 */
+	logit(LOG_INFO, "No spare DNS thread - session accounting for %s skipped",
+	    NetAddrToSt(0, (struct sockaddr *)rsin, 1, 1, 1));
+	++FailCount;
     } else {
 	char errbuf[1024];
 	logit(LOG_CRIT, "Unable to find spare DNS thread - rejecting connection");

@@ -58,7 +58,7 @@ FilePreAllocSpace(int fd, off_t off, int preallocsz, int objsz)
 
 	off = (off + preallocsz - 1) & ~(off_t)(preallocsz - 1);
 	e = syscall(SYS_fallocate, fd, FALLOC_FL_KEEP_SIZE,
-				(loff_t)off, (loff_t)preallocsz);
+				(off_t)off, (off_t)preallocsz);
 	if (e < 0 && (errno == ENOSYS || errno == EOPNOTSUPP))
 		fallocate_ok = 0;
     }
@@ -75,7 +75,7 @@ FileAllocSpace(int fd, off_t off, off_t len)
     static int posix_fallocate_ok = 1;
 
     if (fallocate_ok) {
-	e = syscall(SYS_fallocate, fd, 0, (loff_t)off, (loff_t)len);
+	e = syscall(SYS_fallocate, fd, 0, (off_t)off, (off_t)len);
 	if (e == 0)
 	    return 0;
 	if (e < 0 && (errno == ENOSYS || errno == EOPNOTSUPP))

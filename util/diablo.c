@@ -256,6 +256,7 @@ main(int ac, char **av)
 	    switch(ptr[-1]) {
 	    case 'b':
 		passedfd = strtol(((*ptr) ? ptr : av[++i]), NULL, 0);
+		break;
 	    case 'A':
 	    case 'N':
 		strdupfree(&DOpts.NewsAdmin, (*ptr) ? ptr : av[++i], "");
