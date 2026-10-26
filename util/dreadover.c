@@ -77,6 +77,8 @@ main(int ac, char **av)
 	    break;
 	case 'C':
 	    /* diablo.config path */
+	    if (*ptr == 0)
+		++i;
 	    break;
 	case 'd':
 	    VerboseMode = 1;

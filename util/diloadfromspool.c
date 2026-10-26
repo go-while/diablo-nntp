@@ -208,11 +208,14 @@ main(int ac, char **av)
     if (flags & HGF_FAST || UnExpireOpt) {
 	struct stat st;
 
+	/* -e works on the existing history, by default the configured one */
+	if (historyFileName == NULL && UnExpireOpt)
+	    historyFileName = strdup(PatDbExpand(DHistoryPat));
 	if (historyFileName == NULL) {
-	    fprintf(stderr, "You cannot run fastmode/unexpire without specifying a filename!\n");
+	    fprintf(stderr, "You cannot run fastmode without specifying a filename!\n");
 	    exit(1);
 	}
-	if (stat(historyFileName, &st) == 0 && uflag == 0) {
+	if (!UnExpireOpt && stat(historyFileName, &st) == 0 && uflag == 0) {
 	    fprintf(stderr, "-f history files may not previously exist unless you also specify -u\n");
 	    fprintf(stderr, "WARNING! -f -u is NOT suggested!\n");
 	    exit(1);

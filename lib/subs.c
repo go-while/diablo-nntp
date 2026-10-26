@@ -100,49 +100,77 @@ diablo_strlcpynl2(char *d, int trimwsafter, const char *s, int ssize, int dsize)
 static char PatPath1[128];
 static char PatPath2[128];
 
+/*
+ * PatSubst() - expand a path pattern from diablo.config (path_*), the
+ *		command line or dreader.access ("%s/dnewsfeeds"): the first
+ *		%s becomes dir, %% a single %, and anything else, including
+ *		any other % sequence, is copied as it is.  The pattern is
+ *		never used as a printf format, so a stray %d or %n in a
+ *		configured path can't read or write memory.
+ */
+static const char *
+PatSubst(char *buf, size_t size, const char *pat, const char *dir)
+{
+    size_t n = 0;
+    int subst = 0;
+
+    if (size == 0)
+	return(buf);
+    for (; *pat && n + 1 < size; ++pat) {
+	if (pat[0] == '%' && pat[1] == 's' && !subst) {
+	    const char *d;
+
+	    for (d = dir ? dir : ""; *d && n + 1 < size; ++d)
+		buf[n++] = *d;
+	    subst = 1;
+	    ++pat;
+	} else if (pat[0] == '%' && pat[1] == '%') {
+	    buf[n++] = '%';
+	    ++pat;
+	} else {
+	    buf[n++] = *pat;
+	}
+    }
+    buf[n] = 0;
+    return(buf);
+}
+
 const char *
 PatExpand(const char *pat)
 {
-    snprintf(PatPath1, sizeof(PatPath1), pat, NewsHome);
-
-    return(PatPath1);
+    return(PatSubst(PatPath1, sizeof(PatPath1), pat, NewsHome));
 }
 
 
 const char *
 PatLibExpand(const char *pat)
 {
-    snprintf(PatPath2, sizeof(PatPath2), pat, PatExpand(LibHomePat));
-    return(PatPath2);
+    return(PatSubst(PatPath2, sizeof(PatPath2), pat, PatExpand(LibHomePat)));
 }
 
 
 const char *
 PatDbExpand(const char *pat)
 {
-    snprintf(PatPath2, sizeof(PatPath2), pat, PatExpand(DbHomePat));
-    return(PatPath2);
+    return(PatSubst(PatPath2, sizeof(PatPath2), pat, PatExpand(DbHomePat)));
 }
 
 const char *
 PatLogExpand(const char *pat)
 {
-    snprintf(PatPath2, sizeof(PatPath2), pat, PatExpand(LogHomePat));
-    return(PatPath2);
+    return(PatSubst(PatPath2, sizeof(PatPath2), pat, PatExpand(LogHomePat)));
 }
 
 const char *
 PatSpoolExpand(const char *pat)
 {
-    snprintf(PatPath2, sizeof(PatPath2), pat, PatExpand(SpoolHomePat));
-    return(PatPath2);
+    return(PatSubst(PatPath2, sizeof(PatPath2), pat, PatExpand(SpoolHomePat)));
 }
 
 const char *
 PatRunExpand(const char *pat)
 {
-    snprintf(PatPath2, sizeof(PatPath2), pat, PatExpand(RunHomePat));
-    return(PatPath2);
+    return(PatSubst(PatPath2, sizeof(PatPath2), pat, PatExpand(RunHomePat)));
 }
 
 int 

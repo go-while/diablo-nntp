@@ -78,6 +78,7 @@ typedef struct ForkDesc {
     void	*d_Data;
     struct DnsRes *d_DnsRes;	/* partial DNS reply (THREAD_DNS only) */
     size_t	d_DnsRead;	/* number of reply bytes accumulated */
+    int		d_Dead;		/* worker failed; never pick it, wait3() reaps */
     struct sockaddr_storage d_SaveRSin;
     char	*d_LocalSpool;	/* direct spool access	*/
     int		d_Cache;	/* is spooler to be locally cached */
@@ -199,6 +200,7 @@ typedef struct ReaderDef {		/* Define a reader group	*/
     int rd_SpoolHeaders;
     int rd_IgnoreAuthInfo;
     int rd_CheckPostGroups;
+    int rd_AllowApprove;	/* may post with Approved: (approve moderated) */
     int rd_LogCmd;
 #ifdef	IP_TOS
     int rd_SetTOS;
@@ -470,6 +472,7 @@ typedef struct Connection {
     struct activeCacheEnt *co_ListCachePtr;
     struct GroupList *co_ListCacheGroups;
     int		co_ArtMode;	/* current article mode		*/
+    int		co_ListStrict;	/* OVER/HDR (RFC 3977), not XOVER/XHDR */
     artno_t	co_ArtNo;	/* current article number	*/
     artno_t	co_ArtBeg;
     artno_t	co_ArtEnd;
@@ -553,6 +556,7 @@ typedef struct Connection {
 #define COM_NEWNEWS	14
 
 #define	COM_XZVER	15
+#define	COM_ACTIVETIMES	16		/* list active.times		*/
 
 #define	ARTFETCH_MSGID	0x01		/* Request was by Message-ID */
 #define	ARTFETCH_ARTNO	0x02		/* Request was by article number */

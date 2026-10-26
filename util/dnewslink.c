@@ -274,7 +274,9 @@ int NumBatches = 1;
 int ConnLife = 0;
 int RotatedBatch = 0;
 int IdleRetire = 0;
+int OrphanRetire = 0;	/* our label left dnewsfeeds (or isn't realtime) */
 time_t ProcessStarted = 0;
+time_t LastHandoff = 0;	/* last kept queue rotation (or session start) */
 int HeaderSize = 0;
 int NotifyFd = -1;
 int NotifyLockFd = -1;
@@ -282,7 +284,8 @@ int IPTOS=0;
 time_t LastNotify = 0;
 time_t LastFeedData = 0;
 
-int TermFlag;
+volatile sig_atomic_t TermFlag;
+static int PeerWait(void);
 
 FeedStats	*Stats;
 FeedStats	*HostStats;
@@ -299,6 +302,7 @@ int HasStatusLine;
 
 void sigTerm(int sigNo);
 static time_t monotonicSeconds(void);
+static int FeedLabelGone(void);
 static void closeOutboundSession(int cfd);
 
 void
@@ -1252,16 +1256,30 @@ main(int ac, char **av)
 		if (ConnLife > 0 && RotatedBatch && !TermFlag &&
 		    NumBatches != 0 && StreamPend == 0 && StreamRetry == 0 &&
 		    WouldHaveRefiled == 0 && !WritesLosing) {
-		    if (monotonicSeconds() - ProcessStarted >= ConnLife) {
+		    time_t now = monotonicSeconds();
+		    time_t since = now - (LastHandoff ? LastHandoff : ProcessStarted);
+
+		    /* Retirement is only possible at a rotation, and the next
+		     * one is about "since" seconds away.  Retire at the
+		     * rotation nearest connlife rather than the first one after
+		     * it: otherwise a worker started just after a rotation is a
+		     * second short of connlife at each multiple and serves a
+		     * whole extra rotation interval (connlife 60 gave ~120 s).
+		     */
+		    if ((now - ProcessStarted) + since / 2 >= ConnLife) {
 			retire = 1;
 			dl_logit("connlife expired; retiring after queue rotation");
 		    } else {
 			retainedCfd = cfd;
+			LastHandoff = now;
 		    }
 		}
 		if (IdleRetire) {
 		    retire = 1;
-		    dl_logit("connlife expired; retiring with empty queue");
+		    if (OrphanRetire)
+			dl_logit("label %s no longer a realtime feed in dnewsfeeds; retiring", BatchFileCtl);
+		    else
+			dl_logit("connlife expired; retiring with empty queue");
 		}
 		if (retainedCfd < 0)
 		    closeOutboundSession(cfd);
@@ -1298,7 +1316,7 @@ main(int ac, char **av)
      * not rotate queues or launch batch workers; cron remains the fallback
      * if fork/exec fails.  Never respawn on signals or failed connections.
      */
-    if (retire && ConnLife > 0 && RealTimeOpt && !TermFlag &&
+    if (retire && ConnLife > 0 && RealTimeOpt && !TermFlag && !OrphanRetire &&
 	BatchSeq < 0 && !PipeOpt) {
 	pid_t pid = fork();
 	if (pid == 0) {
@@ -1336,6 +1354,40 @@ main(int ac, char **av)
 	    dl_logit("connlife replacement fork failed: %s", strerror(errno));
     }
     exit(0);
+}
+
+/*
+ * FeedLabelGone() - 1 if our label (the queue name) is no longer a realtime
+ *		     feed in dnewsfeeds.  The file is reparsed only when its
+ *		     mtime or inode changed; the first call just records them,
+ *		     since dspoolout started us from the current file.
+ */
+static int
+FeedLabelGone(void)
+{
+    static time_t lastMtime = 0;
+    static ino_t lastIno = 0;
+    static int gone = 0;
+    struct stat st;
+
+    if (BatchFileCtl == NULL ||
+	stat(PatLibExpand(DNewsfeedsPat), &st) < 0)
+	return(gone);
+    if (lastMtime == 0) {
+	lastMtime = st.st_mtime;
+	lastIno = st.st_ino;
+	return(0);
+    }
+    if (st.st_mtime != lastMtime || st.st_ino != lastIno) {
+	NewslinkInfo *li;
+
+	lastMtime = st.st_mtime;
+	lastIno = st.st_ino;
+	LoadNewsFeed(0, 1, NULL);
+	li = FeedLinkInfo(BatchFileCtl);
+	gone = (li == NULL || !li->li_RealTime);
+    }
+    return(gone);
 }
 
 /* Connection age is deliberately independent of queue rotation count. */
@@ -2733,7 +2785,12 @@ flushCommandBuffer(int cfd)
 
 	    pfd.fd = cfd;
 	    pfd.events = POLLOUT;
-	    if (poll(&pfd, 1, Timeout * 1000) == 0) {
+	    if (TermFlag && b != Cmde && poll(&pfd, 1, 0) == 0) {
+		/* terminating: don't wait for a stalled peer */
+		Cmde = 0;
+		return(-1);
+	    }
+	    if (poll(&pfd, 1, PeerWait()) == 0) {
 		dl_logit("write timeout");
 		WritesLosing = 1;
 		l.l_onoff = 1;
@@ -2803,7 +2860,11 @@ writeLarge(int cfd, char *buffer, size_t size)
 
 	    pfd.fd = cfd;
 	    pfd.events = POLLOUT;
-	    if (poll(&pfd, 1, Timeout * 1000) == 0) {
+	    if (TermFlag && poll(&pfd, 1, 0) == 0) {
+		/* terminating: don't wait for a stalled peer */
+		return(-1);
+	    }
+	    if (poll(&pfd, 1, PeerWait()) == 0) {
 		dl_logit("write timeout");
 		WritesLosing = 1;
 		l.l_onoff = 1;
@@ -2967,10 +3028,18 @@ commandResponse(int cfd, char **rptr, const char *ctl, ...)
 #if USE_POLL
 		    struct pollfd pfd = { 0 };
 
+		    int pr;
+
 		    pfd.fd = cfd;
 		    pfd.events = POLLIN;
-		    if (poll(&pfd, 1, Timeout * 1000) == 0) {
+		    pr = poll(&pfd, 1, PeerWait());
+		    if (pr == 0) {
 			TimeCounter = 100000;
+			break;
+		    }
+		    if (pr < 0 && errno == EINTR && TermFlag) {
+			/* a signal asked us to terminate: stop waiting */
+			n = 0;
 			break;
 		    }
 #else
@@ -3012,6 +3081,19 @@ commandResponse(int cfd, char **rptr, const char *ctl, ...)
 	r = 0;
     }
     return(r);
+}
+
+/*
+ * PeerWait() - the poll() timeout in ms for waiting on the peer: -T, but at
+ * most 2 seconds once a signal asked us to terminate, so that a stalled peer
+ * can't hold a terminating dnewslink for the full timeout.
+ */
+static int
+PeerWait(void)
+{
+    if (TermFlag)
+	return(2000);
+    return(Timeout * 1000);
 }
 
 void
@@ -3272,6 +3354,18 @@ readline(int fd, char *buf, int size, time_t t)
 		monotonicSeconds() - ProcessStarted >= ConnLife &&
 		fstat(fd, &st) == 0 && st.st_size == 0) {
 		IdleRetire = 1;
+		break;
+	    }
+
+	    /* If our label was removed from dnewsfeeds (or is no longer
+	     * realtime), dspoolout stops rotating this queue, so neither
+	     * retirement above can ever happen and the session would stay
+	     * open forever.  Nothing is pending here (StreamPend == 0), so
+	     * retire the same way as with an empty queue.
+	     */
+	    if (ConnLife > 0 && FeedLabelGone()) {
+		IdleRetire = 1;
+		OrphanRetire = 1;
 		break;
 	    }
 

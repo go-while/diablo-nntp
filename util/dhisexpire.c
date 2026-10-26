@@ -109,6 +109,8 @@ main(int ac, char **av)
 	    break;
 #endif
 	case 'o':
+	    if (*ptr == 0)
+		ptr = av[++i];
 	    strncpy(OldFileName, ptr, sizeof(OldFileName) - 1);
 	    OldFileName[sizeof(OldFileName) - 1] = '\0';
 	    break;

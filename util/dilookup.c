@@ -53,11 +53,11 @@ main(int ac, char **av)
 		    ++i;
 		break;
 	    case 'f':
-		ScanFile = *ptr ? ptr : ptr + 1;
+		ScanFile = *ptr ? ptr : av[++i];
 		ScanOpt = 1;
 		break;
 	    case 'h':
-		DHistoryPat = *ptr ? ptr : ptr + 1;
+		DHistoryPat = *ptr ? ptr : av[++i];
 		break;
 	    case 'q':
 		QuietOpt = 1;

@@ -37,8 +37,17 @@ NNTPMode(Connection *conn, char **pptr)
 
     if (mode) {
 	if (strcasecmp(mode, "stream") == 0) {
-	    conn->co_Flags |= COF_STREAM;
-	    MBLogPrintf(conn, &conn->co_TMBuf, "203 StreamOK.\r\n");
+	    /*
+	     * CHECK and TAKETHIS exist only in transit mode (COF_SERVER), so
+	     * streaming is only offered there (RFC 4644 2.3: 501 otherwise,
+	     * and CAPABILITIES lists STREAMING only there).
+	     */
+	    if (conn->co_Flags & COF_SERVER) {
+		conn->co_Flags |= COF_STREAM;
+		MBLogPrintf(conn, &conn->co_TMBuf, "203 StreamOK.\r\n");
+	    } else {
+		MBLogPrintf(conn, &conn->co_TMBuf, "501 MODE STREAM not available in reader mode\r\n");
+	    }
 	    ok = 1;
 	}
 	if (strcasecmp(mode, "headfeed") == 0) {

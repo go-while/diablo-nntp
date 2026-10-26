@@ -89,6 +89,8 @@ int DFd = -1;
 MemPool	*DnsMemPool;
 
 time_t Access_LastUpdate = 0;
+static off_t Access_LastSize = -1;	/* with the mtime: which dreader.access */
+static ino_t Access_LastIno = 0;	/* the cache was built from */
 time_t Cache_LastUpdate = 0;
 
 AccessMap accessmap;
@@ -2168,11 +2170,9 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
 
     if (AuthReader && strncmp(AuthReader, "110 ", 4) == 0) {
 	AuthReader += 4;
-	strncpy(dres->dr_ReaderName, AuthReader, sizeof(dres->dr_ReaderName) - 1);
-	dres->dr_ReaderName[sizeof(dres->dr_ReaderName) - 1] = '\0';
+	snprintf(dres->dr_ReaderName, sizeof(dres->dr_ReaderName), "%s", AuthReader);
     } else {
-	strncpy(dres->dr_ReaderName, matchedalp->ad_Reader, sizeof(dres->dr_ReaderName) - 1);
-	dres->dr_ReaderName[sizeof(dres->dr_ReaderName) - 1] = '\0';
+	snprintf(dres->dr_ReaderName, sizeof(dres->dr_ReaderName), "%s", matchedalp->ad_Reader);
     }
 
     SetAuthDetails(dres, dres->dr_ReaderName);
@@ -2529,8 +2529,15 @@ InstallAccessCache(void) {
     char rdnewbuf[PATH_MAX];
     char ranewbuf[PATH_MAX];
 
+    /*
+     * Rebuild when dreader.access changed in any way, not only when it got
+     * newer: restoring an older copy (cp -p, a backup) must take effect.
+     */
     if ((stat(PatLibExpand(DReaderAccessPat), &st) == 0) &&
-		(st.st_mtime <= Access_LastUpdate))
+		Access_LastUpdate != 0 &&
+		st.st_mtime == Access_LastUpdate &&
+		st.st_size == Access_LastSize &&
+		st.st_ino == Access_LastIno)
 	return;
 
     logit(LOG_INFO, "Installing access cache");
@@ -2545,6 +2552,8 @@ InstallAccessCache(void) {
 	return;
     }
     Access_LastUpdate = st.st_mtime;
+    Access_LastSize = st.st_size;
+    Access_LastIno = st.st_ino;
 
     snprintf(vsnewbuf, sizeof(vsnewbuf), "%s.new",
 				PatDbExpand(DRVserverCachePat));
@@ -3088,6 +3097,13 @@ InstallAccessCache(void) {
 			readerdef.rd_CheckPostGroups = 1;
 		    else
 			readerdef.rd_CheckPostGroups = 0;
+		    continue;
+		}
+		if (*val && strcmp(opt, "approve") == 0) {
+		    if (*val == 'y' || *val == 'Y' || *val == '1')
+			readerdef.rd_AllowApprove = 1;
+		    else
+			readerdef.rd_AllowApprove = 0;
 		    continue;
 		}
 		if (*val && strcmp(opt, "logcmd") == 0) {
@@ -3713,6 +3729,7 @@ PrintAuthDetails(DnsRes *dres)
     printf(" rd_DenyMismatchedDns: %d\n", dres->dr_ReaderDef->rd_DenyMismatchedDns);
     printf(" rd_DenyNoDns: %d\n", dres->dr_ReaderDef->rd_DenyNoDns);
     printf(" rd_CheckPostGroups: %d\n", dres->dr_ReaderDef->rd_CheckPostGroups);
+    printf(" rd_AllowApprove: %d\n", dres->dr_ReaderDef->rd_AllowApprove);
     printf(" rd_LogCmd: %d\n", dres->dr_ReaderDef->rd_LogCmd);
 #ifdef	IP_TOS
     printf(" rd_SetTOS: %d\n", dres->dr_ReaderDef->rd_SetTOS);

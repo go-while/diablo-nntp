@@ -347,7 +347,9 @@ main(int ac, char **av)
 	    case '7':
 	    case '8':
 	    case '9':
-		TxBufSize = strtol(((*ptr) ? ptr : av[++i]), NULL, 0);
+		/* -S# sets both buffers */
+		TxBufSize = RxBufSize = strtol(((*ptr) ? ptr : av[++i]), NULL, 0);
+		break;
 	    case 'R':
 		++ptr;
 		RxBufSize = strtol(((*ptr) ? ptr : av[++i]), NULL, 0);
@@ -387,26 +389,28 @@ main(int ac, char **av)
     if (BindBase == NULL) {
 	BindList *bl = calloc(sizeof(BindList), 1);
 
-	bl->bl_Host = DOpts.ReaderBindHost;
-	bl->bl_Port = DOpts.ReaderPort;
-
 	bl->bl_Next = BindBase;
 	BindBase = bl;
+    }
+
+    /*
+     * -B host and -P port take the missing half from diablo.config
+     * (readerbindhost, readerbindport)
+     */
+    {
+	BindList *bl;
+
+	for (bl = BindBase; bl; bl = bl->bl_Next) {
+	    if (bl->bl_Host == NULL)
+		bl->bl_Host = DOpts.ReaderBindHost;
+	    if (bl->bl_Port == NULL)
+		bl->bl_Port = DOpts.ReaderPort;
+	}
     }
 
     MaxConnects = DOpts.ReaderThreads * DOpts.ReaderForks;
 
     MyGroupHome = strdup(PatExpand(GroupHomePat));
-
-    if (BindBase == NULL) {
-	BindList *bl = calloc(sizeof(BindList), 1);
-
-	bl->bl_Host = DOpts.ReaderBindHost;
-	bl->bl_Port = DOpts.ReaderPort;
-
-	bl->bl_Next = BindBase;
-	BindBase = bl;
-    }
 
     /*
      * To stdout, not an error, no arguments == user requesting 
@@ -1305,7 +1309,7 @@ DoCommand(int ufd)
 		    break;
 		s2 = strtok(NULL, "\n");
 		if (strcmp(s1, "status") == 0) {
-		    fprintf(fo, "Connect=%d Failed=%d Dns=%d/%d Act=%d/%d", 
+		    fprintf(fo, "Connect=%d Failed=%d Dns=%d/%d Act=%d/%d\n",
 			ConnectCount, FailCount,
 			NumPending, DOpts.ReaderDns, 
 			NumActive, MaxConnects
@@ -1660,15 +1664,22 @@ HandleDnsThread(ForkDesc *desc)
     if (r < 0) {
 	int err = errno;
 
-	logit(LOG_CRIT, "DNS subprocess %d response failed after %lu/%lu bytes: %s",
+	/* A worker that closes between replies (e.g. killed at shutdown)
+	 * is routine; an unexpected death is reported by wait3() as "Lost
+	 * dns resolver".  Keep LOG_CRIT for partial replies and errors.
+	 */
+	logit((desc->d_DnsRead == 0 && err == EPIPE) ? LOG_INFO : LOG_CRIT,
+		"DNS subprocess %d response failed after %lu/%lu bytes: %s",
 		(int)desc->d_Pid, (unsigned long)desc->d_DnsRead,
 		(unsigned long)sizeof(dres), strerror(err));
 	FD_CLR(desc->d_Fd, &SFds);	/* avoid select() spinning on EOF */
 	if (desc->d_Pid > 0)
 	    kill(desc->d_Pid, SIGKILL);
-	NumActive -= desc->d_Count;
-	NumPending -= desc->d_Count;
-	desc->d_Count = 0;
+	/* Never hand this worker another client.  Leave d_Count, the
+	 * counters and the pending descriptor to the wait3() handler,
+	 * which closes d_FdPend and subtracts d_Count when it reaps it.
+	 */
+	desc->d_Dead = 1;
 	return;
     }
     --desc->d_Count;
@@ -1728,7 +1739,12 @@ HandleDnsThread(ForkDesc *desc)
         if (r == 1)
 	    ClearOldAccessMap();
 
-        if (dres.dr_Code == 0) {
+        if (dres.dr_Code == 0 && dres.dr_AuthUser[0] && dres.dr_AuthPass[0]) {
+	    /* AUTHINFO USER/PASS that no access entry accepts (RFC 4643) */
+	    snprintf(errbuf, sizeof(errbuf), "481 Authentication failed\r\n");
+	    error1 = errbuf;
+	    error2 = "AuthFailed";
+        } else if (dres.dr_Code == 0) {
 	    snprintf(errbuf, sizeof(errbuf), "502 %s: Access denied to your node%s%s\r\n",
 		    dres.dr_VServerDef->vs_HostName,
 		    *dres.dr_VServerDef->vs_NewsAdm ? " - " : "",

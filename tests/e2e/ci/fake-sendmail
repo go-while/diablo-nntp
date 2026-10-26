@@ -1,0 +1,33 @@
+#!/bin/sh
+# diablo-e2e-fake-sendmail
+#
+# A stand-in for sendmail on e2e test machines, for the moderation tests.
+# ci/build-on-host installs it as /usr/sbin/sendmail (SENDMAIL_PATH in
+# lib/config.h) only with E2E_FAKE_SENDMAIL=1 and only where no sendmail
+# exists; never install it on a machine that sends real mail.
+#
+# dreaderd runs the mailer with its own environment, so DIABLO_CONFIG_PATH
+# names the test site.  Each mail goes into <site>/mail/N/ (argv: one
+# argument per line, argv[0] first; msg: what came in on stdin; done: written
+# last).  The exit status is the number in <site>/mail/exit, else 0.  Without
+# DIABLO_CONFIG_PATH the mail is read and dropped.
+
+conf=${DIABLO_CONFIG_PATH:-}
+if [ -z "$conf" ]; then
+    cat >/dev/null
+    exit 0
+fi
+dir=$(dirname "$conf")/mail
+mkdir -p "$dir" || exit 75
+n=1
+until mkdir "$dir/$n" 2>/dev/null; do
+    n=$((n + 1))
+done
+for a in "$0" "$@"; do
+    printf '%s\n' "$a"
+done > "$dir/$n/argv"
+cat > "$dir/$n/msg"
+: > "$dir/$n/done"
+status=0
+[ -r "$dir/exit" ] && status=$(cat "$dir/exit")
+exit "$status"

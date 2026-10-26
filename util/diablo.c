@@ -379,8 +379,7 @@ main(int ac, char **av)
 		SetCommand(stderr, "feederxrefhost", (*ptr) ? ptr : av[++i], NULL);
 		break;
 	    case 'x':
-		ptr = (*ptr) ? ptr : av[++i];
-		SetCommand(stderr, "feederxrefhost", (*ptr) ? ptr : av[++i], NULL);
+		SetCommand(stderr, "feederxrefsync", (*ptr) ? ptr : av[++i], NULL);
 		break;
 	    case 'Z':
 		SetCommand(stderr, "rejectartswithnul", "1", NULL);
@@ -546,6 +545,8 @@ sigAlrm(int sigNo)
  * DIABLOSERVER() - The master server process.  It accept()s connections
  *		    and forks off children.
  */
+
+static char PidFile[1024];
 
 void
 DiabloServer(int lfd)
@@ -828,6 +829,27 @@ DiabloServer(int lfd)
     }
 
     /*
+     * Pid file <path_log>/diablo.pid, next to dreaderd.pid, so that tools
+     * like diablo-ctl find this site's master even when other sites run as
+     * the same user.  Removed again on a clean exit.
+     */
+
+    {
+	FILE *pf;
+
+	snprintf(PidFile, sizeof(PidFile), "%s/diablo.pid", PatExpand(LogHomePat));
+	remove(PidFile);
+	if ((pf = fopen(PidFile, "w")) != NULL) {
+	    fprintf(pf, "%d\n", (int)getpid());
+	    if (fclose(pf) != 0)
+		logit(LOG_ERR, "unable to write %s: %s", PidFile, strerror(errno));
+	} else {
+	    logit(LOG_ERR, "unable to create %s: %s", PidFile, strerror(errno));
+	    PidFile[0] = 0;
+	}
+    }
+
+    /*
      * UNIX domain socket
      */
 
@@ -1003,6 +1025,8 @@ DiabloServer(int lfd)
     }
     FinishRetain(RET_PAUSE);
     FinishRetain(RET_CLOSE);
+    if (PidFile[0])
+	remove(PidFile);	/* last: diablo-ctl waits for this pid */
 }
 
 /*
@@ -1856,7 +1880,8 @@ DoSession(int fd, int count)
 	    xfprintf(fo, "480 Read-only connection.\r\n");
 	} else if (strcasecmp(cmd, "ihave") == 0) {
 	    const char *msgidbuf = "";
-	    const char *msgid = MsgId(strtok(NULL, "\r\n"), &msgidbuf);
+	    const char *msgarg = strtok(NULL, "\r\n");
+	    const char *msgid = MsgId(msgarg, &msgidbuf);
 	    int pre = 0;
 
 	    TtlStats.ArtsTested += 1.0;
@@ -1867,7 +1892,9 @@ DoSession(int fd, int count)
 	     * cache, so check it first.
 	     */
 
-	    if (strcmp(msgid, "<>") == 0) {
+	    if (msgarg == NULL || msgarg[strspn(msgarg, " \t")] == 0) {
+		xfprintf(fo, "501 Syntax error: message-id required\r\n");
+	    } else if (strcmp(msgid, "<>") == 0) {
 		xfprintf(fo, "435 %s Bad Message-ID\r\n", msgidbuf);
 	    } else if (ArtHashIsFiltered(msgid)) {
 		LogIncoming("%s - %s %s", HLabel, msgid, "IFILTER");
@@ -1973,7 +2000,8 @@ DoSession(int fd, int count)
 	    xfprintf(fo, "480 Read-only connection.\r\n");
 	} else if (strcasecmp(cmd, "check") == 0) {
 	    const char *msgidbuf = "";
-	    const char *msgid = MsgId(strtok(NULL, "\r\n"), &msgidbuf);
+	    const char *msgarg = strtok(NULL, "\r\n");
+	    const char *msgid = MsgId(msgarg, &msgidbuf);
 	    int pre = 0;
 
 	    TtlStats.ArtsTested += 1.0;
@@ -1984,7 +2012,9 @@ DoSession(int fd, int count)
 	     * cache, so check it first in that case. 
 	     */
 
-	    if (strcmp(msgid, "<>") == 0) {
+	    if (msgarg == NULL || msgarg[strspn(msgarg, " \t")] == 0) {
+		xfprintf(fo, "501 Syntax error: message-id required\r\n");
+	    } else if (strcmp(msgid, "<>") == 0) {
 		xfprintf(fo, "438 %s Bad Message-ID\r\n", msgidbuf);
 		DoArtStats(STATS_REFUSED, STATS_REF_BADMSGID, 0);
 	    } else if (ArtHashIsFiltered(msgid)) {
@@ -2444,7 +2474,8 @@ DoSession(int fd, int count)
 		headerOnly = 0;
 		xfprintf(fo, "250 Mode Command OK.\r\n");
 	    } else if (p && strcasecmp(p, "reader") == 0) {
-		unimp = 1;
+		/* a transit-only server (RFC 3977 5.3) */
+		xfprintf(fo, "502 Transit service only\r\n");
 #ifdef	USE_ZLIB
 	    } else if (p && strcasecmp(p, "compress") == 0) {
 		/* added for compression support */
@@ -2700,6 +2731,7 @@ SendArticle(const char *data, int fsize, FILE *fo, int doHead, int doBody)
 #define	LAERR_HEADERTOOBIG	0x100000
 #define	LAERR_NOHDREND		0x200000
 #define	LAERR_ARTHASBARECR	0x400000
+#define	LAERR_UNAPPROVED	0x800000	/* moderated group, no Approved: */
 
 int
 LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *rejBuf, char *artType)
@@ -2747,6 +2779,7 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 	int haveMsgId = 0;
 	int haveBytes = 0;
 	int artError = 0;
+	char unapprGroup[MAXGNAME] = "";
 	int artFd = -1;
 	int hdrDate = 0; /* number of Date: headers */
 	int hdrSubject = 0;
@@ -2991,9 +3024,10 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 			     */
 			    if (DOpts.FeederActiveDrop &&
 				    (haveApproved == 0) &&
-				    (CheckForModeratedGroups(nglist) == 1))
+				    (FirstModeratedGroup(nglist, unapprGroup,
+					sizeof(unapprGroup)) == 1))
 			    {
-				artError |= LAERR_ACTIVEDROP;
+				artError |= LAERR_UNAPPROVED;
 			    } else if (GenerateXRef(buffer, nglist,
 					DOpts.FeederXRefHost, control) == 0 &&
 					DOpts.FeederActiveDrop &&
@@ -3539,6 +3573,15 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		DoArtStats(STATS_REJECTED, STATS_REJ_MISSHDRS, size);
 		DEBUGLOG(msgid, "NoNewsgroups");
 		SETREJECT("NoNewsgroups");
+	    } else if (artError & LAERR_UNAPPROVED) {
+		/* As INN's "Unapproved for <group>", in the reject token style */
+		char why[MAXGNAME + 16];
+
+		snprintf(why, sizeof(why), "Unapproved/%s", unapprGroup);
+		DoArtStats(STATS_REJECTED, STATS_REJ_NOTINACTV, size);
+		DEBUGLOG(msgid, why);
+		SETREJECT(why);
+		addRejectToHistory = 1;
 	    } else if (artError & LAERR_ACTIVEDROP) {
 		DoArtStats(STATS_REJECTED, STATS_REJ_NOTINACTV, size);
 		DEBUGLOG(msgid, "NotInActive");
