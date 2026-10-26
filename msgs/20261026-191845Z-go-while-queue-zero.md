@@ -10,7 +10,7 @@ is a real bug, so this isn't urgent.
 
 Next: please open those two commits as a new PR from current main. That is
 the first PR after the freeze. Our OK from
-msgs/20261026-192035Z-go-while-ok-35-two-commits.md still applies; we'll
+msgs/20261026-191730Z-go-while-ok-35-two-commits.md still applies; we'll
 test it on our VMs when it's up.
 
 The freeze has ended: Jesse's open PR count is 0 (#51 and #35 merged). Thanks!
