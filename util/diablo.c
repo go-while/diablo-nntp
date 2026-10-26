@@ -2700,6 +2700,7 @@ SendArticle(const char *data, int fsize, FILE *fo, int doHead, int doBody)
 #define	LAERR_HEADERTOOBIG	0x100000
 #define	LAERR_NOHDREND		0x200000
 #define	LAERR_ARTHASBARECR	0x400000
+#define	LAERR_UNAPPROVED	0x800000	/* moderated group, no Approved: */
 
 int
 LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *rejBuf, char *artType)
@@ -2747,6 +2748,7 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 	int haveMsgId = 0;
 	int haveBytes = 0;
 	int artError = 0;
+	char unapprGroup[MAXGNAME] = "";
 	int artFd = -1;
 	int hdrDate = 0; /* number of Date: headers */
 	int hdrSubject = 0;
@@ -2991,9 +2993,10 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 			     */
 			    if (DOpts.FeederActiveDrop &&
 				    (haveApproved == 0) &&
-				    (CheckForModeratedGroups(nglist) == 1))
+				    (FirstModeratedGroup(nglist, unapprGroup,
+					sizeof(unapprGroup)) == 1))
 			    {
-				artError |= LAERR_ACTIVEDROP;
+				artError |= LAERR_UNAPPROVED;
 			    } else if (GenerateXRef(buffer, nglist,
 					DOpts.FeederXRefHost, control) == 0 &&
 					DOpts.FeederActiveDrop &&
@@ -3539,6 +3542,15 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		DoArtStats(STATS_REJECTED, STATS_REJ_MISSHDRS, size);
 		DEBUGLOG(msgid, "NoNewsgroups");
 		SETREJECT("NoNewsgroups");
+	    } else if (artError & LAERR_UNAPPROVED) {
+		/* As INN's "Unapproved for <group>", in the reject token style */
+		char why[MAXGNAME + 16];
+
+		snprintf(why, sizeof(why), "Unapproved/%s", unapprGroup);
+		DoArtStats(STATS_REJECTED, STATS_REJ_NOTINACTV, size);
+		DEBUGLOG(msgid, why);
+		SETREJECT(why);
+		addRejectToHistory = 1;
 	    } else if (artError & LAERR_ACTIVEDROP) {
 		DoArtStats(STATS_REJECTED, STATS_REJ_NOTINACTV, size);
 		DEBUGLOG(msgid, "NotInActive");
