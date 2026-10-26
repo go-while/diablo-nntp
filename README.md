@@ -56,6 +56,25 @@ pkgin -y install gcc13 gmake db4 openssl libradius
 
 This list was tested on a fresh `base-64-lts` 25.4.0 zone: `gmake -j8` built all 39 programs with no warnings.
 
+After `gmake install`, two SmartOS details:
+
+- **Cron and the news user.** SmartOS creates new accounts locked (`*LK*` in `/etc/shadow`), and cron refuses their jobs (`'news' not allowed to execute cronjobs`), so `dspoolout` and the `adm` scripts never run. Mark the account as having no password instead; it still can't log in:
+
+  ```sh
+  passwd -N news
+  ```
+
+- **Feeder and reader in one zone.** `diablo` and `dreaderd` both listen on port 119 by default. Move the feeder to another port and point the reader's post server at it:
+
+  ```
+  # diablo.config
+  feederbindport  120
+  # dserver.hosts
+  localhost       s1o1p120
+  ```
+
+  and start diablo with `-P 120` (`DIABLO_OPTS` in `diablo-ctl.conf`).
+
 ### Optional Features
 
 Optional functionality is controlled through `lib/vendor.h`.
