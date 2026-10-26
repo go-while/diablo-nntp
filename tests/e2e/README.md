@@ -36,11 +36,18 @@ test fails.
 | `TestReaderBindHostPort` | dreaderd | `dreaderd -P 127.0.0.1:port` listens there. **Fails** on main before the -P fix: the whole "host:port" was passed to getaddrinfo |
 | `TestHeaderFeedToReader` | diablo, dnewslink, dreaderd | diablo feeds dreaderd a header-only feed (`headfeed on`, `dnewslink -H`); the reader shows the article in GROUP and OVER and fetches BODY from diablo as its spool server |
 | `TestDexpire` | diablo, dexpire | `dexpire -a` removes the spool directory of an article older than `keeptime`; STAT then gives 430, and offering the article again gets 435 (still in history) |
-| `TestSpoolDirRemovedWhileWriting` | diablo | the spool directory a connection writes into is removed (as dexpire can do); the next article on the same connection is stored (235, then STAT 223) in a recreated directory |
+| `TestDexpireKeepsNewestDir` | diablo, dexpire | `dexpire -a` keeps a spool's newest directory even when it is older than `keeptime` (diablo may be writing into it): the article in it stays readable and the next one is stored. **Fails** on main before jrehmer/diablo-nntp#25 |
+| `TestSpoolDirRemovedWhileWriting` | diablo | the spool directory a connection writes into is removed (as dexpire can do); the next article on the same connection is stored (235, then STAT 223) in a recreated directory. **Fails** on main before jrehmer/diablo-nntp#24 (235, then STAT 430: the article was lost) |
 | `TestDiabloCtlFeeder`, `TestDiabloCtlReader` | samples/adm/diablo-ctl | status (3 when stopped), start, a second start ("already running"), restart, stop (port closed), stop again; skipped without the script (`DIABLO_CTL`, default: `samples/adm/diablo-ctl` next to `DIABLO_BIN`) |
 | `TestCanLockVectors` | (Go only) | the Go Cancel-Lock helpers reproduce INN's test vectors (tests/lib/canlock-t.c) |
 | `TestCancelLock`, `TestCancelLockSupersedes`, `TestCancelLockEarlyCancel`, `TestCancelLockTrackonlyRefused` | dreaderd | `readercanlock` (RFC 8315): cancels and supersedes against Cancel-Lock in each mode (require-auth, auth, none, all), matching, wrong and missing keys, sha1 in a folded lock with a comment, early cancels, and the trackonly refusal; skipped without readercanlock support |
 | `TestDnewslinkConnlife` | diablo, dspoolout, dnewslink | realtime feed with `connlife 8` (skipped without `dnewslink -K`): one TCP session across a queue rotation; after connlife, retirement at the next rotation and a replacement at once (`dspoolout -J`); no descriptor growth over three replacements; every article reaches the peer once, in order. Linux only (reads /proc) |
+| `TestInstallConfigFiles` | install-portable.sh | `make install` into a temporary prefix: config files are real 0640 copies of the samples, `dactive.kp` is empty, adm scripts in `<prefix>/adm` keep the execute bit; a reinstall keeps a changed config file and puts a changed adm script's new version next to it (`.new`); uninstall leaves the configuration. Skipped without `install-portable.sh` next to `DIABLO_BIN` |
+| `TestInstallConvertsConfigSymlinks` | install-portable.sh | a config symlink into `samples/` left by an earlier install becomes a real file with the content in use, before `samples/` is replaced; with install and with bininstall |
+| `TestAdmHourlyExpire` | adm/hourly.expire, dexpire | the script expires an article older than `keeptime` |
+| `TestAdmDailyAtrim` | adm/daily.atrim, adm/rot | the script rotates the logs |
+| `TestAdmBiweeklyAtrim` | adm/biweekly.atrim, dhisexpire | the script trims the history while diablo runs; the stored article stays in history |
+| `TestAdmReaderScripts` | adm/daily.reader, adm/weekly.reader | both scripts run on a reader site. The adm tests are skipped while `samples/adm` still holds the csh scripts |
 
 ## Running
 
