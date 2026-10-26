@@ -58,6 +58,24 @@ For installation instructions, see [`INSTALL`](INSTALL) and [`README.md`](README
 - Fixed newly created `general.log` ownership when the master starts as root and connection-handling processes run as the configured unprivileged account. The existing open file descriptor is checked and, when appropriate, ownership is corrected before privileges are dropped.
 - Fixed recursive general-log error reporting: failure to open `general.log` now reports directly to syslog rather than calling `logit()` recursively, preventing repeated `EACCES` opens and eventual `SIGSEGV` in affected connection handlers.
 
+**Utility behavior and safety**
+
+- Fixed `dexpirecache` free-space calculation to use 64-bit arithmetic, avoiding overflow on
+  filesystems with more than about 2 TiB free. `dexpirecache` now reads `diablo.config`; it
+  requires that file, uses `path_cache` when `-d` is omitted, accepts `-C file`, and exits
+  with an error for unknown options.
+- Changed `dclient` to return after one-line NNTP replies instead of waiting for a multiline
+  terminator that will not arrive.
+- Changed `dspaminfo -c` to require `-B` or `-N` so a clear targets only the selected cache;
+  `-l` without either flag still lists both caches.
+- Changed `dhisbench` add runs to require `-f` and a scratch history file, keeping synthetic
+  benchmark entries out of the configured live history.
+- Changed `plock` to return the command's exit status and to reject a missing command.
+- Changed `dcancel -n` to report planned history, spool, and reader-overview cancellations
+  without changing those stores or entering the spool rewrite path.
+- Fixed utility option handling: `dlockhistory -s` consumes its sleep-time argument, and
+  `dexpirescoring` and `dprimehostcache` correctly skip the argument to `-C file`.
+
 ### Verified
 
 **Native builds**
