@@ -44,9 +44,9 @@ Prototype void NNPostCommand1(Connection *conn);
 void NNPostResponse1(Connection *conn);
 void NNPostArticle1(Connection *conn);
 void NNPostResponse2(Connection *conn);
-int MailIfModerated(char *groups, Connection *conn);
-int groupAlready(int v, int *save, int saveCount);
-void MailToModerator(const char *group, Connection *conn, const char *modMail);
+int MailIfModerated(char *groups, Connection *conn, const char **perr);
+int ModeratorAddress(const char *group, char *addr, size_t addrLen);
+int MailToModerator(Connection *conn, const char *mailDest);
 int CheckGroupModeration(const char *group);
 void GenerateDistribution(MBufHead *mbuf, char *newsGrps);
 int BreakIfBadGroup(char *groups, Connection *conn);
@@ -164,6 +164,8 @@ NNPostBuffer(Connection *conn)
     int haveFrom = 0;
     int haveDate = 0;
     int haveApproved = 0;
+    int mod;
+    const char *modErr = NULL;
     int haveNewsgroups = 0;
     int haveOrganization = 0;
     int haveDist = 0;
@@ -637,14 +639,22 @@ NNPostBuffer(Connection *conn)
 	conn->co_Auth.dr_PostCount++;
 	conn->co_Auth.dr_PostBytes += conn->co_ArtBuf.mh_Bytes;
 
-	if (newsGrps2 && 
-	    haveApproved == 0 && 
-	    MailIfModerated(newsGrps2, conn) == 0
+	if (newsGrps2 && haveApproved == 0 &&
+	    (mod = MailIfModerated(newsGrps2, conn, &modErr)) >= 0
 	) {
+	    /*
+	     * Moderated and unapproved: never posted.  Either it was
+	     * mailed to the moderator, or the poster is told why not.
+	     */
 	    if (conn && conn->co_IHaveMsgId)
 		zfreeStr(&conn->co_MemPool, &conn->co_IHaveMsgId);
 	    MBFree(&conn->co_ArtBuf);
-	    MBLogPrintf(conn, &conn->co_TMBuf, "240 Article mailed to moderator\r\n");
+	    if (mod == 0) {
+		MBLogPrintf(conn, &conn->co_TMBuf, "240 Article mailed to moderator\r\n");
+	    } else {
+		MBLogPrintf(conn, &conn->co_TMBuf, "%s", modErr);
+		conn->co_Auth.dr_PostFailCount++;
+	    }
 	    NNCommand(conn);
 	} else {
 	    NNServerRequest(conn, NULL, conn->co_IHaveMsgId, 0, SREQ_POST, 0, -1, 0);
@@ -845,120 +855,166 @@ BreakIfBadGroup(char *groups, Connection *conn)
 
 
 /*
- * MailIfModerated() -	if posting to moderated groups and the article
- *			was not approved, mail the message to the moderators 
- *			instead
+ * MailIfModerated() -	if the article goes to a moderated group (and was
+ *			not approved), mail it to the moderator instead of
+ *			posting it.
  *
- *	Return 0 if article was mailed, -1 otherwise
+ *	As in INN and RFC 5537, only the moderator of the first moderated
+ *	group in Newsgroups: gets it, even when crossposted to several.
  *
+ *	Return -1 if no group is moderated (post normally), 0 if the
+ *	article was mailed, 1 if it can't be (no moderator, or the mail
+ *	failed); *perr then holds the 441 reply.  The article is never
+ *	posted in the last two cases.
  */
 
 int
-MailIfModerated(char *groups, Connection *conn)
+MailIfModerated(char *groups, Connection *conn, const char **perr)
 {
-    FILE *fi;
-    int r = -1;
-    int saveCount = 0;
-    char buf[256];
-    int save[256];
+    static char err[MAXGNAME + 128];
+    char mailDest[512];
+    int i = 0;
 
-    if ((fi = fopen(PatLibExpand(ModeratorsPat), "r")) != NULL) {
-	while (fgets(buf, sizeof(buf), fi) != NULL) {
-	    char *modGroupWild = strtok(buf, ": \t\r\n");
-	    char *modMail = (modGroupWild) ? strtok(NULL, ": \t\r\n") : NULL;
-	    int i = 0;
+    err[0] = 0;
+    while (groups[i]) {
+	int j;
+	char c;
+	int moderated;
 
-	    if (modGroupWild == NULL || modMail == NULL)
-		continue;
+	for (j = i; groups[j] && groups[j] != ','; ++j)
+	    ;
+	c = groups[j];
+	groups[j] = 0;
+	moderated = (j > i && CheckGroupModeration(groups + i) == 0);
 
-	    while (groups[i]) {
-		int j;
-		char c;
+	if (moderated) {
+	    int r = ModeratorAddress(groups + i, mailDest, sizeof(mailDest));
 
-		for (j = i; groups[j] && groups[j] != ','; ++j)
-		    ;
-		c = groups[j];
-		groups[j] = 0;
-
-		if (i != j && 
-		    groupAlready(i, save, saveCount) < 0 &&
-		    saveCount != arysize(save)
-		) {
-		    if (CheckGroupModeration(groups + i) < 0)
-			save[saveCount++] = i;
-		}
-
-		if (i != j && 
-		    groupAlready(i, save, saveCount) < 0 &&
-		    saveCount != arysize(save) &&
-		    WildCmp(modGroupWild, groups + i
-		) == 0) {
-		    r = 0;
-		    MailToModerator(groups + i, conn, modMail);
-		    save[saveCount++] = i;
-		}
-		i = j;
-		if ((groups[j] = c) == ',')
-		    ++i;
+	    if (r < 0) {
+		logit(LOG_ERR, "no moderator for %s (moderators file)", groups + i);
+		snprintf(err, sizeof(err),
+		    "441 No moderator known for %s, article not posted\r\n", groups + i);
+	    } else if (MailToModerator(conn, mailDest) < 0) {
+		snprintf(err, sizeof(err),
+		    "441 Unable to mail article to the moderator of %s\r\n", groups + i);
 	    }
+	    groups[j] = c;
+	    if (r < 0 || err[0]) {
+		*perr = err;
+		return(1);
+	    }
+	    return(0);
 	}
-	fclose(fi);
+	i = j;
+	if ((groups[j] = c) == ',')
+	    ++i;
     }
-    return(r);
+    return(-1);
 }
 
+/*
+ * ModeratorAddress() - submission address for a moderated group from the
+ *			moderators file: the first line whose pattern
+ *			matches.  As in INN, at most one %s is replaced by
+ *			the group name with dots changed to dashes, and %%
+ *			is a literal %.  Return 0, or -1 if no line matches
+ *			or the entry is unusable.
+ */
+
 int
-groupAlready(int v, int *save, int saveCount)
+ModeratorAddress(const char *group, char *addr, size_t addrLen)
 {
-    int i;
+    FILE *fi;
+    char buf[1024];
     int r = -1;
 
-    for (i = 0; i < saveCount; ++i) {
-	if (save[i] == v) {
-	    r = 0;
+    if ((fi = fopen(PatLibExpand(ModeratorsPat), "r")) == NULL)
+	return(-1);
+    while (r < 0 && fgets(buf, sizeof(buf), fi) != NULL) {
+	char *pat = buf;
+	char *mod;
+	char *end;
+	size_t n = 0;
+	int subst = 0;
+	int bad = 0;
+
+	while (*pat == ' ' || *pat == '\t')
+	    ++pat;
+	if (*pat == '#' || *pat == '\n' || *pat == 0)
+	    continue;
+	if ((mod = strchr(pat, ':')) == NULL)
+	    continue;
+	*mod++ = 0;
+	for (end = mod; *end && *end != '\n' && *end != '\r' &&
+					*end != ' ' && *end != '\t'; ++end)
+	    ;
+	*end = 0;
+	if (*mod == 0 || WildCmp(pat, group) != 0)
+	    continue;
+
+	for (; *mod && !bad; ++mod) {
+	    if (*mod == '%' && mod[1] == 's' && !subst) {
+		const char *g;
+
+		for (g = group; *g && n + 1 < addrLen; ++g)
+		    addr[n++] = (*g == '.') ? '-' : *g;
+		subst = 1;
+		++mod;
+	    } else if (*mod == '%' && mod[1] == '%') {
+		if (n + 1 < addrLen)
+		    addr[n++] = '%';
+		++mod;
+	    } else if (*mod == '%') {
+		bad = 1;		/* a second %s, or %d etc. */
+	    } else if (n + 1 < addrLen) {
+		addr[n++] = *mod;
+	    } else {
+		bad = 1;		/* too long */
+	    }
+	}
+	addr[n] = 0;
+	if (bad || n == 0 || addr[0] == '-' || strpbrk(addr, ",;<>\"'`$|&") != NULL) {
+	    logit(LOG_ERR, "moderators: unusable address for %s", group);
 	    break;
 	}
+	r = 0;
     }
+    fclose(fi);
     return(r);
 }
 
 /*
- * MailToModerator() -  send mail to the moderator.  
+ * MailToModerator() -  send the article to the moderator.
  *
- *	Note: we have to unescape the posted article and we cannot pass
- *	certain headers.  We cannot pass Path: because the moderator may
- *	forward it, causing the posting news machine to miss the approved
- *	posting made by the moderator (because it will have locked itself
- *	out due to the Path: ).  We also do not pass To:, Cc:, or Bcc:
- *	headers for two reasons:  First, because the news client is 
- *	supposed to handle those fields and we don't parse them for
- *	non-moderated postings, and second, for security reasons.
+ *	The address is passed to the mailer as an argument (as INN's mta
+ *	"%s" does) instead of letting it read recipients from the
+ *	headers with -t, so nothing in the article can add recipients.
+ *
+ *	We have to unescape the posted article and we cannot pass certain
+ *	headers.  We cannot pass Path: because the moderator may forward
+ *	it, causing the posting news machine to miss the approved posting
+ *	made by the moderator (because it will have locked itself out due
+ *	to the Path: ).  We also do not pass To:, Cc:, or Bcc: headers
+ *	(nor their Resent- forms): the news client handles those, and the
+ *	only recipient is the moderator.
+ *
+ *	Return 0 if the mailer took it (exit status 0), -1 otherwise.
  */
 
-void
-MailToModerator(const char *group, Connection *conn, const char *modMail)
+int
+MailToModerator(Connection *conn, const char *mailDest)
 {
-    char mailDest[256];
     pid_t pid;
     int fds[3];
-    char *argv[5] = { SENDMAIL_PATH, SENDMAIL_ARG0, "-t", "-i", NULL };
+    int status = 0;
+    int r = -1;
+    char *argv[6] = { SENDMAIL_PATH, SENDMAIL_ARG0, "-i", NULL, NULL };
 
-    {
-	char *mgroup = zallocStr(&conn->co_MemPool, group);
-	int i;
-
-	for (i = 0; mgroup[i]; ++i) {
-	    if (mgroup[i] == '.')			/* dots to dashes */
-		mgroup[i] = '-';
-	    if (mgroup[i] == '@' || mgroup[i] == ',')	/* shouldn't happen */
-		mgroup[i] = '-';
-	}
-	snprintf(mailDest, sizeof(mailDest), modMail, mgroup);
-	zfreeStr(&conn->co_MemPool, &mgroup);
-    }
+    argv[3] = (char *)mailDest;
 
     if ((pid = RunProgramPipe(fds, RPF_STDOUT, argv, NULL)) > 0) {
 	FILE *fo;
+	int writeErr = 1;
 
 	if ((fo = fdopen(fds[1], "w")) != NULL) {
 	    int artLen = 0;
@@ -1017,9 +1073,11 @@ MailToModerator(const char *group, Connection *conn, const char *modMail)
 			lineOk = 0;
 		    } else if (l >= 4 && !strncasecmp(base + b, "Bcc:", 4)) {
 			lineOk = 0;
+		    } else if (l >= 7 && !strncasecmp(base + b, "Resent-", 7)) {
+			lineOk = 0;
 		    } else if (l >= 5 && !strncasecmp(base + b, "Path:", 5)) {
 			lineOk = 0;
-		    } 
+		    }
 		}
 		if (lineOk) {
 		    fwrite(base + b, l, 1, fo);
@@ -1028,12 +1086,23 @@ MailToModerator(const char *group, Connection *conn, const char *modMail)
 		lastLineOk = lineOk;
 		b = i;
 	    }
+	    fflush(fo);
+	    writeErr = ferror(fo);
 	    fclose(fo);
 	} else {
 	    close(fds[1]);
 	}
-	waitpid(pid, NULL, 0);
+	waitpid(pid, &status, 0);
+	if (!writeErr && WIFEXITED(status) && WEXITSTATUS(status) == 0)
+	    r = 0;
+	else
+	    logit(LOG_ERR, "mailing to moderator %s failed (%s exit %d)",
+		mailDest, SENDMAIL_PATH,
+		WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+    } else {
+	logit(LOG_ERR, "unable to run %s to mail moderator %s", SENDMAIL_PATH, mailDest);
     }
+    return(r);
 }
 
 int
