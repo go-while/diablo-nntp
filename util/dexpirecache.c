@@ -377,6 +377,7 @@ main(int ac, char **av)
 	int i;
 
 	now=oldest=oldestremoved=fileEnd = time(NULL);
+	LoadDiabloConfig(ac, av);
 	for (i = 1; i < ac; ++i) {
         char *ptr = av[i];
 
@@ -387,8 +388,12 @@ main(int ac, char **av)
         ptr += 2;
 
 		switch(ptr[-1]) {
+			case 'C':		/* parsed by LoadDiabloConfig */
+				if (*ptr == 0)
+					++i;
+				break;
 			case 'd':
-				basepath = av[++i];
+				basepath = (*ptr) ? ptr : av[++i];
 				break;
 			case 'f':
 				freeblocks = strtol(((*ptr) ? ptr : av[++i]), NULL, 0);
@@ -404,8 +409,11 @@ main(int ac, char **av)
 				break;
 			default:
 				fprintf(stderr, "unknown option: %s\n", ptr - 2);
+				exit(1);
 		}
 	}
+	if (basepath == NULL)
+		basepath = strdup(PatExpand(CacheHomePat));
 
 	if (chdir(basepath) == -1) {
 		fprintf(stderr, "Unable to change to `%s' (%s).\n",basepath,strerror(errno));
@@ -413,18 +421,19 @@ main(int ac, char **av)
 	}
 	{ /* stat fs */
 		struct statfs fs;
-		int fb;
+		long long fb;
 		if (statfs(".", &fs)) {
 			fprintf(stderr, "Can not stat fs (%s).\n",strerror(errno));
 			exit(1);
 		}
-		fb = fs.f_bavail*(fs.f_bsize/1024);
+		/* in 64 bits: an int overflows above 2 TB free */
+		fb = (long long)fs.f_bavail * fs.f_bsize / 1024;
 		if (fb<freeblocks) {
 			freeblocks -= fb;
 		} else {
 			freeblocks = 0;
 		}
-		if (fs.f_ffree<freeinodes) {
+		if ((long long)fs.f_ffree<freeinodes) {
 			freeinodes -= fs.f_ffree;
 		} else {
 			freeinodes = 0;
