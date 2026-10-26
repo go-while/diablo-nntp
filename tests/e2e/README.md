@@ -30,6 +30,8 @@ test fails.
 | `TestDnewslinkIHAVEFallback` | diablo, dicmd, dnewslink | a peer that refuses MODE STREAM gets the articles with IHAVE |
 | `TestDnewslinkPeerHas` | diablo, dicmd, dnewslink | an article the peer already has is not sent (CHECK gets 438); the others are |
 | `TestDnewslinkLiteralPercentLabel` | diablo, dicmd, dnewslink | a `%` in a feed label remains literal in its queue path when `-S` is omitted |
+| `TestDnewsfeedsHashfeedFiltersByMessageID` | diablo, dicmd | outgoing feed filtering splits Message-IDs correctly with all four MD5 word offsets (0, 4, 8, 12) and legacy quickhash (`@`) |
+| `TestDspoolHashfeedSelectsSpoolByMessageID` | diablo, dicmd | complementary metaspool filters route each Message-ID to the matching spool with all four MD5 word offsets (0, 4, 8, 12) and legacy quickhash (`@`) |
 | `TestDnewslinkTermStalledPeer` | diablo, dnewslink | SIGTERM while dnewslink waits for a stalled peer (at the greeting, and on an unanswered CHECK/TAKETHIS): it exits within 5 s and both articles stay queued. **Fails** on main before this fix: dnewslink polled again for the full `-T` timeout (600 s) after the signal |
 | `TestReaderFeedAndRead` | dreaderd, dgrpctl | an article fed to the reader by IHAVE shows in GROUP and OVER; BODY and ARTICLE fetch it from the spool server (fake) |
 | `TestReaderQuitAlone` | dreaderd | QUIT gets 205 and nothing follows it |
