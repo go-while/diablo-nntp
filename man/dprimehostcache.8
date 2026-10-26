@@ -1,0 +1,48 @@
+.TH DPRIMEHOSTCACHE 8 "2026-10-26"
+.SH NAME
+dprimehostcache \- dump or rebuild Diablo's incoming host cache
+.SH SYNOPSIS
+.B dprimehostcache
+.B \-dump
+|
+.B \-prime
+[
+.I hostcache
+[
+.I diablo.hosts
+]
+]
+.SH DESCRIPTION
+diablo decides which dnewsfeeds label an incoming connection belongs to
+through a host cache, dhosts.cache in path_db.  It is built from the
+host names and addresses in dnewsfeeds (alias, inhost) and, if it
+exists, from the older diablo.hosts file, with their DNS lookups done
+ahead of time.  diablo rebuilds it on its own when dnewsfeeds or
+diablo.hosts change.
+.PP
+.B \-dump
+prints the cache: one line per address with its host name and label.
+.B \-prime
+rebuilds the cache now, for example after a DNS change for a peer.
+.SH OPTIONS
+.TP
+.B \-dump
+Print the contents of the host cache.
+.TP
+.B \-prime
+Rebuild the host cache.
+.TP
+.I hostcache
+Use this cache file instead of dhosts.cache.
+.TP
+.I diablo.hosts
+Use this hosts file instead of diablo.hosts.
+.TP
+.BI \-C " diablo.config"
+Use this diablo.config instead of the default.
+.TP
+.B \-V
+Print the version and exit.
+.SH "SEE ALSO"
+diablo(8),
+dnewsfeeds in diablo-files(5)

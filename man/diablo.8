@@ -49,6 +49,25 @@ diablo \- NetNews daemon for backbone article transit
 ]
 [
 .B \-x
+.I on|off
+]
+[
+.B \-Z
+]
+[
+.B \-b
+.I fd
+]
+[
+.B \-C
+.I diablo.config
+]
+[
+.B \-r
+.I maxage
+]
+[
+.B \-V
 ]
 .BI server
 
@@ -85,7 +104,7 @@ sets the common path name.  The path is prepended to the Path: header only
 if it does not already exist in the Path: header.  Usually both -p and -c
 options are used.  The newspathname is placed in front of the commonname
 in this case (assuming it does not exist elsewhere in the path), as in
-'newspathname!commonname!...'. Multiple -c options can be specified and
+\&'newspathname!commonname!...'. Multiple -c options can be specified and
 wil be added (along with -p) in the order specified on the command-line.
 .PP
 .B \-d[n]
@@ -142,7 +161,7 @@ Set the TCP receive buffer size.
 .PP
 
 This option enables the internal spamfilter and will override the
-'internalfilter' option in diablo.config. NOTE: There must also be
+\&'internalfilter' option in diablo.config. NOTE: There must also be
 an ISPAM entry in dnewsfeeds before any articles will reach the
 filter even if it is enabled here. The ISPAM entry determines which
 articles are sent to the internal filter.  There are two internal
@@ -165,7 +184,7 @@ in an hour before extra articles from that host are
 rejected.
 .PP
 .B en - set the expire time (in seconds) for the previous
-'B' or 'N' option. Default is 3600 (1 hour).  
+\&'B' or 'N' option. Default is 3600 (1 hour).  
 .PP
 .B sn
 - set the number of entries in the filter hash table to
@@ -205,11 +224,41 @@ guarentee lockup-free operation in streaming mode.
 sets the XRef: hostname used when generating Xref: lines. The default
 is to use the newspathname if Xref: generation is enabled.
 .PP
-.B \-x
+.B \-x on|off
 .PP
 If active file is enabled and we are not an Xref: slave, then use the
 Xref: line to update the NX field in the active file. This is useful
-for a backup to the Xref: generator in large installations.
+for a backup to the Xref: generator in large installations.  Same as
+feederxrefsync in diablo.config.
+.PP
+.B \-Z
+.PP
+Reject articles that contain a NUL byte (rejectartswithnul).
+.PP
+.B \-r maxage
+.PP
+Reject articles whose Date: is more than maxage in the past or the
+future.  The value is in days, or with s, m, h or d appended.  Same as
+feedermaxacceptage in diablo.config; the default is the remember time.
+.PP
+.B \-b fd
+.PP
+Listen on the already open socket fd instead of opening one.
+.IR dstart (8)
+uses this.
+.PP
+.B \-C diablo.config
+.PP
+Use this diablo.config instead of the default (path_home/diablo.config,
+or DIABLO_CONFIG_PATH).
+.PP
+.B \-N newsadminname
+.PP
+The same as \-A.
+.PP
+.B \-V
+.PP
+Print the version and exit.
 .PP
 Diablo understands a subset of the NNTP protocol.  The basic commands it
 understands are
@@ -518,20 +567,45 @@ See the KERNEL_NOTES file for tuning suggestions and machine-specific
 configurations.
 
 .SH "SEE ALSO"
-diablo(8), 
+dcancel(8),
+dclient(8),
+dexpire(8),
+dexpirecache(8),
+dexpireover(8),
+dexpirescoring(8),
+dfeedinfo(8),
+dfeedtest(8),
+dgrpctl(8),
+dhisbench(8),
+dhisctl(8),
+dhisexpire(8),
 dicmd(8),
+diconvhist(8),
+didate(8),
 didump(8),
 diload(8),
+diloadfromspool(8),
+dilookup(8),
+dkp(8),
+dlockhistory(8),
 dnewslink(8),
 doutq(8),
-dexpire(8),
-dexpireover(8),
-diconvhist(8),
-dilookup(8),
-dspoolout(8),
-dkp(8),
+doverctl(8),
 dpath(8),
-diablo-kp(5),
-diablo-files(5)
+dprimehostcache(8),
+drcmd(8),
+dreadart(8),
+dreaderd(8),
+dreadover(8),
+drequeue(8),
+dspaminfo(8),
+dspoolout(8),
+dstart(8),
+dsyncgroups(8),
+pgpverify(8),
+plock(8),
+showlocks(8),
+diablo-files(5),
+diablo-kp(5)
 .PP
 

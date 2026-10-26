@@ -1,0 +1,62 @@
+.TH DCLIENT 8 "2026-10-26"
+.SH NAME
+dclient \- send NNTP commands to a news server and print the replies
+.SH SYNOPSIS
+.B dclient
+[
+.B \-f
+.I file
+]
+[
+.B \-p
+.I port
+]
+[
+.B \-v
+]
+[
+.B \-V
+]
+.I host
+[
+.I command
+]
+.SH DESCRIPTION
+.I dclient
+connects to the NNTP server on
+.I host
+(port 119 by default), sends a command and writes the reply to standard
+output, then sends QUIT.  The command is one argument, so quote a command
+with arguments.  Without a command, it reads command lines from standard
+input and sends them one at a time.  After a reply code that RFC 3977
+follows with a block (LIST, ARTICLE, OVER, LISTGROUP ...) it reads up to
+the line holding a single dot.
+.PP
+With
+.BR \-f ,
+the lines of
+.I file
+are sent to the server as they are, without waiting for replies, for
+example to feed a prepared IHAVE or POST session.
+.SH OPTIONS
+.TP
+.BI \-f " file"
+Send the lines of \fIfile\fP instead of a command.
+.TP
+.BI \-p " port"
+Connect to this port (default 119).
+.TP
+.B \-v
+Also print the command sent and the connect, command and total times.
+.TP
+.B \-V
+Print the version and exit.
+.SH EXAMPLES
+.nf
+dclient news.example.com "LIST NEWSGROUPS"
+dclient -p 120 localhost "LIST ACTIVE"
+.fi
+.SH "SEE ALSO"
+diablo(8),
+dreaderd(8),
+dreadart(8)

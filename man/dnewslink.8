@@ -164,7 +164,7 @@ number of queue files.
 This option tells dnewslink to generate a header-only feed, used when feeding
 the diablo reader system and often coupled with diablo support for Xref:
 headers to assign article numbers.  The remote end must support
-'mode headfeed' as a safety feature to prevent a header-only feed from being
+\&'mode headfeed' as a safety feature to prevent a header-only feed from being
 sent to a normal feed and propogating outward.  Beyond that, the header-only
 feed uses the same ihave/check/takethis protocols that a normal feed uses.
 
@@ -237,6 +237,49 @@ option is not given.
 This option sets the source ip address for outbound connections. It
 can be either an ip address or a hostname which will be resolved by
 DNS.
+.PP
+.B \-K seconds
+.PP
+Connection lifetime for realtime feeds: after this many seconds the
+connection is closed and a new one is opened (connlife in dnewsfeeds;
+dspoolout passes it).
+.PP
+.B \-M number
+.PP
+The maximum number of streaming transactions in flight at once
+(maxstream in dnewsfeeds).
+.PP
+.B \-W seconds
+.PP
+Delay feed: send an article only when it has been queued for this many
+seconds (delayfeed in dnewsfeeds).
+.PP
+.B \-Q tos
+.PP
+Set this IP type-of-service value on the connection.
+.PP
+.B \-Z level
+.PP
+Ask the peer for MODE COMPRESS and, if it agrees, compress the feed with
+this zlib level (1 to 9).  Only with zlib support.
+.PP
+.B \-o label
+.PP
+Take new-article notifications from diablo for this label instead of
+only polling the queue file (realtime feeds).
+.PP
+.B \-x
+.PP
+Skip queued articles whose spool file no longer exists instead of
+offering them.
+.PP
+.B \-C diablo.config
+.PP
+Use this diablo.config instead of the default.
+.PP
+.B \-V
+.PP
+Print the version and exit.
 
 .SH "TYPICAL USE"
 .PP
@@ -245,20 +288,45 @@ purposes.  Typical usage is something like:
 .B dnewslink -b fubar.S23343 -h news.fubar.com
 
 .SH "SEE ALSO"
-diablo(8), 
+dcancel(8),
+dclient(8),
+dexpire(8),
+dexpirecache(8),
+dexpireover(8),
+dexpirescoring(8),
+dfeedinfo(8),
+dfeedtest(8),
+dgrpctl(8),
+dhisbench(8),
+dhisctl(8),
+dhisexpire(8),
+diablo(8),
 dicmd(8),
+diconvhist(8),
+didate(8),
 didump(8),
 diload(8),
-dnewslink(8),
-doutq(8),
-dexpire(8),
-dexpireover(8),
-diconvhist(8),
+diloadfromspool(8),
 dilookup(8),
-dspoolout(8),
 dkp(8),
+dlockhistory(8),
+doutq(8),
+doverctl(8),
 dpath(8),
-diablo-kp(5),
-diablo-files(5)
+dprimehostcache(8),
+drcmd(8),
+dreadart(8),
+dreaderd(8),
+dreadover(8),
+drequeue(8),
+dspaminfo(8),
+dspoolout(8),
+dstart(8),
+dsyncgroups(8),
+pgpverify(8),
+plock(8),
+showlocks(8),
+diablo-files(5),
+diablo-kp(5)
 .PP
 
