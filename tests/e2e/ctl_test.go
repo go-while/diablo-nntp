@@ -10,6 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -42,7 +44,12 @@ func ctl(tb testing.TB, s *Site, ctlPath, conf string, args ...string) (string, 
 	defer cancel()
 	a := append([]string{ctlPath, "-C", filepath.Join(s.Dir, "diablo.config"), "-f", conf}, args...)
 	cmd := exec.CommandContext(ctx, "/bin/sh", a...)
-	cmd.Dir = s.Dir
+	// From an unrelated directory (diablo-ctl must change to path_home itself), except for
+	// a relative conf name, which is relative to the site.
+	cmd.Dir = tb.TempDir()
+	if !filepath.IsAbs(conf) {
+		cmd.Dir = s.Dir
+	}
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	cmd.WaitDelay = 3 * time.Second // the started daemon keeps our output pipe
@@ -55,6 +62,32 @@ func ctl(tb testing.TB, s *Site, ctlPath, conf string, args ...string) (string, 
 		tb.Fatalf("diablo-ctl %s: %v\n%s", strings.Join(args, " "), err, out.String())
 	}
 	return out.String(), code
+}
+
+// checkPsPad checks that the master process of daemon name (the oldest one of this site) got
+// diablo-ctl's status area after its last regular argument lastArg: "-s" plus 60 spaces,
+// which the daemon may overwrite with its status and NULs. Linux only (/proc); the raw
+// cmdline keeps the area's size whatever was written into it.
+func checkPsPad(tb testing.TB, s *Site, name, lastArg string) {
+	tb.Helper()
+	if runtime.GOOS != "linux" {
+		return
+	}
+	pids := sitePids(s, name)
+	if len(pids) == 0 {
+		tb.Fatalf("no %s process of this site", name)
+	}
+	b, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pids[0]), "cmdline"))
+	if err != nil {
+		tb.Fatal(err)
+	}
+	i := bytes.LastIndex(b, []byte("\x00"+lastArg+"\x00"))
+	if i < 0 {
+		tb.Fatalf("%s (pid %d): no argument %q in %q", name, pids[0], lastArg, b)
+	}
+	if tail := len(b) - (i + len(lastArg) + 2); tail < 62 {
+		tb.Errorf("%s (pid %d): %d bytes after %q, want the -s status area (62 or more): %q", name, pids[0], tail, lastArg, b)
+	}
 }
 
 func wantCtl(tb testing.TB, out string, code, want int, what string) {
@@ -88,10 +121,11 @@ func TestDiabloCtlFeeder(t *testing.T) {
 	if !strings.HasPrefix(p.Greeting, "200 ") {
 		t.Fatalf("peer greeting after diablo-ctl start: %q", p.Greeting)
 	}
+	checkPsPad(t, s, "diablo", "server")
 	expect(t, p, 205, "QUIT")
 
-	out, code = ctl(t, s, ctlp, conf, "start")
-	wantCtl(t, out, code, 0, "start while running")
+	out, code = ctl(t, s, ctlp, filepath.Base(conf), "start") // -f without a slash (cwd is s.Dir)
+	wantCtl(t, out, code, 0, "start while running, -f without a slash")
 	if !strings.Contains(out, "already running") {
 		t.Errorf("second start: %q, want \"already running\"", out)
 	}
@@ -134,6 +168,15 @@ func TestDiabloCtlReader(t *testing.T) {
 	wantCtl(t, out, code, 0, "start")
 	c := s.Reader(t)
 	expect(t, c, 205, "QUIT")
+	checkPsPad(t, s, "dreaderd", "[127.0.0.1]:"+port)
+	if runtime.GOOS == "linux" {
+		if pids := sitePids(s, "dreaderd"); len(pids) > 0 {
+			cwd, _ := os.Readlink(filepath.Join("/proc", strconv.Itoa(pids[0]), "cwd"))
+			if want, _ := filepath.EvalSymlinks(s.Dir); cwd != want && cwd != s.Dir {
+				t.Errorf("dreaderd cwd %q, want path_home %q", cwd, s.Dir)
+			}
+		}
+	}
 	out, code = ctl(t, s, ctlp, conf, "status")
 	wantCtl(t, out, code, 0, "status while running")
 	if !strings.Contains(out, "pid ") || strings.Contains(out, "pid )") {

@@ -30,7 +30,10 @@ say() { echo "diablo-ctl: $*"; }
 conf=""
 while getopts C:f: opt; do
     case $opt in
-	C) DIABLO_CONFIG_PATH=$OPTARG; export DIABLO_CONFIG_PATH ;;
+	C)
+	    # absolute: the script changes to path_home before starting
+	    case $OPTARG in /*) DIABLO_CONFIG_PATH=$OPTARG ;; *) DIABLO_CONFIG_PATH=$(pwd)/$OPTARG ;; esac
+	    export DIABLO_CONFIG_PATH ;;
 	f) conf=$OPTARG ;;
 	*) usage ;;
     esac
@@ -45,6 +48,8 @@ case $which in diablo|dreaderd|all) ;; *) usage ;; esac
 # Settings, before the binary directory is known: a -f file may set DIABLO_BIN.
 if [ -n "$conf" ]; then
     [ -r "$conf" ] || { say "cannot read $conf"; exit 1; }
+    # "." searches PATH for a name without a slash
+    case $conf in */*) ;; *) conf=./$conf ;; esac
     . "$conf"
 fi
 
@@ -71,6 +76,7 @@ DIABLO_OPTS=${DIABLO_OPTS:-}
 DREADERD_OPTS=${DREADERD_OPTS:-}
 DIABLO_STOP_WAIT=${DIABLO_STOP_WAIT:-30}
 DIABLO_START_WAIT=${DIABLO_START_WAIT:-30}
+DIABLO_PS_PAD=${DIABLO_PS_PAD-60}
 if [ -z "${DIABLO_USER:-}" ]; then
     if [ "$(id -u)" -eq 0 ]; then DIABLO_USER=news; else DIABLO_USER=$(id -un); fi
 fi
@@ -80,6 +86,16 @@ if [ "$which" = all ]; then
 else
     daemons=$which
 fi
+
+# The status area for ps: "-s" plus DIABLO_PS_PAD spaces as one argument;
+# diablo and dreaderd overwrite it with their status (as rc.news does it).
+# Empty or 0: no status area.
+pspad=""
+case $DIABLO_PS_PAD in
+    ''|0) ;;
+    *[!0-9]*) say "DIABLO_PS_PAD must be a number of spaces"; exit 1 ;;
+    *) pspad="-s$(printf "%${DIABLO_PS_PAD}s" "")" ;;
+esac
 
 # up <daemon>: the daemon answers on its control socket.  drcmd exits 1 even
 # after a good "status" reply (dreaderd sends no "." terminator for it), so
@@ -129,10 +145,22 @@ start_one() {
 	return 0
     fi
     [ -n "${DIABLO_NOFILE:-}" ] && ulimit -n "$DIABLO_NOFILE"
+    # Start in path_home, as rc.news does (dreaderd keeps its cwd).
+    cd "$home" || { say "cannot cd to $home"; return 1; }
     case $d in
 	# Both detach themselves (they fork and the parent exits).
-	diablo) "$DIABLO_BIN/diablo" $DIABLO_OPTS server ;;
-	dreaderd) "$DIABLO_BIN/dreaderd" $DREADERD_OPTS ;;
+	diablo)
+	    if [ -n "$pspad" ]; then
+		"$DIABLO_BIN/diablo" $DIABLO_OPTS server "$pspad"
+	    else
+		"$DIABLO_BIN/diablo" $DIABLO_OPTS server
+	    fi ;;
+	dreaderd)
+	    if [ -n "$pspad" ]; then
+		"$DIABLO_BIN/dreaderd" $DREADERD_OPTS "$pspad"
+	    else
+		"$DIABLO_BIN/dreaderd" $DREADERD_OPTS
+	    fi ;;
     esac || { say "$d did not start (exit status $?)"; return 1; }
     n=0
     until up "$d"; do
@@ -177,6 +205,11 @@ stop_one() {
 	# Realtime dnewslink workers (started by dspoolout) keep running
 	# without diablo; stop them too.  dspoolout from cron starts them again.
 	pkill -TERM -x dnewslink -U "$DIABLO_USER" 2>/dev/null
+	n=0
+	while pgrep -x dnewslink -U "$DIABLO_USER" >/dev/null 2>&1 && [ "$n" -lt 10 ]; do
+	    sleep 1
+	    n=$((n + 1))
+	done
     fi
     say "$d stopped"
 }
