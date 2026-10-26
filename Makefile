@@ -130,7 +130,7 @@ LIB_SRCS = \
     lib/pgp.c lib/hostauth.c lib/strsep.c lib/groupfind.c \
     lib/spool.c lib/arttype.c lib/stats.c lib/dmd5.c \
     lib/notify.c lib/wildmat.c lib/include.c lib/hashfeed.c \
-    lib/dgzip.c
+    lib/dgzip.c lib/canlock.c
 
 FILTER_SRCS = \
     filter/diab-filter.c filter/diab-read.c filter/socket.c

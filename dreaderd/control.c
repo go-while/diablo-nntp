@@ -593,29 +593,78 @@ PerformControl(Connection *conn, Control *ctl, const char **cmd, const char *art
  * 5) Unlock index
  */
 
+/*
+ * canLockDecide() - whether a cancel or supersede of the article artNo in ov
+ * may be executed under readercanlock (RFC 8315).  ckey is the Cancel-Key
+ * value of the cancelling article, or NULL.  Returns 1 to execute, -1 to
+ * refuse, and sets *why for the log.
+ */
+static int
+canLockDecide(OverInfo *ov, artno_t artNo, const char *ckey, const char **why)
+{
+    const char *data;
+    int hlen = 0;
+    char lock[1024];
+    int r;
+
+    switch (DOpts.ReaderCanLock) {
+    case CANLOCK_ALL:
+	*why = "not checked (readercanlock all)";
+	return(1);
+    case CANLOCK_NONE:
+	*why = "refused (readercanlock none)";
+	return(-1);
+    }
+    if ((data = GetOverRecord(ov, artNo, &hlen, NULL, NULL, NULL)) == NULL) {
+	*why = "refused, headers of the target not available";
+	return(-1);
+    }
+    r = CanLockFindHeader(data, hlen, "Cancel-Lock", lock, sizeof(lock));
+    if (r < 0) {
+	*why = "refused, Cancel-Lock of the target too long";
+	return(-1);
+    }
+    if (r == 0) {
+	if (DOpts.ReaderCanLock == CANLOCK_AUTH) {
+	    *why = "target has no Cancel-Lock, executed (readercanlock auth)";
+	    return(1);
+	}
+	*why = "refused, target has no Cancel-Lock";
+	return(-1);
+    }
+    if (ckey == NULL) {
+	*why = "refused, no Cancel-Key";
+	return(-1);
+    }
+    if (CanLockVerify(ckey, lock)) {
+	*why = "Cancel-Key verified";
+	return(1);
+    }
+    *why = "refused, Cancel-Key does not match";
+    return(-1);
+}
+
 const char *
 CtlCancel(Connection *conn, Control *ctl, const char **cmd, const char *art, const char *body, int bodyLen, char *groups)
 {
     char *ptr;
     int isValidCancel = 0;
     int validGroups = 0;
-#ifdef NOTDEF
-    const char *xtrace;
-    int xtLen = 0;
-#endif
     int count = 0;
+    char ckeyBuf[1024];
+    const char *ckey = NULL;
+    const char *why = NULL;
 
     /*
-     * Locate X-Trace: header.  Set xtrace & xtLen to point to first element 
-     * if found.
+     * Cancel-Key of the cancelling (or superseding) article, if any.
      */
 
-#ifdef NOTDEF
-    xtrace = locateXTrace(art, body - art, &xtLen);
-#endif
+    if (CanLockFindHeader(art, body - art, "Cancel-Key", ckeyBuf, sizeof(ckeyBuf)) > 0)
+	ckey = ckeyBuf;
 
     /*
-     * Find a valid overview records, check headers on first, and cancel
+     * Find a valid overview record; decide on the first one found (against
+     * its Cancel-Lock, see readercanlock), then cancel in every group.
      */
 
     ptr = groups;
@@ -635,31 +684,8 @@ CtlCancel(Connection *conn, Control *ctl, const char **cmd, const char *art, con
 	if (ov != NULL) {
 	    ++count;
 
-	    if (isValidCancel == 0) {
-		isValidCancel = 1;
-#ifdef NOTDEF
-		/*
-		 * Get article contents, set isValidCancel to 1 or -1
-		 */
-		int hlen;
-		const char *data = GetOverRecord(ov, artNo, &hlen, NULL, NULL, NULL);
-		if (data != NULL) {
-		    int cxLen;
-		    const char *cxtrace = locateXTrace(data, hlen, &cxLen);
-
-		    if (xtrace && cxtrace) {
-			if (cxLen==xtLen && bcmp(xtrace, cxtrace, cxLen) == 0)
-			    isValidCancel = 1;
-			else
-			    isValidCancel = -1;
-		    } else if (xtrace == NULL && cxtrace == NULL) {
-			isValidCancel = 1;
-		    } else {
-			isValidCancel = -1;
-		    }
-		}
-#endif
-	    }
+	    if (isValidCancel == 0)
+		isValidCancel = canLockDecide(ov, artNo, ckey, &why);
 	    if (isValidCancel > 0)
 		CancelOverArt(ov, artNo);
 	    PutOverInfo(ov);
@@ -670,41 +696,31 @@ CtlCancel(Connection *conn, Control *ctl, const char **cmd, const char *art, con
     }
 
     /*
-     * If we could not find the article anywhere and if at 
-     * least one of the groups is valid, we allow the cancel and put
-     * it in the pre-cancel cache.  The article will be canceled if it
-     * comes in later on.  Note that when this case occurs, no X-Trace
-     * comparing is done... we assume that anyone able to cancel an article
-     * that quickly is either reasonably close to official, or can't 
-     * generate any significant damage anyway.
+     * If we could not find the article anywhere and if at least one of the
+     * groups is valid, the cancel goes into the pre-cancel cache and the
+     * article is cancelled if it comes in later on.  That skips the
+     * Cancel-Lock check, so it is only done with readercanlock all; under
+     * the other modes such early cancels are dropped, as INN does.
      */
 
     if (isValidCancel == 0) {
-	if (validGroups)
+	if (validGroups && DOpts.ReaderCanLock == CANLOCK_ALL) {
 	    EnterCancelCache(cmd[1]);
-	if (DebugOpt)
-	    printf("CtlCancel unverified, canceled %d items: %s %s\n", count, cmd[1], groups);
-    } else if (isValidCancel > 0) {
-	if (DebugOpt)
-	    printf("CtlCancel verified, canceled %d items: %s %s\n", count, cmd[1], groups);
-    } else {
-	if (DebugOpt)
-	    printf("CtlCancel failed verify, did NOT cancel: %s %s\n", cmd[1], groups);
+	    why = "target not here yet, pre-cancel cached";
+	} else if (validGroups) {
+	    why = "target not here yet, dropped (readercanlock)";
+	} else {
+	    why = "no valid groups, nothing canceled";
+	}
     }
+    if (DOpts.ReaderCanLock != CANLOCK_ALL)
+	logit((isValidCancel > 0) ? LOG_INFO : LOG_NOTICE,
+	    "cancel %s: %s, %d item(s)", cmd[1], why, (isValidCancel > 0) ? count : 0);
+    if (DebugOpt)
+	printf("CtlCancel %s: %s, %d items found: %s\n", cmd[1], why, count, groups);
     if (ctl->ct_LogFo) {
-	fprintf(ctl->ct_LogFo, ">> control cancel, %d items found, %s\n", 
-	    count,
-	    ((isValidCancel) ?
-		((isValidCancel < 0) ? 
-		    "trace mismatch, nothing canceled" :
-		    "trace match ok") 
-		: 
-		(validGroups ? 
-		    "unverified, pre-cancel cached" : 
-		    "no valid groups, nothing canceled" 
-		)
-	    )
-	);
+	fprintf(ctl->ct_LogFo, ">> control cancel, %d items found, %s\n",
+	    count, why);
     }
     return(NULL);
 }

@@ -417,6 +417,17 @@ main(int ac, char **av)
 	Usage();
 
     /*
+     * Cancel-Lock checks need the target's headers from the overview data,
+     * which 'readerxover trackonly' doesn't store.
+     */
+    if (DOpts.ReaderXOverMode == 2 && DOpts.ReaderCanLock != CANLOCK_ALL) {
+	fprintf(stderr, "dreaderd: readercanlock %s needs article headers, "
+	    "but readerxover is trackonly; set readercanlock all\n",
+	    CanLockModeName(DOpts.ReaderCanLock));
+	exit(1);
+    }
+
+    /*
      * Can't do OpenLog() yet, but we do want to be able to log
      * errors, so initialize standard syslog.
      */
