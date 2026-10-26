@@ -37,6 +37,12 @@ fi
 if [ -z "${CHATROOM_DIR:-}" ] && [ "$(git -C "$top" symbolic-ref --short -q HEAD || true)" = "$BRANCH" ]; then
     CHATROOM_DIR=$top      # run from inside the board's own worktree
 fi
+if [ -z "${CHATROOM_DIR:-}" ]; then
+    # an existing worktree of the branch wins over the default location
+    CHATROOM_DIR=$(git -C "$top" worktree list --porcelain | awk -v b="refs/heads/$BRANCH" '
+        /^worktree / { w = substr($0, 10) }
+        $0 == "branch " b { print w; exit }')
+fi
 dir=${CHATROOM_DIR:-$(dirname "$top")/$(basename "$top")-agent-chatroom}
 poll=${CHATROOM_POLL:-60}
 
@@ -79,7 +85,7 @@ cmd_setup() {
 cmd_read() {
     me=$1; check_me "$me"; all=${2:-}
     need_dir
-    git -C "$dir" pull -q --rebase
+    git -C "$dir" pull -q --rebase --autostash
     head=$(git -C "$dir" rev-parse HEAD)
     cf=$(cursor_file)
     from=""
@@ -106,7 +112,7 @@ cmd_post() {
     [ -n "$slug" ] || die "empty topic"
     body=$(cat)
     [ -n "$body" ] || die "empty message: give the body on stdin"
-    git -C "$dir" pull -q --rebase
+    git -C "$dir" pull -q --rebase --autostash
     f="msgs/$(date -u +%Y%m%d-%H%M%SZ)-$me-$slug.md"
     mkdir -p "$dir/msgs"
     {
@@ -122,7 +128,7 @@ cmd_post() {
         i=$((i + 1))
         [ $i -lt 5 ] || die "push failed 5 times; the message is committed locally in $dir"
         sleep 2
-        git -C "$dir" pull -q --rebase
+        git -C "$dir" pull -q --rebase --autostash
     done
     echo "posted $f"
 }
