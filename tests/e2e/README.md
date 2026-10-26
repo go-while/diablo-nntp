@@ -55,6 +55,12 @@ test fails.
 | `TestAdmDailyAtrim` | adm/daily.atrim, adm/rot | the script rotates the logs |
 | `TestAdmBiweeklyAtrim` | adm/biweekly.atrim, dhisexpire | the script trims the history while diablo runs; the stored article stays in history |
 | `TestAdmReaderScripts` | adm/daily.reader, adm/weekly.reader | both scripts run on a reader site. The adm tests are skipped while `samples/adm` still holds the csh scripts |
+| `TestModerationMailsModerator`, `TestModerationCrosspost`, `TestModerationMailFailure` | dreaderd | an unapproved POST to a moderated group is mailed to the moderator (moderators file, `%s` = group with dashes) with 240 and not passed on; today a crosspost mails every moderated group's moderator and a failing sendmail is ignored. Mail content is checked only with `ci/fake-sendmail` installed (`E2E_FAKE_SENDMAIL=1` for `ci/build-on-host`, as in CI) |
+| `TestModerationApproveRequired`, `TestModerationApprovedGoesIn` | dreaderd | readerdef `approve` (#42): a POST with Approved: from a reader without `approve yes` gets 441, to a moderated and to an unmoderated group, and nothing is mailed or passed on; with `approve yes` it goes straight out. **Fails** on main before #42: any reader's Approved: post went out |
+| `TestModerationGroupStatus` | dreaderd | group status on POST (#43): a group with status "n" or "x", alone or crossposted, gets `441 Posting to <group> is not allowed (status <c>)`, with or without `checkpostgroups`; the open group still posts. **Fails** on main before #43: the "n" post went out |
+| `TestModerationNoModerator` | dreaderd | today: a moderated group without a moderators line is passed on to the outgoing server |
+| `TestFeederUnapprovedModerated` | diablo | with `active on`, `activedrop yes` and `xrefhost`, an unapproved article to a moderated group gets 437, logged as NotInActive (today's reason) |
+| `TestModeration*` marked PLANNED, `TestFeederUnapprovedReason` | | skipped until the maintainer's moderation PRs are in: first moderator only, 441 without a moderator, MTA status, safe address substitution, "Unapproved for <group>" |
 
 ## Running
 
