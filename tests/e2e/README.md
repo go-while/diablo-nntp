@@ -31,8 +31,9 @@ test fails.
 | `TestDnewslinkPeerHas` | diablo, dicmd, dnewslink | an article the peer already has is not sent (CHECK gets 438); the others are |
 | `TestReaderFeedAndRead` | dreaderd, dgrpctl | an article fed to the reader by IHAVE shows in GROUP and OVER; BODY and ARTICLE fetch it from the spool server (fake) |
 | `TestReaderQuitAlone` | dreaderd | QUIT gets 205 and nothing follows it |
-| `TestReaderQuitWhileConnecting` | dreaderd | a client that QUITs while another connects gets 205 and nothing after it. **Fails** (dreaderd writes "400 Server too busy" after the 205 when its only DNS worker is busy; dreaderd/main.c SendDns) |
+| `TestReaderQuitWhileConnecting` | dreaderd | a client that QUITs while another connects gets 205 and nothing after it. **Fails** on main before jrehmer/diablo-nntp#12 (dreaderd wrote "400 Server too busy" after the 205 when its only DNS worker was busy) |
 | `TestReaderPost` | dreaderd | POST is passed to the outgoing ('o') server (fake peer) with IHAVE: body as posted, the vserver's `postpath` in the Path |
+| `TestReaderBindHostPort` | dreaderd | `dreaderd -P 127.0.0.1:port` listens there. **Fails** on main before the -P fix: the whole "host:port" was passed to getaddrinfo |
 | `TestHeaderFeedToReader` | diablo, dnewslink, dreaderd | diablo feeds dreaderd a header-only feed (`headfeed on`, `dnewslink -H`); the reader shows the article in GROUP and OVER and fetches BODY from diablo as its spool server |
 | `TestDexpire` | diablo, dexpire | `dexpire -a` removes the spool directory of an article older than `keeptime`; STAT then gives 430, and offering the article again gets 435 (still in history) |
 | `TestDnewslinkConnlife` | diablo, dspoolout, dnewslink | realtime feed with `connlife 8` (skipped without `dnewslink -K`): one TCP session across a queue rotation; after connlife, retirement at the next rotation and a replacement at once (`dspoolout -J`); no descriptor growth over three replacements; every article reaches the peer once, in order. Linux only (reads /proc) |

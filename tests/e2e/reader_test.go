@@ -31,6 +31,9 @@ type ReaderOptions struct {
 	Post      *fakeserver.Server // the 'o' server (POST is sent there with IHAVE); nil = none
 	Access    string             // dreader.access; "" = DefaultReaderAccess
 	Config    map[string]string  // diablo.config directives added or replacing the generated ones
+
+	// PlainBind passes -P as "127.0.0.1:port" instead of "[127.0.0.1]:port".
+	PlainBind bool
 }
 
 // DefaultReaderAccess lets 127.0.0.1 read and post and PeerIP feed.
@@ -108,10 +111,15 @@ func NewReaderSite(tb testing.TB, o ReaderOptions) *Site {
 		s.Run(tb, "dgrpctl", "newgroup", g, "y")
 	}
 
+	// "[host]:port" by default: before the -P fix (jrehmer/diablo-nntp PR "dreaderd: -P/-B
+	// host:port") dreaderd kept the ":port" in the host of a plain "host:port".
+	bind := "[127.0.0.1]:" + strconv.Itoa(port)
+	if o.PlainBind {
+		bind = s.Addr
+	}
 	s.Proc = proc.StartTCP(tb, proc.Options{
 		Path: filepath.Join(s.Bin, "dreaderd"),
-		// "[host]:port": dreaderd keeps the ":port" in the host of a plain "host:port".
-		Args: []string{"-d", "-p", PathHost, "-h", PathHost, "-P", "[127.0.0.1]:" + strconv.Itoa(port)},
+		Args: []string{"-d", "-p", PathHost, "-h", PathHost, "-P", bind},
 		Env:  s.Env,
 		Dir:  s.Dir,
 	}, s.Addr)
@@ -325,6 +333,18 @@ end
 	expect(t, c, 222, "BODY %s", id)
 	if got := c.ReadDotLines(); len(got) != 2 || got[0] != "body from the spool" || got[1] != ".dot" {
 		t.Errorf("BODY (fetched from diablo): %q", got)
+	}
+	expect(t, c, 205, "QUIT")
+}
+
+// TestReaderBindHostPort: dreaderd -P 127.0.0.1:port listens there (before the fix it passed
+// "127.0.0.1:port" as the host to getaddrinfo and exited).
+func TestReaderBindHostPort(t *testing.T) {
+	_, spool := spoolStore(t)
+	s := NewReaderSite(t, ReaderOptions{Spool: spool, PlainBind: true})
+	c := s.Reader(t)
+	if code, _ := client.ParseCode(c.Greeting); code != 200 {
+		t.Fatalf("greeting %q, want 200", c.Greeting)
 	}
 	expect(t, c, 205, "QUIT")
 }
