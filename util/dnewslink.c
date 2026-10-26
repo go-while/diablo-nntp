@@ -282,7 +282,8 @@ int IPTOS=0;
 time_t LastNotify = 0;
 time_t LastFeedData = 0;
 
-int TermFlag;
+volatile sig_atomic_t TermFlag;
+static int PeerWait(void);
 
 FeedStats	*Stats;
 FeedStats	*HostStats;
@@ -2733,7 +2734,12 @@ flushCommandBuffer(int cfd)
 
 	    pfd.fd = cfd;
 	    pfd.events = POLLOUT;
-	    if (poll(&pfd, 1, Timeout * 1000) == 0) {
+	    if (TermFlag && b != Cmde && poll(&pfd, 1, 0) == 0) {
+		/* terminating: don't wait for a stalled peer */
+		Cmde = 0;
+		return(-1);
+	    }
+	    if (poll(&pfd, 1, PeerWait()) == 0) {
 		dl_logit("write timeout");
 		WritesLosing = 1;
 		l.l_onoff = 1;
@@ -2803,7 +2809,11 @@ writeLarge(int cfd, char *buffer, size_t size)
 
 	    pfd.fd = cfd;
 	    pfd.events = POLLOUT;
-	    if (poll(&pfd, 1, Timeout * 1000) == 0) {
+	    if (TermFlag && poll(&pfd, 1, 0) == 0) {
+		/* terminating: don't wait for a stalled peer */
+		return(-1);
+	    }
+	    if (poll(&pfd, 1, PeerWait()) == 0) {
 		dl_logit("write timeout");
 		WritesLosing = 1;
 		l.l_onoff = 1;
@@ -2967,10 +2977,18 @@ commandResponse(int cfd, char **rptr, const char *ctl, ...)
 #if USE_POLL
 		    struct pollfd pfd = { 0 };
 
+		    int pr;
+
 		    pfd.fd = cfd;
 		    pfd.events = POLLIN;
-		    if (poll(&pfd, 1, Timeout * 1000) == 0) {
+		    pr = poll(&pfd, 1, PeerWait());
+		    if (pr == 0) {
 			TimeCounter = 100000;
+			break;
+		    }
+		    if (pr < 0 && errno == EINTR && TermFlag) {
+			/* a signal asked us to terminate: stop waiting */
+			n = 0;
 			break;
 		    }
 #else
@@ -3012,6 +3030,19 @@ commandResponse(int cfd, char **rptr, const char *ctl, ...)
 	r = 0;
     }
     return(r);
+}
+
+/*
+ * PeerWait() - the poll() timeout in ms for waiting on the peer: -T, but at
+ * most 2 seconds once a signal asked us to terminate, so that a stalled peer
+ * can't hold a terminating dnewslink for the full timeout.
+ */
+static int
+PeerWait(void)
+{
+    if (TermFlag)
+	return(2000);
+    return(Timeout * 1000);
 }
 
 void
