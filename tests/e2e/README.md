@@ -29,6 +29,8 @@ test fails.
 | `TestDnewslinkStreaming` | diablo, dicmd, dnewslink | queued articles reach a streaming peer (fake) in order, with TAKETHIS and no IHAVE |
 | `TestDnewslinkIHAVEFallback` | diablo, dicmd, dnewslink | a peer that refuses MODE STREAM gets the articles with IHAVE |
 | `TestDnewslinkPeerHas` | diablo, dicmd, dnewslink | an article the peer already has is not sent (CHECK gets 438); the others are |
+| `TestReaderFeedAndRead` | dreaderd, dgrpctl | an article fed to the reader by IHAVE shows in GROUP and OVER; BODY and ARTICLE fetch it from the spool server (fake) |
+| `TestReaderQuitAlone` | dreaderd | QUIT gets 205 and nothing follows it |
 
 ## Running
 

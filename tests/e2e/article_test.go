@@ -2,6 +2,8 @@ package e2e
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -45,6 +47,33 @@ func wire(lines []string) string {
 	b.WriteString(".\r\n")
 	return b.String()
 }
+
+// splitArticle returns the head and body of an article's lines (split at the first blank
+// line).
+func splitArticle(lines []string) (head, body []string) {
+	i := slices.Index(lines, "")
+	if i < 0 {
+		return lines, nil
+	}
+	return lines[:i], lines[i+1:]
+}
+
+// headerValue returns the value of the first header field called name, or "".
+func headerValue(head []string, name string) string {
+	for _, h := range head {
+		k, v, ok := strings.Cut(h, ":")
+		if ok && strings.EqualFold(k, name) {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
+// containsLine reports whether lines has a line equal to want.
+func containsLine(lines []string, want string) bool { return slices.Contains(lines, want) }
+
+// sortedKeys returns the keys of m in order.
+func sortedKeys(m map[string]string) []string { return slices.Sorted(maps.Keys(m)) }
 
 // expect sends a command and fails the test unless the reply code is want; it returns the
 // status line.
