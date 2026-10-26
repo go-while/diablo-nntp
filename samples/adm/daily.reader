@@ -1,39 +1,42 @@
-#!/bin/csh -f
+#!/bin/sh
 #
-# daily.reader
-#
+# DAILY.READER - for a dreaderd machine: remove cached articles over 3 days
+# old, and expire the overview (dexpireover).
 
-cd ~
+# The directory with dpath, dexpire, ...: DIABLO_BIN, else dbin next to this
+# script's directory (<path_home>/adm -> <path_home>/dbin; samples/adm in a source
+# tree -> its dbin), else /news/dbin.  Every other path comes from diablo.config
+# through dpath, so the news user's home directory doesn't matter.
+set -u
+here=$(cd "$(dirname "$0")" && pwd)
+dbin=${DIABLO_BIN:-}
+if [ -z "$dbin" ]; then
+    for d in "$here/../dbin" "$here/../../dbin" /news/dbin; do
+	[ -x "$d/dpath" ] && { dbin=$(cd "$d" && pwd); break; }
+    done
+fi
+[ -n "$dbin" ] && [ -x "$dbin/dpath" ] || { echo "$0: no dpath found; set DIABLO_BIN" >&2; exit 1; }
+home=$("$dbin/dpath" home) || exit 1
+cd "$home" || exit 1
 
-echo "`date` - $0 BEGIN"
+echo "$(date) - $0 BEGIN"
 
-set cache = `dbin/dpath cache`
-set group = `dbin/dpath group`
-set news = `dbin/dpath home`
+cache=$("$dbin/dpath" cache)
+group=$("$dbin/dpath" group)
 
-# Remove cached articles over 3 days old.
-#
+# Cached articles over 3 days old.
+if [ -d "$cache" ]; then
+    find "$cache" -type f -name '????????.????????' -mtime +3 -exec rm -f {} +
+fi
 
-if ( -d ${cache}/. ) then
-    cd ${cache}
-    find . -type f -name "????????.????????" -mtime +3 -print | xargs rm
-endif
+# Expire overview information.  The commented entry does a second pass to
+# delete stale alt groups over 180 days old that have no traffic.
+# WARNING: the '-O' option on a non-dreaderd server, or on a dreaderd that
+#	only receives control messages, will cause problems; see dexpireover(8).
+if [ -d "$group" ]; then
+    cd "$group" &&
+    "$dbin/plock" -t "$home/.dexpireover" "$dbin/dexpireover" -a -l180
+    # "$dbin/plock" -t "$home/.dexpireover" "$dbin/dexpireover" -w 'alt.*' -O180 -y
+fi
 
-cd ~
-
-# Expire overview information
-#
-# The commented entry does a second pass to delete stale alt groups over
-# 180 days old that do not have any traffic.
-# WARNING: Use the '-O' option on a non-dreaderd server or a dreaderd that
-#	only receives control messages will cause problems. See the
-#	dexpireover man page for more details.
-
-if ( -d ${group}/. ) then
-    cd ${group}
-    ${news}/dbin/plock -t ~/.dexpireover ${news}/dbin/dexpireover -a -l180
-    # ${news}/dbin/plock -t ~/.dexpireover ${news}/dbin/dexpireover -w 'alt.*' -O180 -y
-endif
-
-echo "`date` - $0 END"  
-
+echo "$(date) - $0 END"

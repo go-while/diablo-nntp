@@ -1,17 +1,31 @@
-#!/bin/csh -f
+#!/bin/sh
 #
-# rotate non-SYSLOG maintained log files
-#
+# DAILY.ATRIM - rotate the logs, keeping 4 old copies of each.
 
-cd ~
+# The directory with dpath, dexpire, ...: DIABLO_BIN, else dbin next to this
+# script's directory (<path_home>/adm -> <path_home>/dbin; samples/adm in a source
+# tree -> its dbin), else /news/dbin.  Every other path comes from diablo.config
+# through dpath, so the news user's home directory doesn't matter.
+set -u
+here=$(cd "$(dirname "$0")" && pwd)
+dbin=${DIABLO_BIN:-}
+if [ -z "$dbin" ]; then
+    for d in "$here/../dbin" "$here/../../dbin" /news/dbin; do
+	[ -x "$d/dpath" ] && { dbin=$(cd "$d" && pwd); break; }
+    done
+fi
+[ -n "$dbin" ] && [ -x "$dbin/dpath" ] || { echo "$0: no dpath found; set DIABLO_BIN" >&2; exit 1; }
+home=$("$dbin/dpath" home) || exit 1
+cd "$home" || exit 1
 
-echo "`date` - $0 BEGIN"
+echo "$(date) - $0 BEGIN"
 
-set log = `dbin/dpath log`
+log=$("$dbin/dpath" log)
+cd "$log" || exit 1
+# A pattern that matches nothing stays as it is; rot skips it.
+"$here/rot" 4 daily.log dspoolout.log control.log miscctl \
+    newgroup*.alt newgroup*.other newgroup*.log \
+    rmgroup*.alt rmgroup*.other rmgroup*.log \
+    checkgroup*.alt checkgroup*.other checkgroup*.log
 
-adm/rot 4 ${log}/{daily.log,dspoolout.log,{new,rm,check}group*.{alt,other,log},control.log}
-
-adm/rot 4 ${log}/{miscctl}
-
-echo "`date` - $0 END"  
-
+echo "$(date) - $0 END"

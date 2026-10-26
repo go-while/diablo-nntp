@@ -1,26 +1,30 @@
-#!/bin/csh -f
+#!/bin/sh
 #
-# weekly.reader
-#
-# The weekly reader runs dexpireover with the -R option, which truely cleans
-# up the overview database.  It rewrites the entire database which can take
-# a while but only needs to be run once a week or possibly even once a month.
-#
-# dexpireover -a -R is able to cleanout more data from the data.* files whereas
-#
-# dexpireover -a is only able to remove whole data.* files (i.e. it cannot
-# remove the file until the entire contents of the file has expired).
+# WEEKLY.READER - for a dreaderd machine: rewrite the overview data files
+# (dexpireover -R).
 
-cd ~
+# The directory with dpath, dexpire, ...: DIABLO_BIN, else dbin next to this
+# script's directory (<path_home>/adm -> <path_home>/dbin; samples/adm in a source
+# tree -> its dbin), else /news/dbin.  Every other path comes from diablo.config
+# through dpath, so the news user's home directory doesn't matter.
+set -u
+here=$(cd "$(dirname "$0")" && pwd)
+dbin=${DIABLO_BIN:-}
+if [ -z "$dbin" ]; then
+    for d in "$here/../dbin" "$here/../../dbin" /news/dbin; do
+	[ -x "$d/dpath" ] && { dbin=$(cd "$d" && pwd); break; }
+    done
+fi
+[ -n "$dbin" ] && [ -x "$dbin/dpath" ] || { echo "$0: no dpath found; set DIABLO_BIN" >&2; exit 1; }
+home=$("$dbin/dpath" home) || exit 1
+cd "$home" || exit 1
 
-echo "`date` - $0 BEGIN"
+echo "$(date) - $0 BEGIN"
 
-set group = `dbin/dpath group`
-set news = `dbin/dpath home`
+group=$("$dbin/dpath" group)
+if [ -d "$group" ]; then
+    cd "$group" &&
+    "$dbin/plock" -t "$home/.dexpireover" "$dbin/dexpireover" -a -R -l720
+fi
 
-if ( -d ${group}/. ) then
-    ${news}/dbin/plock -t ~/.dexpireover ${news}/dbin/dexpireover -a -R -l720
-endif
-
-echo "`date` - $0 END"  
-
+echo "$(date) - $0 END"
