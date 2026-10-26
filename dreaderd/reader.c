@@ -209,11 +209,7 @@ ReaderTask(int fd, const char *id)
 	gettimeofday(&CurTime, NULL);
 
 	if(sel_r < 0 && errno != EINTR)
-	    logit(LOG_CRIT,
-		  "select error: %s (rfds=0x%x, wfds=0x%x)",
-		  strerror(errno),
-		  rfds,
-		  wfds);
+	    logit(LOG_CRIT, "select error: %s", strerror(errno));
 
 	/*
 	 * select is critical, don't make unnecessary system calls.  Only
@@ -1095,7 +1091,7 @@ NNCommand(Connection *conn)
     if (conn->co_Auth.dr_ReaderDef->rd_ByteLimit &&
 	    conn->co_Auth.dr_ReaderDef->rd_ByteLimit <
 	    conn->co_ClientTotalByteCount) {
-	logit(LOG_INFO, "bytelimit session %s byte=%d/%d",
+	logit(LOG_INFO, "bytelimit session %s byte=%.0f/%d",
 		conn->co_Auth.dr_Host,
 		conn->co_ClientTotalByteCount,
 		conn->co_Auth.dr_ReaderDef->rd_ByteLimit);

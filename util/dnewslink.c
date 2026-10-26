@@ -45,6 +45,7 @@
 
 #include "defs.h"
 #include <sys/uio.h>
+#include <limits.h>
 
 #define NDEBUG
 #include <assert.h>
@@ -305,6 +306,77 @@ static time_t monotonicSeconds(void);
 static int FeedLabelGone(void);
 static void closeOutboundSession(int cfd);
 
+/* Expand only the batch-template syntax used by dspoolout.  A literal percent
+ * is written as %% and a sequence template has exactly one %d conversion,
+ * optionally with a zero flag and width.  Never pass the template to printf.
+ */
+static int
+ExpandBatchFile(char *dst, size_t dstSize, const char *batchTemplate, int sequence)
+{
+	const char *p = batchTemplate;
+	size_t used = 0;
+	int conversions = 0;
+
+	if (dstSize == 0)
+		return (-1);
+
+	while (*p) {
+		if (*p != '%') {
+			if (used + 1 >= dstSize)
+				return (-1);
+			dst[used++] = *p++;
+			continue;
+		}
+		++p;
+		if (*p == '%') {
+			if (used + 1 >= dstSize)
+				return (-1);
+			dst[used++] = '%';
+			++p;
+			continue;
+		}
+		{
+			int zeroPad = 0;
+			int width = 0;
+			int haveWidth = 0;
+			char number[64];
+			int n;
+
+			if (*p == '0') {
+				zeroPad = 1;
+				++p;
+			}
+			while (*p >= '0' && *p <= '9') {
+				int digit = *p - '0';
+
+				if (width > (INT_MAX - digit) / 10)
+					return (-1);
+				width = width * 10 + digit;
+				haveWidth = 1;
+				++p;
+			}
+			if (*p != 'd' || sequence < 0 || ++conversions != 1)
+				return (-1);
+			if (!haveWidth && !zeroPad)
+				n = snprintf(number, sizeof(number), "%d", sequence);
+			else if (zeroPad)
+				n = snprintf(number, sizeof(number), "%0*d", width, sequence);
+			else
+				n = snprintf(number, sizeof(number), "%*d", width, sequence);
+			if (n < 0 || (size_t)n >= sizeof(number) ||
+			    (size_t)n >= dstSize - used)
+				return (-1);
+			memcpy(dst + used, number, n);
+			used += n;
+			++p;
+		}
+	}
+	if ((sequence >= 0) != (conversions == 1))
+		return (-1);
+	dst[used] = '\0';
+	return (0);
+}
+
 void
 Usage(char *progname)
 {
@@ -315,7 +387,7 @@ Usage(char *progname)
 	    "                  of accept,reject,defer,refuse,error\n"
 	    "-B ip           - set source ip address for outbound connections\n"
 	    "-b batchfile    - specify batchfile\n"
-	    "-b template%d   - template containing %[xx]d\n"
+	    "-b template%d   - template: %% is literal %; one %d sequence conversion\n"
 	    "-c #            - close-reopen-after, default 1000\n"
 	    "-D              - detect delete-out-from-under\n"
 	    "-d[#]           - debug option\n"
@@ -337,7 +409,7 @@ Usage(char *progname)
 	    "-P #            - specify destination tcp port\n"
 	    "-R #            - set receive buffer size\n"
 	    "-r              - realtime feed\n"
-	    "-S #            - starting sequence #, template mode\n"
+	    "-S #            - starting sequence #, template mode (requires %d)\n"
 	    "-s \"<24chars>\"  - /bin/ps argv space for status\n"
 	    "-T #            - set transmit buffer size\n"
 	    "-t #            - specify timeout, default 600s\n"
@@ -501,6 +573,14 @@ main(int ac, char **av)
 	Usage(av[0]);
     }
 
+    {
+        char testFile[sizeof(CurrentBatchFile)];
+        if (ExpandBatchFile(testFile, sizeof(testFile), BatchFileCtl, BatchSeq) < 0) {
+            dl_logit("invalid or too long batchfile template: %s", BatchFileCtl);
+            exit(1);
+        }
+    }
+
     rsignal(SIGPIPE, SIG_IGN);
     rsignal(SIGHUP, sigTerm);
     rsignal(SIGINT, sigTerm);
@@ -593,12 +673,13 @@ main(int ac, char **av)
 	strcat(CurrentBatchFile, "/");
 	CBFIndex = strlen(CurrentBatchFile);
 
-	if (BatchSeq < 0) {
-	    sprintf(CurrentBatchFile + CBFIndex, "%s", BatchFileCtl);
-	} else {
-	    sprintf(CurrentBatchFile + CBFIndex, BatchFileCtl, BatchSeq);
-	    ++BatchSeq;
+	if (ExpandBatchFile(CurrentBatchFile + CBFIndex,
+	    sizeof(CurrentBatchFile) - CBFIndex, BatchFileCtl, BatchSeq) < 0) {
+	    dl_logit("expanded batchfile path is too long");
+	    exit(1);
 	}
+	if (BatchSeq >= 0)
+	    ++BatchSeq;
 
 	/*
 	 * Open next batchfile.  If the open fails, we go onto the next

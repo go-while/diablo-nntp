@@ -165,3 +165,31 @@ func TestDnewslinkPeerHas(t *testing.T) {
 		t.Errorf("TAKETHIS %s sent although the peer has it", ids[1])
 	}
 }
+
+// TestDnewslinkBatchTemplatePercentLabel checks that a percent in a feed label
+// is unescaped while the batch sequence conversion is expanded.
+func TestDnewslinkBatchTemplatePercentLabel(t *testing.T) {
+	const label = "feed%label"
+	peer, got := newPeer(t, &fakeserver.PeerOptions{})
+	newsfeeds := strings.Replace(OutNewsfeeds, "label "+OutLabel+"\n", "label "+label+"\n", 1)
+	s := NewSite(t, SiteOptions{Newsfeeds: newsfeeds})
+	ids := s.Inject(t, "e2e.test", 1)
+	queue := s.waitQueue(t, label, 1)
+	batch := filepath.Join(s.Dir, "dqueue", label+".S00007")
+	if err := os.WriteFile(batch, []byte(strings.Join(queue, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	template := strings.ReplaceAll(label, "%", "%%") + ".S%05d"
+	out := s.Run(t, "dnewslink", "-b", template, "-S", "7", "-h", "127.0.0.1", "-P", strconv.Itoa(peer.Port()))
+	if !slices.Equal(got.list(), ids) {
+		t.Errorf("peer accepted %q, want %q\ndnewslink output:\n%s", got.list(), ids, out)
+	}
+}
+
+func TestDnewslinkRejectsInvalidBatchTemplate(t *testing.T) {
+	s := NewSite(t, SiteOptions{NoStart: true})
+	_, err := s.TryRun("dnewslink", "-b", "bad%p", "-S", "0", "-h", "127.0.0.1", "-P", "119")
+	if err == nil {
+		t.Fatal("dnewslink accepted an unsupported batch-template conversion")
+	}
+}
