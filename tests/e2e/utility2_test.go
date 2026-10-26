@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -38,4 +39,25 @@ func TestDspaminfoClearNeedsCache(t *testing.T) {
 	if !strings.Contains(out, "Must specify which cache to clear") {
 		t.Errorf("dspaminfo -c 0 without -B/-N: %q, want a refusal", out)
 	}
+}
+
+// TestDcancelDryRunDoesNotRewriteSpool: -n reports the planned cancellation without
+// changing history or removing the article from the spool.
+func TestDcancelDryRunDoesNotRewriteSpool(t *testing.T) {
+	s := NewSite(t, SiteOptions{})
+	id := s.Inject(t, "e2e.test", 1)[0]
+	cmd := exec.Command(filepath.Join(s.Bin, "dcancel"), "-a", "-n")
+	cmd.Dir = s.Dir
+	cmd.Env = append(os.Environ(), s.Env...)
+	cmd.Stdin = strings.NewReader(id + "\n")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("dcancel -a -n: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "Would cancel history entry for: "+id) {
+		t.Errorf("dcancel -a -n did not report the planned cancellation:\n%s", out)
+	}
+	p := s.Peer(t)
+	expect(t, p, 223, "STAT %s", id)
+	expect(t, p, 205, "QUIT")
 }

@@ -181,7 +181,7 @@ main(int ac, char **av)
 	    CancelReader(msgid);
     }
     PrintCancelList();
-    if (SpoolCancel)
+    if (SpoolCancel && ForReal)
 	RewriteFiles();
     if (VerboseOpt)
 	printf("Rewrote %d spool files with %d articles removed\n",
