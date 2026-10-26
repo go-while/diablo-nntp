@@ -3007,7 +3007,6 @@ int
 readline(int fd, char *buf, int size, time_t t)
 {
     RBlock *rbs;
-    int statCounter = 0;
     int loopCounter = 0;
     static int usleeptime = 100000;
 
@@ -3102,8 +3101,10 @@ readline(int fd, char *buf, int size, time_t t)
 	     * realtime batch is available.  
 	     */
 	    {
-		if (statCounter == 0 &&
-				stat(CurrentBatchFile,&st) == 0 &&
+		/* Check every EOF pass: the sleep can reach one second, so
+		 * checking only every 50 passes delays rotation by up to 50s.
+		 */
+		if (stat(CurrentBatchFile,&st) == 0 &&
 				st.st_ino != CurSt.st_ino) {
 		    /*
 		     * do not attempt to remove the batchfile if we would have
@@ -3150,7 +3151,6 @@ readline(int fd, char *buf, int size, time_t t)
 			LastNotify = 0;
 		    }
 		}
-		statCounter = (statCounter + 1) % 5;
 	    } else if (RealTimeOpt < 0) {
 #if USE_POLL && defined(POLLEXTEND) && USE_POLLEXTEND
 	        struct pollfd pfd = { 0 };
@@ -3162,22 +3162,18 @@ readline(int fd, char *buf, int size, time_t t)
 		errno = 0;
 		if ((r = poll(&pfd, 1, 100)) < 0)
 		    dl_logit("poll() failed: %s", strerror(errno));
-		statCounter = (statCounter + 1) % 50;
 		TimeCounter += 10;
 #else
 #if HAS_USLEEP
 		usleep(usleeptime);
-		statCounter = (statCounter + 1) % 50;
 		TimeCounter += usleeptime / 10000 + 10;
 #else
 		sleep(1);		/* 1s  */
-		statCounter = (statCounter + 1) % 5;
 		TimeCounter += 100;
 #endif
 #endif
 	    } else {
 		sleep(RealTimeOpt);
-		statCounter = (statCounter + 1) % 5;
 		TimeCounter += 100;
 	    }
 	    usleeptime = usleeptime + usleeptime / 2;
