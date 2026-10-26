@@ -208,7 +208,7 @@ FeedWrite(int logIt,
     int bytes = 0;
     char linebuf[4096];
     int linesiz, siz;
-    char *ptr;
+    const char *ptr;
     unsigned char md5hash[16];
 
     HM_MD5MessageID((mid_t)msgid, md5hash);
@@ -224,7 +224,7 @@ FeedWrite(int logIt,
     if (offsize && ((ptr = strchr(offsize, ',')))) {
 	ptr++;
     } else {
-	*ptr = '?';
+	ptr = "?";
     }
 
     siz = strlen(msgid) + strlen(ptr) + strlen(artType) + 4;
@@ -245,8 +245,8 @@ FeedWrite(int logIt,
     }
 
     {
-	char *p;
-	if ((p = strchr(offsize, ',')) != NULL)
+	const char *p;
+	if (offsize != NULL && (p = strchr(offsize, ',')) != NULL)
 	    bytes = strtol(p + 1, NULL, 0);
     }
 
