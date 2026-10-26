@@ -897,10 +897,11 @@ main(int ac, char **av)
 			    );
 			    close(desc->d_FdPend);
 			    desc->d_FdPend = -1;
-			    NumPending -= desc->d_Count; /* note: d_Count may already be 0 */
-			    NumActive -= desc->d_Count;
-			    desc->d_Count = 0;
 			}
+			/* also for an in-flight accounting request (no pending descriptor) */
+			NumPending -= desc->d_Count; /* note: d_Count may already be 0 */
+			NumActive -= desc->d_Count;
+			desc->d_Count = 0;
 		    } else if (desc->d_Type == THREAD_READER) {
 			if (!Exiting)
 			    logit(LOG_CRIT, "Lost reader process %d", (int)pid);
@@ -1485,7 +1486,15 @@ SendDns(int fd, struct sockaddr_in *rsin, DnsRes *dres)
 	    dreq.dr_SessionLength = time(NULL) - dres->dr_TimeStart;
 	}
 
-        best->d_FdPend = fd;
+	/*
+	 * An accounting hand-back (DR_SESSEXIT_RPT) is closed by the caller
+	 * right after this; don't keep its number as a pending descriptor
+	 * that a dying worker's cleanup would close later.
+	 */
+	if (dres != NULL && dres->dr_ResultFlags == DR_SESSEXIT_RPT)
+	    best->d_FdPend = -1;
+	else
+	    best->d_FdPend = fd;
 	bcopy(rsin, &best->d_SaveRSin, sizeof(best->d_SaveRSin));
 	write(best->d_Fd, &dreq, sizeof(dreq));
 	/* 
