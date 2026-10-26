@@ -850,6 +850,9 @@ PostRefusedGroup(char *groups, char *pstatus)
 		const char *s = KPDBGetField(rec, recLen, "S", &slen, NULL);
 		int k;
 
+		/* "=other.group" is an INN alias (dsyncgroups copies it), not flags */
+		if (s && slen > 0 && s[0] == '=')
+		    s = NULL;
 		for (k = 0; s && k < slen; ++k) {
 		    if (s[k] == 'n' || s[k] == 'x') {
 			*pstatus = s[k];
@@ -1120,7 +1123,8 @@ CheckGroupModeration(const char *group)
     if (rec != NULL) {
         int slen;
         const char *s = KPDBGetField(rec, recLen, "S", &slen, NULL);
-        if (s) {
+	/* "=other.group" is an INN alias (dsyncgroups copies it), not flags */
+        if (s && !(slen > 0 && s[0] == '=')) {
             int i;
 
 	    for (i = 0; i < slen; ++i) {
@@ -1150,7 +1154,8 @@ CheckValidRestrictedGroup(const char *group)
         int slen;
         const char *s = KPDBGetField(rec, recLen, "S", &slen, NULL);
 	r = 0;
-        if (s) {
+	/* "=other.group" is an INN alias (dsyncgroups copies it), not flags */
+        if (s && !(slen > 0 && s[0] == '=')) {
             int i;
 
 	    for (i = 0; i < slen; ++i) {
