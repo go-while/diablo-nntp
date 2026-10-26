@@ -26,6 +26,9 @@ test fails.
 | `TestGeneralLogNotWritable` | diablo | with an unwritable `path_generallog`, diablo reports it and keeps accepting articles instead of crashing |
 | `TestHostCacheLastPeerRemoved` | diablo, dprimehostcache | removing the last `inhost` empties `dhosts.cache`, and the former peer gets a permission denial, not "label missing" |
 | `TestHostCacheRebuildAfterFreshStart` | diablo | after a start without `dhosts.cache`, a peer added to `dnewsfeeds` is let in once the cache is rebuilt |
+| `TestDnewslinkStreaming` | diablo, dicmd, dnewslink | queued articles reach a streaming peer (fake) in order, with TAKETHIS and no IHAVE |
+| `TestDnewslinkIHAVEFallback` | diablo, dicmd, dnewslink | a peer that refuses MODE STREAM gets the articles with IHAVE |
+| `TestDnewslinkPeerHas` | diablo, dicmd, dnewslink | an article the peer already has is not sent (CHECK gets 438); the others are |
 
 ## Running
 
