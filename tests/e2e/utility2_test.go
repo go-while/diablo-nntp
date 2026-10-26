@@ -41,8 +41,8 @@ func TestDspaminfoClearNeedsCache(t *testing.T) {
 	}
 }
 
-// TestDcancelDryRunDoesNotRewriteSpool: -n reports the planned cancellation without
-// changing history or removing the article from the spool.
+// TestDcancelDryRunDoesNotRewriteSpool: -n reports the planned cancellation without entering
+// the spool rewrite path or removing the article from the spool.
 func TestDcancelDryRunDoesNotRewriteSpool(t *testing.T) {
 	s := NewSite(t, SiteOptions{})
 	id := s.Inject(t, "e2e.test", 1)[0]
@@ -56,6 +56,9 @@ func TestDcancelDryRunDoesNotRewriteSpool(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "Would cancel history entry for: "+id) {
 		t.Errorf("dcancel -a -n did not report the planned cancellation:\n%s", out)
+	}
+	if strings.Contains(string(out), "Rewriting:") {
+		t.Errorf("dcancel -a -n entered the spool rewrite path:\n%s", out)
 	}
 	p := s.Peer(t)
 	expect(t, p, 223, "STAT %s", id)
