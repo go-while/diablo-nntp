@@ -347,7 +347,9 @@ main(int ac, char **av)
 	    case '7':
 	    case '8':
 	    case '9':
-		TxBufSize = strtol(((*ptr) ? ptr : av[++i]), NULL, 0);
+		/* -S# sets both buffers */
+		TxBufSize = RxBufSize = strtol(((*ptr) ? ptr : av[++i]), NULL, 0);
+		break;
 	    case 'R':
 		++ptr;
 		RxBufSize = strtol(((*ptr) ? ptr : av[++i]), NULL, 0);
