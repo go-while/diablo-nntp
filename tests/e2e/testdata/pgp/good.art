@@ -1,0 +1,18 @@
+Path: example.invalid!not-for-mail
+Newsgroups: e2e.test.group
+Subject: cmsg newgroup e2e.test.group
+Control: newgroup e2e.test.group
+Message-ID: <newgroup-e2e.test.group-1@example.invalid>
+Date: Mon, 26 Oct 2026 10:00:00 +0000
+From: news.announce.newgroups <newgroups-request@example.invalid>
+Sender: news.announce.newgroups <newgroups-request@example.invalid>
+X-PGP-Sig: GnuPG2 Subject,Control,Message-ID,Date,From,Sender
+	iHUEARYKAB0WIQRXlsxS6iwGyN1SRGZlXi1CkJ6YvAUCat83ewAKCRBlXi1CkJ6Y
+	vNbzAQDwWBHaoAVSXTe1LQVeTZ3nB87K1r5qVnf6RUSAd1G1lAEA0WMPh6qibsun
+	q7Bwdh825CvlbDDSPBzWlW49TeEUhA0=
+	=O/7G
+
+e2e.test.group is an unmoderated group for tests.
+
+For your newsgroups file:
+e2e.test.group	Test group.

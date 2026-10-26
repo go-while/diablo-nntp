@@ -502,12 +502,6 @@ uint64_t		i;
 #ifndef PGP_VERIFY_ARG0
 #define PGP_VERIFY_ARG0		"pgpverify"
 #endif
-#ifndef PGP_PATH
-#define PGP_PATH		"/usr/local/bin/pgp"
-#endif
-#ifndef PGP_ARG0
-#define PGP_ARG0		"pgp"
-#endif
 #ifndef SENDMAIL_PATH
 #define SENDMAIL_PATH		"/usr/sbin/sendmail"
 #endif

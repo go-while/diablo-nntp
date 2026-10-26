@@ -62,6 +62,7 @@ ExecuteControl(Connection *conn, const char *ctlMsg, const char *art, int artLen
 #endif
     const char *badCmd = NULL;
     Control *ctl = NULL;
+    int dupHeaders = 0;
 
     /*
      * control command and arguments
@@ -105,6 +106,10 @@ ExecuteControl(Connection *conn, const char *ctlMsg, const char *art, int artLen
     {
 	const char *line;
 	int l = 0;
+	int nControl = 0;
+	int nFrom = 0;
+	int nNewsgroups = 0;
+	int nPGPSig = 0;
 
 	for (line = art; line < art + artLen; line += l + 1) {
 	    for (l = line - art; l < artLen; ++l) {
@@ -122,12 +127,17 @@ ExecuteControl(Connection *conn, const char *ctlMsg, const char *art, int artLen
 	    if (l == 0 || (l == 1 && line[0] == '\r')) {
 		/* out of headers */
 		break;
+	    } else if (strncasecmp(line, "Control:", 8) == 0) {
+		++nControl;
 	    } else if (strncasecmp(line, "From:", 5) == 0) {
+		++nFrom;
 		from = zallocStrTrim2(&conn->co_MemPool, 0, line + 5, l - 5);
 	    } else if (strncasecmp(line, "Newsgroups:", 11) == 0) {
+		++nNewsgroups;
 		groups = zallocStrTrim2(&conn->co_MemPool, ',', line + 11, l - 11);
 #if DIABLO_PGP_SUPPORT
 	    } else if (strncasecmp(line, "X-PGP-Sig:", 10) == 0) {
+		++nPGPSig;
 		hasXPGPSig = 1;
 #endif
 #if DIABLO_DGP_SUPPORT    
@@ -139,6 +149,15 @@ ExecuteControl(Connection *conn, const char *ctlMsg, const char *art, int artLen
 
 	}
 	body = line;
+
+	/*
+	 * A control message with any of these twice is never executed: the
+	 * article's Control: that is acted on, and the From: and Newsgroups:
+	 * matched against dcontrol.ctl, are the last ones, while a signature
+	 * covers the first.
+	 */
+	if (nControl > 1 || nFrom > 1 || nNewsgroups > 1 || nPGPSig > 1)
+	    dupHeaders = 1;
     }
 
     /*
@@ -166,6 +185,11 @@ ExecuteControl(Connection *conn, const char *ctlMsg, const char *art, int artLen
 	}
     } else if (strcasecmp(cmd[0], "checkgroups") == 0) {
 	;
+    }
+    if (badCmd == NULL && dupHeaders) {
+	badCmd = "duplicate Control:, From:, Newsgroups: or X-PGP-Sig: header\n";
+	logit(LOG_NOTICE, "control %s %s refused: duplicate Control:, From:, "
+	    "Newsgroups: or X-PGP-Sig: header", cmd[0], cmd[1] ? cmd[1] : "");
     }
 
     /*
