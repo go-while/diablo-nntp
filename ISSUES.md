@@ -12,10 +12,9 @@ re-checked yet.
 Status values: **open**, **PR** (fix waiting for review, with its number), **fixed** (with
 the PR that fixed it), **decision** (needs the maintainer to decide), **won't fix**.
 
-Last updated 2026-10-26, after #5, #6, #8, #10 to #29 and #32 to #36 were merged. Open:
-#30 and #38 (connlife rounding and its test), #31 (diablo-ctl), #35 (GnuPG pgpverify, in
-review), #37 (dnewslink SIGTERM), #40 (D-14), #41 (D-15), #42, #43, #45 and #46
-(moderation, D-49) with their tests in #44.
+Last updated 2026-10-26, after batch 1 (#30, #31, #37 to #44, #47 to #49) and the first part
+of batch 2 (#46, #50, #52, #62) were merged. Open: #35 (GnuPG pgpverify, held for a private
+advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 
 | ID | Severity | Summary | Status |
 |---|---|---|---|
@@ -32,8 +31,8 @@ review), #37 (dnewslink SIGTERM), #40 (D-14), #41 (D-15), #42, #43, #45 and #46
 | [D-11](#d-11-kpdb-deletes-the-wrong-record-on-a-race) | High | KPDB deletes the wrong record on a create/update race | fixed (#33, test #36) |
 | [D-12](#d-12-a-dead-dns-worker-can-be-picked-for-a-new-client) | High | A dead DNS worker can be picked for a new client | fixed (#34) |
 | [D-13](#d-13-interrupted-kpdb-sort-marker-is-negative-as-int) | Medium | Interrupted KPDB sort marker `FFFFFFFF` is negative as `int` | fixed (#33) |
-| [D-14](#d-14-a-damaged-cachehits-is-refused-forever) | Medium | A damaged `cache.hits` is refused forever | PR (#40) |
-| [D-15](#d-15-dreaderd-has-no-capabilities) | Medium | dreaderd has no `CAPABILITIES` (RFC 3977) | PR (#41) |
+| [D-14](#d-14-a-damaged-cachehits-is-refused-forever) | Medium | A damaged `cache.hits` is refused forever | fixed (#40) |
+| [D-15](#d-15-dreaderd-has-no-capabilities) | Medium | dreaderd has no `CAPABILITIES` (RFC 3977) | fixed (#41) |
 | [D-16](#d-16-linux-build-fails-with-the-default-libvendorh) | Medium | Linux build fails with the default `lib/vendor.h` (RADIUS) | decision |
 | [D-17](#d-17-unchecked-results-under-_fortify_source) | Low | 80 `-Wunused-result` warnings under `_FORTIFY_SOURCE` | open |
 | [D-18](#d-18-debian-gnuhurd-build) | Low | Debian GNU/Hurd build: `PATH_MAX`, `setpgrp`, `db_185.h` | open |
@@ -59,15 +58,16 @@ review), #37 (dnewslink SIGTERM), #40 (D-14), #41 (D-15), #42, #43, #45 and #46
 | [D-38](#d-38-dexpire-removes-the-directory-diablo-writes-into) | High | `dexpire` removes a spool's newest directory, the one diablo writes into | fixed (#25) |
 | [D-39](#d-39-dreaderd-spool-server-address-may-be-udp) | Medium | dreaderd connects its spool servers with the first `getaddrinfo()` result, which is UDP on FreeBSD | fixed (#27) |
 | [D-40](#d-40-feeder-children-hang-on-sighup) | High | Feeder children hang forever on the SIGHUP of `dicmd exit`/`pause` | fixed (#32) |
-| [D-41](#d-41-diablo-ctl-stops-other-sites-daemons) | High | diablo-ctl stops the daemons of another site of the same user | PR (#31) |
-| [D-42](#d-42-dnewslink-ignores-sigterm-on-a-stalled-peer) | Medium | dnewslink ignores SIGTERM for up to `-T` (600 s) per wait while a peer is stalled | PR (#37) |
-| [D-43](#d-43-connlife-retires-one-rotation-late) | Low | A connlife worker retires one rotation late (connlife 60 gives about 120 s) | PR (#30, test #38) |
+| [D-41](#d-41-diablo-ctl-stops-other-sites-daemons) | High | diablo-ctl stops the daemons of another site of the same user | fixed (#31) |
+| [D-42](#d-42-dnewslink-ignores-sigterm-on-a-stalled-peer) | Medium | dnewslink ignores SIGTERM for up to `-T` (600 s) per wait while a peer is stalled | fixed (#37) |
+| [D-43](#d-43-connlife-retires-one-rotation-late) | Low | A connlife worker retires one rotation late (connlife 60 gives about 120 s) | fixed (#30, test #38) |
 | [D-44](#d-44-listgroup-reply-and-range) | Medium | dreaderd LISTGROUP: wrong 211 line, range ignored, 481 without a group | open |
 | [D-45](#d-45-hdr-reply-code-and-list-headers) | Medium | dreaderd HDR answers 221 (XHDR's code); LIST HEADERS missing | open |
 | [D-46](#d-46-authinfo-reply-codes) | Medium | dreaderd AUTHINFO: a wrong password gets 502 (no retry); PASS before USER, and a second login | open |
 | [D-47](#d-47-other-reader-reply-codes) | Low | dreaderd reply codes: NEXT, ARTICLE in an empty group, bad article numbers, OVER past the high mark, LIST ACTIVE.TIMES | open |
 | [D-48](#d-48-feeder-reply-codes) | Low | diablo: MODE READER 500, IHAVE/CHECK without an argument | open |
-| [D-49](#d-49-moderation-handling) | Medium | Moderation: Approved: from any reader, posts to "n" groups, crosspost mails every moderator, failures not reported | PR (#42, #43, #45, #46; tests #44) |
+| [D-49](#d-49-moderation-handling) | Medium | Moderation: Approved: from any reader, posts to "n" groups, crosspost mails every moderator, failures not reported | partly fixed (#42, #43, #46, #50; #45 and its tests in #56 open) |
+| [D-50](#d-50-codeql-robustness-findings) | Low | CodeQL: a `%` in a feed label or in the diablo.config path is used as a format; two log lines with wrong format types | open |
 
 Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315).
 
@@ -375,6 +375,25 @@ as "NotInActive" (and only `incoming.log` has the reason); mail failures are ign
 without any sendmail the client still gets "240 Article mailed to moderator" while the article
 is lost; the moderators address goes through snprintf as the format (post.c:957). Fixes in #42,
 #43, #45 and #46; tests in #44.
+
+### D-50 CodeQL robustness findings
+From the triage of the CodeQL alerts (advanced setup, #48). None of these is reachable from
+the network; the sources are configuration and the command line of non-setuid programs.
+- `util/dspoolout.c:471` and `:689`: the feed label (dnewsfeeds, dnntpspool.ctl) becomes the
+  format of `xopen()`. A `%` in a label opens the wrong file or crashes dspoolout. Fix:
+  `xopen(..., "%s", spoolFile)`, and reject `%` in labels.
+- `util/dspoolout.c:774` / `util/dnewslink.c:597`: the label goes unescaped into dnewslink's
+  `-b` template (`label.S%05d`), and dnewslink expands it with an unbounded `sprintf` into a
+  1024-byte buffer. Fix: escape `%` in the label and use `snprintf`.
+- `lib/config.c:187`: the diablo.config path (`DIABLO_CONFIG_PATH`, `-C`) is the format of
+  `xfopen()`, the same class as the path patterns #62 fixed. A `%` in that path gives a wrong
+  path. Fix: the same substitution as #62's `PatSubst()`.
+- `dreaderd/reader.c:1100`: the bytelimit log line prints a `double` with `%d`, so both logged
+  numbers are wrong. Fix: `%.0f`.
+- `dreaderd/reader.c:215`: the select error log passes two `fd_set` structures to `%x`, so the
+  values are meaningless. Fix: log something else.
+Of the 72 format-string alerts, 52 went away with #62; the rest are these and integer-width
+mismatches that only shorten a printed number.
 
 ## Feature requests
 
