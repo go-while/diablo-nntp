@@ -146,7 +146,18 @@ main(int ac, char **av)
 	while (isspace((int)*msgid))
 	    msgid++;
 	strtok(msgid, " \t\n");
-	if (HistoryCancel) {
+	if (HistoryCancel && !ForReal) {
+	    /* -n: report only, leave history alone */
+	    if (HistoryLookup(msgid, &h) == 0) {
+		CancelCount++;
+		printf("Would %scancel history entry for: %s\n",
+					UnExpire ? "un" : "", msgid);
+		if (SpoolCancel)
+		    AddToSpoolCancel(&h);
+	    } else {
+		printf("No history entry for: %s\n", msgid);
+	    }
+	} else if (HistoryCancel) {
 	    if (HistoryExpire(msgid, &h, UnExpire)) {
 		if (h.iter == (uint16)-1) {
 		    fprintf(stderr, "Already removed %s\n", msgid);
@@ -170,7 +181,7 @@ main(int ac, char **av)
 	    CancelReader(msgid);
     }
     PrintCancelList();
-    if (SpoolCancel)
+    if (SpoolCancel && ForReal)
 	RewriteFiles();
     if (VerboseOpt)
 	printf("Rewrote %d spool files with %d articles removed\n",
@@ -267,6 +278,10 @@ CancelReader(char *grpinfo)
 	*group++ = '\0';
 	artno = atoll(group);
 	group = grpinfo;
+	if (!ForReal) {
+	    printf("Would cancel %lld in %s\n", (long long)artno, group);
+	    return;
+	}
 	ov = GetOverInfo(group);
 	if (CancelOverArt(ov, artno)) {
 		printf("%lld in %s cancelled\n", artno, group);

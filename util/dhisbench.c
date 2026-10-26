@@ -112,6 +112,7 @@ main(int ac, char **av)
 		    exit(1);
 		}
 		DOpts.HashSize = n;
+		break;
 	    case 'l':
 		if (*ptr == 'f') {
 		    ptr++;
@@ -140,8 +141,15 @@ main(int ac, char **av)
     if (AddForks == 0)
 	HOFlags |= HGF_READONLY;
 
-    if (HistoryFile == NULL)
+    if (HistoryFile == NULL) {
+	if (AddForks) {
+	    /* the adds write made-up entries */
+	    fprintf(stderr, "dhisbench: adds need a scratch history file (-f FILE), "
+		"not the live %s\n", PatDbExpand(DHistoryPat));
+	    exit(1);
+	}
 	HistoryFile = PatDbExpand(DHistoryPat);
+    }
 
     printf("History File: %s\n", HistoryFile);
     printf("Flags       : ");

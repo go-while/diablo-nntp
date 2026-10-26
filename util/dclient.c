@@ -104,6 +104,23 @@ connectnews(char *hostname, char *port) {
     }
 }
 
+/*
+ * RFC 3977 replies that are followed by a multi-line block.  211 is
+ * multi-line only after LISTGROUP.
+ */
+static int
+MultiLineReply(const char *cmd, const char *line)
+{
+    switch (atoi(line)) {
+    case 100: case 101: case 215: case 220: case 221: case 222:
+    case 224: case 225: case 230: case 231: case 282:
+	return(1);
+    case 211:
+	return(strncasecmp(cmd, "LISTGROUP", 9) == 0);
+    }
+    return(0);
+}
+
 void
 newscommand(char *command) {
     char line[MAXLINE];
@@ -113,16 +130,25 @@ newscommand(char *command) {
 	printf(">>%s\r\n", command ? command : "STDIN");
 
     while (command || fgets(inp, sizeof(inp), stdin) != NULL) {
+	const char *cmd = command;
+	int multi = -1;
+
+	if (cmd == NULL) {
+	    inp[strcspn(inp, "\r\n")] = 0;
+	    cmd = inp;
+	}
 	fflush(fp);
-	if (command)
-	    fprintf(fp, "%s\r\n", command);
-	else
-	    fprintf(fp, "%s\r\n", inp);
+	fprintf(fp, "%s\r\n", cmd);
 	rewind(fp);
 	while (fgets(line, MAXLINE, fp) != NULL) {
 	    printf("%s", line);
-	    if (strncmp(line, ".\r\n", 3) == 0)
+	    if (multi < 0) {
+		multi = MultiLineReply(cmd, line);
+		if (multi == 0)
+		    break;
+	    } else if (strncmp(line, ".\r\n", 3) == 0) {
 		break;
+	    }
 	}
 	if (command)
 	    break;
@@ -171,7 +197,7 @@ int
 main(int argc, char **argv) {
     extern char *optarg;
     extern int optind;
-    char ch;
+    int ch;
     char *progname;
     char *port = "119";
     char *command;

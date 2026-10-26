@@ -48,7 +48,7 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-28](#d-28-man-pages) | Low | Man pages: none fully accurate, 17 programs without one, broken SEE ALSO | open |
 | [D-29](#d-29-dreaderd--sdigits-sets-a-mangled-receive-buffer) | Low | `dreaderd -S<digits>` also sets a mangled receive buffer | fixed (#58) |
 | [D-30](#d-30-diablo--x-sets-the-xref-host-not-xrefsync) | Low | `diablo -x` sets the Xref host, not xrefsync | fixed (#59) |
-| [D-31](#d-31-option-parsing-bugs-in-utilities) | Low | Option parsing bugs in utilities (`-C file`, `dilookup -f`, `dhisexpire -o`, ...) | fixed (#64) |
+| [D-31](#d-31-option-parsing-bugs-in-utilities) | Low | Option parsing bugs in utilities (`-C file`, `dilookup -f`, `dhisexpire -o`, ...) | fixed (#64, #70) |
 | [D-32](#d-32-drcmd-exits-1-after-a-good-status) | Low | `drcmd` exits 1 after a good `status` reply | fixed (#57) |
 | [D-33](#d-33-dreaderd--b-host-without-port-binds-a-random-port) | Low | `dreaderd -B host` without a port binds a random port; `-P`/`-B` drop the config bind settings | fixed (#60) |
 | [D-34](#d-34-installed-adm-scripts-are-not-executable) | Low | Installed adm scripts are mode 444; no `/news/adm`; csh needed | fixed (#21, #22) |
@@ -253,6 +253,8 @@ Verified.
   argument (label, host or ID); dicmd and drcmd skip only `-C`. From review.
 - `dhisexpire -o file` with a space silently uses `.bak` and takes `file` as the history file;
   `drequeue -d` eats the label; `diloadfromspool -e` requires `-F` and `-u`. From review.
+- Follow-up: `dlockhistory -s` did not consume its sleep-time argument, and `dexpirescoring`
+  and `dprimehostcache` did not skip the argument to `-C file`. Fixed in #70.
 
 ### D-32 drcmd exits 1 after a good status
 `util/drcmd.c` exits 0 only after a `.` line, and dreaderd sends none after `status`, so

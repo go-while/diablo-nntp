@@ -44,6 +44,15 @@ main(int ac, char *av[])
 	    dodump = 1;
 	    continue;
 	}
+	if (strncmp(av[arg], "-C", 2) == 0) {	/* parsed by LoadDiabloConfig */
+	    if (av[arg][2] == 0 && av[arg + 1] != NULL) {
+		arg++;
+		ac--;
+	    }
+	    arg++;
+	    ac--;
+	    continue;
+	}
 	if (strcasecmp(av[arg], "-prime") == 0) {
 	    arg++;
 	    ac--;

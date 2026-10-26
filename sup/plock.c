@@ -25,6 +25,7 @@ main(int ac, char **av)
     int j;
     int len;
     int pid;
+    int status = 0;
     int blockExit = 0;
     int type = XLOCK_EX;
     char *buf;
@@ -46,6 +47,10 @@ main(int ac, char **av)
 	    fprintf(stderr, "plock: unknown option %s\n", ptr - 2);
 	    exit(1);
 	}
+    }
+    if (i + 1 >= ac) {
+	puts("plock [-r][-t] <file> <program...>");
+	exit(1);
     }
     if ((fd = open(av[i], O_RDWR|O_CREAT, 0600)) < 0) {
 	printf("unable to open/create %s\n", av[i]);
@@ -84,11 +89,14 @@ main(int ac, char **av)
 	execl("/bin/sh", "sh", "-c", buf, NULL);
 	exit(0);
     }
-    waitpid(pid, NULL, 0);
+    waitpid(pid, &status, 0);
 
     xflock(fd, XLOCK_UN);
     close(fd);
 
-    return(0);
+    /* the command's exit status */
+    if (WIFEXITED(status))
+	return(WEXITSTATUS(status));
+    return(1);
 }
 
