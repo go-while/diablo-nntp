@@ -4,9 +4,9 @@ package e2e
 // file, sendmail), and diablo with "activedrop" drops an unapproved article to a moderated
 // group.
 //
-// The tests of today's behaviour pass on main. The comments marked "changes with" name the
-// assertions that the maintainer's planned moderation PRs change; the tests for the new
-// behaviour are written and skipped until those PRs are in (search "PLANNED").
+// The behaviour is that of the maintainer's moderation series, compared with INN: readerdef
+// "approve" (#42), group status on POST (#43), mail to the first moderator only with failures
+// reported (#45), diablo's "Unapproved/<group>" reason (#46), and alias statuses (#50).
 //
 // Mail content is checked only where ci/fake-sendmail is installed as the system's sendmail
 // (ci/build-on-host with E2E_FAKE_SENDMAIL=1; GitHub Actions does that). Elsewhere those
@@ -244,15 +244,15 @@ func (m *modSite) postArticle(tb testing.TB, groups string, extra ...string) (st
 // the article without Path:.
 func TestModerationMailsModerator(t *testing.T) {
 	m := newModerationReader(t, ModOptions{})
+	if m.Mail == nil {
+		// Without it the outcome depends on the host's MTA: none at all now gives 441 (#45).
+		t.Skip("needs ci/fake-sendmail as the system's sendmail")
+	}
 	_, line := m.postArticle(t, ModGroup)
 	if !strings.HasPrefix(line, "240 ") || !strings.Contains(line, "moderator") {
 		t.Fatalf("POST to %s: %q, want 240 ... mailed to moderator", ModGroup, line)
 	}
 	m.noPost(t, "unapproved post to a moderated group")
-	if m.Mail == nil {
-		t.Log("no fake sendmail: mail content not checked")
-		return
-	}
 	mails := m.Mail.waitMails(t, 1)
 	if len(mails) != 1 {
 		t.Fatalf("%d mails, want 1", len(mails))
@@ -261,9 +261,9 @@ func TestModerationMailsModerator(t *testing.T) {
 	if want := "e2e-mod@moderators.example.invalid"; got.To() != want {
 		t.Errorf("To: %q, want %q", got.To(), want)
 	}
-	// changes with the moderator-mail PR: the address as an argument instead of -t
-	if !slices.Contains(got.Argv, "-t") {
-		t.Errorf("sendmail argv %q, want -t (today's behaviour)", got.Argv)
+	// #45: the address as an argument, no -t (nothing in the article can add recipients)
+	if slices.Contains(got.Argv, "-t") || !slices.Contains(got.Argv, "e2e-mod@moderators.example.invalid") {
+		t.Errorf("sendmail argv %q, want the address as an argument and no -t", got.Argv)
 	}
 	if !strings.Contains(got.Msg, "Subject: moderation test") || !strings.Contains(got.Msg, "\nbody line one\n") {
 		t.Errorf("mail lacks the article:\n%s", got.Msg)
@@ -297,62 +297,11 @@ func TestModerationApprovedGoesIn(t *testing.T) {
 	}
 }
 
-// TestModerationCrosspost: an unapproved crosspost to two moderated groups is mailed to
-// both moderators today. Changes with the moderator-mail PR: only the first moderated
-// group's moderator (RFC 5537 section 3.5.1).
-func TestModerationCrosspost(t *testing.T) {
-	m := newModerationReader(t, ModOptions{})
-	_, line := m.postArticle(t, ModGroup+","+ModGroup2+","+OpenGroup)
-	if !strings.HasPrefix(line, "240 ") {
-		t.Fatalf("crosspost: %q, want 240", line)
-	}
-	m.noPost(t, "unapproved crosspost to moderated groups")
-	if m.Mail == nil {
-		t.Log("no fake sendmail: mail count not checked")
-		return
-	}
-	mails := m.Mail.waitMails(t, 2)
-	var to []string
-	for _, ml := range mails {
-		to = append(to, ml.To())
-	}
-	want := []string{"e2e-mod@moderators.example.invalid", "mod2@moderators.example.invalid"}
-	if !slices.Equal(to, want) {
-		t.Errorf("mailed to %q, want %q (today: every moderated group's moderator)", to, want)
-	}
-}
-
-// TestModerationNoModerator: an unapproved POST to a moderated group without a moderators
-// line is not mailed but passed on to the outgoing server (where diablo with activedrop
-// drops it). Changes with the moderator-mail PR: a clear 441.
-func TestModerationNoModerator(t *testing.T) {
-	m := newModerationReader(t, ModOptions{})
-	_, line := m.postArticle(t, NoModGroup)
-	if !strings.HasPrefix(line, "240 ") {
-		t.Fatalf("POST to %s: %q, want 240 (today's behaviour)", NoModGroup, line)
-	}
-	m.waitPost(t, 1, "the post passed on to the outgoing server (today's behaviour)")
-}
-
-// TestModerationMailFailure: when sendmail fails, dreaderd still answers "240 Article
-// mailed to moderator" today. Changes with the moderator-mail PR: the MTA's exit status is
-// checked. Needs the fake sendmail.
-func TestModerationMailFailure(t *testing.T) {
-	m := newModerationReader(t, ModOptions{})
-	if m.Mail == nil {
-		t.Skip("needs ci/fake-sendmail as the system's sendmail")
-	}
-	m.Mail.setExit(t, 75) // EX_TEMPFAIL
-	_, line := m.postArticle(t, ModGroup)
-	if !strings.HasPrefix(line, "240 ") {
-		t.Fatalf("POST with a failing sendmail: %q, want 240 (today: the failure is ignored)", line)
-	}
-	m.Mail.waitMails(t, 1)
-}
-
 // TestFeederUnapprovedModerated: diablo with "active on", "activedrop yes" and an xrefhost
-// drops an unapproved article to a moderated group; today the reason is "NotInActive",
-// although the group is in the active file. Changes with the diablo PR: "Unapproved".
+// rejects an unapproved article to a moderated group with 437, giving the reason
+// "Unapproved/<group>" in the reply and in incoming.log (#46; before, "NotInActive", only in
+// incoming.log, although the group is in the active file). An article to an open group is
+// accepted.
 func TestFeederUnapprovedModerated(t *testing.T) {
 	s := NewSite(t, SiteOptions{
 		Config: map[string]string{
@@ -384,15 +333,14 @@ func TestFeederUnapprovedModerated(t *testing.T) {
 	status(t, p, 235, "IHAVE to an unmoderated group")
 	expect(t, p, 205, "QUIT")
 
-	// changes with the diablo PR: "Unapproved for e2e.mod"
-	logs := feederLogs(s)
-	if !strings.Contains(logs, "NotInActive") {
-		t.Errorf("no NotInActive for the unapproved article (today's reason) in diablo's logs:\n%s", logs)
+	// #46: the reason names the group, in the IHAVE reply and in incoming.log
+	if !strings.Contains(line, "Unapproved/"+ModGroup) {
+		t.Errorf("unapproved IHAVE reply %q, want the reason Unapproved/%s", line, ModGroup)
+	}
+	if logs := feederLogs(s); !strings.Contains(logs, "Unapproved/"+ModGroup) || strings.Contains(logs, "NotInActive") {
+		t.Errorf("want Unapproved/%s and no NotInActive in diablo's logs:\n%s", ModGroup, logs)
 	}
 }
-
-// PLANNED: the tests below are for the maintainer's moderation PRs (agent-chatroom
-// 20261026-112934Z). Remove the skip when the PR is in, and adjust names and texts to it.
 
 // TestModerationApproveRequired (#42): readerdef "approve yes|no", default no. A POST with
 // Approved: from a reader without "approve yes" gets 441, to a moderated group and (as in
@@ -449,19 +397,20 @@ func TestModerationGroupStatus(t *testing.T) {
 	}
 }
 
-// TestModerationFirstModeratorOnly (PLANNED, moderator-mail PR): a crosspost to two
-// moderated groups is mailed to the first one's moderator only, with the address as an
-// argument to sendmail instead of -t.
+// TestModerationFirstModeratorOnly (#45): an unapproved crosspost to two moderated groups
+// and an open one is mailed only to the first moderated group's moderator (RFC 5537
+// section 3.5.1), with the address as an argument to sendmail instead of -t, and nothing is
+// passed on. Before #45 every moderated group's moderator got a copy.
 func TestModerationFirstModeratorOnly(t *testing.T) {
-	t.Skip("PLANNED: moderator mail (moderation PR 3)")
 	m := newModerationReader(t, ModOptions{})
 	if m.Mail == nil {
 		t.Skip("needs ci/fake-sendmail as the system's sendmail")
 	}
-	_, line := m.postArticle(t, ModGroup2+","+ModGroup)
+	_, line := m.postArticle(t, ModGroup2+","+ModGroup+","+OpenGroup)
 	if !strings.HasPrefix(line, "240") {
 		t.Fatalf("crosspost: %q, want 240", line)
 	}
+	m.noPost(t, "unapproved crosspost to moderated groups")
 	mails := m.Mail.waitMails(t, 1)
 	if len(mails) != 1 {
 		t.Fatalf("%d mails, want 1 (the first moderated group's moderator)", len(mails))
@@ -474,67 +423,75 @@ func TestModerationFirstModeratorOnly(t *testing.T) {
 	}
 }
 
-// TestModerationNoModerator441 (PLANNED, moderator-mail PR): an unapproved POST to a
-// moderated group without a moderator gets a clear 441 and is not passed on.
+// TestModerationNoModerator441 (#45): an unapproved POST to a moderated group without a
+// moderators line gets "441 No moderator known for <group>, article not posted" and is not
+// passed on. Before #45 it was passed on to the outgoing server (where diablo with activedrop
+// dropped it).
 func TestModerationNoModerator441(t *testing.T) {
-	t.Skip("PLANNED: moderator mail (moderation PR 3)")
 	m := newModerationReader(t, ModOptions{})
-	if _, line := m.postArticle(t, NoModGroup); !strings.HasPrefix(line, "441") {
-		t.Errorf("POST to %s: %q, want 441", NoModGroup, line)
+	if _, line := m.postArticle(t, NoModGroup); line != "441 No moderator known for "+NoModGroup+", article not posted" {
+		t.Errorf("POST to %s: %q, want 441 No moderator known", NoModGroup, line)
 	}
 	m.noPost(t, "post to a moderated group without a moderator")
 }
 
-// TestModerationMailFailureReported (PLANNED, moderator-mail PR): a failing sendmail gives
-// an error reply, not "240 Article mailed".
+// TestModerationMailFailureReported (#45): when sendmail fails, the poster gets "441 Unable
+// to mail article to the moderator of <group>" instead of "240 Article mailed", and nothing
+// is passed on. Before #45 the failure was ignored (240). Needs the fake sendmail.
 func TestModerationMailFailureReported(t *testing.T) {
-	t.Skip("PLANNED: moderator mail (moderation PR 3)")
 	m := newModerationReader(t, ModOptions{})
 	if m.Mail == nil {
 		t.Skip("needs ci/fake-sendmail as the system's sendmail")
 	}
-	m.Mail.setExit(t, 75)
-	if _, line := m.postArticle(t, ModGroup); strings.HasPrefix(line, "240") {
-		t.Errorf("POST with a failing sendmail: %q, want an error", line)
+	m.Mail.setExit(t, 75) // EX_TEMPFAIL
+	if _, line := m.postArticle(t, ModGroup); line != "441 Unable to mail article to the moderator of "+ModGroup {
+		t.Errorf("POST with a failing sendmail: %q, want 441 Unable to mail", line)
 	}
+	m.noPost(t, "post whose moderator mail failed")
 }
 
-// TestModerationAddressFormat (PLANNED, moderator-mail PR): the moderators address is
-// substituted safely: "%s" is the group, "%%" a percent sign, and anything else is
-// literal (today it goes through snprintf as a format).
+// TestModerationAddressFormat (#45): in the moderators file "%s" is the group with dots
+// made dashes and "%%" a percent sign, as in INN; any other "%" sequence makes the entry
+// unusable, so the post gets "441 No moderator known" and nothing is mailed. Before #45 the
+// address went through snprintf as a format string.
 func TestModerationAddressFormat(t *testing.T) {
-	t.Skip("PLANNED: moderator mail (moderation PR 3)")
-	m := newModerationReader(t, ModOptions{Moderators: ModGroup + ":%s%%x%d%n@moderators.example.invalid\n"})
+	m := newModerationReader(t, ModOptions{Moderators: ModGroup + ":%s%%x@moderators.example.invalid\n" +
+		ModGroup2 + ":%s%d%n@moderators.example.invalid\n"})
 	if m.Mail == nil {
 		t.Skip("needs ci/fake-sendmail as the system's sendmail")
 	}
 	m.postArticle(t, ModGroup)
 	mails := m.Mail.waitMails(t, 1)
-	if want := "e2e-mod%x%d%n@moderators.example.invalid"; len(mails) != 1 || mails[0].To() != want {
+	if want := "e2e-mod%x@moderators.example.invalid"; len(mails) != 1 || mails[0].To() != want {
 		t.Errorf("mails %v, want one To: %s", mails, want)
 	}
+	if _, line := m.postArticle(t, ModGroup2); line != "441 No moderator known for "+ModGroup2+", article not posted" {
+		t.Errorf("POST to %s with a %%d in its moderators entry: %q, want 441 No moderator known", ModGroup2, line)
+	}
+	if n := len(m.Mail.mails()); n != 1 {
+		t.Errorf("%d mails after the unusable entry, want 1", n)
+	}
+	m.noPost(t, "posts to moderated groups")
 }
 
-// TestFeederUnapprovedReason (PLANNED, diablo PR): the unapproved article to a moderated
-// group is answered and logged as "Unapproved for e2e.mod", not "NotInActive".
-func TestFeederUnapprovedReason(t *testing.T) {
-	t.Skip("PLANNED: diablo Unapproved reason (moderation PR 4)")
-	s := NewSite(t, SiteOptions{
-		Config: map[string]string{"active": "on", "activedrop": "yes", "xrefhost": PathHost, "path_generallog": "%s/general.log"},
-		Setup: func(tb testing.TB, s *Site) {
-			s.WriteFile(tb, "dactive.kp", "")
-			s.Run(tb, "dgrpctl", "-s", "newgroup", ModGroup, "m")
-		},
-	})
-	p := s.Peer(t)
-	id := msgID(t)
-	expect(t, p, 335, "IHAVE %s", id)
-	send(t, p, wire(newArticle(id, ModGroup, "unapproved", "body")))
-	line, _ := p.ReadLine()
-	if !strings.HasPrefix(line, "437") || !strings.Contains(line, "Unapproved") {
-		t.Errorf("unapproved IHAVE: %q, want 437 ... Unapproved for %s", line, ModGroup)
+// TestModerationAliasStatus (#50): a status "=other.group" is an INN alias (dsyncgroups copies
+// it), not flags: a POST to such a group is neither refused as status n/x nor treated as
+// moderated, and goes out. Before #50 every character of the status counted, so the alias
+// "=comp.unix.mx" (n, x and m) made the post refused.
+func TestModerationAliasStatus(t *testing.T) {
+	m := newModerationReader(t, ModOptions{})
+	const alias = "e2e.alias"
+	// dgrpctl takes one-letter statuses only; dsyncgroups writes S= directly, so does dkp.
+	m.Run(t, "dgrpctl", "newgroup", alias, "y")
+	m.Run(t, "dkp", "-w", filepath.Join(m.Dir, "dactive.kp"), alias, "S==comp.unix.mx")
+	if out := m.Run(t, "dkp", "-r", filepath.Join(m.Dir, "dactive.kp"), alias); !strings.Contains(out, "S==comp.unix.mx") {
+		t.Fatalf("dactive.kp record for %s: %q, want S==comp.unix.mx", alias, out)
 	}
-	if !strings.Contains(feederLogs(s), "Unapproved for "+ModGroup) {
-		t.Errorf("no \"Unapproved for %s\" in the log", ModGroup)
+	if _, line := m.postArticle(t, alias); !strings.HasPrefix(line, "240 ") || strings.Contains(line, "moderator") {
+		t.Fatalf("POST to %s (status =comp.unix.mx): %q, want 240 posted", alias, line)
+	}
+	m.waitPost(t, 1, "the post to the alias group")
+	if m.Mail != nil && len(m.Mail.mails()) != 0 {
+		t.Errorf("post to the alias group was mailed to a moderator")
 	}
 }
