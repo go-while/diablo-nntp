@@ -14,6 +14,8 @@
 Prototype void NNTPNewNews(Connection *conn, char **pptr);
 Prototype void NNTPXHdr(Connection *conn, char **pptr);
 Prototype void NNTPXOver(Connection *conn, char **pptr);
+Prototype void NNTPHdr(Connection *conn, char **pptr);
+Prototype void NNTPOver(Connection *conn, char **pptr);
 Prototype void NNTPXZver(Connection *conn, char **pptr);
 Prototype void NNTPXPat(Connection *conn, char **pptr);
 Prototype void NNTPXPath(Connection *conn, char **pptr);
@@ -109,6 +111,7 @@ NNTPXHdr(Connection *conn, char **pptr)
 {
     char *hdr;
 
+    conn->co_ListStrict = 0;
     if ((hdr = parseword(pptr, " \t")) == NULL) {
 	MBLogPrintf(conn, &conn->co_TMBuf, "501 header [range|MessageID]\r\n");
 	NNCommand(conn);
@@ -121,13 +124,42 @@ NNTPXHdr(Connection *conn, char **pptr)
 void 
 NNTPXOver(Connection *conn, char **pptr)
 {
+    conn->co_ListStrict = 0;
     NNStartListOverview(conn, OverViewFmt, parseword(pptr, " \t"), NULL, COM_XOVER);
     return;
+}
+
+/*
+ * HDR and OVER (RFC 3977 8.3, 8.5): as XHDR and XOVER, but with the RFC's
+ * reply codes: 225 for HDR, and 420/423 instead of an empty list when there
+ * is no current article or no article in the range.  XHDR and XOVER keep
+ * their old behaviour for existing clients.
+ */
+void
+NNTPHdr(Connection *conn, char **pptr)
+{
+    char *hdr;
+
+    conn->co_ListStrict = 1;
+    if ((hdr = parseword(pptr, " \t")) == NULL) {
+	MBLogPrintf(conn, &conn->co_TMBuf, "501 header [range|MessageID]\r\n");
+	NNCommand(conn);
+	return;
+    }
+    NNStartListOverview(conn, hdr, parseword(pptr, " \t"), NULL, COM_XHDR);
+}
+
+void
+NNTPOver(Connection *conn, char **pptr)
+{
+    conn->co_ListStrict = 1;
+    NNStartListOverview(conn, OverViewFmt, parseword(pptr, " \t"), NULL, COM_XOVER);
 }
 
 void 
 NNTPXZver(Connection *conn, char **pptr)
 {
+    conn->co_ListStrict = 0;
     if (conn->co_Auth.dr_ReaderDef->rd_XzverLevel < 0) {
 	MBLogPrintf(conn, &conn->co_TMBuf, "500 \"xzver\" not enabled\r\n");
 	NNCommand(conn);
@@ -140,6 +172,7 @@ NNTPXZver(Connection *conn, char **pptr)
 void 
 NNTPXPat(Connection *conn, char **pptr)
 {
+    conn->co_ListStrict = 0;
     char *hdr;
     char *ran;
     char *pat;
@@ -195,6 +228,70 @@ NNStartListOverview(Connection *conn, const char *hdr, const char *ran, const ch
 	}
     }
 
+    /*
+     * HDR and OVER answer an error instead of an empty list: 420 without a
+     * current article, 423 when the range holds no article, 501 for a range
+     * that isn't one.  The message-id form isn't implemented: 503.
+     */
+    if (conn->co_ListStrict) {
+	if (ran == NULL) {
+	    if (NoCurrentArticle(conn)) {
+		MBLogPrintf(conn, &conn->co_TMBuf, "420 No current article selected\r\n");
+		NNCommand(conn);
+		return;
+	    }
+	} else if (ran[0] == '<') {
+	    MBLogPrintf(conn, &conn->co_TMBuf, "503 %s by message-id is not supported\r\n",
+		(mode == COM_XHDR) ? "HDR" : "OVER");
+	    NNCommand(conn);
+	    return;
+	} else {
+	    char *p;
+	    char *q;
+	    artno_t lo = strtoll(ran, &p, 10);
+	    artno_t hi;
+	    int bad = (p == ran || lo < 0);
+	    artno_t lbeg = conn->co_ArtBeg;
+	    artno_t lend = conn->co_ArtEnd;
+	    const char *rec;
+	    int recLen;
+
+	    /* the group's range now, not as of GROUP */
+	    if ((rec = KPDBReadRecord(KDBActive, conn->co_GroupName, KP_LOCK, &recLen)) != NULL) {
+		lbeg = strtoll(KPDBGetField(rec, recLen, "NB", NULL, "0"), NULL, 10);
+		lend = strtoll(KPDBGetField(rec, recLen, "NE", NULL, "0"), NULL, 10);
+		KPDBUnlock(KDBActive, rec);
+	    }
+
+	    if (!bad)
+		lo = artno_input(conn->co_ArtBeg, conn->co_ArtEnd, lo, conn->co_Numbering);
+	    hi = lo;
+	    if (!bad && *p == '-') {
+		q = p + 1;
+		if (*q == 0) {
+		    hi = lend;		/* n-: to the end */
+		    p = q;
+		} else {
+		    hi = strtoll(q, &p, 10);
+		    if (p == q || hi < 0)
+			bad = 1;
+		    else
+			hi = artno_input(conn->co_ArtBeg, conn->co_ArtEnd, hi, conn->co_Numbering);
+		}
+	    }
+	    if (bad || *p != 0) {
+		MBLogPrintf(conn, &conn->co_TMBuf, "501 Bad range %s\r\n", ran);
+		NNCommand(conn);
+		return;
+	    }
+	    if (lo > hi || lo > lend || hi < lbeg) {
+		MBLogPrintf(conn, &conn->co_TMBuf, "423 No articles in that range\r\n");
+		NNCommand(conn);
+		return;
+	    }
+	}
+    }
+
     conn->co_ArtMode = mode;
 
     switch(mode) {
@@ -202,10 +299,16 @@ NNStartListOverview(Connection *conn, const char *hdr, const char *ran, const ch
 	MBLogPrintf(conn, &conn->co_TMBuf, "221 %s matches follow.\r\n", hdr);
 	break;
     case COM_XHDR:
-	MBLogPrintf(conn, &conn->co_TMBuf, "221 %s data follows\r\n", hdr);
+	if (conn->co_ListStrict)
+	    MBLogPrintf(conn, &conn->co_TMBuf, "225 Headers follow\r\n");
+	else
+	    MBLogPrintf(conn, &conn->co_TMBuf, "221 %s data follows\r\n", hdr);
 	break;
     case COM_XOVER:
-	MBLogPrintf(conn, &conn->co_TMBuf, "224 data follows\r\n");
+	if (conn->co_ListStrict)
+	    MBLogPrintf(conn, &conn->co_TMBuf, "224 Overview information follows\r\n");
+	else
+	    MBLogPrintf(conn, &conn->co_TMBuf, "224 data follows\r\n");
 	break;
     case COM_XZVER:
 	if (MZInit(conn, &conn->co_TMBuf, conn->co_Auth.dr_ReaderDef->rd_XzverLevel) < 0) {
@@ -629,6 +732,12 @@ OutputOverview(Connection *conn, const char *res, int resLen, int artSize)
 
 	hdr += hlen;
 	conn->co_LastActiveTime = CurTime.tv_sec;
+    }
+    if (didIndex == 0 && conn->co_ArtMode == COM_XHDR && conn->co_ListStrict) {
+	/* HDR: a missing header has the empty string as its value */
+	MBPrintf(&conn->co_TMBuf, "%lld ",
+	    artno_art(conn->co_ArtBeg, conn->co_ArtEnd, conn->co_ListBegNo, conn->co_Numbering));
+	didIndex = 1;
     }
     if (didIndex == 0 && 
 	(/* conn->co_ArtMode == COM_XPAT || */ conn->co_ArtMode == COM_XHDR)

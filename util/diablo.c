@@ -1881,7 +1881,8 @@ DoSession(int fd, int count)
 	    xfprintf(fo, "480 Read-only connection.\r\n");
 	} else if (strcasecmp(cmd, "ihave") == 0) {
 	    const char *msgidbuf = "";
-	    const char *msgid = MsgId(strtok(NULL, "\r\n"), &msgidbuf);
+	    const char *msgarg = strtok(NULL, "\r\n");
+	    const char *msgid = MsgId(msgarg, &msgidbuf);
 	    int pre = 0;
 
 	    TtlStats.ArtsTested += 1.0;
@@ -1892,7 +1893,9 @@ DoSession(int fd, int count)
 	     * cache, so check it first.
 	     */
 
-	    if (strcmp(msgid, "<>") == 0) {
+	    if (msgarg == NULL || msgarg[strspn(msgarg, " \t")] == 0) {
+		xfprintf(fo, "501 Syntax error: message-id required\r\n");
+	    } else if (strcmp(msgid, "<>") == 0) {
 		xfprintf(fo, "435 %s Bad Message-ID\r\n", msgidbuf);
 	    } else if (ArtHashIsFiltered(msgid)) {
 		LogIncoming("%s - %s %s", HLabel, msgid, "IFILTER");
@@ -1998,7 +2001,8 @@ DoSession(int fd, int count)
 	    xfprintf(fo, "480 Read-only connection.\r\n");
 	} else if (strcasecmp(cmd, "check") == 0) {
 	    const char *msgidbuf = "";
-	    const char *msgid = MsgId(strtok(NULL, "\r\n"), &msgidbuf);
+	    const char *msgarg = strtok(NULL, "\r\n");
+	    const char *msgid = MsgId(msgarg, &msgidbuf);
 	    int pre = 0;
 
 	    TtlStats.ArtsTested += 1.0;
@@ -2009,7 +2013,9 @@ DoSession(int fd, int count)
 	     * cache, so check it first in that case. 
 	     */
 
-	    if (strcmp(msgid, "<>") == 0) {
+	    if (msgarg == NULL || msgarg[strspn(msgarg, " \t")] == 0) {
+		xfprintf(fo, "501 Syntax error: message-id required\r\n");
+	    } else if (strcmp(msgid, "<>") == 0) {
 		xfprintf(fo, "438 %s Bad Message-ID\r\n", msgidbuf);
 		DoArtStats(STATS_REFUSED, STATS_REF_BADMSGID, 0);
 	    } else if (ArtHashIsFiltered(msgid)) {
@@ -2469,7 +2475,8 @@ DoSession(int fd, int count)
 		headerOnly = 0;
 		xfprintf(fo, "250 Mode Command OK.\r\n");
 	    } else if (p && strcasecmp(p, "reader") == 0) {
-		unimp = 1;
+		/* a transit-only server (RFC 3977 5.3) */
+		xfprintf(fo, "502 Transit service only\r\n");
 #ifdef	USE_ZLIB
 	    } else if (p && strcasecmp(p, "compress") == 0) {
 		/* added for compression support */

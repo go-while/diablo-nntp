@@ -14,6 +14,7 @@
 Prototype void NNTPList(Connection *conn, char **pptr);
 Prototype void NNTPListActive(Connection *conn, char **pptr);
 Prototype void NNTPListActiveTimes(Connection *conn, char **pptr);
+Prototype void NNTPListHeaders(Connection *conn, char **pptr);
 Prototype void NNTPListNewsgroups(Connection *conn, char **pptr);
 Prototype void NNTPListExtensions(Connection *conn, char **pptr);
 Prototype void NNTPListDistributions(Connection *conn, char **pptr);
@@ -110,6 +111,8 @@ NNTPList(Connection *conn, char **pptr)
 	NNTPListActive(conn, pptr);
     } else if (strcmp(ltype, "active.times") == 0) {
 	NNTPListActiveTimes(conn, pptr);
+    } else if (strcmp(ltype, "headers") == 0) {
+	NNTPListHeaders(conn, pptr);
     } else if (strcmp(ltype, "newsgroups") == 0) {
 	NNTPListNewsgroups(conn, pptr);
     } else if (strcmp(ltype, "extensions") == 0) {
@@ -273,6 +276,13 @@ NNListActiveScan(Connection *conn)
 		    );
 		    MBWrite(&conn->co_TMBuf, flags, flen);
 		    MBWrite(&conn->co_TMBuf, "\r\n", 2);
+		} else if (conn->co_ArtMode == COM_ACTIVETIMES) {
+		    const char *cts = KPDBGetField(rec, conn->co_ListRecLen, "CTS", NULL, NULL);
+
+		    if (cts) {
+			MBPrintf(&conn->co_TMBuf, "%s %lu unknown\r\n", grpbuf,
+			    (unsigned long)strtoul(cts, NULL, 16));
+		    }
 		} else if (conn->co_ArtMode == COM_NEWGROUPS) {
 		    const char *cts = KPDBGetField(rec, conn->co_ListRecLen, "CTS", NULL, NULL);
 		    if (cts) {
@@ -358,10 +368,42 @@ NNListActiveScan(Connection *conn)
     }
 }
 
+/*
+ * list active.times [wildmat] (RFC 3977 7.6.4): "group time creator" for
+ * every group with a creation time (CTS).  Diablo doesn't record who
+ * created a group, so the creator is "unknown".
+ */
 void 
 NNTPListActiveTimes(Connection *conn, char **pptr)
 {
-    MBLogPrintf(conn, &conn->co_TMBuf, "500 list active.times not supported yet\r\n");
+    const char *wc = NULL;
+
+    if (pptr)
+	wc = parseword(pptr, " \t");	/* may also be NULL */
+
+    MBLogPrintf(conn, &conn->co_TMBuf, "215 Newsgroup creation times follow\r\n");
+    NNStartListActiveScan(conn, wc, NULL, COM_ACTIVETIMES);
+}
+
+/*
+ * list headers [msgid|range] (RFC 3977 8.6): the fields HDR can return.
+ * HDR with a range works for any header in the stored article headers
+ * (":"); HDR by message-id isn't implemented, so that list is empty.
+ */
+void
+NNTPListHeaders(Connection *conn, char **pptr)
+{
+    const char *form = pptr ? parseword(pptr, " \t") : NULL;
+
+    if (form != NULL && strcasecmp(form, "msgid") != 0 && strcasecmp(form, "range") != 0) {
+	MBLogPrintf(conn, &conn->co_TMBuf, "501 list headers [msgid|range]\r\n");
+	NNCommand(conn);
+	return;
+    }
+    MBLogPrintf(conn, &conn->co_TMBuf, "215 Field list follows\r\n");
+    if (form == NULL || strcasecmp(form, "range") == 0)
+	MBPrintf(&conn->co_TMBuf, ":\r\n");
+    MBPrintf(&conn->co_TMBuf, ".\r\n");
     NNCommand(conn);
 }
 
@@ -491,35 +533,90 @@ NNTPListModerators(Connection *conn, char **pptr)
     NNCommand(conn);
 }
 
+/*
+ * LISTGROUP [group [range]] (RFC 3977 6.1.2): select the group as GROUP
+ * does (or the current one), answer "211 count low high group" and list
+ * the article numbers in range (default: the whole group).
+ */
 void 
 NNTPListGroup(Connection *conn, char **pptr)
 {
-    char *group;
-    const char *rec;
-    int recLen;
-    OverInfo *ov;
+    char *group = parseword(pptr, " \t");
+    char *range = (group != NULL) ? parseword(pptr, " \t") : NULL;
+    artno_t beg;
+    artno_t end;
 
-    if ((group = parseword(pptr, " \t")) != NULL && strlen(group) < MAXGNAME)
-	SetCurrentGroup(conn, group);
-    if (conn->co_GroupName && (ov = GetOverInfo(conn->co_GroupName)) != NULL) {
-
-	if ((rec = KPDBReadRecord(KDBActive, conn->co_GroupName, KP_LOCK, &recLen)) != NULL) {
-	    conn->co_ListBegNo = strtoll(KPDBGetField(rec, recLen, "NB", NULL, "0"), NULL, 10);
-	    conn->co_ListEndNo = strtoll(KPDBGetField(rec, recLen, "NE", NULL, "0"), NULL, 10) + 1;
-	    KPDBUnlock(KDBActive, rec);
-	    if (conn->co_ListEndNo - conn->co_ListBegNo > ov->ov_Head->oh_MaxArts)
-		conn->co_ListBegNo = conn->co_ListEndNo - ov->ov_Head->oh_MaxArts;
-	    MBLogPrintf(conn, &conn->co_TMBuf, "211 Article list follows\r\n");
-	    NNListGroup(conn);
-	} else {
-	    MBLogPrintf(conn, &conn->co_TMBuf, "411 No such group %s\r\n", conn->co_GroupName);
+    if (group != NULL) {
+	if (strlen(group) >= MAXGNAME || parseword(pptr, " \t") != NULL) {
+	    MBLogPrintf(conn, &conn->co_TMBuf, "501 listgroup [newsgroup [range]]\r\n");
 	    NNCommand(conn);
+	    return;
 	}
-	PutOverInfo(ov);
-    } else {
-	MBLogPrintf(conn, &conn->co_TMBuf, "481 Not in a newsgroup\r\n");
+	if (SelectGroup(conn, group) < 0) {
+	    MBLogPrintf(conn, &conn->co_TMBuf, "411 No such group %s\r\n", group);
+	    NNCommand(conn);
+	    return;
+	}
+    } else if (conn->co_GroupName == NULL) {
+	MBLogPrintf(conn, &conn->co_TMBuf, "412 No newsgroup selected\r\n");
 	NNCommand(conn);
+	return;
+    } else if (SelectGroup(conn, conn->co_GroupName) < 0) {
+	MBLogPrintf(conn, &conn->co_TMBuf, "411 No such group %s\r\n", conn->co_GroupName);
+	NNCommand(conn);
+	return;
     }
+
+    /* the range, in the client's numbering: n, n- or n-m */
+    beg = conn->co_ArtBeg;
+    end = conn->co_ArtEnd;
+    if (range != NULL) {
+	char *p;
+	artno_t lo = strtoll(range, &p, 10);
+	artno_t hi = lo;
+
+	if (p == range || lo < 0) {
+	    MBLogPrintf(conn, &conn->co_TMBuf, "501 Bad range %s\r\n", range);
+	    NNCommand(conn);
+	    return;
+	}
+	if (*p == '-') {
+	    char *q = p + 1;
+
+	    if (*q == 0) {
+		hi = -1;		/* n-: to the end */
+		p = q;
+	    } else {
+		hi = strtoll(q, &p, 10);
+		if (p == q || hi < 0)
+		    p = q - 1;		/* reject below */
+	    }
+	}
+	if (*p != 0) {
+	    MBLogPrintf(conn, &conn->co_TMBuf, "501 Bad range %s\r\n", range);
+	    NNCommand(conn);
+	    return;
+	}
+	lo = artno_input(conn->co_ArtBeg, conn->co_ArtEnd, lo, conn->co_Numbering);
+	if (lo > beg)
+	    beg = lo;
+	if (hi >= 0) {
+	    hi = artno_input(conn->co_ArtBeg, conn->co_ArtEnd, hi, conn->co_Numbering);
+	    if (hi < end)
+		end = hi;
+	}
+    }
+
+    {
+	artno_t nb = artno_nb(conn->co_ArtBeg, conn->co_ArtEnd, conn->co_Numbering);
+	artno_t ne = artno_ne(conn->co_ArtBeg, conn->co_ArtEnd, conn->co_Numbering);
+
+	MBLogPrintf(conn, &conn->co_TMBuf, "211 %lld %lld %lld %s list follows\r\n",
+	    ne - nb + 1, nb, ne, conn->co_GroupName);
+    }
+    conn->co_ListBegNo = beg;
+    conn->co_ListEndNo = end + 1;
+    NNListGroup(conn);
 }
 
 void
@@ -530,6 +627,8 @@ NNListGroup(Connection *conn)
     conn->co_Func = NNListGroup;
     conn->co_State = "listgr";
 
+    if (ov == NULL)			/* no overview yet: nothing to list */
+	conn->co_ListBegNo = conn->co_ListEndNo;
     while (
 	conn->co_TMBuf.mh_Bytes < MBUF_HIWAT && 
 	conn->co_ListBegNo < conn->co_ListEndNo
@@ -538,11 +637,13 @@ NNListGroup(Connection *conn)
         int artSize;
 
         if (GetOverRecord(ov, conn->co_ListBegNo, &resLen, &artSize, NULL, NULL) != NULL) {
-	    MBPrintf(&conn->co_TMBuf, "%d\r\n", conn->co_ListBegNo);
+	    MBPrintf(&conn->co_TMBuf, "%lld\r\n",
+		artno_art(conn->co_ArtBeg, conn->co_ArtEnd, conn->co_ListBegNo, conn->co_Numbering));
 	}
 	++conn->co_ListBegNo;
     }
-    PutOverInfo(ov);
+    if (ov != NULL)
+	PutOverInfo(ov);
     if (conn->co_ListBegNo < conn->co_ListEndNo) {
 	;
     } else {
