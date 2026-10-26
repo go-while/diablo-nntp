@@ -18,6 +18,7 @@ Prototype void vddprintf(const char *ctl, va_list va);
 Prototype FILE *fcdopen(const char *path, const char *modes);
 Prototype int cdopen(const char *path, int modes, int perms);
 Prototype const char *cdcache(const char *path);
+Prototype void cdreset(void);
 
 Prototype int DDUseSyslog;
 
@@ -125,10 +126,22 @@ cdopen(const char *path, int modes, int perms)
     return(fd);
 }
 
+static char DirCache[256];
+
+/*
+ * cdreset() - forget the directory cdcache() changed into, so the next call
+ * changes into it again: needed when it was removed (and maybe recreated)
+ * behind our back, e.g. a spool directory deleted by dexpire.
+ */
+void
+cdreset(void)
+{
+    DirCache[0] = 0;
+}
+
 const char *
 cdcache(const char *path)
 {
-    static char DirCache[256];
     const char *p;
 
     if ((p = strrchr(path, '/')) == NULL)

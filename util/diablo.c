@@ -4557,6 +4557,21 @@ ArticleFile(History *h, off_t *pbpos, int clvl, char **cfile)
 
 	    if (raf->af_Slot == h->gmt && raf->af_Spool == H_SPOOL(h->exp) &&
 			raf->af_FileSize + h->bsize < SPOOL_MAX_FILE_SIZE) {
+		struct stat st;
+
+		/*
+		 * The file, or its directory, may have been removed while
+		 * we had it open (dexpire expiring down to the newest
+		 * directory): writing on would lose the article.  Open a
+		 * new file instead; the directory is created again below.
+		 */
+		if (fstat(raf->af_Fd, &st) == 0 && st.st_nlink == 0) {
+		    logit(LOG_NOTICE, "spool file for slot %08x was removed while open, opening a new one",
+			(unsigned int)raf->af_Slot);
+		    ArticleFileClose(i);
+		    cdreset();
+		    break;
+		}
 		af = raf;
 		break;
 	    }
@@ -4623,15 +4638,22 @@ ArticleFile(History *h, off_t *pbpos, int clvl, char **cfile)
 	    }
 
 	    /*
-	     * Does the directory need creating?
+	     * Does the directory need creating?  It may also have been
+	     * removed (dexpire) while we were changed into it: forget the
+	     * cached directory, so the next open changes into the real one
+	     * instead of retrying inside the removed directory.
 	     */
 	    if (errno == ENOENT) {
 		char tpath[PATH_MAX];
-		if (DebugOpt)
-		    logit(LOG_DEBUG, "Creating spool directory %s - should already be created", tpath);
+
+		cdreset();
 		ArticleFileName(tpath, sizeof(tpath), h, ARTFILE_DIR);
-		if (mkdir(tpath, 0755) == 0)
+		if (mkdir(tpath, 0755) == 0) {
+		    logit(LOG_NOTICE, "spool directory %s was missing, created it", tpath);
 		    continue;
+		}
+		if (errno == EEXIST)
+		    continue;	/* exists (again): retry the same file */
 	    }
 		
 
