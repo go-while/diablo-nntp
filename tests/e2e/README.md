@@ -37,6 +37,8 @@ test fails.
 | `TestHeaderFeedToReader` | diablo, dnewslink, dreaderd | diablo feeds dreaderd a header-only feed (`headfeed on`, `dnewslink -H`); the reader shows the article in GROUP and OVER and fetches BODY from diablo as its spool server |
 | `TestDexpire` | diablo, dexpire | `dexpire -a` removes the spool directory of an article older than `keeptime`; STAT then gives 430, and offering the article again gets 435 (still in history) |
 | `TestDiabloCtlFeeder`, `TestDiabloCtlReader` | samples/adm/diablo-ctl | status (3 when stopped), start, a second start ("already running"), restart, stop (port closed), stop again; skipped without the script (`DIABLO_CTL`, default: `samples/adm/diablo-ctl` next to `DIABLO_BIN`) |
+| `TestCanLockVectors` | (Go only) | the Go Cancel-Lock helpers reproduce INN's test vectors (tests/lib/canlock-t.c) |
+| `TestCancelLock`, `TestCancelLockSupersedes`, `TestCancelLockEarlyCancel`, `TestCancelLockTrackonlyRefused` | dreaderd | `readercanlock` (RFC 8315): cancels and supersedes against Cancel-Lock in each mode (require-auth, auth, none, all), matching, wrong and missing keys, sha1 in a folded lock with a comment, early cancels, and the trackonly refusal; skipped without readercanlock support |
 | `TestDnewslinkConnlife` | diablo, dspoolout, dnewslink | realtime feed with `connlife 8` (skipped without `dnewslink -K`): one TCP session across a queue rotation; after connlife, retirement at the next rotation and a replacement at once (`dspoolout -J`); no descriptor growth over three replacements; every article reaches the peer once, in order. Linux only (reads /proc) |
 
 ## Running

@@ -148,4 +148,3 @@ func TestDiabloCtlReader(t *testing.T) {
 	out, code = ctl(t, s, ctlp, conf, "status")
 	wantCtl(t, out, code, 3, "status after stop")
 }
-

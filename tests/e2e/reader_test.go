@@ -37,6 +37,9 @@ type ReaderOptions struct {
 
 	// NoStart writes the site and its groups but doesn't start dreaderd.
 	NoStart bool
+
+	// Files are further files in the home directory, by name (e.g. dcontrol.ctl).
+	Files map[string]string
 }
 
 // DefaultReaderAccess lets 127.0.0.1 read and post and PeerIP feed.
@@ -102,6 +105,9 @@ func NewReaderSite(tb testing.TB, o ReaderOptions) *Site {
 	}
 	s.WriteFile(tb, "dserver.hosts", hosts)
 	s.WriteFile(tb, "dexpire.ctl", "*:x30\n")
+	for name, content := range o.Files {
+		s.WriteFile(tb, name, content)
+	}
 	s.WriteFile(tb, "moderators", "")
 
 	// An empty dactive.kp gets its KP header on the first open; dgrpctl does not create it.
@@ -124,13 +130,20 @@ func NewReaderSite(tb testing.TB, o ReaderOptions) *Site {
 	if o.PlainBind {
 		bind = s.Addr
 	}
+	startReader(tb, s, bind)
+	return s
+}
+
+// startReader starts dreaderd -d for a reader site (written with NoStart) on bind and waits
+// for its greeting on s.Addr.
+func startReader(tb testing.TB, s *Site, bind string) {
+	tb.Helper()
 	s.Proc = proc.StartTCP(tb, proc.Options{
 		Path: filepath.Join(s.Bin, "dreaderd"),
 		Args: []string{"-d", "-p", PathHost, "-h", PathHost, "-P", bind},
 		Env:  s.Env,
 		Dir:  s.Dir,
 	}, s.Addr)
-	return s
 }
 
 // Reader dials dreaderd from 127.0.0.1 (read and post in the default dreader.access).
