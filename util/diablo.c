@@ -890,6 +890,7 @@ DiabloServer(int lfd)
 	if (stat(PatDbExpand(DHostsCachePat), &st) < 0) {
 	    logit(LOG_INFO, "No host cache - waiting for build to complete");
 	    waitpid(HostCachePid, NULL, 0);
+	    HostCachePid = 0;	/* reaped here; let the main loop rebuild again */
 	    logit(LOG_INFO, "Host cache rebuild complete");
 	}
     }
