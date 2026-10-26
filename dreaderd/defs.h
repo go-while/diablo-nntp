@@ -200,6 +200,7 @@ typedef struct ReaderDef {		/* Define a reader group	*/
     int rd_SpoolHeaders;
     int rd_IgnoreAuthInfo;
     int rd_CheckPostGroups;
+    int rd_AllowApprove;	/* may post with Approved: (approve moderated) */
     int rd_LogCmd;
 #ifdef	IP_TOS
     int rd_SetTOS;

@@ -411,6 +411,13 @@ NNPostBuffer(Connection *conn)
 	errMsg = "441 Nonexistent newsgroup(s)\r\n";
     }
 
+    /*
+     * Approving articles for moderated groups is a privilege, as with
+     * INN's readers.conf access "A": without it, Approved: is refused
+     * instead of letting the article bypass moderation.
+     */
+    if (haveApproved && !conn->co_Auth.dr_ReaderDef->rd_AllowApprove)
+	errMsg = "441 You are not allowed to approve postings\r\n";
     if (haveFrom == 0)
 	errMsg = "441 Required \"From\" header is missing\r\n";
     if (haveSubject == 0)

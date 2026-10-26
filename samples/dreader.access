@@ -263,6 +263,12 @@
 # checkpostgroups : Verify that all groups in the Newsgroups: header of
 #		    a post request are actually valid on this server.
 #
+# approve : Allow posting articles with an Approved: header, i.e.
+#	    approving articles for moderated groups (moderators, staff).
+#	    Default 'no': such a post is refused with 441.  Without an
+#	    Approved: header, posts to moderated groups are mailed to the
+#	    moderator as usual.  Like INN's readers.conf access "A".
+#
 # logcmd : Log every reader command issued (via syslog). Overrides the
 #	   global configuration option "readerdetaillog" for this reader.
 #
@@ -308,6 +314,7 @@
 #  pathcomponents	3
 #  grouplog		yes
 #  checkpostgroups	yes
+#  approve		no
 #  logcmd		yes
 #  xzver		1-9,n
 #  settos		<integer>
