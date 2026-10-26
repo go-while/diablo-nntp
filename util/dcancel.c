@@ -278,6 +278,10 @@ CancelReader(char *grpinfo)
 	*group++ = '\0';
 	artno = atoll(group);
 	group = grpinfo;
+	if (!ForReal) {
+	    printf("Would cancel %lld in %s\n", (long long)artno, group);
+	    return;
+	}
 	ov = GetOverInfo(group);
 	if (CancelOverArt(ov, artno)) {
 		printf("%lld in %s cancelled\n", artno, group);

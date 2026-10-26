@@ -64,3 +64,32 @@ func TestDcancelDryRunDoesNotRewriteSpool(t *testing.T) {
 	expect(t, p, 223, "STAT %s", id)
 	expect(t, p, 205, "QUIT")
 }
+
+// TestDcancelDryRunReaderDoesNotCancelOverview: -n applies to reader-index cancellation too.
+func TestDcancelDryRunReaderDoesNotCancelOverview(t *testing.T) {
+	st, spool := spoolStore(t)
+	s := NewReaderSite(t, ReaderOptions{Spool: spool})
+	id := msgID(t)
+	feedReader(t, s, st, "e2e.test", newArticle(id, "e2e.test", "dry-run reader cancel", "body"))
+	c := s.Reader(t)
+	waitFor(t, 10*time.Second, "the article in the reader overview", func() bool {
+		_, line := c.Cmd("GROUP e2e.test")
+		f := strings.Fields(line)
+		return len(f) > 1 && f[1] != "0"
+	})
+	expect(t, c, 223, "STAT 1")
+
+	cmd := exec.Command(filepath.Join(s.Bin, "dcancel"), "-n", "-r")
+	cmd.Dir = s.Dir
+	cmd.Env = append(os.Environ(), s.Env...)
+	cmd.Stdin = strings.NewReader("e2e.test:1\n")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("dcancel -n -r: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "Would cancel 1 in e2e.test") {
+		t.Errorf("dcancel -n -r did not report the planned cancellation:\n%s", out)
+	}
+	expect(t, c, 223, "STAT 1")
+	expect(t, c, 205, "QUIT")
+}
