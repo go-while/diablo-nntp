@@ -11,6 +11,7 @@
 #include "defs.h"
 
 Prototype const char *PatExpand(const char *pat);
+Prototype const char *PatSubst(char *buf, size_t size, const char *pat, const char *dir);
 Prototype void diablo_strlcpy(char *d, const char *s, int ssize, int dsize);
 Prototype void diablo_strlcpynl(char *d, const char *s, int ssize, int dsize);
 Prototype void diablo_strlcpynl2(char *d, int trimwsafter, const char *s, int ssize, int dsize);
@@ -111,7 +112,7 @@ static char PatPath2[128];
  *		never used as a printf format, so a stray %d or %n in a
  *		configured path can't read or write memory.
  */
-static const char *
+const char *
 PatSubst(char *buf, size_t size, const char *pat, const char *dir)
 {
     size_t n = 0;

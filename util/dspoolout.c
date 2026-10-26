@@ -688,7 +688,7 @@ spool_file(char *spoolFile, int pass, NewslinkInfo *li, int flags)
 			AddNode(spoolFile);
 		}
 		if (flags & SF_REALTIME) {
-		    int fd = xopen(O_RDWR|O_CREAT, 0644, spoolFile);
+		    int fd = xopen(O_RDWR|O_CREAT, 0644, "%s", spoolFile);
 		    if (fd != -1) {
 			close(fd);
 		    }
@@ -774,7 +774,18 @@ spool_file(char *spoolFile, int pass, NewslinkInfo *li, int flags)
 		    if (!Quiet)
 			printf("dspoolout: run %s.S%05d\n", spoolFile, use);
 
-		    sprintf(templateFile, "%s.S%%05d", spoolFile);
+		    {
+			/* dnewslink expands the template: escape a % in the label */
+			const char *s;
+			size_t n = 0;
+
+			for (s = spoolFile; *s && n + 2 < sizeof(templateFile) - 8; ++s) {
+			    if (*s == '%')
+				templateFile[n++] = '%';
+			    templateFile[n++] = *s;
+			}
+			snprintf(templateFile + n, sizeof(templateFile) - n, ".S%%05d");
+		    }
 		    sprintf(seqName, "%d", use);
 		    if (VerboseOpt)
 			    printf("%s %s%s %s%s %s%s %s%s %s%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s\n",

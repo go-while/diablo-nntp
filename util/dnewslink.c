@@ -596,7 +596,8 @@ main(int ac, char **av)
 	if (BatchSeq < 0) {
 	    sprintf(CurrentBatchFile + CBFIndex, "%s", BatchFileCtl);
 	} else {
-	    sprintf(CurrentBatchFile + CBFIndex, BatchFileCtl, BatchSeq);
+	    snprintf(CurrentBatchFile + CBFIndex,
+			sizeof(CurrentBatchFile) - CBFIndex, BatchFileCtl, BatchSeq);
 	    ++BatchSeq;
 	}
 

@@ -160,6 +160,7 @@ LoadDiabloConfig(int ac, char **av)
     int exitMe = 0;
     int i;
     const char *diabloConfig;
+    char configPath[PATH_MAX];
 
     /*
      * Figure out path to diablo.config.  Check environment first, then
@@ -184,7 +185,8 @@ LoadDiabloConfig(int ac, char **av)
 
     initDOpts();
 
-    if ((fi = xfopen("r", diabloConfig, NewsHome)) != NULL) {
+    PatSubst(configPath, sizeof(configPath), diabloConfig, NewsHome);
+    if ((fi = xfopen("r", "%s", configPath)) != NULL) {
 	while (fgets(buf, sizeof(buf), fi) != NULL) {
 	    char *cmd;
 	    char *opt = buf;
