@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -26,6 +28,28 @@ func TestPathPatternPercent(t *testing.T) {
 		got := strings.TrimSpace(s.Run(t, "dpath", key))
 		if got != want {
 			t.Errorf("dpath %s: %q, want %q", key, got, want)
+		}
+	}
+}
+
+// TestConfigPathPercent: the diablo.config path itself (-C, DIABLO_CONFIG_PATH) is expanded
+// the same way, so a % in a directory name is taken literally. Before D-50's fix it was the
+// format of xfopen(): a site in a directory with "%d" in its name couldn't be read ("Unable
+// to open diablo.config using pattern ...").
+func TestConfigPathPercent(t *testing.T) {
+	s := NewSite(t, SiteOptions{NoStart: true})
+	dir := filepath.Join(t.TempDir(), "c%dfg")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	conf := filepath.Join(dir, "diablo.config")
+	if err := os.WriteFile(conf, []byte(s.ReadFile(t, "diablo.config")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"-C", conf, "home"}, {"-C" + conf, "home"}} {
+		out, err := s.TryRun("dpath", args...)
+		if err != nil || strings.TrimSpace(out) != s.Dir {
+			t.Errorf("dpath %s: %q (%v), want %q", strings.Join(args, " "), out, err, s.Dir)
 		}
 	}
 }
