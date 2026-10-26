@@ -139,6 +139,7 @@ FindLeastUsedThread(int type, int maxCount, int minPri, int *prand, int nopass, 
 
 	if ((desc = FDes[i]) != NULL && 
 	    desc->d_Type == type &&
+	    !desc->d_Dead &&
 	    desc->d_Count < maxCount &&
 	    (callBack == NULL || callBack(cbData, desc->d_Data)) &&
 	    ((nopass < 0 && desc->d_Pri >= minPri) || desc->d_Pri == minPri)

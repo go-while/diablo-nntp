@@ -1660,15 +1660,22 @@ HandleDnsThread(ForkDesc *desc)
     if (r < 0) {
 	int err = errno;
 
-	logit(LOG_CRIT, "DNS subprocess %d response failed after %lu/%lu bytes: %s",
+	/* A worker that closes between replies (e.g. killed at shutdown)
+	 * is routine; an unexpected death is reported by wait3() as "Lost
+	 * dns resolver".  Keep LOG_CRIT for partial replies and errors.
+	 */
+	logit((desc->d_DnsRead == 0 && err == EPIPE) ? LOG_INFO : LOG_CRIT,
+		"DNS subprocess %d response failed after %lu/%lu bytes: %s",
 		(int)desc->d_Pid, (unsigned long)desc->d_DnsRead,
 		(unsigned long)sizeof(dres), strerror(err));
 	FD_CLR(desc->d_Fd, &SFds);	/* avoid select() spinning on EOF */
 	if (desc->d_Pid > 0)
 	    kill(desc->d_Pid, SIGKILL);
-	NumActive -= desc->d_Count;
-	NumPending -= desc->d_Count;
-	desc->d_Count = 0;
+	/* Never hand this worker another client.  Leave d_Count, the
+	 * counters and the pending descriptor to the wait3() handler,
+	 * which closes d_FdPend and subtracts d_Count when it reaps it.
+	 */
+	desc->d_Dead = 1;
 	return;
     }
     --desc->d_Count;
