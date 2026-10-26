@@ -418,8 +418,10 @@ end
 #access [identuser@]hostpattern		areader
 #access [identuser@]db:[type_]dbfile	areader
 #
-# Anyone on the 1.* network can connect readonly
-access	1/8			ro
+# This host (localhost) can read and post
+access	127.0.0.0/8		rp
+# Example: hosts on your private network can connect readonly
+#access	10.0.0.0/8,172.16.0.0/12,192.168.0.0/16	ro
 # Anyone under example.com can read if there less than 50 total connections
 access	*.example.com		rolimit
 # Anyone under domain.example.com can read and post
