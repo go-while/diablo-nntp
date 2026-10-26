@@ -109,17 +109,60 @@ func TestReaderCapabilities(t *testing.T) {
 	expect(t, p, 205, "QUIT")
 
 	// nntp-testkit's RFC 3977 checks against the reader (no posting).
-	rep := conformance.Run(t, conformance.Options{Addr: s.Addr, ReportOnly: true, Workers: 2})
+	runConformance(t, conformance.Options{Addr: s.Addr})
+}
+
+// runConformance runs nntp-testkit's conformance checks (2 at a time unless o.Workers says
+// otherwise), logs every result that isn't a skip, fails the test for each failed check and
+// returns the results by check name.
+func runConformance(tb testing.TB, o conformance.Options) map[string]conformance.Result {
+	tb.Helper()
+	o.ReportOnly = true
+	if o.Workers == 0 {
+		o.Workers = 2
+	}
+	rep := conformance.Run(tb, o)
+	res := map[string]conformance.Result{}
 	var failed []string
 	for _, r := range rep.Results {
+		res[r.Name] = r
 		if r.Status != conformance.Skip {
-			t.Logf("conformance %-22s %s %s", r.Name, r.Status, r.Detail)
+			tb.Logf("conformance %-26s %s %s", r.Name, r.Status, r.Detail)
 		}
 		if r.Status == conformance.Fail {
 			failed = append(failed, r.Name)
 		}
 	}
 	if len(failed) > 0 {
-		t.Errorf("conformance checks failed: %q", failed)
+		tb.Errorf("conformance checks failed: %q", failed)
+	}
+	return res
+}
+
+// TestReaderConformanceAuthinfo: nntp-testkit's conformance checks against a reader that
+// requires AUTHINFO USER/PASS (AuthReaderAccess, user fred), with the user and password
+// given, so the RFC 4643 checks run too: login, a wrong password (481), PASS before USER
+// (482), GROUP before login (480), AUTHINFO after login (502) and AUTHINFO gone from
+// CAPABILITIES after login. Every check must pass, and the six AUTHINFO checks must not be
+// skipped. Before #67 (D-46), the wrong-password, PASS-before-USER and second-login checks
+// failed. The checks run one at a time: each AUTHINFO PASS goes through dreaderd's DNS/auth
+// worker, the test reader has one (readerdns 1), and a login while it is busy gets "400
+// Server too busy" instead of waiting.
+func TestReaderConformanceAuthinfo(t *testing.T) {
+	st, spool := spoolStore(t)
+	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: AuthReaderAccess})
+	feedReader(t, s, st, "e2e.test", newArticle(msgID(t), "e2e.test", "conformance auth", "body"))
+
+	res := runConformance(t, conformance.Options{Addr: s.Addr, User: "fred", Pass: "fredspass",
+		Workers: 1,
+		// dreaderd answers MODE READER before AUTHINFO with 480 on a reader that requires
+		// a login; the check accepts only 200, 201 or 502 (RFC 3977 §5.3).
+		Skip: []string{"mode-reader"}})
+	for _, name := range []string{"authinfo-user-pass", "authinfo-wrong-pass",
+		"authinfo-pass-without-user", "authinfo-480", "authinfo-after-auth",
+		"authinfo-capabilities"} {
+		if r, ok := res[name]; !ok || r.Status != conformance.Pass {
+			t.Errorf("conformance %s: %v %s, want Pass", name, r.Status, r.Detail)
+		}
 	}
 }

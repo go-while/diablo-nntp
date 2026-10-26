@@ -61,11 +61,11 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-41](#d-41-diablo-ctl-stops-other-sites-daemons) | High | diablo-ctl stops the daemons of another site of the same user | fixed (#31) |
 | [D-42](#d-42-dnewslink-ignores-sigterm-on-a-stalled-peer) | Medium | dnewslink ignores SIGTERM for up to `-T` (600 s) per wait while a peer is stalled | fixed (#37) |
 | [D-43](#d-43-connlife-retires-one-rotation-late) | Low | A connlife worker retires one rotation late (connlife 60 gives about 120 s) | fixed (#30, test #38) |
-| [D-44](#d-44-listgroup-reply-and-range) | Medium | dreaderd LISTGROUP: wrong 211 line, range ignored, 481 without a group | open |
-| [D-45](#d-45-hdr-reply-code-and-list-headers) | Medium | dreaderd HDR answers 221 (XHDR's code); LIST HEADERS missing | open |
-| [D-46](#d-46-authinfo-reply-codes) | Medium | dreaderd AUTHINFO: a wrong password gets 502 (no retry); PASS before USER, and a second login | open |
-| [D-47](#d-47-other-reader-reply-codes) | Low | dreaderd reply codes: NEXT, ARTICLE in an empty group, bad article numbers, OVER past the high mark, LIST ACTIVE.TIMES | open |
-| [D-48](#d-48-feeder-reply-codes) | Low | diablo: MODE READER 500, IHAVE/CHECK without an argument | open |
+| [D-44](#d-44-listgroup-reply-and-range) | Medium | dreaderd LISTGROUP: wrong 211 line, range ignored, 481 without a group | fixed (#67) |
+| [D-45](#d-45-hdr-reply-code-and-list-headers) | Medium | dreaderd HDR answers 221 (XHDR's code); LIST HEADERS missing | fixed (#67; HDR stays unadvertised, see below) |
+| [D-46](#d-46-authinfo-reply-codes) | Medium | dreaderd AUTHINFO: a wrong password gets 502 (no retry); PASS before USER, and a second login | fixed (#67; retry needs a reconnect, see below) |
+| [D-47](#d-47-other-reader-reply-codes) | Low | dreaderd reply codes: NEXT, ARTICLE in an empty group, bad article numbers, OVER past the high mark, LIST ACTIVE.TIMES | fixed (#67) |
+| [D-48](#d-48-feeder-reply-codes) | Low | diablo: MODE READER 500, IHAVE/CHECK without an argument | fixed (#67) |
 | [D-49](#d-49-moderation-handling) | Medium | Moderation: Approved: from any reader, posts to "n" groups, crosspost mails every moderator, failures not reported | fixed (#42, #43, #45 via #56, #46, #50) |
 | [D-50](#d-50-codeql-robustness-findings) | Low | CodeQL: a `%` in a feed label or in the diablo.config path is used as a format; two log lines with wrong format types | fixed (#72) |
 
@@ -344,17 +344,27 @@ answers `211 Article list follows` instead of `211 count low high group`
 (`dreaderd/list.c:512`); a range (`LISTGROUP g 2-2`) is ignored and the whole group listed
 (list.c:494-500); LISTGROUP with no group selected gives 481, an authentication code, instead
 of 412 (list.c:520).
+Fixed in #67: `211 count low high group` (GROUP and LISTGROUP share `SelectGroup()`), ranges,
+and 412. Test: `TestReaderReplyCodes`.
 
 ### D-45 HDR reply code and LIST HEADERS
 `HDR` answers 221, XHDR's code, instead of 225 (`dreaderd/xover.c:205`), and `LIST HEADERS`,
 which RFC 3977 section 8.6 requires with HDR, gives `501 Bad command use`
 (`dreaderd/reader.c:1318`). #41 doesn't advertise HDR because of this.
+Fixed in #67: HDR answers 225 (XHDR keeps 221) and LIST HEADERS answers 215. Left out on
+purpose: the message-id form of HDR and OVER (they answer 503), so HDR and LIST HEADERS stay
+unadvertised in CAPABILITIES, as RFC 3977 requires that form.
 
 ### D-46 AUTHINFO reply codes
 RFC 4643 section 2.3.2: a wrong password should get 481 and let the client retry; dreaderd
 answers `502 Access denied to your node` (`dreaderd/main.c:1739`). AUTHINFO PASS before USER
 gives 501 instead of 482 (nntp.c:104), and AUTHINFO after a successful login is accepted
 again (381) instead of 502 (nntp.c:86).
+Fixed in #67: 481, 482 and 502. Left out on purpose: a retry in the same session. After AUTHINFO
+PASS the reader hands the connection back to the master for a fresh access check, and on a
+failure the master writes 481 and closes the connection, so the client reconnects to try
+again. Tests: `TestReaderAuthinfoCodes`, and nntp-testkit's six RFC 4643 checks in
+`TestReaderConformanceAuthinfo`.
 
 ### D-47 Other reader reply codes
 RFC 3977: NEXT with no group selected gives 421 instead of 412 (`dreaderd/nntp.c:264`);
@@ -362,11 +372,14 @@ ARTICLE or STAT in an empty group 423 instead of 420 (nntp.c:423); `ARTICLE abc`
 instead of 501 (nntp.c:331-334); OVER past the high mark (or a range like 3-1) sends 224 and an
 empty list instead of 423, because 224 goes out before the range is checked (xover.c:208);
 LIST ACTIVE.TIMES gives 500 instead of 215 or 503 (list.c:364).
+Fixed in #67 (ACTIVE.TIMES is now listed in CAPABILITIES; its creator is `unknown`, which Diablo
+doesn't record). Test: `TestReaderReplyCodes`.
 
 ### D-48 Feeder reply codes
 diablo answers MODE READER with 500 instead of 502 (a transit-only server, RFC 3977 section
 5.3; `util/diablo.c:2534`), and IHAVE or CHECK without an argument with 435/438 instead of 501.
 All 15 of nntp-testkit's RFC 4644/IHAVE checks pass otherwise.
+Fixed in #67. Test: `TestFeederReplyCodes`.
 
 ### D-49 Moderation handling
 The maintainer's list (agent-chatroom, 2026-10-26), confirmed live: any reader can post with
@@ -396,6 +409,17 @@ the network; the sources are configuration and the command line of non-setuid pr
   values are meaningless. Fix: log something else.
 Of the 72 format-string alerts, 52 went away with #62; the rest are these and integer-width
 mismatches that only shorten a printed number.
+
+### D-51 Logins beyond `readerdns` are turned away, not queued
+Each new reader connection, and each AUTHINFO login, goes through one of dreaderd's DNS/auth
+workers (`readerdns`, default 5). When all of them are busy, the next one is not queued: the
+client gets `400 <host>: Server too busy - please try later` and is disconnected
+(`dreaderd/main.c:1536`, logged as "Unable to find spare DNS thread"). A short burst of logins
+larger than `readerdns` therefore disconnects some clients, even though each worker is only
+busy for a moment. Seen in the e2e suite: with `readerdns 1`, two conformance checks logging in
+at the same time got 400. Fix: queue the request until a worker is free (with a time limit),
+or at least document that `readerdns` must cover the expected number of logins arriving at
+once.
 
 ## Feature requests
 
