@@ -270,10 +270,11 @@ DESTDIR ?=
 INSTALL_OWNER ?= news
 INSTALL_GROUP ?= news
 
+# install-portable.sh takes these as arguments (as BSDmakefile passes them),
+# not from the environment.
 install bininstall uninstall: all
-	@PREFIX="$(PREFIX)" DESTDIR="$(DESTDIR)" \
-	  INSTALL_OWNER="$(INSTALL_OWNER)" INSTALL_GROUP="$(INSTALL_GROUP)" \
-	  sh ./install-portable.sh "$@"
+	@sh ./install-portable.sh "$@" "$(PREFIX)" "$(DESTDIR)" \
+	  "$(INSTALL_OWNER)" "$(INSTALL_GROUP)"
 
 # Maintenance
 
