@@ -6,6 +6,7 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -78,6 +79,12 @@ func TestAdmHourlyExpire(t *testing.T) {
 		t.Fatal("no spool directory")
 	}
 	time.Sleep(2 * time.Second)
+	// dexpire keeps a spool's newest directory (jrehmer/diablo-nntp#25): add a newer, empty
+	// one, as the next time slot gives a real site.
+	newer := filepath.Join(s.Dir, "spool", "news", fmt.Sprintf("D.%08x", time.Now().Unix()/60+1))
+	if err := os.Mkdir(newer, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	out := runAdm(t, s, "hourly.expire")
 	for _, d := range dirs {
 		if _, err := os.Stat(d); err == nil {
