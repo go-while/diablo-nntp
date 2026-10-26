@@ -271,7 +271,10 @@ struct DiabloOpts {
     GroupHashType ReaderGroupHashMethod;
     char *PgpVerifyArgs[10];
     char *PostXFilter;
-} DiabloOpts;
+};
+
+/* One shared definition is provided by lib/global.c. */
+extern struct DiabloOpts DiabloOpts;
 
 /*
  * History
@@ -853,7 +856,7 @@ typedef struct IPList {
     struct IPList *il_next;
 } IPList;
 
-IPList *IPHash;
+extern IPList *IPHash;
 
 /*
  * MISC

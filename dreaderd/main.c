@@ -530,11 +530,11 @@ main(int ac, char **av)
 #endif
 	    listen(lfd, 256);
 	    if (bl->bl_Host != NULL && strchr(bl->bl_Host, ':') != NULL)
-		syslog(LOG_INFO, "Listening on [%s]:%s\n",
+		syslog(LOG_INFO, "Listening on [%s]:%s",
 					bl->bl_Host ? bl->bl_Host : "ALL",
 					bl->bl_Port);
 	    else
-		syslog(LOG_INFO, "Listening on %s:%s\n",
+		syslog(LOG_INFO, "Listening on %s:%s",
 					bl->bl_Host ? bl->bl_Host : "ALL",
 					bl->bl_Port);
 	    AddThread("acceptor", lfd, -1, THREAD_LISTEN, -1, 0);
@@ -635,9 +635,28 @@ main(int ac, char **av)
             exit(1);
         }
         gid = gr->gr_gid;
-        setgroups(1, &gid);
-        setgid(gr->gr_gid);
-        setuid(pw->pw_uid);
+        /*
+         * Only root can change identity.  A non-root start keeps running
+         * as the invoking user, as it always has; a failure while root
+         * must not leave the daemon running with root privileges.
+         */
+        if (geteuid() == 0) {
+            if (setgroups(1, &gid) < 0) {
+                syslog(LOG_CRIT, "Unable to set supplementary groups to news: %s",
+                       strerror(errno));
+                exit(1);
+            }
+            if (setgid(gr->gr_gid) < 0) {
+                syslog(LOG_CRIT, "Unable to set group ID to news: %s",
+                       strerror(errno));
+                exit(1);
+            }
+            if (setuid(pw->pw_uid) < 0) {
+                syslog(LOG_CRIT, "Unable to set user ID to news: %s",
+                       strerror(errno));
+                exit(1);
+            }
+        }
     }
 
 #ifdef	USE_PRCTL
