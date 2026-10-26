@@ -8,8 +8,10 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -183,4 +185,88 @@ func TestReaderQuitAlone(t *testing.T) {
 			t.Errorf("connection %d: after QUIT's 205: %v", i+1, err)
 		}
 	}
+}
+
+// TestReaderPost: an article POSTed to dreaderd is passed to the outgoing ('o') server with
+// IHAVE: the peer gets it with the body as posted and the vserver's postpath in the Path.
+func TestReaderPost(t *testing.T) {
+	_, spool := spoolStore(t)
+	var mu sync.Mutex
+	var arts [][]string
+	post := fakeserver.New(t, fakeserver.Options{Handler: fakeserver.PeerHandler(&fakeserver.PeerOptions{
+		OnArticle: func(id string, wire []string) {
+			mu.Lock()
+			defer mu.Unlock()
+			arts = append(arts, wire)
+		},
+	})})
+	// postpath: dreaderd adds this to the Path of local posts (without it the Path stays as
+	// posted).
+	access := strings.Replace(DefaultReaderAccess, "    hostname "+PathHost+"\n",
+		"    hostname "+PathHost+"\n    postpath "+PathHost+"\n", 1)
+	s := NewReaderSite(t, ReaderOptions{Spool: spool, Post: post, Access: access})
+	c := s.Reader(t)
+	id := msgID(t)
+	expect(t, c, 340, "POST")
+	send(t, c, wire([]string{
+		"From: E2E Poster <poster@example.invalid>",
+		"Newsgroups: e2e.test",
+		"Subject: posted through dreaderd",
+		"Message-ID: " + id,
+		"",
+		"posted body",
+		".dot line",
+	}))
+	status(t, c, 240, "POST article")
+	waitFor(t, 15*time.Second, "the outgoing server to receive the post", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(arts) > 0
+	})
+	mu.Lock()
+	got := slices.Clone(arts[0])
+	mu.Unlock()
+	head, body := splitArticle(got)
+	if v := headerValue(head, "Message-ID"); v != id {
+		t.Errorf("Message-ID at the peer %q, want %q", v, id)
+	}
+	if p := headerValue(head, "Path"); !strings.Contains(p, PathHost) {
+		t.Errorf("Path at the peer %q, want it to name %s", p, PathHost)
+	}
+	// wire lines are dot-stuffed as sent
+	if want := []string{"posted body", "..dot line"}; !slices.Equal(body, want) {
+		t.Errorf("body at the peer %q, want %q", body, want)
+	}
+}
+
+// TestReaderQuitWhileConnecting: a client that QUITs while another client is connecting gets
+// 205 and nothing after it. With one DNS worker (readerdns 1), the end-of-session accounting of
+// the first connection finds the worker busy with the second; dreaderd then writes "400 Server
+// too busy" to the connection that already got its 205 (dreaderd/main.c SendDns).
+func TestReaderQuitWhileConnecting(t *testing.T) {
+	_, spool := spoolStore(t)
+	s := NewReaderSite(t, ReaderOptions{Spool: spool})
+	prev := s.Reader(t)
+	for i := range 20 {
+		next := make(chan *client.Conn, 1)
+		go func() {
+			c, err := client.TryDial(s.Addr, testkit.Deadline())
+			if err != nil {
+				t.Errorf("round %d: dial: %v", i+1, err)
+			}
+			next <- c
+		}()
+		expect(t, prev, 205, "QUIT")
+		if err := prev.ExpectNoPending(300 * time.Millisecond); err != nil {
+			t.Errorf("round %d: after QUIT's 205: %v", i+1, err)
+		}
+		prev.Close()
+		prev = <-next
+		if prev == nil {
+			return
+		}
+		prev = prev.WithTB(t)
+		t.Cleanup(prev.Close)
+	}
+	expect(t, prev, 205, "QUIT")
 }
