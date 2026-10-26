@@ -36,7 +36,7 @@ reviewed 2× (date).
 | 9 | Spam filter and filters | `lib/spamfilter.c`, `filter/` | ~1,600 | Hash cache sizing, filter protocol | partial: #7 diff |
 | 10 | Other utilities | rest of `util/` (dicmd, dhisctl, didump, dgrpctl, dkp, ...) | ~9,900 | Option parsing, file handling | not started (option parsing: D-31, D-36) |
 | 11 | Build and portability | `Makefile`, `BSDmakefile`, `install-portable.sh`, `compat/`, `lib/vendor.h`, `lib/defs.h` | | Platform detection, defaults, warnings per compiler | partial: 21 systems built (D-09, D-16 to D-18, D-20); installer (D-22, D-25, D-34) |
-| 12 | Tests and CI | `tests/e2e`, `.github/workflows` | | Coverage of the areas above, flaky tests | 19 tests in #11 |
+| 12 | Tests and CI | `tests/e2e`, `.github/workflows` | | Coverage of the areas above, flaky tests | 19 tests, merged with #11; CI on Ubuntu 22.04/24.04 |
 
 Line counts are approximate, from `main` at `ed3ce67` (2026-10-26).
 
@@ -51,6 +51,12 @@ Fixed so far (the open ones are in [ISSUES.md](ISSUES.md)).
 | D-03 non-root start refused after the first D-02 fix | 1, 6, 10 | e2e tests | #6 |
 | D-04 write through a NULL pointer in `FeedWrite()` | 3 | maintainer | #8 |
 | D-05 `const strchr()` warnings with glibc 2.43+ | 11 | builds (Fedora 46, Arch) | #8 |
+| D-06 dreaderd wrote "400 too busy" after a session's 205 | 6 | e2e tests | #12 |
+| D-07 dreaderd cleanup could close another client's descriptor | 6 | review | #12 |
+| D-08 `dreaderd -P host:port` did not bind | 6 | e2e tests | #13 |
+| D-09 dreaderd did not build with musl (`loff_t`) | 11 | builds (Alpine) | #14 |
+| D-10 `diablo -b` fell through into `-A` | 1 | review | #15 |
+| D-22 GNU Make install ignored `PREFIX` and `DESTDIR` | 11 | docs review | #16 |
 
 ## Test coverage by area
 
