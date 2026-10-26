@@ -655,22 +655,61 @@ UpdateCacheHits(char *groupName, int grpIter, artno_t endNo, int cachehit) {
     return che;
 }
 
+/*
+ * CacheHitsUsable() - the header read from cache.hits (r bytes) describes a
+ * scoreboard that fits in the file.
+ */
+static int
+CacheHitsUsable(int fd, const struct CacheHitHead *chh, int r)
+{
+    struct stat st;
+
+    return(r == sizeof(*chh) &&
+	chh->chh_magic == CHMAGIC &&
+	chh->chh_version == CHVERSION &&
+	fstat(fd, &st) == 0 &&
+	chh->chh_hashSize != 0 &&
+	chh->chh_end >= sizeof(*chh) &&
+	chh->chh_newEntry >= sizeof(*chh) +
+	    (uint64_t)chh->chh_hashSize * sizeof(uint32) &&
+	chh->chh_end >= chh->chh_newEntry &&
+	st.st_size >= chh->chh_end);
+}
+
+static int OpenCacheHitsOnce(void);
+
+/*
+ * OpenCacheHits() - open and map the scoreboard.  A damaged one (a good
+ * magic but a header that doesn't fit the file, as an interrupted growth
+ * used to leave) is replaced by a new one instead of disabling the
+ * scoreboard until someone deletes the file.
+ */
 void
 OpenCacheHits(void) {
+    if (OpenCacheHitsOnce() > 0)
+	(void)OpenCacheHitsOnce();
+}
+
+/*
+ * OpenCacheHitsOnce() - 0 when mapped (or failed for good), 1 when a damaged
+ * cache.hits was removed and the caller should open a new one.
+ */
+static int
+OpenCacheHitsOnce(void) {
     struct CacheHitHead chh;
     struct stat st;
     int r;
     int locked = 0;
 
     if (CacheHitsFD >= 0)
-	return;
+	return(0);
     if (XPageMask == 0)
 	XPageMask = getpagesize() - 1;
     CacheHitsFD = open(PatDbExpand(CacheHitsPat), O_RDWR|O_CREAT, 0644);
     if (CacheHitsFD < 0) {
 	logit(LOG_ERR, "Cannot open cache hits file (%s)",
 	      PatDbExpand(CacheHitsPat));
-	return;
+	return(0);
     }
 
     do {
@@ -737,15 +776,45 @@ OpenCacheHits(void) {
 	    }
 	}
     }
-    if (fstat(CacheHitsFD, &st) < 0 ||
-	chh.chh_hashSize == 0 ||
-	chh.chh_end < sizeof(chh) ||
-	chh.chh_newEntry < sizeof(chh) +
-	    (uint64_t)chh.chh_hashSize * sizeof(uint32) ||
-	chh.chh_end < chh.chh_newEntry ||
-	st.st_size < chh.chh_end) {
-	logit(LOG_ERR, "OpenCacheHits: invalid or truncated cache.hits");
-	goto failed;
+    if (!CacheHitsUsable(CacheHitsFD, &chh, sizeof(chh))) {
+	struct stat pst;
+
+	/*
+	 * Damaged.  Recheck under the lock (another reader may have
+	 * replaced it already), then unlink it rather than truncate it:
+	 * readers that still map the old file keep a valid mapping of the
+	 * unlinked inode instead of faulting on pages past a new end.
+	 */
+	if (!locked) {
+	    if (hflock(CacheHitsFD, 0, XLOCK_EX) < 0) {
+		logit(LOG_ERR, "OpenCacheHits: cannot lock cache.hits (%s)",
+		      strerror(errno));
+		goto failed;
+	    }
+	    locked = 1;
+	    do {
+		r = pread(CacheHitsFD, &chh, sizeof(chh), 0);
+	    } while (r < 0 && errno == EINTR);
+	}
+	if (!CacheHitsUsable(CacheHitsFD, &chh, r)) {
+	    if (fstat(CacheHitsFD, &st) == 0 &&
+		stat(PatDbExpand(CacheHitsPat), &pst) == 0 &&
+		st.st_dev == pst.st_dev && st.st_ino == pst.st_ino) {
+		logit(LOG_WARNING, "OpenCacheHits: cache.hits damaged "
+		      "(end %lu, file %lu bytes), replacing it",
+		      (unsigned long)chh.chh_end, (unsigned long)st.st_size);
+		if (unlink(PatDbExpand(CacheHitsPat)) < 0) {
+		    logit(LOG_ERR, "OpenCacheHits: cannot remove cache.hits (%s)",
+			  strerror(errno));
+		    goto failed;
+		}
+	    }
+	    /* removed now, or already replaced by another reader */
+	    hflock(CacheHitsFD, 0, XLOCK_UN);
+	    close(CacheHitsFD);
+	    CacheHitsFD = -1;
+	    return(1);
+	}
     }
     CacheHits = mmap(NULL, chh.chh_end, PROT_READ|PROT_WRITE,
 		     MAP_SHARED, CacheHitsFD, 0);
@@ -758,7 +827,7 @@ OpenCacheHits(void) {
     CacheHitsEnd = chh.chh_end;
     if (locked)
 	hflock(CacheHitsFD, 0, XLOCK_UN);
-    return;
+    return(0);
 
 failed:
     if (locked)
@@ -767,4 +836,5 @@ failed:
     CacheHitsFD = -1;
     CacheHitsEnd = 0;
     CacheHits = NULL;
+    return(0);
 }
