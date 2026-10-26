@@ -4,7 +4,7 @@ All notable changes to this Diablo 6 portability and correctness effort are docu
 
 This changelog uses the categories **Added**, **Changed**, **Fixed**, and **Verified**. The current tested build identifies itself as **`6-CUR-20261024-BWH`** (`VERS=6`, `SUBREV=CUR-20261024-BWH`). This is the project build/release identifier; a Git release or tag is not implied.
 
-For installation instructions, operating-system prerequisites, and implementation details, see [`BUILD-PORTABLE-MAKE.md`](BUILD-PORTABLE-MAKE.md).
+For installation instructions, see [`INSTALL`](INSTALL) and [`README.md`](README.md).
 
 ## [6-CUR-20261024-BWH] - 2026-10-24
 

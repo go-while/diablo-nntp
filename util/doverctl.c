@@ -221,7 +221,7 @@ main(int ac, char **av)
 	    const char *group = KPDBGetField(rec, recLen, NULL, &groupLen, NULL);
 	    artno_t begNo = strtoll(KPDBGetField(rec, recLen, "NB", NULL, "-1"), NULL, 10);
 	    artno_t endNo = strtoll(KPDBGetField(rec, recLen, "NE", NULL, "-1"), NULL, 10);
-	    int iter = (int)strtoul(KPDBGetField(rec, recLen, "ITER", NULL, "0"), NULL, 16);
+	    int iter = (int)strtoul(KPDBGetField(rec, recLen, "ITER", NULL, "0"), NULL, 10);	/* written as %06d */
 
 	    if (group)
 		group = allocTmpCopy(group, groupLen);

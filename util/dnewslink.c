@@ -274,6 +274,7 @@ int NumBatches = 1;
 int ConnLife = 0;
 int RotatedBatch = 0;
 int IdleRetire = 0;
+int OrphanRetire = 0;	/* our label left dnewsfeeds (or isn't realtime) */
 time_t ProcessStarted = 0;
 time_t LastHandoff = 0;	/* last kept queue rotation (or session start) */
 int HeaderSize = 0;
@@ -301,6 +302,7 @@ int HasStatusLine;
 
 void sigTerm(int sigNo);
 static time_t monotonicSeconds(void);
+static int FeedLabelGone(void);
 static void closeOutboundSession(int cfd);
 
 void
@@ -1274,7 +1276,10 @@ main(int ac, char **av)
 		}
 		if (IdleRetire) {
 		    retire = 1;
-		    dl_logit("connlife expired; retiring with empty queue");
+		    if (OrphanRetire)
+			dl_logit("label %s no longer a realtime feed in dnewsfeeds; retiring", BatchFileCtl);
+		    else
+			dl_logit("connlife expired; retiring with empty queue");
 		}
 		if (retainedCfd < 0)
 		    closeOutboundSession(cfd);
@@ -1311,7 +1316,7 @@ main(int ac, char **av)
      * not rotate queues or launch batch workers; cron remains the fallback
      * if fork/exec fails.  Never respawn on signals or failed connections.
      */
-    if (retire && ConnLife > 0 && RealTimeOpt && !TermFlag &&
+    if (retire && ConnLife > 0 && RealTimeOpt && !TermFlag && !OrphanRetire &&
 	BatchSeq < 0 && !PipeOpt) {
 	pid_t pid = fork();
 	if (pid == 0) {
@@ -1349,6 +1354,40 @@ main(int ac, char **av)
 	    dl_logit("connlife replacement fork failed: %s", strerror(errno));
     }
     exit(0);
+}
+
+/*
+ * FeedLabelGone() - 1 if our label (the queue name) is no longer a realtime
+ *		     feed in dnewsfeeds.  The file is reparsed only when its
+ *		     mtime or inode changed; the first call just records them,
+ *		     since dspoolout started us from the current file.
+ */
+static int
+FeedLabelGone(void)
+{
+    static time_t lastMtime = 0;
+    static ino_t lastIno = 0;
+    static int gone = 0;
+    struct stat st;
+
+    if (BatchFileCtl == NULL ||
+	stat(PatLibExpand(DNewsfeedsPat), &st) < 0)
+	return(gone);
+    if (lastMtime == 0) {
+	lastMtime = st.st_mtime;
+	lastIno = st.st_ino;
+	return(0);
+    }
+    if (st.st_mtime != lastMtime || st.st_ino != lastIno) {
+	NewslinkInfo *li;
+
+	lastMtime = st.st_mtime;
+	lastIno = st.st_ino;
+	LoadNewsFeed(0, 1, NULL);
+	li = FeedLinkInfo(BatchFileCtl);
+	gone = (li == NULL || !li->li_RealTime);
+    }
+    return(gone);
 }
 
 /* Connection age is deliberately independent of queue rotation count. */
@@ -3315,6 +3354,18 @@ readline(int fd, char *buf, int size, time_t t)
 		monotonicSeconds() - ProcessStarted >= ConnLife &&
 		fstat(fd, &st) == 0 && st.st_size == 0) {
 		IdleRetire = 1;
+		break;
+	    }
+
+	    /* If our label was removed from dnewsfeeds (or is no longer
+	     * realtime), dspoolout stops rotating this queue, so neither
+	     * retirement above can ever happen and the session would stay
+	     * open forever.  Nothing is pending here (StreamPend == 0), so
+	     * retire the same way as with an empty queue.
+	     */
+	    if (ConnLife > 0 && FeedLabelGone()) {
+		IdleRetire = 1;
+		OrphanRetire = 1;
 		break;
 	    }
 

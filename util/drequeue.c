@@ -75,9 +75,11 @@ main(int ac, char **av)
 		    doAll = 1;
 		    break;
 		case 'C':
+		    if (*ptr == 0)
+			++i;
 		    break;
 		case 'd':
-		    DebugOpt = atoi(*ptr ? ptr : av[++i]);
+		    DebugOpt = *ptr ? atoi(ptr) : 1;
 		    break;
 		case 'f':
 		    DNewsfeedsPat = *ptr ? ptr : av[++i];
