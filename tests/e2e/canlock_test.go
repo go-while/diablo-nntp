@@ -56,11 +56,15 @@ func TestCanLockVectors(t *testing.T) {
 	}
 }
 
-// supportsCanLock reports whether this dreaderd knows readercanlock.
-func supportsCanLock(tb testing.TB, s *Site) bool {
+// skipWithoutCanLock skips the test unless the dreaderd in DIABLO_BIN knows readercanlock.
+// It must run before a site with readercanlock in diablo.config is written: without
+// Cancel-Lock support, dgrpctl and dreaderd reject the unknown directive.
+func skipWithoutCanLock(tb testing.TB) {
 	tb.Helper()
-	b, err := os.ReadFile(filepath.Join(s.Bin, "dreaderd"))
-	return err == nil && bytes.Contains(b, []byte("readercanlock"))
+	b, err := os.ReadFile(filepath.Join(bin(tb), "dreaderd"))
+	if err != nil || !bytes.Contains(b, []byte("readercanlock")) {
+		tb.Skip("dreaderd has no readercanlock (Cancel-Lock support)")
+	}
 }
 
 // withHeaders inserts header lines before the blank line of an article.
@@ -81,6 +85,7 @@ func cancelArticle(tb testing.TB, target, group string, hdrs ...string) []string
 // cancels, or skips the test when dreaderd has no Cancel-Lock support.
 func canLockSite(tb testing.TB, mode string) (*Site, *fakeserver.Store) {
 	tb.Helper()
+	skipWithoutCanLock(tb)
 	st, spool := spoolStore(tb)
 	s := NewReaderSite(tb, ReaderOptions{
 		Spool:   spool,
@@ -88,9 +93,6 @@ func canLockSite(tb testing.TB, mode string) (*Site, *fakeserver.Store) {
 		Files:   map[string]string{"dcontrol.ctl": "cancel:*:*:doit,break\n"},
 		NoStart: true,
 	})
-	if !supportsCanLock(tb, s) {
-		tb.Skip("dreaderd has no readercanlock (Cancel-Lock support)")
-	}
 	_, port, _ := strings.Cut(s.Addr, ":")
 	startReader(tb, s, "[127.0.0.1]:"+port)
 	return s, st
@@ -226,15 +228,13 @@ func TestCancelLockEarlyCancel(t *testing.T) {
 // TestCancelLockTrackonlyRefused: readercanlock (other than all) with readerxover trackonly
 // can't check anything, so dreaderd refuses to start.
 func TestCancelLockTrackonlyRefused(t *testing.T) {
+	skipWithoutCanLock(t)
 	_, spool := spoolStore(t)
 	s := NewReaderSite(t, ReaderOptions{
 		Spool:   spool,
 		Config:  map[string]string{"readerxover": "trackonly"},
 		NoStart: true,
 	})
-	if !supportsCanLock(t, s) {
-		t.Skip("dreaderd has no readercanlock (Cancel-Lock support)")
-	}
 	_, port, _ := strings.Cut(s.Addr, ":")
 	out, err := s.TryRun("dreaderd", "-d", "-p", PathHost, "-h", PathHost, "-P", "[127.0.0.1]:"+port)
 	if err == nil || !strings.Contains(out, "trackonly") {
