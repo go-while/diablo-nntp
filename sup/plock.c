@@ -25,6 +25,7 @@ main(int ac, char **av)
     int j;
     int len;
     int pid;
+    int status = 0;
     int blockExit = 0;
     int type = XLOCK_EX;
     char *buf;
@@ -88,11 +89,14 @@ main(int ac, char **av)
 	execl("/bin/sh", "sh", "-c", buf, NULL);
 	exit(0);
     }
-    waitpid(pid, NULL, 0);
+    waitpid(pid, &status, 0);
 
     xflock(fd, XLOCK_UN);
     close(fd);
 
-    return(0);
+    /* the command's exit status */
+    if (WIFEXITED(status))
+	return(WEXITSTATUS(status));
+    return(1);
 }
 
