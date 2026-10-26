@@ -448,11 +448,25 @@ Kill(pid_t pid, int sig)
 }
 
 /*
- * This needs fork.  What we are trying to accomplish
- * is to ensure that all the pipes from the children
- * are flushed back to the parent and the parent
- * writes them out before exiting.  Otherwise
- * feed redistribution might fail.
+ * A feeder child's session socket, for sigHup() (-1: none), the request to
+ * end the session, and what sigAlrm() needs to tell the master about
+ * read-only mode.  Set outside the handlers, so the handlers only use
+ * async-signal-safe calls.
+ */
+static volatile sig_atomic_t SessionFd = -1;
+static volatile sig_atomic_t SessionExitReq = 0;
+static volatile sig_atomic_t ReadOnlyNotifyErr = 0;
+static char MasterSockPath[sizeof(((struct sockaddr_un *)0)->sun_path)];
+
+/*
+ * In a feeder child, end the session.  The child must still flush its feed
+ * pipe to the parent (otherwise feed redistribution might fail), close its
+ * article files and log the session, but not here: the signal can arrive
+ * while the child is inside stdio, malloc or syslog, and doing that work in
+ * the handler (fflush, LogSession, exit) then waited forever on the lock
+ * the interrupted code held.  So only shut the session socket down: the
+ * command loop sees EOF or SessionExitReq, and the child leaves through
+ * its normal exit path, as after QUIT.
  */
 
 void
@@ -460,15 +474,12 @@ sigHup(int sigNo)
 {
     Exiting = 1;
     if (DidFork) {
-	if (FeedFo) {
-	    fflush(FeedFo);
-	    fclose(FeedFo);
-	    FeedFo = NULL;
-	}
-	ArticleFileCloseAll();
-	DiabFilterClose(0);
-	LogSession();	/* try, may not work */
-	exit(1);
+	int saved = errno;
+
+	SessionExitReq = 1;
+	if (SessionFd >= 0)
+	    shutdown(SessionFd, SHUT_RDWR);
+	errno = saved;
     } else {
 	if (Exiting == 0) {
 	    int i;
@@ -501,38 +512,30 @@ sigAlrm(int sigNo)
     if (ReadOnlyCxn) {
 	ReadOnlyMode = 1;
 	if (DidFork) {
+	    /* Tell the master, with async-signal-safe calls only. */
+	    static const char msg[] = "child-is-readonly\nquit\n";
 	    struct sockaddr_un soun;
+	    int saved = errno;
 	    int ufd;
-	    FILE *fo;
 
 	    memset(&soun, 0, sizeof(soun));
-	    if((ufd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
-		/* Can't make socket; hang ourselves */
-		logit(LOG_INFO, "Unable to create UNIX socket: %s\n",
-			strerror(errno));
-		sigHup(SIGHUP);
-	    }
-
 	    soun.sun_family = AF_UNIX;
-	    sprintf(soun.sun_path, "%s", PatRunExpand(DiabloSocketPat));
-	    if (connect(ufd, (struct sockaddr *)&soun,
-		offsetof(struct sockaddr_un,
-			 sun_path[strlen(soun.sun_path)+1])) < 0) {
-		/* Can't connect; hang ourselves */
-		logit(LOG_INFO, "Unable to connect to master %s: %s\n",
-			soun.sun_path, strerror(errno));
+	    memcpy(soun.sun_path, MasterSockPath, sizeof(soun.sun_path));
+	    if ((ufd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0 ||
+		connect(ufd, (struct sockaddr *)&soun,
+		    offsetof(struct sockaddr_un,
+			     sun_path[strlen(soun.sun_path)+1])) < 0 ||
+		write(ufd, msg, sizeof(msg) - 1) != (ssize_t)(sizeof(msg) - 1)) {
+		/* Can't tell the master; end the session (logged later) */
+		ReadOnlyNotifyErr = errno ? errno : EIO;
+		if (ufd >= 0)
+		    close(ufd);
+		errno = saved;
 		sigHup(SIGHUP);
+		return;
 	    }
-
-	    fo = fdopen(ufd, "w");
-
-	    fprintf(fo, "child-is-readonly\n");
-	    fprintf(fo, "quit\n");
-	    fflush(fo);
-
-	    fclose(fo);
-
 	    close(ufd);
+	    errno = saved;
 	}
     } else {
 	sigHup(SIGHUP);
@@ -1299,6 +1302,8 @@ authenticate:
 		}
 
 		DidFork = 1;
+		snprintf(MasterSockPath, sizeof(MasterSockPath), "%s",
+		    PatRunExpand(DiabloSocketPat));
 
 		if (HasStatusLine)
 		    stprintf("%s", HName);
@@ -1728,6 +1733,7 @@ DoSession(int fd, int count)
 	    logit(LOG_CRIT, "DoSession() bopen failure");
 	    exit(1);
 	}
+	SessionFd = fd;		/* for sigHup() */
     }
     if (PausedCount) {
 	if (DOpts.DisplayAdminVersion && DOpts.NewsAdmin != NULL)
@@ -1832,7 +1838,8 @@ DoSession(int fd, int count)
 					DOpts.FeederHostName);
     fflush(fo);
 
-    while ((buf = bgets(bi, NULL)) != NULL && buf != (char *)-1) {
+    while (!SessionExitReq &&
+	    (buf = bgets(bi, NULL)) != NULL && buf != (char *)-1) {
 	char *cmd;
 
 
@@ -2554,6 +2561,12 @@ DoSession(int fd, int count)
     }
 #endif
 
+    if (SessionExitReq)
+	logit(LOG_INFO, "%s: session ended by the master (exit or pause)", HName);
+    if (ReadOnlyNotifyErr)
+	logit(LOG_ERR, "%s: unable to tell the master about read-only mode: %s",
+	    HName, strerror(ReadOnlyNotifyErr));
+    SessionFd = -1;		/* before the descriptor is closed */
     bclose(bi, 1);
     fclose(fo);
     ArticleFileCloseAll();
