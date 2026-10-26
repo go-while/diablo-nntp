@@ -1492,6 +1492,15 @@ SendDns(int fd, struct sockaddr_in *rsin, DnsRes *dres)
 	 * ignore return code.  If DNS process died, it
 	 * will be cleaned up later.
 	 */
+    } else if (dres != NULL && dres->dr_ResultFlags == DR_SESSEXIT_RPT) {
+	/*
+	 * Only the end-of-session accounting of a finished session: the
+	 * client already got its 205.  Never write to it; the caller
+	 * closes the descriptor.
+	 */
+	logit(LOG_INFO, "No spare DNS thread - session accounting for %s skipped",
+	    NetAddrToSt(0, (struct sockaddr *)rsin, 1, 1, 1));
+	++FailCount;
     } else {
 	char errbuf[1024];
 	logit(LOG_CRIT, "Unable to find spare DNS thread - rejecting connection");
