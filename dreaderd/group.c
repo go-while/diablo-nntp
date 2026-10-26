@@ -450,6 +450,9 @@ AssignArticleNo(Connection *conn, ArtNumAss **pan, const char *group, const char
 	int flagsLen;
 	const char *flags = KPDBGetField(rec, recLen, "S", &flagsLen, "y");
 
+	/* "=other.group" is an INN alias (dsyncgroups copies it), not flags */
+	if (flagsLen > 0 && flags[0] == '=')
+	    flagsLen = 0;
 	while (flagsLen > 0) {
 	    if (*flags == 'm') {
 		KPDBUnlock(KDBActive, rec);
