@@ -15,6 +15,7 @@ Prototype int InActive(const char *nglist);
 Prototype int GenerateXRef(Buffer *b, const char *nglist, const char *npName, const char *ctl);
 Prototype int UpdateActiveNX(char *xrefdata);
 Prototype int CheckForModeratedGroups(const char *nglist);
+Prototype int FirstModeratedGroup(const char *nglist, char *buf, int bufLen);
 
 KPDB *DActiveDB;
 
@@ -191,6 +192,16 @@ GenerateXRef(Buffer *b, const char *nglist, const char *npName, const char *ctl)
 int
 CheckForModeratedGroups(const char *nglist)
 {
+    return(FirstModeratedGroup(nglist, NULL, 0));
+}
+
+/*
+ * FirstModeratedGroup() - like CheckForModeratedGroups(), and copy the
+ *			   first moderated group's name into buf (if given).
+ */
+int
+FirstModeratedGroup(const char *nglist, char *buf, int bufLen)
+{
     const char *p = nglist;
     char group[MAXGNAME];
     int foundModerated = 0;
@@ -216,6 +227,9 @@ CheckForModeratedGroups(const char *nglist)
 
 		if (s && ((s[0] == 'm') || (s[0] == 'M'))) {
 		    foundModerated = 1;
+		    if (buf != NULL && bufLen > 0)
+			snprintf(buf, bufLen, "%s", group);
+		    break;
 		}
 	    }
 	}
