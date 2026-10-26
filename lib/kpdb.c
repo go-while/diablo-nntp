@@ -1228,8 +1228,11 @@ KPDBSort(KPDB *kpdb)
 
     qsort(ary, nc, sizeof(char *), kpdqsort);
 
-    /* If the sort is interrupted, force another resort on next open. */
-    if (KPDBWriteAt(kpdb->kp_Fd, "FFFFFFFF", 8, C_OFF) < 0)
+    /* If the sort is interrupted, force another resort on next open.
+     * Use the creation header's "needs sort" value: FFFFFFFF would read
+     * back as -1 in KPDBWrite()'s int cval and skip the forced remap.
+     */
+    if (KPDBWriteAt(kpdb->kp_Fd, "0FFFFFFF", 8, C_OFF) < 0)
 	KPDBFatalIO(kpdb, "resort marker write");
 
     for ((c = 0), (i = kpdb->kp_HeadLen); c < nc; ++c) {
