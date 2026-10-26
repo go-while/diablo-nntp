@@ -3090,6 +3090,13 @@ InstallAccessCache(void) {
 			readerdef.rd_CheckPostGroups = 0;
 		    continue;
 		}
+		if (*val && strcmp(opt, "approve") == 0) {
+		    if (*val == 'y' || *val == 'Y' || *val == '1')
+			readerdef.rd_AllowApprove = 1;
+		    else
+			readerdef.rd_AllowApprove = 0;
+		    continue;
+		}
 		if (*val && strcmp(opt, "logcmd") == 0) {
 		    if (*val == 'y' || *val == 'Y' || *val == '1')
 			readerdef.rd_LogCmd = 1;
@@ -3713,6 +3720,7 @@ PrintAuthDetails(DnsRes *dres)
     printf(" rd_DenyMismatchedDns: %d\n", dres->dr_ReaderDef->rd_DenyMismatchedDns);
     printf(" rd_DenyNoDns: %d\n", dres->dr_ReaderDef->rd_DenyNoDns);
     printf(" rd_CheckPostGroups: %d\n", dres->dr_ReaderDef->rd_CheckPostGroups);
+    printf(" rd_AllowApprove: %d\n", dres->dr_ReaderDef->rd_AllowApprove);
     printf(" rd_LogCmd: %d\n", dres->dr_ReaderDef->rd_LogCmd);
 #ifdef	IP_TOS
     printf(" rd_SetTOS: %d\n", dres->dr_ReaderDef->rd_SetTOS);
