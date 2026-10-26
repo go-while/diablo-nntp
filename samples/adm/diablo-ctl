@@ -1,0 +1,215 @@
+#!/bin/sh
+#
+# DIABLO-CTL - start, stop, restart or show the status of diablo and dreaderd.
+#
+#	diablo-ctl [-C diablo.config] [-f diablo-ctl.conf] start|stop|restart|status [diablo|dreaderd|all]
+#
+#	"all" (the default) means the daemons listed in DIABLO_DAEMONS.
+#
+# Paths come from diablo.config (path_home, path_run, path_log ...), read
+# through dpath, so this script never assumes /news.  The start options and
+# the other settings come from diablo-ctl.conf: given with -f, or
+# <path_home>/diablo-ctl.conf when it exists.  See samples/adm/diablo-ctl.conf.
+#
+# Run it as root (the daemons bind their port, then switch to the news user)
+# or as the user the daemons run as.  POSIX sh; uses pgrep/pkill with -x,
+# never -f.
+#
+# Exit status: 0 ok, 1 failure, 2 usage, 3 status: a requested daemon is not
+# running.
+
+set -u
+
+usage() {
+    echo "usage: diablo-ctl [-C diablo.config] [-f diablo-ctl.conf] start|stop|restart|status [diablo|dreaderd|all]" >&2
+    exit 2
+}
+
+say() { echo "diablo-ctl: $*"; }
+
+conf=""
+while getopts C:f: opt; do
+    case $opt in
+	C) DIABLO_CONFIG_PATH=$OPTARG; export DIABLO_CONFIG_PATH ;;
+	f) conf=$OPTARG ;;
+	*) usage ;;
+    esac
+done
+shift $((OPTIND - 1))
+[ $# -ge 1 ] && [ $# -le 2 ] || usage
+action=$1
+which=${2:-all}
+case $action in start|stop|restart|status) ;; *) usage ;; esac
+case $which in diablo|dreaderd|all) ;; *) usage ;; esac
+
+# Settings, before the binary directory is known: a -f file may set DIABLO_BIN.
+if [ -n "$conf" ]; then
+    [ -r "$conf" ] || { say "cannot read $conf"; exit 1; }
+    . "$conf"
+fi
+
+# The binaries: DIABLO_BIN, else ../dbin next to this script (an installed
+# <home>/adm/diablo-ctl or the source tree's samples/adm), else /news/dbin.
+if [ -z "${DIABLO_BIN:-}" ]; then
+    here=$(cd "$(dirname "$0")" && pwd)
+    for d in "$here/../dbin" "$here/../../dbin" /news/dbin; do
+	if [ -x "$d/diablo" ]; then
+	    DIABLO_BIN=$(cd "$d" && pwd)
+	    break
+	fi
+    done
+fi
+[ -n "${DIABLO_BIN:-}" ] && [ -x "$DIABLO_BIN/dpath" ] || { say "no diablo binaries found; set DIABLO_BIN"; exit 1; }
+
+home=$("$DIABLO_BIN/dpath" home) || { say "dpath cannot read diablo.config"; exit 1; }
+if [ -z "$conf" ] && [ -r "$home/diablo-ctl.conf" ]; then
+    . "$home/diablo-ctl.conf"
+fi
+
+DIABLO_DAEMONS=${DIABLO_DAEMONS:-diablo}
+DIABLO_OPTS=${DIABLO_OPTS:-}
+DREADERD_OPTS=${DREADERD_OPTS:-}
+DIABLO_STOP_WAIT=${DIABLO_STOP_WAIT:-30}
+DIABLO_START_WAIT=${DIABLO_START_WAIT:-30}
+if [ -z "${DIABLO_USER:-}" ]; then
+    if [ "$(id -u)" -eq 0 ]; then DIABLO_USER=news; else DIABLO_USER=$(id -un); fi
+fi
+
+if [ "$which" = all ]; then
+    daemons=$DIABLO_DAEMONS
+else
+    daemons=$which
+fi
+
+# up <daemon>: the daemon answers on its control socket.  drcmd exits 1 even
+# after a good "status" reply (dreaderd sends no "." terminator for it), so
+# any reply on stdout counts too; without a daemon there is only an error on
+# stderr.
+up() {
+    case $1 in
+	diablo) cmd=dicmd ;;
+	dreaderd) cmd=drcmd ;;
+    esac
+    reply=$("$DIABLO_BIN/$cmd" status 2>/dev/null) && return 0
+    [ -n "$reply" ]
+}
+
+# masterpid <daemon>: the pid of the daemon's master process, or nothing.
+# dreaderd writes <path_log>/dreaderd.pid; diablo writes no pid file, so its
+# master is the oldest diablo process of DIABLO_USER.
+masterpid() {
+    case $1 in
+	dreaderd)
+	    pf="$("$DIABLO_BIN/dpath" log)/dreaderd.pid"
+	    if [ -r "$pf" ]; then
+		p=$(tr -dc '0-9' < "$pf")
+		[ -n "$p" ] && kill -0 "$p" 2>/dev/null && { echo "$p"; return; }
+	    fi
+	    pgrep -o -x dreaderd -U "$DIABLO_USER" 2>/dev/null ;;
+	diablo)
+	    pgrep -o -x diablo -U "$DIABLO_USER" 2>/dev/null ;;
+    esac
+}
+
+# waitgone <pid> <seconds>: wait until pid has exited; 1 if it is still there.
+waitgone() {
+    n=0
+    while kill -0 "$1" 2>/dev/null; do
+	[ "$n" -ge "$2" ] && return 1
+	sleep 1
+	n=$((n + 1))
+    done
+    return 0
+}
+
+start_one() {
+    d=$1
+    if up "$d"; then
+	say "$d is already running (pid $(masterpid "$d"))"
+	return 0
+    fi
+    [ -n "${DIABLO_NOFILE:-}" ] && ulimit -n "$DIABLO_NOFILE"
+    case $d in
+	# Both detach themselves (they fork and the parent exits).
+	diablo) "$DIABLO_BIN/diablo" $DIABLO_OPTS server ;;
+	dreaderd) "$DIABLO_BIN/dreaderd" $DREADERD_OPTS ;;
+    esac || { say "$d did not start (exit status $?)"; return 1; }
+    n=0
+    until up "$d"; do
+	if [ "$n" -ge "$DIABLO_START_WAIT" ]; then
+	    say "$d does not answer on its control socket after ${DIABLO_START_WAIT}s"
+	    return 1
+	fi
+	sleep 1
+	n=$((n + 1))
+    done
+    say "$d started (pid $(masterpid "$d"))"
+}
+
+stop_one() {
+    d=$1
+    pid=$(masterpid "$d")
+    if [ -z "$pid" ] && ! up "$d"; then
+	say "$d is not running"
+	return 0
+    fi
+    # Remember the children: once the master is gone they are not its
+    # children any more.
+    kids=""
+    [ -n "$pid" ] && kids=$(pgrep -P "$pid" 2>/dev/null | tr '\n' ' ')
+    case $d in
+	diablo) "$DIABLO_BIN/dicmd" exit >/dev/null 2>&1 ;;
+	dreaderd) "$DIABLO_BIN/drcmd" exit >/dev/null 2>&1 ;;
+    esac
+    if [ -n "$pid" ] && ! waitgone "$pid" "$DIABLO_STOP_WAIT"; then
+	say "$d (pid $pid) still running after ${DIABLO_STOP_WAIT}s: SIGTERM"
+	kill -TERM "$pid" 2>/dev/null
+	if ! waitgone "$pid" 5; then
+	    say "$d (pid $pid) still running: SIGKILL"
+	    kill -KILL "$pid" 2>/dev/null
+	    waitgone "$pid" 5 || { say "cannot stop $d (pid $pid)"; return 1; }
+	fi
+    fi
+    for k in $kids; do
+	kill -0 "$k" 2>/dev/null && kill -TERM "$k" 2>/dev/null
+    done
+    if [ "$d" = diablo ]; then
+	# Realtime dnewslink workers (started by dspoolout) keep running
+	# without diablo; stop them too.  dspoolout from cron starts them again.
+	pkill -TERM -x dnewslink -U "$DIABLO_USER" 2>/dev/null
+    fi
+    say "$d stopped"
+}
+
+status_one() {
+    d=$1
+    if up "$d"; then
+	case $d in
+	    diablo) line=$("$DIABLO_BIN/dicmd" status 2>/dev/null | head -1) ;;
+	    dreaderd) line=$("$DIABLO_BIN/drcmd" status 2>/dev/null | head -1) ;;
+	esac
+	say "$d is running (pid $(masterpid "$d")): $line"
+	return 0
+    fi
+    say "$d is not running"
+    return 3
+}
+
+rc=0
+case $action in
+    start)
+	for d in $daemons; do start_one "$d" || rc=1; done ;;
+    stop)
+	# The reader first: it may fetch articles from the local feeder.
+	for d in dreaderd diablo; do
+	    case " $daemons " in *" $d "*) stop_one "$d" || rc=1 ;; esac
+	done ;;
+    restart)
+	for d in dreaderd diablo; do
+	    case " $daemons " in *" $d "*) stop_one "$d" || rc=1 ;; esac
+	done
+	[ $rc -eq 0 ] && for d in $daemons; do start_one "$d" || rc=1; done ;;
+    status)
+	for d in $daemons; do status_one "$d" || rc=3; done ;;
+esac
+exit $rc
