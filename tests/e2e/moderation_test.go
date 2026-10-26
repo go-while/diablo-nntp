@@ -126,6 +126,7 @@ const (
 	NoModGroup  = "e2e.nomod"  // m, no moderators line
 	OpenGroup   = "e2e.test"   // y
 	ClosedGroup = "e2e.closed" // n
+	GoneGroup   = "e2e.gone"   // x
 )
 
 // DefaultModerators maps the moderated groups; "%s" is the group with dots made dashes.
@@ -203,7 +204,7 @@ func newModerationReader(tb testing.TB, o ModOptions) *modSite {
 		Groups:  []string{OpenGroup},
 		NoStart: true,
 	})
-	for g, flags := range map[string]string{ModGroup: "m", ModGroup2: "m", NoModGroup: "m", ClosedGroup: "n"} {
+	for g, flags := range map[string]string{ModGroup: "m", ModGroup2: "m", NoModGroup: "m", ClosedGroup: "n", GoneGroup: "x"} {
 		s.Run(tb, "dgrpctl", "newgroup", g, flags)
 	}
 	s.WriteFile(tb, "moderators", or(o.Moderators, DefaultModerators))
@@ -333,17 +334,6 @@ func TestModerationNoModerator(t *testing.T) {
 	m.waitPost(t, 1, "the post passed on to the outgoing server (today's behaviour)")
 }
 
-// TestModerationClosedGroup: a POST to a status "n" group is accepted and passed on today.
-// Changes with the group-status PR: refused.
-func TestModerationClosedGroup(t *testing.T) {
-	m := newModerationReader(t, ModOptions{})
-	_, line := m.postArticle(t, ClosedGroup)
-	if !strings.HasPrefix(line, "240 ") {
-		t.Fatalf("POST to %s: %q, want 240 (today's behaviour)", ClosedGroup, line)
-	}
-	m.waitPost(t, 1, "the post to a closed group at the outgoing server (today's behaviour)")
-}
-
 // TestModerationMailFailure: when sendmail fails, dreaderd still answers "240 Article
 // mailed to moderator" today. Changes with the moderator-mail PR: the MTA's exit status is
 // checked. Needs the fake sendmail.
@@ -429,17 +419,34 @@ func TestModerationApproveRequired(t *testing.T) {
 	m2.waitPost(t, 1, "the approved post with approve yes")
 }
 
-// TestModerationGroupStatus (PLANNED, group-status PR): POST to a status "n" group, to an
-// "x" group and to a group that doesn't exist is refused, even without checkpostgroups.
+// TestModerationGroupStatus (#43): a POST to a group with status "n" (no local posting) or
+// "x" (no posting) gets 441 naming the group and its status, also when crossposted with an
+// open group and with "checkpostgroups no"; nothing is passed on. A POST to the open group
+// alone still goes out. Before #43 the post to the "n" group went out (240), and "x" was
+// refused only with checkpostgroups, as "Nonexistent newsgroup(s)".
 func TestModerationGroupStatus(t *testing.T) {
-	t.Skip("PLANNED: group status on POST (moderation PR 2)")
-	m := newModerationReader(t, ModOptions{})
-	for _, g := range []string{ClosedGroup, "e2e.nonexistent"} {
-		if _, line := m.postArticle(t, g); !strings.HasPrefix(line, "441") {
-			t.Errorf("POST to %s: %q, want 441", g, line)
+	for _, access := range []string{
+		DefaultReaderAccess,
+		strings.Replace(DefaultReaderAccess, "    post yes\n", "    post yes\n    checkpostgroups no\n", 1),
+	} {
+		m := newModerationReader(t, ModOptions{Access: access})
+		for _, c := range []struct{ groups, group, status string }{
+			{ClosedGroup, ClosedGroup, "n"},
+			{GoneGroup, GoneGroup, "x"},
+			{OpenGroup + "," + ClosedGroup, ClosedGroup, "n"},
+		} {
+			_, line := m.postArticle(t, c.groups)
+			want := "441 Posting to " + c.group + " is not allowed (status " + c.status + ")"
+			if line != want {
+				t.Errorf("POST to %s: %q, want %q", c.groups, line, want)
+			}
 		}
+		m.noPost(t, "posts to n or x groups")
+		if _, line := m.postArticle(t, OpenGroup); !strings.HasPrefix(line, "240 ") {
+			t.Errorf("POST to %s: %q, want 240", OpenGroup, line)
+		}
+		m.waitPost(t, 1, "the post to the open group")
 	}
-	m.noPost(t, "posts to closed or missing groups")
 }
 
 // TestModerationFirstModeratorOnly (PLANNED, moderator-mail PR): a crosspost to two
