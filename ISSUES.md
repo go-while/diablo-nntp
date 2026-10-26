@@ -13,8 +13,9 @@ Status values: **open**, **PR** (fix waiting for review, with its number), **fix
 the PR that fixed it), **decision** (needs the maintainer to decide), **won't fix**.
 
 Last updated 2026-10-26, after #5, #6, #8, #10 to #29 and #32 to #36 were merged. Open:
-#30 and #38 (connlife rounding and its test), #31 (diablo-ctl), #35 (GnuPG pgpverify,
-in review), #37 (dnewslink SIGTERM).
+#30 and #38 (connlife rounding and its test), #31 (diablo-ctl), #35 (GnuPG pgpverify, in
+review), #37 (dnewslink SIGTERM), #40 (D-14), #41 (D-15), #42, #43, #45 and #46
+(moderation, D-49) with their tests in #44.
 
 | ID | Severity | Summary | Status |
 |---|---|---|---|
@@ -31,7 +32,7 @@ in review), #37 (dnewslink SIGTERM).
 | [D-11](#d-11-kpdb-deletes-the-wrong-record-on-a-race) | High | KPDB deletes the wrong record on a create/update race | fixed (#33, test #36) |
 | [D-12](#d-12-a-dead-dns-worker-can-be-picked-for-a-new-client) | High | A dead DNS worker can be picked for a new client | fixed (#34) |
 | [D-13](#d-13-interrupted-kpdb-sort-marker-is-negative-as-int) | Medium | Interrupted KPDB sort marker `FFFFFFFF` is negative as `int` | fixed (#33) |
-| [D-14](#d-14-a-damaged-cachehits-is-refused-forever) | Medium | A damaged `cache.hits` is refused forever | open (on main since #7) |
+| [D-14](#d-14-a-damaged-cachehits-is-refused-forever) | Medium | A damaged `cache.hits` is refused forever | PR (#40) |
 | [D-15](#d-15-dreaderd-has-no-capabilities) | Medium | dreaderd has no `CAPABILITIES` (RFC 3977) | PR (#41) |
 | [D-16](#d-16-linux-build-fails-with-the-default-libvendorh) | Medium | Linux build fails with the default `lib/vendor.h` (RADIUS) | decision |
 | [D-17](#d-17-unchecked-results-under-_fortify_source) | Low | 80 `-Wunused-result` warnings under `_FORTIFY_SOURCE` | open |
@@ -66,7 +67,7 @@ in review), #37 (dnewslink SIGTERM).
 | [D-46](#d-46-authinfo-reply-codes) | Medium | dreaderd AUTHINFO: a wrong password gets 502 (no retry); PASS before USER, and a second login | open |
 | [D-47](#d-47-other-reader-reply-codes) | Low | dreaderd reply codes: NEXT, ARTICLE in an empty group, bad article numbers, OVER past the high mark, LIST ACTIVE.TIMES | open |
 | [D-48](#d-48-feeder-reply-codes) | Low | diablo: MODE READER 500, IHAVE/CHECK without an argument | open |
-| [D-49](#d-49-moderation-handling) | Medium | Moderation: Approved: from any reader, posts to "n" groups, crosspost mails every moderator, failures not reported | maintainer (in progress) |
+| [D-49](#d-49-moderation-handling) | Medium | Moderation: Approved: from any reader, posts to "n" groups, crosspost mails every moderator, failures not reported | PR (#42, #43, #45, #46; tests #44) |
 
 Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315).
 
@@ -142,7 +143,7 @@ Fixed in #33.
 ### D-14 A damaged cache.hits is refused forever
 In #7, `OpenCacheHits()` re-initializes only for a bad magic; a structurally bad file (the
 state the old growth bug left) disables scoreboard caching until an admin deletes it.
-On main since #7 was merged.
+On main since #7 was merged; fix in #40.
 
 ### D-15 dreaderd has no CAPABILITIES
 `CAPABILITIES` answers `500 What?`. Clients that need it can't detect `READER`, `OVER`,
@@ -372,8 +373,8 @@ to a status "n" group is accepted; a crosspost to two moderated groups mails bot
 (RFC 5537: the first only); with no moderators match the post goes to diablo, which rejects it
 as "NotInActive" (and only `incoming.log` has the reason); mail failures are ignored, and
 without any sendmail the client still gets "240 Article mailed to moderator" while the article
-is lost; the moderators address goes through snprintf as the format (post.c:957). Being fixed
-by the maintainer in four PRs; e2e tests are prepared (branch test-moderation-harness).
+is lost; the moderators address goes through snprintf as the format (post.c:957). Fixes in #42,
+#43, #45 and #46; tests in #44.
 
 ## Feature requests
 
