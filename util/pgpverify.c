@@ -1,11 +1,20 @@
-
 /*
  * UTIL/PGPVERIFY.C
  *
- * pgpverify < control-news-article
+ * pgpverify [-d] [-k keyring] [program [args...]] < control-news-article
  *
- * Extract X-PGP-Sig header from news article, construct 
- * PGP text file, and pipe into pgp -f
+ * Extract the X-PGP-Sig header from a news article, rebuild the signed
+ * text and check it.  On success print the first word of the signer's
+ * user id (e.g. "news.announce.newgroups") and exit 0.
+ *
+ * By default GnuPG's gpgv (GnuPG 1.x or 2.x) is used: the signed text and
+ * the signature are written to temporary files and verified as a detached
+ * signature with "gpgv --status-fd", whose GOODSIG line names the signer.
+ * When the program given is PGP 2.x ("pgp"), the old clear-signed message
+ * is piped into "pgp -f" instead.
+ *
+ * Exit status: 0 good signature, 1 no X-PGP-Sig header, 2 malformed
+ * header or verifier not runnable, 3 bad or unverifiable signature.
  *
  * (c)Copyright 1998, Matthew Dillon, All Rights Reserved.  Refer to
  *    the COPYRIGHT file in the base directory of this distribution
@@ -21,15 +30,25 @@ typedef struct Header {
 } Header;
 
 char *FindHeader(const char *name, char *def);
+static const char *FindGpgv(void);
+static int VerifyGpgv(char **argv, const char *keyring, const char *version,
+		      char *sheaders, const char *signature);
+static int VerifyPgp2(char **argv, const char *version, char *sheaders,
+		      const char *signature);
+static void PutStripped(FILE *fo, const char *text);
 
 Header *HBase = NULL;
 Header **PHe = &HBase;
-char *argv[10] = { PGP_PATH, PGP_ARG0, "-f", NULL };
+char *argv[12];
+
+/* Signed body of the article, read after the headers. */
+static char *Body = NULL;
+static size_t BodyLen = 0;
 
 void
 Usage(void)
 {
-    printf("Usage: pgpverify [-d] [pgp_path] [pgp_args]\n");
+    printf("Usage: pgpverify [-d] [-k keyring] [program [args]]\n");
     exit(1);
 }
 
@@ -39,13 +58,13 @@ main(int ac, char **av)
     char buf[8192];
     Header *he = NULL;
     int nl = 1;
-    int r = 2;
+    int r;
     char *sig;
     char *version = NULL;
     char *sheaders = NULL;
     char *signature = NULL;
-    pid_t pid = 0;
-    int fds[3] = { -1, -1, -1 };
+    const char *keyring = NULL;
+    const char *prog;
     int i;
     int argcount = 0;
     int argend = 0;
@@ -54,15 +73,18 @@ main(int ac, char **av)
 	char *ptr = av[i];
 
 	if (*ptr != '-' || argend) {
+	    /*
+	     * The verifier and its arguments: argv[0] is the path to exec,
+	     * argv[1] the name it is run as, then its arguments.
+	     */
 	    argend = 1;
-	    if (argcount > 8)
+	    if (argcount > 9)
 		break;
-	    argv[argcount++] = ptr;
 	    if (argcount == 0) {
-		if (strrchr(ptr, '/') == NULL)
-		    argv[argcount++] = ptr;
-		else
-		    argv[argcount++] = strrchr(ptr, '/') + 1;
+		argv[argcount++] = ptr;
+		argv[argcount++] = strrchr(ptr, '/') ? strrchr(ptr, '/') + 1 : ptr;
+	    } else {
+		argv[argcount++] = ptr;
 	    }
 	    argv[argcount] = NULL;
 	    continue;
@@ -77,6 +99,11 @@ main(int ac, char **av)
 		DebugOpt = strtol(ptr, NULL, 0);
 	    else
 		DebugOpt = 1;
+	    break;
+	case 'k':
+	    keyring = (*ptr) ? ptr : (++i < ac ? av[i] : NULL);
+	    if (keyring == NULL)
+		Usage();
 	    break;
 	default:
 	    fprintf(stderr, "illegal option: %s\n", ptr - 2);
@@ -134,6 +161,23 @@ main(int ac, char **av)
     }
 
     /*
+     * Read the body: both verifiers need it after the headers.
+     */
+
+    {
+	size_t n;
+
+	while ((n = fread(buf, 1, sizeof(buf), stdin)) > 0) {
+	    Body = realloc(Body, BodyLen + n + 1);
+	    memcpy(Body + BodyLen, buf, n);
+	    BodyLen += n;
+	}
+	if (Body == NULL)
+	    Body = strdup("");
+	Body[BodyLen] = 0;
+    }
+
+    /*
      * Extract X-PGP-Sig: header
      */
 
@@ -152,57 +196,286 @@ main(int ac, char **av)
 	exit(2);
 
     /*
-     * Start pgp -f
+     * Choose the verifier: the one given, else gpgv found on the system.
      */
 
-    {
-	char nhtmp[PATH_MAX];
-	char *env[2];
-
-	env[0] = nhtmp;
-	env[1] = NULL;
-
-	snprintf(nhtmp, sizeof(nhtmp), "HOME=%s", NewsHome);
-
-	pid = RunProgramPipe(fds, RPF_STDOUT|RPF_STDERR, argv, env);
-	if (pid <= 0)
+    if (argcount == 0) {
+	if ((prog = FindGpgv()) == NULL) {
+	    fprintf(stderr, "pgpverify: no gpgv, gpgv2 or gpgv1 found\n");
 	    exit(2);
+	}
+	argv[argcount++] = (char *)prog;
+	argv[argcount++] = (char *)strrchr(prog, '/') + 1;
+	argv[argcount] = NULL;
+    }
+
+    if (strcmp(argv[1], "pgp") == 0)
+	r = VerifyPgp2(argv, version, sheaders, signature);
+    else
+	r = VerifyGpgv(argv, keyring, version, sheaders, signature);
+    exit(r);
+}
+
+/*
+ * FindGpgv() - locate gpgv (GnuPG 2.x usually, 1.x on older systems),
+ *		gpgv2 or gpgv1 in the usual binary directories.
+ */
+
+static const char *
+FindGpgv(void)
+{
+    static const char *dirs[] = { "/usr/bin", "/usr/local/bin", "/opt/local/bin",
+				  "/usr/pkg/bin", "/opt/ooce/bin", NULL };
+    static const char *names[] = { "gpgv", "gpgv2", "gpgv1", NULL };
+    static char path[PATH_MAX];
+    int n;
+    int d;
+
+    for (n = 0; names[n]; ++n) {
+	for (d = 0; dirs[d]; ++d) {
+	    snprintf(path, sizeof(path), "%s/%s", dirs[d], names[n]);
+	    if (access(path, X_OK) == 0)
+		return(path);
+	}
+    }
+    return(NULL);
+}
+
+/*
+ * PutStripped() - write text with trailing blanks removed from each line.
+ *		   OpenPGP clear signatures, which signcontrol produces,
+ *		   are computed over text without trailing whitespace.
+ */
+
+static void
+PutStripped(FILE *fo, const char *text)
+{
+    while (*text) {
+	const char *eol = strchr(text, '\n');
+	const char *end = eol ? eol : text + strlen(text);
+	const char *e = end;
+
+	while (e > text && (e[-1] == ' ' || e[-1] == '\t' || e[-1] == '\r'))
+	    --e;
+	fwrite(text, 1, e - text, fo);
+	if (eol == NULL)
+	    break;
+	fputc('\n', fo);
+	text = eol + 1;
+    }
+}
+
+/*
+ * VerifyGpgv() - verify with gpgv as a detached signature.
+ *
+ * The signed text is X-Signed-Headers, the signed headers, a blank line
+ * and the body.  It goes into one temporary file, the ASCII-armored
+ * signature into another, and gpgv reports the result on its status fd.
+ * Only options gpgv 1.x and 2.x both understand are used.
+ */
+
+static int
+VerifyGpgv(char **argv, const char *keyring, const char *version,
+	   char *sheaders, const char *signature)
+{
+    const char *tmpdir = getenv("TMPDIR");
+    char msgfile[PATH_MAX];
+    char sigfile[PATH_MAX];
+    char homeenv[PATH_MAX];
+    char defring[PATH_MAX];
+    char *gargv[16];
+    char *env[2];
+    char buf[1024];
+    int mfd;
+    int sfd;
+    int n;
+    int fds[3] = { -1, -1, -1 };
+    int r = 3;
+    pid_t pid;
+    FILE *fo;
+    FILE *fi;
+    const char *name;
+
+    if (tmpdir == NULL || *tmpdir == 0)
+	tmpdir = "/tmp";
+    snprintf(msgfile, sizeof(msgfile), "%s/pgpverify.msg.XXXXXX", tmpdir);
+    snprintf(sigfile, sizeof(sigfile), "%s/pgpverify.sig.XXXXXX", tmpdir);
+    if ((mfd = mkstemp(msgfile)) < 0)
+	return(2);
+    if ((sfd = mkstemp(sigfile)) < 0) {
+	close(mfd);
+	unlink(msgfile);
+	return(2);
     }
 
     /*
-     * output PGP text
+     * signed text
      */
+
+    fo = fdopen(mfd, "w");
+    fprintf(fo, "X-Signed-Headers: %s\n", sheaders);
+    for (name = strtok(sheaders, ","); name; name = strtok(NULL, ",")) {
+	fprintf(fo, "%s:", name);
+	PutStripped(fo, FindHeader(name, "\n"));
+    }
+    fprintf(fo, "\n");
+    /*
+     * In a clear-signed message the line break before the signature block
+     * is not part of the signed text, so drop the body's final newline.
+     */
+    if (BodyLen > 0 && Body[BodyLen - 1] == '\n') {
+	Body[BodyLen - 1] = 0;
+	PutStripped(fo, Body);
+	Body[BodyLen - 1] = '\n';
+    } else {
+	PutStripped(fo, Body);
+    }
+    fclose(fo);
+
+    /*
+     * ASCII-armored signature
+     */
+
+    fo = fdopen(sfd, "w");
+    fprintf(fo, "-----BEGIN PGP SIGNATURE-----\n");
+    fprintf(fo, "Version: %s\n", version);
+    fprintf(fo, "\n");
+    for (name = signature; *name; ++name) {
+	if (*name == ' ' || *name == '\t' || *name == '\r')
+	    continue;
+	fputc(*name, fo);
+    }
+    if (name > signature && name[-1] != '\n')
+	fputc('\n', fo);
+    fprintf(fo, "-----END PGP SIGNATURE-----\n");
+    fclose(fo);
+
+    /*
+     * gpgv --status-fd 1 [--keyring K] sigfile msgfile
+     *
+     * Without -k, use <home>/pgp/trustedkeys.gpg when it exists, else
+     * gpgv's default keyring under HOME (~/.gnupg/trustedkeys.*).
+     */
+
+    if (keyring == NULL) {
+	snprintf(defring, sizeof(defring), "%s/pgp/trustedkeys.gpg", NewsHome);
+	if (access(defring, R_OK) == 0)
+	    keyring = defring;
+    }
+    n = 0;
+    while (argv[n] != NULL && n < 10) {
+	gargv[n] = argv[n];
+	++n;
+    }
+    gargv[n++] = "--status-fd";
+    gargv[n++] = "1";
+    if (keyring) {
+	gargv[n++] = "--keyring";
+	gargv[n++] = (char *)keyring;
+    }
+    gargv[n++] = sigfile;
+    gargv[n++] = msgfile;
+    gargv[n] = NULL;
+
+    snprintf(homeenv, sizeof(homeenv), "HOME=%s", NewsHome);
+    env[0] = homeenv;
+    env[1] = NULL;
+
+    if (DebugOpt) {
+	for (n = 0; gargv[n]; ++n)
+	    fprintf(stderr, "gpgv argv[%d]=%s\n", n, gargv[n]);
+    }
+
+    pid = RunProgramPipe(fds, RPF_STDIN, gargv, env);
+    if (pid <= 0) {
+	unlink(msgfile);
+	unlink(sigfile);
+	return(2);
+    }
+
+    /*
+     * [GNUPG:] GOODSIG <keyid> <user id>
+     */
+
+    fi = fdopen(fds[0], "r");
+    while (fgets(buf, sizeof(buf), fi) != NULL) {
+	if (DebugOpt)
+	    fprintf(stderr, ">> %s", buf);
+	if (r == 3 && strncmp(buf, "[GNUPG:] GOODSIG ", 17) == 0) {
+	    char *uid = strchr(buf + 17, ' ');
+	    char *tok = uid ? strtok(uid, " \t\r\n") : NULL;
+
+	    if (tok && tok[0]) {
+		printf("%s\n", tok);
+		r = 0;
+	    }
+	}
+    }
+    fclose(fi);
+    {
+	int status = 0;
+
+	waitpid(pid, &status, 0);
+	if (r == 0 && !(WIFEXITED(status) && WEXITSTATUS(status) == 0))
+	    r = 3;
+	if (WIFEXITED(status) && WEXITSTATUS(status) == 9)
+	    r = 2;		/* RunProgramPipe could not exec it */
+    }
+    if (DebugOpt < 2) {
+	unlink(msgfile);
+	unlink(sigfile);
+    }
+    return(r);
+}
+
+/*
+ * VerifyPgp2() - PGP 2.x: pipe the clear-signed message into "pgp -f"
+ *		  and read the signer from its "Good signature from" line.
+ */
+
+static int
+VerifyPgp2(char **argv, const char *version, char *sheaders,
+	   const char *signature)
+{
+    char buf[8192];
+    char nhtmp[PATH_MAX];
+    char *env[2];
+    int fds[3] = { -1, -1, -1 };
+    int r = 2;
+    pid_t pid;
+    const char *name;
+
+    env[0] = nhtmp;
+    env[1] = NULL;
+    snprintf(nhtmp, sizeof(nhtmp), "HOME=%s", NewsHome);
+
+    pid = RunProgramPipe(fds, RPF_STDOUT|RPF_STDERR, argv, env);
+    if (pid <= 0)
+	return(2);
 
     {
 	FILE *fo = fdopen(fds[1], "w");
-	char *name;
+	const char *p;
 
 	fprintf(fo, "-----BEGIN PGP SIGNED MESSAGE-----\n");
 	fprintf(fo, "\n");
 	fprintf(fo, "X-Signed-Headers: %s\n", sheaders);
 
-	/*
-	 * extract requested headers
-	 */
 	for (name = strtok(sheaders, ","); name; name = strtok(NULL, ",")) {
 	    fprintf(fo, "%s:%s", name, FindHeader(name, "\n"));
 	}
 
-	/*
-	 * blank line, then article body
-	 */
-
 	fprintf(fo, "\n");
 
-	while (fgets(buf, sizeof(buf), stdin) != NULL) {
-	    if (buf[0] == '-')
-		fputs("- ", fo);
-	    fputs(buf, fo);
-	}
+	for (p = Body; *p; ) {
+	    const char *eol = strchr(p, '\n');
+	    size_t l = eol ? (size_t)(eol - p + 1) : strlen(p);
 
-	/*
-	 * blank line, then PGP signature
-	 */
+	    if (*p == '-')
+		fputs("- ", fo);
+	    fwrite(p, 1, l, fo);
+	    p += l;
+	}
 
 	fprintf(fo, "\n");
 	fprintf(fo, "-----BEGIN PGP SIGNATURE-----\n");
@@ -219,28 +492,24 @@ main(int ac, char **av)
 	fclose(fo);
     }
 
-    /*
-     * input results
-     */
-
     {
 	FILE *fi = fdopen(fds[2], "r");
 	while (fgets(buf, sizeof(buf), fi) != NULL) {
-            char *good;
+	    char *good;
 
 	    if (DebugOpt)
 		printf(">> %s", buf);
 	    if (strstr(buf, "Bad signature")) {
-		r= 3;
+		r = 3;
 		break;
 	    }
-	    if ((good=strstr(buf, "Good signature from"))) {
+	    if ((good = strstr(buf, "Good signature from"))) {
 		char *tok;
 		good = strchr(good + 19, '"');
 		if (good == NULL)
 		    break;
 		tok = strtok(good + 1, " \"\n");
-		if (tok[0]) {
+		if (tok && tok[0]) {
 		    r = 0;
 		    printf("%s\n", tok);
 		}
@@ -253,10 +522,14 @@ main(int ac, char **av)
 	}
 	fclose(fi);
     }
-    if (pid > 0)
-	waitpid(pid, NULL, 0);
-    exit(r);
+    waitpid(pid, NULL, 0);
+    return(r);
 }
+
+/*
+ * FindHeader() - header body (after the colon), matched case-insensitively
+ *		  as header names are.
+ */
 
 char *
 FindHeader(const char *name, char *def)
@@ -265,12 +538,10 @@ FindHeader(const char *name, char *def)
     int l = strlen(name);
 
     for (he = HBase; he; he = he->he_Next) {
-	if (strncmp(he->he_Name, name, l) == 0 && he->he_Name[l] == ':')
+	if (strncasecmp(he->he_Name, name, l) == 0 && he->he_Name[l] == ':')
 	    break;
     }
     if (he)
 	return(he->he_Name + l + 1);
     return(def);
 }
-
-

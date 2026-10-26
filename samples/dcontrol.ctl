@@ -19,7 +19,9 @@
 ##	    log				One line to error log
 ##	    log=xxx			Log to xxx (see below)
 ##	    mail			Send mail to admin
-##	    verify-pgp_userid		Do PGP verification on user.
+##	    verify-pgp_userid		Do PGP verification on user (GnuPG
+##					gpgv by default; see pgpverifyargs
+##					in diablo.config).
 ##	    verify-pgp_userid=logfile	PGP verify and log.
 ##	    break			terminate dcontrol.ctl scan
 ##
