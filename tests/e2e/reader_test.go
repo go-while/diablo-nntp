@@ -24,10 +24,13 @@ import (
 // ReaderOptions configures a throwaway dreaderd site.
 type ReaderOptions struct {
 	Groups []string           // groups created with dgrpctl; nil = e2e.test, e2e.other
-	Spool  *fakeserver.Server // the 's' server of dserver.hosts (article bodies); required
-	Post   *fakeserver.Server // the 'o' server (POST is sent there with IHAVE); nil = none
-	Access string             // dreader.access; "" = DefaultReaderAccess
-	Config map[string]string  // diablo.config directives added or replacing the generated ones
+	Spool  *fakeserver.Server // the 's' server of dserver.hosts (article bodies)
+	// SpoolAddr is the 's' server as host:port when it is not a fakeserver (e.g. a diablo
+	// site); one of Spool and SpoolAddr is required.
+	SpoolAddr string
+	Post      *fakeserver.Server // the 'o' server (POST is sent there with IHAVE); nil = none
+	Access    string             // dreader.access; "" = DefaultReaderAccess
+	Config    map[string]string  // diablo.config directives added or replacing the generated ones
 }
 
 // DefaultReaderAccess lets 127.0.0.1 read and post and PeerIP feed.
@@ -50,8 +53,13 @@ access ` + PeerIP + ` feed
 // greeting. proc's cleanup stops it with SIGTERM, then SIGKILL.
 func NewReaderSite(tb testing.TB, o ReaderOptions) *Site {
 	tb.Helper()
-	if o.Spool == nil {
-		tb.Fatal("NewReaderSite: ReaderOptions.Spool is required")
+	spoolAddr := o.SpoolAddr
+	if o.Spool != nil {
+		spoolAddr = o.Spool.Addr()
+	}
+	spoolHost, spoolPort, err := net.SplitHostPort(spoolAddr)
+	if err != nil {
+		tb.Fatalf("NewReaderSite: Spool or SpoolAddr is required: %v", err)
 	}
 	s := &Site{Dir: tb.TempDir(), Bin: bin(tb)}
 	port := freePort(tb)
@@ -81,7 +89,7 @@ func NewReaderSite(tb testing.TB, o ReaderOptions) *Site {
 	}
 	s.WriteFile(tb, "diablo.config", b.String())
 	s.WriteFile(tb, "dreader.access", or(o.Access, DefaultReaderAccess))
-	hosts := "127.0.0.1\ts1p" + strconv.Itoa(o.Spool.Port()) + "\n"
+	hosts := spoolHost + "\ts1p" + spoolPort + "\n"
 	if o.Post != nil {
 		// the same host twice: dserver.hosts tells entries apart by the name's case
 		hosts += "127.0.0.1\to1p" + strconv.Itoa(o.Post.Port()) + "\n"
@@ -269,4 +277,54 @@ func TestReaderQuitWhileConnecting(t *testing.T) {
 		t.Cleanup(prev.Close)
 	}
 	expect(t, prev, 205, "QUIT")
+}
+
+// TestHeaderFeedToReader: diablo feeds dreaderd a header-only feed (dnewsfeeds headfeed,
+// dnewslink -H), and dreaderd fetches the body from diablo as its spool server: GROUP, OVER and
+// BODY on the reader show the article fed into diablo.
+func TestHeaderFeedToReader(t *testing.T) {
+	const label = "reader"
+	feeds := GlobalLabel + `label peer
+    inhost ` + PeerIP + `
+    alias e2e.peer
+    addgroup *
+end
+label ` + label + `
+    inhost 127.0.0.1
+    hostname 127.0.0.1
+    alias dummy
+    headfeed on
+    addgroup *
+end
+`
+	feeder := NewSite(t, SiteOptions{Newsfeeds: feeds})
+	r := NewReaderSite(t, ReaderOptions{SpoolAddr: feeder.Addr})
+
+	id := msgID(t)
+	p := feeder.Peer(t)
+	expect(t, p, 335, "IHAVE %s", id)
+	send(t, p, wire(newArticle(id, "e2e.test", "header feed", "body from the spool", ".dot")))
+	status(t, p, 235, "IHAVE "+id)
+	expect(t, p, 205, "QUIT")
+	feeder.waitQueue(t, label, 1)
+
+	_, rport, _ := net.SplitHostPort(r.Addr)
+	// from PeerIP: the feed address in the reader's dreader.access
+	feeder.Run(t, "dnewslink", "-b", label, "-h", "127.0.0.1", "-P", rport, "-H", "-B", PeerIP)
+
+	c := r.Reader(t)
+	waitFor(t, testkit.Deadline(), "the article in the reader's GROUP e2e.test", func() bool {
+		_, line := c.Cmd("GROUP e2e.test")
+		f := strings.Fields(line)
+		return len(f) > 1 && f[0] == "211" && f[1] == "1"
+	})
+	expect(t, c, 224, "OVER 1")
+	if over := c.ReadDotLines(); len(over) != 1 || !strings.Contains(over[0], id) {
+		t.Fatalf("OVER 1: %q, want one line with %s", over, id)
+	}
+	expect(t, c, 222, "BODY %s", id)
+	if got := c.ReadDotLines(); len(got) != 2 || got[0] != "body from the spool" || got[1] != ".dot" {
+		t.Errorf("BODY (fetched from diablo): %q", got)
+	}
+	expect(t, c, 205, "QUIT")
 }
