@@ -1305,7 +1305,7 @@ DoCommand(int ufd)
 		    break;
 		s2 = strtok(NULL, "\n");
 		if (strcmp(s1, "status") == 0) {
-		    fprintf(fo, "Connect=%d Failed=%d Dns=%d/%d Act=%d/%d", 
+		    fprintf(fo, "Connect=%d Failed=%d Dns=%d/%d Act=%d/%d\n",
 			ConnectCount, FailCount,
 			NumPending, DOpts.ReaderDns, 
 			NumActive, MaxConnects
