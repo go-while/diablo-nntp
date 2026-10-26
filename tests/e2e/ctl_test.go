@@ -44,7 +44,12 @@ func ctl(tb testing.TB, s *Site, ctlPath, conf string, args ...string) (string, 
 	defer cancel()
 	a := append([]string{ctlPath, "-C", filepath.Join(s.Dir, "diablo.config"), "-f", conf}, args...)
 	cmd := exec.CommandContext(ctx, "/bin/sh", a...)
-	cmd.Dir = s.Dir
+	// From an unrelated directory (diablo-ctl must change to path_home itself), except for
+	// a relative conf name, which is relative to the site.
+	cmd.Dir = tb.TempDir()
+	if !filepath.IsAbs(conf) {
+		cmd.Dir = s.Dir
+	}
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	cmd.WaitDelay = 3 * time.Second // the started daemon keeps our output pipe
@@ -119,8 +124,8 @@ func TestDiabloCtlFeeder(t *testing.T) {
 	checkPsPad(t, s, "diablo", "server")
 	expect(t, p, 205, "QUIT")
 
-	out, code = ctl(t, s, ctlp, conf, "start")
-	wantCtl(t, out, code, 0, "start while running")
+	out, code = ctl(t, s, ctlp, filepath.Base(conf), "start") // -f without a slash (cwd is s.Dir)
+	wantCtl(t, out, code, 0, "start while running, -f without a slash")
 	if !strings.Contains(out, "already running") {
 		t.Errorf("second start: %q, want \"already running\"", out)
 	}
@@ -164,6 +169,14 @@ func TestDiabloCtlReader(t *testing.T) {
 	c := s.Reader(t)
 	expect(t, c, 205, "QUIT")
 	checkPsPad(t, s, "dreaderd", "[127.0.0.1]:"+port)
+	if runtime.GOOS == "linux" {
+		if pids := sitePids(s, "dreaderd"); len(pids) > 0 {
+			cwd, _ := os.Readlink(filepath.Join("/proc", strconv.Itoa(pids[0]), "cwd"))
+			if want, _ := filepath.EvalSymlinks(s.Dir); cwd != want && cwd != s.Dir {
+				t.Errorf("dreaderd cwd %q, want path_home %q", cwd, s.Dir)
+			}
+		}
+	}
 	out, code = ctl(t, s, ctlp, conf, "status")
 	wantCtl(t, out, code, 0, "status while running")
 	if !strings.Contains(out, "pid ") || strings.Contains(out, "pid )") {
