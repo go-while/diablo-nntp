@@ -760,9 +760,19 @@ GrpCtlCheckGroups(int ac, char **av, int pos)
 
 	if ((rec = KPDBReadRecord(KDBActive, newsgroup, KP_LOCK, &recLen)) == NULL) {
 	    if (exec) {
+		char tsBuf[64];
+
+		/* as GrpCtlNewGroup(): S last, which releases the lock */
+		sprintf(tsBuf, "%08x", (int)time(NULL));
 		KPDBWrite(KDBActive, newsgroup, "NB", "0000000001", KP_LOCK);
 		KPDBWrite(KDBActive, newsgroup, "NE", "0000000000",
 							KP_LOCK_CONTINUE);
+		if (description[0])
+		    KPDBWriteEncode(KDBActive, newsgroup, "GD", description,
+							KP_LOCK_CONTINUE);
+		KPDBWrite(KDBActive, newsgroup, "CTS", tsBuf, KP_LOCK_CONTINUE);
+		KPDBWrite(KDBActive, newsgroup, "LMTS", tsBuf, KP_LOCK_CONTINUE);
+		KPDBWrite(KDBActive, newsgroup, "S", flags, KP_UNLOCK);
 		printf(">> Checkgroups: Added group %s\n", newsgroup);
 	    } else {
 		printf("dgrpctl newgroup %s %s \"\" \"%s\"\n",
@@ -793,10 +803,16 @@ GrpCtlCheckGroups(int ac, char **av, int pos)
 
 	    if (needflags || needdesc) {
 		if (exec) {
-		    KPDBWrite(KDBActive, newsgroup, "S", flags, KP_UNLOCK);
+		    char tsBuf[64];
+
+		    sprintf(tsBuf, "%08x", (int)time(NULL));
 		    KPDBWriteEncode(KDBActive, newsgroup, "GD", description,
 							KP_LOCK_CONTINUE);
+		    KPDBWrite(KDBActive, newsgroup, "LMTS", tsBuf,
+							KP_LOCK_CONTINUE);
+		    KPDBWrite(KDBActive, newsgroup, "S", flags, KP_UNLOCK);
 		    printf(">> Checkgroups: Modified group %s\n", newsgroup);
+		    continue;		/* the S write released the lock */
 		} else {
 		    printf("dgrpctl modgroup %s %s \"\" \"%s\"\n",
 						newsgroup,
@@ -804,6 +820,7 @@ GrpCtlCheckGroups(int ac, char **av, int pos)
 						description);
 		}
 	    }
+	    KPDBUnlock(KDBActive, rec);
 	}
     }
 	{
