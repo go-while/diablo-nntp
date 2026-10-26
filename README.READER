@@ -309,8 +309,8 @@
 	    the same manner as INN's control.ctl file, except that you can
 	    specify multiple actions by comma-delimiting them.
 
-	    NOTE!!!! You need to install 'pgp' for pgp verification to work,
-	    and you need to setup the pgp key rings properly.
+	    "verify-..." actions check PGP signatures with GnuPG's gpgv
+	    (1.x or 2.x) and a keyring; see README.PGP for the setup.
 
 	    dreaderd automatically detects changes made to this file.
 
@@ -471,48 +471,8 @@
 
 				    PGP KEYS
 
-    In order of dreaderd to properly process PGP keys, the following must be
-    properly setup:
-
-	* The pgp program must be installed in /usr/local/bin, modes 755.
-
-	* The PGPKEYS file must be installed in the ~news user's pgp ring
-	  using the pgp program.
-
-	* rc.news must 'setenv HOME ~news' prior to running dreaderd.
-
-	* Diablo's 'pgpverify' program is not the pgp program, it's a wrapper
-	  for the pgp program that dreaderd uses.
-
-    To setup PGP:
-	
-	ftp ftp.isc.org
-	    (anonymous login)
-	    cd pub/pgpcontrol
-	    binary
-	    dir
-	    get PGPKEYS
-	    get README
-	    quit
-
-	(read the README file)
-
-	(get, compile, and install pgp as /usr/local/bin/pgp)
-	    pgp is available as a port for FreeBSD.  Otherwise you
-	    can obtain it from utopia.hacktic.nl in /pub/replay/pub/pgp/unix/. 
-	    Get version 263is.tar.gz.
-
-	Install the PGPKEYS in ~news's key ring.
-
-	    su - news
-	    pgp -kg
-	    pgp -ka PGPKEYS	(this one is a bit involved)
-
-	Make sure everything is working right.  While you are still the ~news
-	user, do:
-
-	    /news/dbin/pgpverify < samples/pgp-sample
-
-	It should print out: 'news.announce.newgroups'.  Remember that you
-	must 'setenv HOME ~news' in rc.news prior to running dreaderd.
+    dreaderd checks the signatures of control messages with dbin/pgpverify,
+    which runs GnuPG's gpgv (1.x or 2.x).  README.PGP explains how to install
+    gpgv, build the keyring /news/pgp/trustedkeys.gpg from ISC's PGPKEYS,
+    and test it.  PGP 2.x is no longer needed.
 

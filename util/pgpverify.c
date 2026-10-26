@@ -106,8 +106,11 @@ main(int ac, char **av)
 		Usage();
 	    break;
 	default:
-	    fprintf(stderr, "illegal option: %s\n", ptr - 2);
-	    Usage();
+	    /* Older setups may pass options this version doesn't know
+	     * through pgpverifyargs: carry on rather than fail every check.
+	     */
+	    fprintf(stderr, "pgpverify: ignoring unknown option %s\n", ptr - 2);
+	    break;
 	}
     }
 
