@@ -10,6 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -57,6 +59,32 @@ func ctl(tb testing.TB, s *Site, ctlPath, conf string, args ...string) (string, 
 	return out.String(), code
 }
 
+// checkPsPad checks that the master process of daemon name (the oldest one of this site) got
+// diablo-ctl's status area after its last regular argument lastArg: "-s" plus 60 spaces,
+// which the daemon may overwrite with its status and NULs. Linux only (/proc); the raw
+// cmdline keeps the area's size whatever was written into it.
+func checkPsPad(tb testing.TB, s *Site, name, lastArg string) {
+	tb.Helper()
+	if runtime.GOOS != "linux" {
+		return
+	}
+	pids := sitePids(s, name)
+	if len(pids) == 0 {
+		tb.Fatalf("no %s process of this site", name)
+	}
+	b, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pids[0]), "cmdline"))
+	if err != nil {
+		tb.Fatal(err)
+	}
+	i := bytes.LastIndex(b, []byte("\x00"+lastArg+"\x00"))
+	if i < 0 {
+		tb.Fatalf("%s (pid %d): no argument %q in %q", name, pids[0], lastArg, b)
+	}
+	if tail := len(b) - (i + len(lastArg) + 2); tail < 62 {
+		tb.Errorf("%s (pid %d): %d bytes after %q, want the -s status area (62 or more): %q", name, pids[0], tail, lastArg, b)
+	}
+}
+
 func wantCtl(tb testing.TB, out string, code, want int, what string) {
 	tb.Helper()
 	if code != want {
@@ -88,6 +116,7 @@ func TestDiabloCtlFeeder(t *testing.T) {
 	if !strings.HasPrefix(p.Greeting, "200 ") {
 		t.Fatalf("peer greeting after diablo-ctl start: %q", p.Greeting)
 	}
+	checkPsPad(t, s, "diablo", "server")
 	expect(t, p, 205, "QUIT")
 
 	out, code = ctl(t, s, ctlp, conf, "start")
@@ -134,6 +163,7 @@ func TestDiabloCtlReader(t *testing.T) {
 	wantCtl(t, out, code, 0, "start")
 	c := s.Reader(t)
 	expect(t, c, 205, "QUIT")
+	checkPsPad(t, s, "dreaderd", "[127.0.0.1]:"+port)
 	out, code = ctl(t, s, ctlp, conf, "status")
 	wantCtl(t, out, code, 0, "status while running")
 	if !strings.Contains(out, "pid ") || strings.Contains(out, "pid )") {

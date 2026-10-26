@@ -71,6 +71,7 @@ DIABLO_OPTS=${DIABLO_OPTS:-}
 DREADERD_OPTS=${DREADERD_OPTS:-}
 DIABLO_STOP_WAIT=${DIABLO_STOP_WAIT:-30}
 DIABLO_START_WAIT=${DIABLO_START_WAIT:-30}
+DIABLO_PS_PAD=${DIABLO_PS_PAD-60}
 if [ -z "${DIABLO_USER:-}" ]; then
     if [ "$(id -u)" -eq 0 ]; then DIABLO_USER=news; else DIABLO_USER=$(id -un); fi
 fi
@@ -80,6 +81,16 @@ if [ "$which" = all ]; then
 else
     daemons=$which
 fi
+
+# The status area for ps: "-s" plus DIABLO_PS_PAD spaces as one argument;
+# diablo and dreaderd overwrite it with their status (as rc.news does it).
+# Empty or 0: no status area.
+pspad=""
+case $DIABLO_PS_PAD in
+    ''|0) ;;
+    *[!0-9]*) say "DIABLO_PS_PAD must be a number of spaces"; exit 1 ;;
+    *) pspad="-s$(printf "%${DIABLO_PS_PAD}s" "")" ;;
+esac
 
 # up <daemon>: the daemon answers on its control socket.  drcmd exits 1 even
 # after a good "status" reply (dreaderd sends no "." terminator for it), so
@@ -131,8 +142,18 @@ start_one() {
     [ -n "${DIABLO_NOFILE:-}" ] && ulimit -n "$DIABLO_NOFILE"
     case $d in
 	# Both detach themselves (they fork and the parent exits).
-	diablo) "$DIABLO_BIN/diablo" $DIABLO_OPTS server ;;
-	dreaderd) "$DIABLO_BIN/dreaderd" $DREADERD_OPTS ;;
+	diablo)
+	    if [ -n "$pspad" ]; then
+		"$DIABLO_BIN/diablo" $DIABLO_OPTS server "$pspad"
+	    else
+		"$DIABLO_BIN/diablo" $DIABLO_OPTS server
+	    fi ;;
+	dreaderd)
+	    if [ -n "$pspad" ]; then
+		"$DIABLO_BIN/dreaderd" $DREADERD_OPTS "$pspad"
+	    else
+		"$DIABLO_BIN/dreaderd" $DREADERD_OPTS
+	    fi ;;
     esac || { say "$d did not start (exit status $?)"; return 1; }
     n=0
     until up "$d"; do
