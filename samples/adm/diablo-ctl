@@ -131,7 +131,20 @@ masterpid() {
 	c=$(ps -o comm= -p "$p" 2>/dev/null)	# BSD, illumos
     fi
     c=${c##*/}
-    [ "$c" = "$1" ] && echo "$p"
+    [ "$c" = "$1" ] || return 0
+    # and only one of DIABLO_USER: the pid file is writable by that user
+    [ "$(uidof "$p")" = "$(id -u "$DIABLO_USER" 2>/dev/null)" ] && echo "$p"
+}
+
+# uidof <pid>: the numeric uid a process runs as: the Uid: line of
+# /proc/PID/status on Linux (the /proc/PID directory of a daemon that changed
+# from root to news belongs to root), ps on illumos and the BSDs.
+uidof() {
+    if grep -q '^Uid:' "/proc/$1/status" 2>/dev/null; then
+	awk '/^Uid:/ { print $2; exit }' "/proc/$1/status"
+    else
+	ps -o uid= -p "$1" 2>/dev/null | tr -d ' '
+    fi
 }
 
 # pidtext <daemon>: the master's pid for messages.
@@ -144,7 +157,7 @@ pidtext() {
 # system doesn't tell (pwdx: Linux, illumos; /proc: Linux; procstat: FreeBSD).
 cwdof() {
     if command -v pwdx >/dev/null 2>&1; then
-	pwdx "$1" 2>/dev/null | sed -n 's/^[0-9]*: //p'
+	pwdx "$1" 2>/dev/null | sed -n 's/^[0-9]*:[[:space:]]*//p'
     elif [ -r "/proc/$1/cwd" ]; then
 	readlink "/proc/$1/cwd" 2>/dev/null
     elif command -v procstat >/dev/null 2>&1; then

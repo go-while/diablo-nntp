@@ -1009,8 +1009,6 @@ DiabloServer(int lfd)
 	    FD_SET(lfd, &RFds);
 	}
     }
-    if (PidFile[0])
-	remove(PidFile);
     LogSession2();
     flushFeeds(0);
     ClosePathLog(1);
@@ -1025,6 +1023,8 @@ DiabloServer(int lfd)
     }
     FinishRetain(RET_PAUSE);
     FinishRetain(RET_CLOSE);
+    if (PidFile[0])
+	remove(PidFile);	/* last: diablo-ctl waits for this pid */
 }
 
 /*
