@@ -1,0 +1,79 @@
+#!/bin/sh
+
+##  Install build packages and build Diablo for the e2e tests on a Linux
+##  test machine.  Run as root from the top of a Diablo source tree copy:
+##
+##      tests/e2e/ci/build-on-host
+##
+##  This copy's lib/vendor.h is changed: RADIUS is turned off (Linux has no
+##  BSD libradius), and DB_ENABLED and REJECT_DB are turned off when the
+##  system has no Berkeley DB 1.85 API (db_185.h; several distributions
+##  dropped Berkeley DB).  The binaries end up in dbin/.  The news user and
+##  group are created when missing (diablo switches to them at startup).
+
+set -eu
+
+. /etc/os-release
+echo "== $PRETTY_NAME"
+
+# Berkeley DB is optional: install it where the distribution still has it.
+if command -v apt-get >/dev/null; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get -qq update
+    apt-get -qq install -y build-essential libssl-dev zlib1g-dev >/dev/null
+    apt-get -qq install -y libdb5.3-dev >/dev/null 2>&1 || true
+elif command -v dnf >/dev/null; then
+    dnf -q -y install gcc make findutils openssl-devel zlib-devel shadow-utils >/dev/null
+    dnf -q -y install libdb-devel >/dev/null 2>&1 || true
+elif command -v zypper >/dev/null; then
+    zypper -n -q install gcc make findutils libopenssl-devel zlib-devel shadow >/dev/null
+    zypper -n -q install libdb-4_8-devel >/dev/null 2>&1 || true
+elif command -v pacman >/dev/null; then
+    # pacman 7 sandboxes downloads with Landlock, which containers may lack.
+    nosandbox=
+    pacman --help --sync 2>/dev/null | grep -q -- --disable-sandbox && nosandbox=--disable-sandbox
+    pacman -Sy --noconfirm --needed --quiet $nosandbox base-devel openssl zlib >/dev/null
+    pacman -S --noconfirm --needed --quiet $nosandbox db >/dev/null 2>&1 || true
+elif command -v apk >/dev/null; then
+    apk add -q build-base openssl-dev zlib-dev
+    apk add -q db-dev 2>/dev/null || true
+elif command -v emerge >/dev/null; then
+    # A stage3 has the compiler, OpenSSL and zlib.
+    emerge --quiet --noreplace --getbinpkg sys-libs/db >/dev/null 2>&1 || true
+else
+    echo "no supported package manager" >&2
+    exit 1
+fi
+
+if ! getent group news >/dev/null; then
+    if command -v groupadd >/dev/null; then groupadd -r news; else addgroup -S news; fi
+fi
+if ! id news >/dev/null 2>&1; then
+    if command -v useradd >/dev/null; then
+        useradd -r -g news -d /var/tmp -s /bin/sh news
+    else
+        adduser -S -G news -h /var/tmp -s /bin/sh news
+    fi
+fi
+
+sed -i 's/^#define[[:space:]]*RADIUS_ENABLED/#undef RADIUS_ENABLED/' lib/vendor.h
+if [ -e /usr/include/db_185.h ]; then
+    echo "berkeley db: on"
+else
+    sed -i -e 's/^#define[[:space:]]*DB_ENABLED/#undef DB_ENABLED/' \
+        -e 's/^#define[[:space:]]*REJECT_DB.*/#undef REJECT_DB/' lib/vendor.h
+    echo "berkeley db: off (no db_185.h)"
+fi
+
+jobs=$(nproc 2>/dev/null || echo 1)
+echo "cc: $(cc --version 2>/dev/null | head -1)"
+# -k: one program that fails to build doesn't stop the others.
+status=0
+make -k -j"$jobs" > build.log 2>&1 || status=$?
+echo "warnings: $(grep -c 'warning:' build.log || true)"
+echo "errors: $(grep -c 'error:' build.log || true)"
+ls dbin 2>/dev/null | wc -l | sed 's/^ */executables: /'
+if [ $status -ne 0 ]; then
+    grep -m 20 -E 'error:|Error [0-9]' build.log || tail -20 build.log
+    exit 1
+fi
