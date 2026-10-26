@@ -3,6 +3,7 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"net"
@@ -196,7 +197,13 @@ func (s *Site) run(name string, args ...string) (string, error) {
 	cmd.Env = append(os.Environ(), s.Env...)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
+	// A program that starts a daemon (dspoolout starts dnewslink) leaves our output pipe open
+	// in the child; stop waiting for it shortly after the program itself has exited.
+	cmd.WaitDelay = 3 * time.Second
 	err := cmd.Run()
+	if errors.Is(err, exec.ErrWaitDelay) {
+		err = nil
+	}
 	return out.String(), err
 }
 
