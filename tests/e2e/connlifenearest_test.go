@@ -16,11 +16,12 @@ import (
 
 // TestDnewslinkConnlifeNearest: a connlife worker that carries traffic retires at the queue
 // rotation nearest its connlife, not at the first rotation after it. With connlife 12, the
-// replacement worker started just after a rotation is retired at a rotation 9 s later: the
-// next one would be about 18 s in, farther from 12. Before #30 it was kept there, because it
+// replacement worker started just after a rotation is retired at a rotation 10 s later: the
+// next one would be about 20 s in, farther from 12. Before #30 it was kept there, because it
 // was short of 12 s, and served until the rotation after (connlife 60 gave about 120 s with
-// cron's once-a-minute rotation). dnewslink counts whole seconds, so the times leave a
-// second of margin either way. The site logs to log/general.log, shown when the test fails.
+// cron's once-a-minute rotation). dnewslink counts whole seconds; at 10 s the worker is 8 to
+// 11 s old by its count (it can start up to about 1.5 s after the rotation), so #30's rule
+// always retires it (8 + 8/2 >= 12) and the old rule never does (11 < 12). The site logs to log/general.log, shown when the test fails.
 // Linux only (reads /proc).
 func TestDnewslinkConnlifeNearest(t *testing.T) {
 	if runtime.GOOS != "linux" {
@@ -117,9 +118,9 @@ end
 	w2 := newWorker(w1, 10*time.Second, "the replacement after connlife")
 	t.Logf("worker 2 (pid %d) started %v after the rotation", w2, time.Since(rot).Round(time.Millisecond))
 
-	// 9 s after its start rotation: nearer to connlife (12) than the next rotation (about
-	// 18 s), so worker 2 retires here.
-	sleepUntil(rot.Add(9 * time.Second))
+	// 10 s after its start rotation: nearer to connlife (12) than the next rotation (about
+	// 20 s), so worker 2 retires here.
+	sleepUntil(rot.Add(10 * time.Second))
 	rotate()
 	var w3 int
 	deadline := time.Now().Add(5 * time.Second)
