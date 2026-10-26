@@ -75,6 +75,8 @@ For installation instructions, see [`INSTALL`](INSTALL) and [`README.md`](README
   without changing those stores or entering the spool rewrite path.
 - Fixed utility option handling: `dlockhistory -s` consumes its sleep-time argument, and
   `dexpirescoring` and `dprimehostcache` correctly skip the argument to `-C file`.
+- Fixed `dgrpctl checkgroups exec` to initialize new groups with the right status, description,
+  and creation time while leaving unchanged groups untouched.
 - Checked previously ignored results from writes, truncations, and command launches across
   the feeder, reader, and utilities. Failures that can affect stored data or maintenance work
   are now reported; best-effort client error replies remain non-fatal.
