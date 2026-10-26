@@ -1,0 +1,14 @@
+Fixtures for TestPgpverify* (pgpverify_test.go).
+
+trustedkeys.gpg  public keyring of a throwaway ed25519 key with the user id
+                 "news.announce.newgroups"; the private key was not kept.
+good.art         a newgroup control message for e2e.test.group signed with
+                 that key the way signcontrol does (detached text-mode
+                 signature over X-Signed-Headers, the signed headers, a blank
+                 line and the body), with the signature in X-PGP-Sig.
+
+The tests derive the other cases from good.art (changed or duplicated
+headers, NUL bytes, bare CR).  To make new fixtures: gpg --quick-gen-key
+news.announce.newgroups ed25519 sign never in a scratch GNUPGHOME, sign the
+text as above with gpg --textmode --detach-sign --armor, and export the
+public key with gpg --export.
