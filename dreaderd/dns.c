@@ -2887,6 +2887,29 @@ readerdefNumber(const char *opt, const char *val, int linecount, int *dst)
  * renaming the files.
  */
 
+/*
+ * CreateAccessCache() - create a new cache file readable only by us:
+ *	cache.authdef holds the passwords from dreader.access, and the
+ *	others hold access rules, so none of them may follow the umask.
+ *	The .new file is renamed over the old cache, which so gets the
+ *	mode too.
+ */
+
+static FILE *
+CreateAccessCache(const char *path)
+{
+    FILE *f;
+    int fd;
+
+    if ((fd = open(path, O_RDWR|O_CREAT|O_TRUNC, 0600)) < 0)
+	return(NULL);
+    if (fchmod(fd, 0600) < 0 || (f = fdopen(fd, "w+")) == NULL) {
+	close(fd);
+	return(NULL);
+    }
+    return(f);
+}
+
 void
 InstallAccessCache(void) {
     struct stat st;
@@ -2959,26 +2982,22 @@ InstallAccessCache(void) {
     snprintf(ranewbuf, sizeof(ranewbuf), "%s.new",
 				PatDbExpand(DRAccessCachePat));
 
-    if ((vsf = PrivateFOpen(vsnewbuf, "w+", 0600)) == NULL) {
-	logit(LOG_CRIT, "Unable to create %s (%s)", vsnewbuf, strerror(errno));
+    if ((vsf = CreateAccessCache(vsnewbuf)) == NULL) {	logit(LOG_CRIT, "Unable to create %s (%s)", vsnewbuf, strerror(errno));
 	fclose(fp);
 	return;
     }
-    if ((grf = PrivateFOpen(grnewbuf, "w+", 0600)) == NULL) {
-	logit(LOG_CRIT, "Unable to create %s (%s)", grnewbuf, strerror(errno));
+    if ((grf = CreateAccessCache(grnewbuf)) == NULL) {	logit(LOG_CRIT, "Unable to create %s (%s)", grnewbuf, strerror(errno));
 	fclose(fp);
 	fclose(vsf);
 	return;
     }
-    if ((auf = PrivateFOpen(aunewbuf, "w+", 0600)) == NULL) {
-	logit(LOG_CRIT, "Unable to create %s (%s)", aunewbuf, strerror(errno));
+    if ((auf = CreateAccessCache(aunewbuf)) == NULL) {	logit(LOG_CRIT, "Unable to create %s (%s)", aunewbuf, strerror(errno));
 	fclose(fp);
 	fclose(vsf);
 	fclose(grf);
 	return;
     }
-    if ((rdf = PrivateFOpen(rdnewbuf, "w+", 0600)) == NULL) {
-	logit(LOG_CRIT, "Unable to create %s (%s)", rdnewbuf, strerror(errno));
+    if ((rdf = CreateAccessCache(rdnewbuf)) == NULL) {	logit(LOG_CRIT, "Unable to create %s (%s)", rdnewbuf, strerror(errno));
 	fclose(fp);
 	fclose(vsf);
 	fclose(grf);
@@ -2986,8 +3005,7 @@ InstallAccessCache(void) {
 	return;
     }
 
-    if ((raf = PrivateFOpen(ranewbuf, "w+", 0600)) == NULL) {
-	logit(LOG_CRIT, "Unable to create %s (%s)", ranewbuf, strerror(errno));
+    if ((raf = CreateAccessCache(ranewbuf)) == NULL) {	logit(LOG_CRIT, "Unable to create %s (%s)", ranewbuf, strerror(errno));
 	fclose(fp);
 	fclose(vsf);
 	fclose(grf);

@@ -446,7 +446,7 @@ ValidGroupName(const char *name)
 	r = -1;
     } else {
 	for (; *name; ++name) {
-	    if (*name == ' ' || !isprint((unsigned char)*name)) {
+	    if (*name == ' ' || *name == '/' || !isprint((unsigned char)*name)) {
 		r = -1;
 	    }
 	    if (*name >= 'a' && *name <= 'z')
