@@ -12,8 +12,9 @@ re-checked yet.
 Status values: **open**, **PR** (fix waiting for review, with its number), **fixed** (with
 the PR that fixed it), **decision** (needs the maintainer to decide), **won't fix**.
 
-Last updated 2026-10-26, after #5, #6, #8, #10 to #26 were merged. Open: #7 (I/O
-integrity, in review), #9 (dnewslink connlife), #27 (dreaderd spool server address).
+Last updated 2026-10-26, after #5, #6, #8, #10 to #29 and #32 to #36 were merged. Open:
+#30 and #38 (connlife rounding and its test), #31 (diablo-ctl), #35 (GnuPG pgpverify,
+in review), #37 (dnewslink SIGTERM).
 
 | ID | Severity | Summary | Status |
 |---|---|---|---|
@@ -27,10 +28,10 @@ integrity, in review), #9 (dnewslink connlife), #27 (dreaderd spool server addre
 | [D-08](#d-08-dreaderd--p-hostport-does-not-bind) | Low | `dreaderd -P host:port` (and `-B`) does not bind | fixed (#13) |
 | [D-09](#d-09-dreaderd-does-not-build-with-musl) | Medium | dreaderd does not build with musl (Alpine): `loff_t` | fixed (#14) |
 | [D-10](#d-10-diablo--b-falls-through-into--a) | Low | `diablo -b fd` falls through into `-A` | fixed (#15) |
-| [D-11](#d-11-kpdb-deletes-the-wrong-record-on-a-race) | High | KPDB deletes the wrong record on a create/update race | open (in #7, review) |
-| [D-12](#d-12-a-dead-dns-worker-can-be-picked-for-a-new-client) | High | A dead DNS worker can be picked for a new client | open (in #7, review) |
-| [D-13](#d-13-interrupted-kpdb-sort-marker-is-negative-as-int) | Medium | Interrupted KPDB sort marker `FFFFFFFF` is negative as `int` | open (in #7, review) |
-| [D-14](#d-14-a-damaged-cachehits-is-refused-forever) | Medium | A damaged `cache.hits` is refused forever | open (in #7, review) |
+| [D-11](#d-11-kpdb-deletes-the-wrong-record-on-a-race) | High | KPDB deletes the wrong record on a create/update race | fixed (#33, test #36) |
+| [D-12](#d-12-a-dead-dns-worker-can-be-picked-for-a-new-client) | High | A dead DNS worker can be picked for a new client | fixed (#34) |
+| [D-13](#d-13-interrupted-kpdb-sort-marker-is-negative-as-int) | Medium | Interrupted KPDB sort marker `FFFFFFFF` is negative as `int` | fixed (#33) |
+| [D-14](#d-14-a-damaged-cachehits-is-refused-forever) | Medium | A damaged `cache.hits` is refused forever | open (on main since #7) |
 | [D-15](#d-15-dreaderd-has-no-capabilities) | Medium | dreaderd has no `CAPABILITIES` (RFC 3977) | open |
 | [D-16](#d-16-linux-build-fails-with-the-default-libvendorh) | Medium | Linux build fails with the default `lib/vendor.h` (RADIUS) | decision |
 | [D-17](#d-17-unchecked-results-under-_fortify_source) | Low | 80 `-Wunused-result` warnings under `_FORTIFY_SOURCE` | open |
@@ -55,7 +56,11 @@ integrity, in review), #9 (dnewslink connlife), #27 (dreaderd spool server addre
 | [D-36](#d-36-dgrpctl-checkgroups-exec) | Low | `dgrpctl checkgroups exec`: new groups without S/GD, lock order | open |
 | [D-37](#d-37-articles-lost-when-the-spool-directory-is-removed) | High | Articles accepted (235) but lost when their spool directory is removed while diablo writes into it | fixed (#24) |
 | [D-38](#d-38-dexpire-removes-the-directory-diablo-writes-into) | High | `dexpire` removes a spool's newest directory, the one diablo writes into | fixed (#25) |
-| [D-39](#d-39-dreaderd-spool-server-address-may-be-udp) | Medium | dreaderd connects its spool servers with the first `getaddrinfo()` result, which is UDP on FreeBSD | PR (#27) |
+| [D-39](#d-39-dreaderd-spool-server-address-may-be-udp) | Medium | dreaderd connects its spool servers with the first `getaddrinfo()` result, which is UDP on FreeBSD | fixed (#27) |
+| [D-40](#d-40-feeder-children-hang-on-sighup) | High | Feeder children hang forever on the SIGHUP of `dicmd exit`/`pause` | fixed (#32) |
+| [D-41](#d-41-diablo-ctl-stops-other-sites-daemons) | High | diablo-ctl stops the daemons of another site of the same user | PR (#31) |
+| [D-42](#d-42-dnewslink-ignores-sigterm-on-a-stalled-peer) | Medium | dnewslink ignores SIGTERM for up to `-T` (600 s) per wait while a peer is stalled | PR (#37) |
+| [D-43](#d-43-connlife-retires-one-rotation-late) | Low | A connlife worker retires one rotation late (connlife 60 gives about 120 s) | PR (#30, test #38) |
 
 Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315).
 
@@ -113,19 +118,25 @@ In #7 (`lib/kpdb.c:857` on that branch), the `-` delete marker is written at `lo
 the first, unlocked lookup instead of the record the locked second lookup found. A create
 race writes `-` at offset 0 (the header) and leaves two live records; two writers on one
 record also leave duplicates. Needs no I/O error. Details in the #7 review.
+#7 was merged with it; fixed in #33 (the `-` goes to the record the merge read). Test:
+`TestKPDBConcurrentUpdate` (#36), which holds the record lock between two writers' lookups.
 
 ### D-12 A dead DNS worker can be picked for a new client
 In #7 (`dreaderd/main.c:1615` on that branch), the new EOF path sets `d_Count = 0` before
 `wait3()` reaps the worker, so `SendDns()` can choose it: the pending client's descriptor
 leaks and the new client hangs. Details in the #7 review.
+#7 was merged with it; fixed in #34 (a `d_Dead` flag; `wait3()` keeps the cleanup). No test:
+the window is the microseconds while the worker exits.
 
 ### D-13 Interrupted KPDB sort marker is negative as int
 In #7, an interrupted sort leaves `FFFFFFFF` in the append counter; `int cval` makes it -1,
 so the sort runs without the forced remap. Use `0FFFFFFF`, as the creation header does.
+Fixed in #33.
 
 ### D-14 A damaged cache.hits is refused forever
 In #7, `OpenCacheHits()` re-initializes only for a bad magic; a structurally bad file (the
 state the old growth bug left) disables scoreboard caching until an admin deletes it.
+On main since #7 was merged.
 
 ### D-15 dreaderd has no CAPABILITIES
 `CAPABILITIES` answers `500 What?`. Clients that need it can't detect `READER`, `OVER`,
@@ -288,7 +299,35 @@ each partition's newest directory is kept ("Keeping ..."). Test: `TestDexpireKee
 ### D-39 dreaderd spool server address may be UDP
 `dreaderd/server.c` `AddServer()` calls `getaddrinfo()` without `ai_socktype` and connects to
 the first result. FreeBSD lists the UDP address first, so the reader could not reach its spool
-servers. Found by the maintainer on FreeBSD; fix in #27 (`SOCK_STREAM`).
+servers. Found by the maintainer on FreeBSD; fixed in #27 (`SOCK_STREAM`).
+
+### D-40 Feeder children hang on SIGHUP
+`dicmd exit` and `dicmd pause` send SIGHUP to every feeder child. The child's `sigHup()` did
+its cleanup in the handler (fflush, `LogSession()` through syslog, `exit()`). When the
+signal arrived while the child was itself in syslog, stdio or malloc (typically logging its
+session after QUIT), it waited forever on that lock and kept its client socket and dhistory
+open. Found by the 20-VM run (two children left on Gentoo). Fixed in #32: the handler only
+sets a flag and shuts the session socket down. Test: `TestFeederChildSighupAfterQuit` (85 to
+169 of 1000 children hung before on glibc, 6 of 2000 on musl).
+
+### D-41 diablo-ctl stops other sites' daemons
+diablo-ctl (#17, #23) took "the oldest diablo of the user" for its site's master, and
+stopped every dnewslink of the user. Running the e2e tests as `news` on hosts with a live
+site stopped the live diablo, dreaderd and dnewslink (the SmartOS feeder for 28 minutes).
+PR #31: diablo writes `<path_log>/diablo.pid`, diablo-ctl uses only pid files and the
+site's dqueue for dnewslink. Test: `TestDiabloCtlOnlyItsOwnSite`.
+
+### D-42 dnewslink ignores SIGTERM on a stalled peer
+dnewslink's handler only sets `TermFlag`, but its waits for the peer are `poll()` calls with
+the `-T` timeout (600 s); a signal interrupted one poll and the next started. A SIGTERM'd
+worker on a hung peer stayed for many minutes (the maintainer had to kill -9). PR #37.
+Test: `TestDnewslinkTermStalledPeer`.
+
+### D-43 Connlife retires one rotation late
+A connlife worker can only retire at a queue rotation and retired at the first one at or
+after connlife; a replacement starts just after a rotation, so at the next multiple it is
+a second short and serves a whole extra interval. Found by the maintainer. PR #30 (the
+rotation nearest connlife), test #38 (`TestDnewslinkConnlifeNearest`).
 
 ## Feature requests
 

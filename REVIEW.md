@@ -25,18 +25,18 @@ reviewed 2× (date).
 | # | Area | Files | Lines | What to look at | Status |
 |---|---|---|---|---|---|
 | 0 | Docs and samples | `README*`, `INSTALL`, `CHANGELOG.md`, `RELEASE_NOTES`, `TUNING_NOTES`, `man/` (24 pages), `samples/` | | Man pages against the options in the code, samples against the parsers, stale build and path instructions | reviewed (2026-10-26): D-22 to D-28, D-34, D-35 |
-| 1 | Feeder daemon | `util/diablo.c` | ~5,000 | Accept and fork, host authentication, NNTP command loop, IHAVE/CHECK/TAKETHIS, dicmd control socket, privilege drop | partial: option parsing (D-10), host cache (D-01), privilege drop (D-02, D-03), dicmd config |
-| 2 | History and KP databases | `lib/history.c`, `lib/kpdb.c` | ~1,900 | Locking between processes, mmap growth, short writes, on-disk format | partial: #7 diff reviewed 2026-10-26 (D-11, D-13, D-21) |
+| 1 | Feeder daemon | `util/diablo.c` | ~5,000 | Accept and fork, host authentication, NNTP command loop, IHAVE/CHECK/TAKETHIS, dicmd control socket, privilege drop | partial: option parsing (D-10), host cache (D-01), privilege drop (D-02, D-03), dicmd config, child signal handlers (D-40, #32), pid file (D-41, #31) |
+| 2 | History and KP databases | `lib/history.c`, `lib/kpdb.c` | ~1,900 | Locking between processes, mmap growth, short writes, on-disk format | partial: #7 diff reviewed 2026-10-26 (D-11, D-13, D-21); D-11 and D-13 fixed (#33) |
 | 3 | Feeds and configuration | `lib/newsfeed.c`, `lib/hostauth.c`, `lib/config.c` | ~4,400 | dnewsfeeds parsing and limits, label lookup, host cache, diablo.config directives | partial: host cache (D-01), NULL write fixed in #8 (D-04) |
-| 4 | Outgoing feeds | `util/dnewslink.c`, `util/dspoolout.c` | ~4,500 | Queue file handling, streaming, rotation, connlife (#9), descriptor handling | partial: connlife behaviour tested (#9) |
+| 4 | Outgoing feeds | `util/dnewslink.c`, `util/dspoolout.c` | ~4,500 | Queue file handling, streaming, rotation, connlife (#9), descriptor handling | partial: connlife (#9, D-43 in #30), signal handling and peer waits (D-42, #37) |
 | 5 | Spool and expire | `lib/spool.c`, `lib/expire.c`, `util/dexpire.c`, `util/dhisexpire.c` | ~3,200 | Spool directory allocation, keeptime and space checks, history marking | partial: `cleanupDirectories()` (D-38, #25), spool file reopen in `util/diablo.c` (D-37, #24) |
-| 6 | Reader process model | `dreaderd/main.c`, `dreaderd/dns.c`, `dreaderd/thread.c` | ~6,500 | Master/DNS/reader hand-off, descriptor passing, accounting, limits, privilege drop | partial: #7 diff (D-12), D-06, D-07, D-08 |
+| 6 | Reader process model | `dreaderd/main.c`, `dreaderd/dns.c`, `dreaderd/thread.c` | ~6,500 | Master/DNS/reader hand-off, descriptor passing, accounting, limits, privilege drop | partial: #7 diff (D-12, fixed in #34), D-06, D-07, D-08 |
 | 7 | Reader protocol | `dreaderd/nntp.c`, `reader.c`, `post.c`, `control.c`, `cancel.c`, `list.c`, `server.c` | ~6,400 | Commands and reply codes (RFC 3977, 4643), POST handling, control messages, spool server connections | partial: `CtlCancel` and Cancel-Lock (F-01, #19), `AddServer` (D-39, #27); D-15 found by conformance checks |
 | 8 | Reader overview and cache | `dreaderd/group.c`, `cache.c`, `xover.c`, `util/dexpireover.c` | ~5,400 | Overview index and data files, article numbers, cache.hits, concurrent readers | partial: #7 diff reviewed 2026-10-26 (D-14) |
 | 9 | Spam filter and filters | `lib/spamfilter.c`, `filter/` | ~1,600 | Hash cache sizing, filter protocol | partial: #7 diff |
 | 10 | Other utilities | rest of `util/` (dicmd, dhisctl, didump, dgrpctl, dkp, ...) | ~9,900 | Option parsing, file handling | not started (option parsing: D-31, D-36) |
 | 11 | Build and portability | `Makefile`, `BSDmakefile`, `install-portable.sh`, `compat/`, `lib/vendor.h`, `lib/defs.h` | | Platform detection, defaults, warnings per compiler | partial: 21 systems built (D-09, D-16 to D-18, D-20); installer (D-22, D-25, D-34; fixed in #16, #21) |
-| 12 | Tests and CI | `tests/e2e`, `.github/workflows` | | Coverage of the areas above, flaky tests | 32 tests (#11 and the fix PRs since); CI on Ubuntu 22.04/24.04 |
+| 12 | Tests and CI | `tests/e2e`, `.github/workflows` | | Coverage of the areas above, flaky tests | 34 tests on main (#11 and the fix PRs since); CI on Ubuntu 22.04/24.04; main passes on 23 systems (20 Linux VMs, FreeBSD, SmartOS, Ubuntu 26.04) |
 
 Line counts are approximate, from `main` at `ed3ce67` (2026-10-26).
 
@@ -63,13 +63,19 @@ Fixed so far (the open ones are in [ISSUES.md](ISSUES.md)).
 | D-37 articles lost when their spool directory was removed | 1, 5 | maintainer's logs, e2e tests | #24 |
 | D-38 dexpire removed the directory diablo writes into | 5 | maintainer's logs | #25 |
 | F-01 Cancel-Lock verification (feature) | 7 | maintainer's request | #19 |
+| D-11 KPDB deleted the wrong record on a race | 2 | #7 review | #33 (test #36) |
+| D-12 a dead DNS worker could get a new client | 6 | #7 review | #34 |
+| D-13 interrupted KPDB sort marker negative as int | 2 | #7 review | #33 |
+| D-39 dreaderd spool server address could be UDP | 7 | maintainer (FreeBSD) | #27 |
+| D-40 feeder children hung on SIGHUP | 1 | e2e matrix (Gentoo) | #32 |
 
 ## Test coverage by area
 
 | Area | e2e tests |
 |---|---|
 | 0 | `TestAdm*` (samples/adm scripts), `TestDiabloCtl*` (samples/adm/diablo-ctl) |
-| 1 | `TestPeerIHAVE`, `TestStrangerRefused`, `TestDicmdConfig`, `TestGeneralLogNotWritable`, `TestHostCache*`, `TestSpoolDirRemovedWhileWriting` |
+| 1 | `TestPeerIHAVE`, `TestStrangerRefused`, `TestDicmdConfig`, `TestGeneralLogNotWritable`, `TestHostCache*`, `TestSpoolDirRemovedWhileWriting`, `TestFeederChildSighupAfterQuit` |
+| 2 | `TestKPDBConcurrentUpdate` |
 | 4 | `TestDnewslinkStreaming`, `TestDnewslinkIHAVEFallback`, `TestDnewslinkPeerHas`, `TestDnewslinkConnlife` (#9) |
 | 5 | `TestDexpire`, `TestDexpireKeepsNewestDir`, `TestAdmHourlyExpire`, `TestAdmBiweeklyAtrim` |
 | 6 | `TestReaderQuitAlone`, `TestReaderQuitWhileConnecting`, `TestReaderBindHostPort` |
