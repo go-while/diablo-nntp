@@ -379,8 +379,7 @@ main(int ac, char **av)
 		SetCommand(stderr, "feederxrefhost", (*ptr) ? ptr : av[++i], NULL);
 		break;
 	    case 'x':
-		ptr = (*ptr) ? ptr : av[++i];
-		SetCommand(stderr, "feederxrefhost", (*ptr) ? ptr : av[++i], NULL);
+		SetCommand(stderr, "feederxrefsync", (*ptr) ? ptr : av[++i], NULL);
 		break;
 	    case 'Z':
 		SetCommand(stderr, "rejectartswithnul", "1", NULL);

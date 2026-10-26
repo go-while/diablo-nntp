@@ -56,6 +56,8 @@ main(int ac, char **av)
 	ptr += 2;
 	switch(ptr[-1]) {
 	case 'C':
+	    if (*ptr == 0)
+		++i;
 	    break;
 	case 'a':
 	    instats = 1;

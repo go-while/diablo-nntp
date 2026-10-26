@@ -44,6 +44,37 @@ sudo dnf install zlib-devel libdb-devel openssl-devel
 
 These supply the zlib, Berkeley DB, and OpenSSL headers and libraries required by the tested Linux configuration. `libdb-devel` is needed when `DB_ENABLED` is enabled in `lib/vendor.h` or `REJECT_DB` is enabled in `lib/vendor.h`. Other Linux distributions may use different package names.
 
+### SmartOS Build Packages
+
+On SmartOS (pkgsrc), install the following before building:
+
+```sh
+pkgin -y install gcc13 gmake db4 openssl libradius
+```
+
+`libradius` provides `radlib.h`, which the default `lib/vendor.h` needs because `RADIUS_ENABLED` is defined there. Without it the build stops with `radlib.h: No such file or directory`; install `libradius` or disable `RADIUS_ENABLED`. `db4` is needed when `DB_ENABLED` or `REJECT_DB` is enabled. Add `git` to clone the repository, and `gnupg` or `gnupg2` for `pgpverify` (see `README.PGP`).
+
+This list was tested on a fresh `base-64-lts` 25.4.0 zone: `gmake -j8` built all 39 programs with no warnings.
+
+After `gmake install`, two SmartOS details:
+
+- **Cron and the news user.** SmartOS creates new accounts locked (`*LK*` in `/etc/shadow`), and cron refuses their jobs (`'news' not allowed to execute cronjobs`), so `dspoolout` and the `adm` scripts never run. Mark the account as having no password instead; it still can't log in:
+
+  ```sh
+  passwd -N news
+  ```
+
+- **Feeder and reader in one zone.** `diablo` and `dreaderd` both listen on port 119 by default. Move the feeder to another port and point the reader's post server at it:
+
+  ```
+  # diablo.config
+  feederbindport  120
+  # dserver.hosts
+  localhost       s1o1p120
+  ```
+
+  and start diablo with `-P 120` (`DIABLO_OPTS` in `diablo-ctl.conf`).
+
 ### Optional Features
 
 Optional functionality is controlled through `lib/vendor.h`.
