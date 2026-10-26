@@ -21,6 +21,7 @@ Prototype void NNAuthDone(Connection *conn);
 Prototype void NNWriteHello(Connection *conn);
 Prototype void NNWaitThread(Connection *conn);
 Prototype void NNTPHelp(Connection *conn, char **pptr);
+Prototype void NNTPCapabilities(Connection *conn, char **pptr);
 Prototype Connection *InitConnection(ForkDesc *desc, DnsRes *dres);
 Prototype void DeleteConnection(Connection *conn);
 Prototype void StatusUpdate(Connection *conn, const char *ctl, ...);
@@ -861,6 +862,13 @@ Command Cmds[] = {
 	DRBC_BODY
     },
     { 
+	"capabilities",
+	0	 |CMDF_SERVER|CMDF_READER,
+	NNTPCapabilities,
+	"",
+	DRBC_NONE
+    },
+    { 
 	"date",		
 	0	 |CMDF_SERVER|CMDF_READER,
 	NNTPDate,
@@ -1371,6 +1379,48 @@ NNTPHelp(Connection *conn, char **pptr)
 	if (ok)
 	    MBPrintf(&conn->co_TMBuf, "  %s %s\r\n", scan->cmd_Name, scan->cmd_Help);
     }
+    MBPrintf(&conn->co_TMBuf, ".\r\n");
+    NNCommand(conn);
+}
+
+/*
+ * NNTPCapabilities() - RFC 3977 section 5.2.  List only what this
+ * connection can use now: the list changes with MODE READER and with
+ * authentication.
+ *
+ * A feed connection starts in transit mode (COF_SERVER): IHAVE, and MODE
+ * STREAM with CHECK and TAKETHIS; MODE READER switches to reader mode
+ * unless the connection is feed-only.  Not listed because they don't
+ * follow RFC 3977: HDR (answers 221 and "n (none)", not 225), LIST
+ * ACTIVE.TIMES (not implemented) and LIST HEADERS (not implemented).
+ * AUTHINFO USER is listed while this connection needs authentication.
+ */
+void
+NNTPCapabilities(Connection *conn, char **pptr)
+{
+    int flags = conn->co_Auth.dr_Flags;
+
+    MBLogPrintf(conn, &conn->co_TMBuf, "101 Capability list:\r\n");
+    MBPrintf(&conn->co_TMBuf, "VERSION 2\r\n");
+    if (conn->co_Flags & COF_SERVER) {
+	MBPrintf(&conn->co_TMBuf, "IHAVE\r\n");
+	MBPrintf(&conn->co_TMBuf, "STREAMING\r\n");
+	if ((flags & DF_FEEDONLY) == 0)
+	    MBPrintf(&conn->co_TMBuf, "MODE-READER\r\n");
+    } else {
+	if (flags & DF_READ) {
+	    MBPrintf(&conn->co_TMBuf, "READER\r\n");
+	    MBPrintf(&conn->co_TMBuf, "OVER\r\n");
+	    MBPrintf(&conn->co_TMBuf, "LIST ACTIVE NEWSGROUPS OVERVIEW.FMT DISTRIB.PATS\r\n");
+	    if (conn->co_Auth.dr_ReaderDef->rd_AllowNewnews)
+		MBPrintf(&conn->co_TMBuf, "NEWNEWS\r\n");
+	}
+	if (flags & DF_POST)
+	    MBPrintf(&conn->co_TMBuf, "POST\r\n");
+    }
+    if (flags & DF_AUTHREQUIRED)
+	MBPrintf(&conn->co_TMBuf, "AUTHINFO USER\r\n");
+    MBPrintf(&conn->co_TMBuf, "IMPLEMENTATION Diablo %s-%s\r\n", VERS, SUBREV);
     MBPrintf(&conn->co_TMBuf, ".\r\n");
     NNCommand(conn);
 }
