@@ -8,7 +8,7 @@
 		psstat.c runprog.c snprintf.c fatal.c log.c logtime.c \
 		iplist.c dgp.c pgp.c hostauth.c strsep.c groupfind.c spool.c \
 		arttype.c stats.c dmd5.c notify.c wildmat.c include.c \
-		hashfeed.c dgzip.c
+		hashfeed.c dgzip.c canlock.c
 
 .set OBJS	$(SRCS:"*.c":"$(BD)obj/lib_*.o")
 

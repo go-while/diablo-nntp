@@ -439,6 +439,22 @@
     maintain the article *range* in your dactive.kp file from remote active 
     files even if the active files are not synchronized with each other.
 
+				    CANCEL-LOCK
+
+    dreaderd executes cancel control messages and supersedes (Supersedes:
+    header) through dcontrol.ctl's 'cancel' rule.  Before withdrawing an
+    article it checks the cancel's Cancel-Key against the article's
+    Cancel-Lock (RFC 8315), as set by the 'readercanlock' option in
+    diablo.config (see samples/diablo.config).  The default, require-auth,
+    is INN's docancels default: only articles that carry a Cancel-Lock can be
+    withdrawn, and only with a matching key.  Set 'readercanlock all' for the
+    old behaviour (every cancel executed).
+
+    The locks and keys are computed the same way as INN's (libcanlock), so
+    articles posted through INN with the same secrets stay cancellable.
+    Checking needs no secret.  dreaderd doesn't add Cancel-Lock to local
+    posts yet.
+
 				    MONITORING
 
     The file /news/log/dreaderd.status holds realtime connection information

@@ -231,6 +231,7 @@ struct DiabloOpts {
     int ReaderCacheMode;
     int ReaderCacheHashSize;
     int ReaderXOverMode;
+    int ReaderCanLock;		/* readercanlock: CANLOCK_* */
     int ReaderAutoAddToActive;
     int ReaderDetailLog;
     int RememberSecs;
@@ -636,6 +637,16 @@ typedef struct OverExpire {
 #define XLOCK_NB	0x10
 
 #define MAXFEEDTABLE	256
+
+/*
+ * readercanlock (diablo.config): which cancels and supersedes dreaderd
+ * executes, checked against Cancel-Lock (RFC 8315); the names are INN's
+ * docancels values.
+ */
+#define	CANLOCK_ALL		0	/* all, even unauthenticated */
+#define	CANLOCK_REQUIRE_AUTH	1	/* only locked articles, valid key */
+#define	CANLOCK_AUTH		2	/* locked: valid key; unlocked: always */
+#define	CANLOCK_NONE		3	/* none */
 
 #define	RTSTATS_NONE	1
 #define	RTSTATS_LABEL	2
