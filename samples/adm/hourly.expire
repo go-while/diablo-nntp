@@ -1,21 +1,29 @@
-#!/bin/csh -f
+#!/bin/sh
 #
-# We normally run expire once every 4 hours.  If we could not
-# for some reason, we retry every hour thereafter until we are
-# able to run it.
+# HOURLY.EXPIRE - expire the article spool (dexpire), as dspool.ctl says
+# (minfree, maxsize, keeptime).  Run from cron as the news user, see
+# crontab.sample.  plock -t skips the run when another expire or history
+# trim holds the lock.
 #
-# If you want to run dexpire once an hour. get rid of the if/endif
-# surrounding the code segment below.
-#
-# The -s option is only really necessary if you are running 
-# on a softupdates-enabled partition, but it doesn't hurt if not
-# so...
+# The -s option syncs before the disk free space checks; only really needed
+# on softupdates file systems, harmless elsewhere.
 
-cd ~
+# The directory with dpath, dexpire, ...: DIABLO_BIN, else dbin next to this
+# script's directory (<path_home>/adm -> <path_home>/dbin; samples/adm in a source
+# tree -> its dbin), else /news/dbin.  Every other path comes from diablo.config
+# through dpath, so the news user's home directory doesn't matter.
+set -u
+here=$(cd "$(dirname "$0")" && pwd)
+dbin=${DIABLO_BIN:-}
+if [ -z "$dbin" ]; then
+    for d in "$here/../dbin" "$here/../../dbin" /news/dbin; do
+	[ -x "$d/dpath" ] && { dbin=$(cd "$d" && pwd); break; }
+    done
+fi
+[ -n "$dbin" ] && [ -x "$dbin/dpath" ] || { echo "$0: no dpath found; set DIABLO_BIN" >&2; exit 1; }
+home=$("$dbin/dpath" home) || exit 1
+cd "$home" || exit 1
 
-echo "`date` $0 BEGIN"
-
-dbin/plock -t ~/.lock ~/dbin/dexpire -a -s4
-
-echo "`date` $0 END"
-
+echo "$(date) $0 BEGIN"
+"$dbin/plock" -t "$home/.lock" "$dbin/dexpire" -a -s4
+echo "$(date) $0 END"

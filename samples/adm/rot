@@ -1,29 +1,23 @@
-#!/bin/csh -f
+#!/bin/sh
 #
-# used by other scripts to rotate
-# log file(s).
-#
-# ./rot number-of-days log-files
+# ROT <n> <file>... - rotate each file: file.<n-1> -> file.<n>, ...,
+# file.0 -> file.1, file -> file.0.  Files that don't exist are skipped.
 
-set num  = $argv[1]
-set files = "$argv[2-]"
-
-foreach i ( $files )
-    set j = $num
-
-    while ( $j > 0 )
-        @ prev = $j - 1
-        if ( -f $i.$prev ) then
-            mv -f $i.$prev $i.$j
-        else
-            rm -f $i.$j
-        endif
-        set j = $prev
-    end
-
-    if ( -f $i ) then
-	mv -f $i $i.0
-    endif
-end
-
-
+[ $# -ge 2 ] || { echo "usage: rot <n> <file>..." >&2; exit 2; }
+n=$1
+shift
+for f in "$@"; do
+    j=$n
+    while [ "$j" -gt 0 ]; do
+	p=$((j - 1))
+	if [ -f "$f.$p" ]; then
+	    mv -f "$f.$p" "$f.$j"
+	else
+	    rm -f "$f.$j"
+	fi
+	j=$p
+    done
+    if [ -f "$f" ]; then
+	mv -f "$f" "$f.0"
+    fi
+done

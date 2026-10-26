@@ -1,53 +1,47 @@
-#!/bin/csh -f
+#!/bin/sh
 #
-# BIWEEKLY.ATRIM
-#
-#	This script trims the dhistory file.
+# BIWEEKLY.ATRIM - trim the history file (dhisexpire) and the server's active
+# file (dkp -t).  Holds the same lock as hourly.expire, waiting for it, so
+# the two never run at once.
 #
 #	ALWAYS RUN MANUALLY ONCE AFTER MAKING ANY CHANGE, TO BE SURE
 #	THE SCRIPT STILL WORKS!
 
-cd ~
+# The directory with dpath, dexpire, ...: DIABLO_BIN, else dbin next to this
+# script's directory (<path_home>/adm -> <path_home>/dbin; samples/adm in a source
+# tree -> its dbin), else /news/dbin.  Every other path comes from diablo.config
+# through dpath, so the news user's home directory doesn't matter.
+set -u
+here=$(cd "$(dirname "$0")" && pwd)
+dbin=${DIABLO_BIN:-}
+if [ -z "$dbin" ]; then
+    for d in "$here/../dbin" "$here/../../dbin" /news/dbin; do
+	[ -x "$d/dpath" ] && { dbin=$(cd "$d" && pwd); break; }
+    done
+fi
+[ -n "$dbin" ] && [ -x "$dbin/dpath" ] || { echo "$0: no dpath found; set DIABLO_BIN" >&2; exit 1; }
+home=$("$dbin/dpath" home) || exit 1
+cd "$home" || exit 1
 
-if ( "$argv" != "locked" ) then
-    dbin/plock ~/.lock adm/$0 locked
-    exit 0
-endif
+if [ "${1:-}" != locked ]; then
+    exec "$dbin/plock" "$home/.lock" "$here/$(basename "$0")" locked
+fi
 
-echo "`date` - $0 BEGIN"
+echo "$(date) - $0 BEGIN"
 
-set dhistory = `dbin/dpath dhistory`
-set dactive = `dbin/dpath server_dactive`
+dhistory=$("$dbin/dpath" dhistory)
+dactive=$("$dbin/dpath" server_dactive)
 
-# pause diablo
-#
-# rebuild the history file, removing
-# any expired entries over 16 days old.
-#
-# remove the old backup to give us more
-# disk space to play with.
+# Rebuild the history file without the entries expired more than
+# 'remember' days ago (diablo.config); remove the old backup first to have
+# more disk space to work with.  To change the hash table size, see hsize in
+# diablo.config.
+rm -f "$dhistory.new" "$dhistory.bak"
+"$dbin/dhisexpire" -a "$dhistory"
+status=$?
 
-rm -f ${dhistory}.new
-rm -f ${dhistory}.bak
+# Trim the server's active file.
+[ -f "$dactive" ] && "$dbin/dkp" -t "$dactive"
 
-# To increase the hash table size, change the hsize parameter
-# in diablo.config.
-# see diablo.config for more information.
-
-dbin/dhisexpire -a ${dhistory}
-
-set savestatus = $status
-
-#
-# always ensure that *some* dhistory file
-# exists no matter what the failure condition
-#
-
-# This is safer, it will generate an error if it cannot
-# trim the dactive.kp file (which is basically: never while
-# dreaderd is running, but at least this won't blow things up)
-#
-dbin/dkp -t ${dactive}
-
-echo "`date` - $0 END"
-
+echo "$(date) - $0 END (dhisexpire exit status $status)"
+exit $status

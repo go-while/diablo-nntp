@@ -2,6 +2,10 @@
 #
 # RC.NEWS, must be run as root
 #
+# NOTE: samples/adm/diablo-ctl (POSIX sh, start/stop/restart/status) does the
+# same without csh and without editing this file; this one is kept as a
+# reference for its comments on options and limits.
+#
 # THIS FILE MUST BE EDITED APPROPRIATELY OR IT WILL NOT DO ANYTHING.
 # Please read the comments.  There is a section that is appropriate
 # to a feeder-only installation, a section that is appropriate to a 
