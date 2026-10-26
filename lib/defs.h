@@ -462,6 +462,7 @@ typedef struct NewslinkInfo {
     int			li_DelayFeed;
     int			li_DelayInFeed;
     int			li_RealTime;
+    int			li_ConnLife;	/* persistent realtime session lifetime (seconds) */
     int			li_Notify;
     int			li_MaxQueueFile;
     int			li_HeadFeed;
