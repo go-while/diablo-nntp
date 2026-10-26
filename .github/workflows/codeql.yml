@@ -1,0 +1,69 @@
+name: CodeQL Advanced
+
+# Static analysis with GitHub CodeQL ("advanced setup"): the C code of diablo, dreaderd
+# and the utilities, and the workflow files themselves. Results appear under the
+# repository's Security tab (Code scanning) and as annotations on pull requests.
+#
+# Default setup must stay off for this repository: GitHub runs either default setup or
+# an advanced workflow, not both.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '23 4 * * 1'   # weekly, Monday 04:23 UTC: new queries find old code
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      security-events: write   # upload the results
+      packages: read
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # C: CodeQL watches the compiler, so the build runs between init and analyze.
+          - language: c-cpp
+            build-mode: manual
+          # GitHub Actions workflows (injection, permissions, untrusted checkouts).
+          - language: actions
+            build-mode: none
+    steps:
+      - uses: actions/checkout@v4
+
+      # Packages, the news user, and RADIUS off in lib/vendor.h, as for the e2e tests.
+      # This first build runs as root through sudo, which the CodeQL tracer can't follow,
+      # so it only prepares the tree; the traced build below starts clean.
+      - name: Prepare build
+        if: matrix.language == 'c-cpp'
+        run: |
+          sudo tests/e2e/ci/build-on-host
+          sudo chown -R "$(id -u):$(id -g)" .
+          make clean
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          queries: security-extended
+
+      - name: Build (traced)
+        if: matrix.build-mode == 'manual'
+        run: make -k -j"$(nproc)"
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
