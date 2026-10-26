@@ -89,6 +89,8 @@ int DFd = -1;
 MemPool	*DnsMemPool;
 
 time_t Access_LastUpdate = 0;
+static off_t Access_LastSize = -1;	/* with the mtime: which dreader.access */
+static ino_t Access_LastIno = 0;	/* the cache was built from */
 time_t Cache_LastUpdate = 0;
 
 AccessMap accessmap;
@@ -2529,8 +2531,15 @@ InstallAccessCache(void) {
     char rdnewbuf[PATH_MAX];
     char ranewbuf[PATH_MAX];
 
+    /*
+     * Rebuild when dreader.access changed in any way, not only when it got
+     * newer: restoring an older copy (cp -p, a backup) must take effect.
+     */
     if ((stat(PatLibExpand(DReaderAccessPat), &st) == 0) &&
-		(st.st_mtime <= Access_LastUpdate))
+		Access_LastUpdate != 0 &&
+		st.st_mtime == Access_LastUpdate &&
+		st.st_size == Access_LastSize &&
+		st.st_ino == Access_LastIno)
 	return;
 
     logit(LOG_INFO, "Installing access cache");
@@ -2545,6 +2554,8 @@ InstallAccessCache(void) {
 	return;
     }
     Access_LastUpdate = st.st_mtime;
+    Access_LastSize = st.st_size;
+    Access_LastIno = st.st_ino;
 
     snprintf(vsnewbuf, sizeof(vsnewbuf), "%s.new",
 				PatDbExpand(DRVserverCachePat));
