@@ -693,6 +693,28 @@ cleanupDirectories(void)
 	    printPartition(part);
 
 	/*
+	 * Never remove a spool object's newest directory: diablo is (or
+	 * may soon be) writing into it, and removing it under a running
+	 * diablo loses articles.  With a large minfree, and file systems
+	 * that report freed space late (ZFS), expiring could otherwise go
+	 * down to the newest directory.
+	 */
+	{
+	    int j;
+
+	    for (j = i + 1; j < entryIdx; ++j) {
+		if (SpoolEntries[j]->partn == part)
+		    break;
+	    }
+	    if (j == entryIdx) {
+		printf("Keeping %s%s: the newest directory of this spool, still in use (the limits above can't be met by expiring)\n",
+		    part->partname, SpoolEntries[i]->dirname);
+		part->spaceok = 1;	/* nothing more to remove here */
+		continue;
+	    }
+	}
+
+	/*
 	 * XXX We should probably include the size of the dir in remsize
 	 */
 	c = removeDirectory(part->partname, SpoolEntries[i]->dirname,

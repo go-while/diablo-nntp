@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,6 +36,7 @@ expire * trad
 		t.Fatalf("no spool directory after storing %s", id)
 	}
 	time.Sleep(2 * time.Second) // past keeptime 1 (seconds)
+	newerSpoolDir(t, s)         // dexpire keeps a spool's newest directory
 	out := s.Run(t, "dexpire", "-a", "-v")
 
 	for _, d := range dirs {
@@ -55,4 +57,42 @@ expire * trad
 	if strings.Contains(out, "error") {
 		t.Logf("dexpire output mentions an error:\n%s", out)
 	}
+}
+
+// newerSpoolDir creates an empty spool directory for the next minute, as the next time slot
+// gives a real site: dexpire never removes a spool's newest directory.
+func newerSpoolDir(tb testing.TB, s *Site) {
+	tb.Helper()
+	d := filepath.Join(s.Dir, "spool", "news", fmt.Sprintf("D.%08x", time.Now().Unix()/60+1))
+	if err := os.Mkdir(d, 0o755); err != nil {
+		tb.Fatal(err)
+	}
+}
+
+// TestDexpireKeepsNewestDir: dexpire -a doesn't remove a spool's newest directory, even when
+// it is older than keeptime: diablo may be writing into it. The article in it stays
+// readable, and the next article is stored.
+func TestDexpireKeepsNewestDir(t *testing.T) {
+	s := NewSite(t, SiteOptions{SpoolCtl: "spool 00\n    minfree 1m\n    keeptime 1\nend\nmetaspool trad\n    spool 00\nend\nexpire * trad\n"})
+	id := s.Inject(t, "e2e.test", 1)[0]
+	dirs, _ := filepath.Glob(filepath.Join(s.Dir, "spool", "news", "D.*"))
+	if len(dirs) != 1 {
+		t.Fatalf("spool directories: %q, want one", dirs)
+	}
+	time.Sleep(2 * time.Second)
+	out := s.Run(t, "dexpire", "-a", "-v")
+	if _, err := os.Stat(dirs[0]); err != nil {
+		t.Fatalf("newest spool directory removed by dexpire -a: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "Keeping") {
+		t.Errorf("dexpire didn't say it kept the newest directory:\n%s", out)
+	}
+	p := s.Peer(t)
+	expect(t, p, 223, "STAT %s", id)
+	next := msgID(t)
+	expect(t, p, 335, "IHAVE %s", next)
+	send(t, p, wire(newArticle(next, "e2e.test", "after dexpire", "body")))
+	status(t, p, 235, "IHAVE after dexpire")
+	expect(t, p, 223, "STAT %s", next)
+	expect(t, p, 205, "QUIT")
 }
