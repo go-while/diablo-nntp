@@ -547,6 +547,8 @@ sigAlrm(int sigNo)
  *		    and forks off children.
  */
 
+static char PidFile[1024];
+
 void
 DiabloServer(int lfd)
 {
@@ -828,6 +830,27 @@ DiabloServer(int lfd)
     }
 
     /*
+     * Pid file <path_log>/diablo.pid, next to dreaderd.pid, so that tools
+     * like diablo-ctl find this site's master even when other sites run as
+     * the same user.  Removed again on a clean exit.
+     */
+
+    {
+	FILE *pf;
+
+	snprintf(PidFile, sizeof(PidFile), "%s/diablo.pid", PatExpand(LogHomePat));
+	remove(PidFile);
+	if ((pf = fopen(PidFile, "w")) != NULL) {
+	    fprintf(pf, "%d\n", (int)getpid());
+	    if (fclose(pf) != 0)
+		logit(LOG_ERR, "unable to write %s: %s", PidFile, strerror(errno));
+	} else {
+	    logit(LOG_ERR, "unable to create %s: %s", PidFile, strerror(errno));
+	    PidFile[0] = 0;
+	}
+    }
+
+    /*
      * UNIX domain socket
      */
 
@@ -1003,6 +1026,8 @@ DiabloServer(int lfd)
     }
     FinishRetain(RET_PAUSE);
     FinishRetain(RET_CLOSE);
+    if (PidFile[0])
+	remove(PidFile);	/* last: diablo-ctl waits for this pid */
 }
 
 /*
