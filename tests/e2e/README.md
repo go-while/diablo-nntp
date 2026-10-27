@@ -49,6 +49,7 @@ test fails.
 | `TestDnewslinkRefileKeepsFlags` | dnewslink | entries pending in a stream when the peer goes away come back to the queue file once each, with their `H` and `C<size>` flags (D-63). **Fails** on main: flags lost, one entry written twice |
 | `TestFeederMaxHeaderSize` | diablo | an article with 130 KB of headers is refused under `feedermaxheadersize 2k`, and a normal article after it is accepted (D-56). **Fails** on main: the limit was never applied |
 | `TestWeightedAllocationWithZeroWeights` | diablo | `allocstrat weighted` with every spool at `weight 0` starts and stores articles (D-64). **Fails** on main: SIGFPE at start |
+| `TestReaderListActiveAfterRecordRewrite` | dreaderd | a reader that listed the groups before a control message rewrote a group record lists every group in its next LIST ACTIVE (D-54). **Fails** on main: the appended record was skipped once |
 | `TestDnewslinkTermStalledPeer` | diablo, dnewslink | SIGTERM while dnewslink waits for a stalled peer (at the greeting, and on an unanswered CHECK/TAKETHIS): it exits within 5 s and both articles stay queued. **Fails** on main before this fix: dnewslink polled again for the full `-T` timeout (600 s) after the signal |
 | `TestReaderFeedAndRead` | dreaderd, dgrpctl | an article fed to the reader by IHAVE shows in GROUP and OVER; BODY and ARTICLE fetch it from the spool server (fake) |
 | `TestReaderQuitAlone` | dreaderd | QUIT gets 205 and nothing follows it |
