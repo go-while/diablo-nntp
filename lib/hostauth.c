@@ -235,9 +235,16 @@ convHost(char *host, HostAccess *HA, FILE *fo)
 
 #ifdef INET6
     {
-	struct addrinfo *ai0;
+	struct addrinfo hints, *ai0;
 
-	if (getaddrinfo(host, NULL, NULL, &ai0) == 0) {
+	/*
+	 * Explicit hints: with NULL hints glibc adds AI_ADDRCONFIG, and
+	 * glibc 2.39 (EL10) then drops even a numeric IPv6 address on a
+	 * host without a global IPv6 address, so the entry was lost.
+	 */
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_UNSPEC;
+	if (getaddrinfo(host, NULL, &hints, &ai0) == 0) {
 	    struct addrinfo *ai;
 
 	    for (ai = ai0; ai; ai = ai->ai_next) {
