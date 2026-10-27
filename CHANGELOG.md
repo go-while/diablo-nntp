@@ -51,6 +51,8 @@ For installation instructions, see [`INSTALL`](INSTALL) and [`README.md`](README
   difference is that the average pending count of a queue is no longer counted twice for a label
   that equals its host name. The environment variable `FEEDER_STATS_QUEUECMD` replaces the path of
   `doutq` (used by the test).
+- Fixed `STAT` answering `430 Article expired` for an article that exists when the spool path plus the
+  article file name is longer than 127 characters.
 - Fixed the per-label `maxconnect N` of dnewsfeeds letting N+1 connections in; it is now N, like the
   global `maxconnect`.
 - Fixed the host cache: an `inhost` line after the `end` of a label was authorised under that label (and
