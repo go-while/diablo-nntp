@@ -611,7 +611,7 @@ loadSpoolCtl(FILE *fi)
 	line++;
 	while (isspace((int)*cmd))
 	    cmd++;
-	if (!*cmd || *cmd == '/' || *cmd == '#')
+	if (*cmd == '/' || *cmd == '#')
 	    continue;
 	/* too long is fine if the part that did not fit is a comment */
 	if (tooLong && strchr(cmd, '#') == NULL) {
@@ -619,6 +619,8 @@ loadSpoolCtl(FILE *fi)
 			PatLibExpand(DSpoolCtlPat), line, (int)sizeof(buf) - 1);
 	    exit(1);
 	}
+	if (!*cmd)
+	    continue;
 
 	cmd = strtok(cmd, " \t\n\r");
 	arg = strtok(NULL, " \t\n\r");

@@ -86,7 +86,7 @@ loadExpireCtl(FILE *fi)
 	line++;
 	while (isspace((int)*p))
 	    p++;
-	if (!*p || *p == '/' || *p == '#')
+	if (*p == '/' || *p == '#')
 	    continue;
 	/* too long is fine if the part that did not fit is a comment */
 	if (tooLong && strchr(p, '#') == NULL) {
@@ -94,6 +94,8 @@ loadExpireCtl(FILE *fi)
 					line, (int)sizeof(buf) - 1);
 	    continue;
 	}
+	if (!*p)
+	    continue;
 
 	if ((q = strchr(p, ':')) != NULL) {
 	    int n;

@@ -985,7 +985,8 @@ NiceBestEffort(int inc)
  * buffer is not split into two lines: the rest of it is read and dropped
  * and *tooLong is set, so the caller can skip a long comment or report the
  * line instead of parsing its tail as a line of its own.  A line that just
- * fits (its newline is the next character) is not too long.
+ * fits (its newline is the next character), or whose dropped rest is only
+ * white space, is not too long.
  */
 char *
 ConfigGets(char *buf, int size, FILE *fi, int *tooLong)
@@ -996,10 +997,9 @@ ConfigGets(char *buf, int size, FILE *fi, int *tooLong)
     if (strchr(buf, '\n') == NULL) {
 	int c = getc(fi);
 
-	if (c != EOF && c != '\n') {
-	    *tooLong = 1;
-	    while ((c = getc(fi)) != EOF && c != '\n')
-		;
+	for (; c != EOF && c != '\n'; c = getc(fi)) {
+	    if (!isspace(c))
+		*tooLong = 1;
 	}
     }
     return(buf);
