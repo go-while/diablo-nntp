@@ -1282,6 +1282,18 @@ main(int ac, char **av)
 		}
 
 		/*
+		 * Entries the peer deferred (431) and that were not retried
+		 * yet go back into the queue with the unsent ones.
+		 */
+		if (deferbegin < deferend && fo == NULL)
+		    fo = fopen(path, "w");
+		while (deferbegin < deferend) {
+		    if (fo != NULL)
+			fputs(deferbuf[deferbegin], fo);
+		    zfreeStr(&SysMemPool, &deferbuf[deferbegin++]);
+		}
+
+		/*
 		 * At the end of the file buf still holds the last line that
 		 * was handled (and written above), so only copy lines that
 		 * were read.
@@ -1326,6 +1338,10 @@ main(int ac, char **av)
 		 */
 		if (StreamPend)
 		    WouldHaveRefiled += RefilePendingStreams(NULL);
+		while (deferbegin < deferend) {
+		    ++WouldHaveRefiled;
+		    zfreeStr(&SysMemPool, &deferbuf[deferbegin++]);
+		}
 		if (readline(fd, buf, sizeof(buf), TimeNow) == 0)
 		    WouldHaveRefiled = 1;
 	    }
