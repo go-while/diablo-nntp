@@ -37,6 +37,7 @@ test fails.
 | `TestDnewsfeedsLimitsDfeedtest` | dfeedtest | dnewsfeeds `maxsize`, `minsize` (with `k`), `maxcross`, `mincross`, `maxpath` and `minpath`: dfeedtest feeds an article only inside each range, with the edge values on both sides. `minsize` is exclusive and `maxsize` inclusive, and both are pinned |
 | `TestDnewsfeedsLimitsLive` | diablo | the same six limits on a running diablo: an article outside the range does not reach the label's queue, one inside does |
 | `TestStatWithLongSpoolPath` | diablo | STAT of a stored article answers 223 with a spool path of about 125 characters (D-62). **Fails** on main: 430 Article expired |
+| `TestDnewsfeedsMaxconnect` | diablo | `maxconnect 2` in a dnewsfeeds label lets two parallel connections in and refuses the third with 502 (D-59). **Fails** on main: the third was accepted |
 | `TestDhisexpireFailureKeepsHistoryAlive` | diablo, dhisexpire | a dhisexpire that fails after marking the history dead (backup directory missing) marks it alive again: dhistory is not dead and diablo still greets new connections (D-57). **Fails** on main |
 | `TestDhisexpireKeepsBackup` | diablo, dhisexpire | a normal `dhisexpire -a -o file` installs the new history, replaces an earlier backup with the old file, leaves no temporary name, and diablo still knows the article |
 | `TestDnewsfeedsDirectiveWithoutArgument` | dfeedtest | each numeric dnewsfeeds option (`maxparallel`, `port`, `priority`, `feedertxbuf`, ...) written without its value is a configuration error, not a crash (D-58). **Fails** on main: SIGSEGV |

@@ -53,6 +53,8 @@ For installation instructions, see [`INSTALL`](INSTALL) and [`README.md`](README
   `doutq` (used by the test).
 - Fixed `STAT` answering `430 Article expired` for an article that exists when the spool path plus the
   article file name is longer than 127 characters.
+- Fixed the per-label `maxconnect N` of dnewsfeeds letting N+1 connections in; it is now N, like the
+  global `maxconnect`.
 - Fixed the host cache: an `inhost` line after the `end` of a label was authorised under that label (and
   `label` was not initialised), and `diablo.hosts` could not hold an IPv6 address because its fields were
   split at every colon; the older `host: label` and `host:label` forms still work.
