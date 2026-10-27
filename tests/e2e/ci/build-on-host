@@ -32,7 +32,7 @@ wantdb() {
         return 1
     fi
 }
-enddb() { [ -e /usr/include/db_185.h ] || : > "$nodbmark"; }
+enddb() { [ -e /usr/include/db_185.h ] || { true > "$nodbmark"; } 2>/dev/null || true; }
 missing() {
     for p; do have "$p" >/dev/null 2>&1 || printf '%s ' "$p"; done
 }
