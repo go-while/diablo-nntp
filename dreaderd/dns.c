@@ -758,16 +758,24 @@ dbAuthenticate(char *user, char *pass, char *conf)
 	char *p = data.data;
 	int i = 0;
 
-	if (negate)
+	if (negate) {
+	    db->close(db);
 	    return(NULL);
+	}
 	if (*pass) {
-	    if (strcmp(pass, p) != 0)
+	    size_t pl = strlen(pass);
+
+	    /* the value is not necessarily NUL-terminated: stay inside data.size */
+	    if (pl > data.size || memcmp(pass, p, pl) != 0 ||
+		(pl < data.size && p[pl] != 0)) {
+		db->close(db);
 		return(NULL);
+	    }
 	    while (i < data.size && *p) {
 		p++;
 		i++;
 	    }
-	    if (!*p && i < data.size)
+	    if (i < data.size && !*p)
 		p++;
 	    i++;
 	    i = data.size - i;
@@ -777,7 +785,8 @@ dbAuthenticate(char *user, char *pass, char *conf)
 	if (i > 0 && *p) {
 	    if (i > sizeof(result) - 5)
 		i = sizeof(result) - 5;
-	    snprintf(result, i + 5, "110 %s", p);
+	    /* the text may not end in a NUL either: at most the i bytes that are left */
+	    snprintf(result, i + 5, "110 %.*s", i, p);
 	} else {
 	    strcpy(result, "100 Success");
 	}
