@@ -3697,7 +3697,8 @@ ValidMsgId(char *msgid)
 	return(0);
     if (msgid[0] == '<') {
 	for (i = 1; i < l; ++i) {
-	    if (msgid[i] == ' ' || msgid[i] == '\t')
+	    if (msgid[i] == ' ' || msgid[i] == '\t' ||
+		msgid[i] == '\r' || msgid[i] == '\n')
 		break;
 	    if (msgid[i] == '>') {
 		if (msgid[i+1] == 0)
