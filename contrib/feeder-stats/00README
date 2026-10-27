@@ -24,6 +24,21 @@ To use:
 7. install a crontab job to run diablo-stats.sh (or cyclone-stats.sh):
    ie.  59 * * * * /usr/local/bin/diablo-stats.sh > /dev/null 2>&1
 
+Grouping by label (Diablo log files only):
+
+   Add -L to the feeder-stats.pl command line in diablo-stats.sh to report
+   incoming and outgoing feeds per dnewsfeeds label instead of per host
+   name.  This helps when peers have no PTR record (the tables then show
+   bare IP addresses) or feed from several addresses.  The label of an
+   incoming host is taken from the inhost, host and hostname lines of
+   dnewsfeeds and from diablo.hosts, including wildcards and CIDR ranges
+   (read from the directory given with -C).  A host that matches no label
+   is reported under its own name, as before; alias: lines in
+   feeder-stats.conf still apply to such hosts.  Where ranges overlap, the first
+   matching line wins, not the longest prefix.  Outgoing feeds use the
+   label in the name of the queue file.  Run 'sh test-label.sh' in this
+   directory to check the option on made-up log lines.
+
 Original additional notes from Iain kept for historical sake ;-)
 -----------------------------------------------------------
 8. send me money/pizza/your wife or anything you have handy
