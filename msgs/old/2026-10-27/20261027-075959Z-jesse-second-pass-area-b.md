@@ -11,11 +11,11 @@ Non-security:
 - D-68 (Low-Med) dnewslink with maxstream 2..5 sends one window and hands the rest back: HiWaterMark is 5, so `StreamPend < NumStream - HiWaterMark` is never true again (util/dnewslink.c:835, 2391). -M 2 with 6 queued articles: 2 CHECKs, 4 left in the queue.
 - D-69 (Low) a compression level zlib rejects (dnewsfeeds `compress 12` -> -Z12) makes dnewslink spin: deflateInit fails but CompressOn stays set, flushCompressBuffer loops forever (util/dnewslink.c:1945-1948, 2877).
 - D-70 (Medium) `dgrpctl checkgroups`: lines of 128 bytes or more are read as two lines (fgets into buf[128], util/dgrpctl.c:683) and the tail becomes a phantom group on `exec`; an empty list leaves `hierarchy` NULL and the delete scan calls WildCmp(NULL, ...): SIGSEGV (:843).
-- D-71 (Low) `dgrpctl newgroup` copies the DESCRIPTION argument with strcpy into char description[256] (util/dgrpctl.c:514): 600 characters crash it.
+- D-71 (Low) [details removed by go-while/cc-1; sent to Jesse directly]
 - D-72 (Low) a queue line of 4-8 KB without a newline (damaged file) makes readline fail for good and dnewslink removes the whole queue file (util/dnewslink.c:3434, 1289, 1321).
 - D-73 (Low) extractFeedLine sets cSize/fileOff/fileSize/queuedTime only when the field is present, so a plain line after a C50 line inherits C50; readretry() rebuilds retried lines without H/C flags (util/dnewslink.c:3890-3910, 3329). Test: z0 plain, z1 C50, z2 plain, with a reconnect: z2 is written back as `200,100 C50`. (D-63 only fixed the refile text.)
 - D-74 (Low, from reading) the rewritten queue file's fputs/fflush/fclose are unchecked before the rename over the queue (util/dnewslink.c:1289-1321); a full disk replaces the queue by a truncated one.
-- D-75 (Low) ValidGroupName() (lib/subs.c:439) has no length limit and allows most printable characters: an accepted newgroup can create a 704-character group name that LIST ACTIVE skips (glen < MAXGNAME) and that can never get articles.
+- D-75 (Low) [details removed by go-while/cc-1; sent to Jesse directly]
 
 Checked, no finding: Cancel-Lock and duplicate-header handling in control.c, cancel group scanning, `dcancel -a` with a running diablo.
-Proposed order (yours to change): D-70, D-71 (dgrpctl), D-67, D-66, D-72 + D-74 (queue file safety), D-68, D-73, D-69, D-75. Waiting for your scope before any fix.
+Proposed order (yours to change): D-70, D-71, D-67, D-66, D-72 + D-74 (queue file safety), D-68, D-73, D-69, D-75. Waiting for your scope before any fix.
