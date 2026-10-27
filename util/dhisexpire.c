@@ -328,7 +328,20 @@ DoExpire(int fd, int hsize, int rsize)
     while (!finished || MustExit) {
 	int i;
 
-	n = read(fd, hbuf, hlen) / rsize;
+	{
+	    ssize_t r;
+
+	    /*
+	     * A read error is not the end of the file: stop here and keep
+	     * the old history rather than install a truncated copy.
+	     */
+	    do {
+		r = read(fd, hbuf, hlen);
+	    } while (r < 0 && errno == EINTR);
+	    if (r < 0)
+		Fail(NewFileName, "Error reading the history file");
+	    n = r / rsize;
+	}
 
 	if (n == 0) {
 #ifdef USE_DEADMAGIC
