@@ -88,9 +88,10 @@ loadExpireCtl(FILE *fi)
 	    p++;
 	if (!*p || *p == '/' || *p == '#')
 	    continue;
-	if (tooLong) {
+	/* too long is fine if the part that did not fit is a comment */
+	if (tooLong && strchr(p, '#') == NULL) {
 	    logit(LOG_ERR, "dexpire.ctl line %d too long (at most %d characters) - ignoring",
-					line, (int)sizeof(buf) - 2);
+					line, (int)sizeof(buf) - 1);
 	    continue;
 	}
 

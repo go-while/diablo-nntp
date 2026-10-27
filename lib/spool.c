@@ -613,9 +613,10 @@ loadSpoolCtl(FILE *fi)
 	    cmd++;
 	if (!*cmd || *cmd == '/' || *cmd == '#')
 	    continue;
-	if (tooLong) {
+	/* too long is fine if the part that did not fit is a comment */
+	if (tooLong && strchr(cmd, '#') == NULL) {
 	    logit(LOG_ERR, "%s: line %d too long (at most %d characters)",
-			PatLibExpand(DSpoolCtlPat), line, (int)sizeof(buf) - 2);
+			PatLibExpand(DSpoolCtlPat), line, (int)sizeof(buf) - 1);
 	    exit(1);
 	}
 

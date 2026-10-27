@@ -205,9 +205,9 @@ LoadDiabloConfig(int ac, char **av)
 	    if (tooLong && strchr(buf, '#') == NULL) {
 		exitMe = 1;
 		fprintf(stderr, "diablo.config line too long (at most %d characters): %.60s...\n",
-						(int)sizeof(buf) - 2, buf);
+						(int)sizeof(buf) - 1, buf);
 		logit(LOG_CRIT, "diablo.config line too long (at most %d characters): %.60s...",
-						(int)sizeof(buf) - 2, buf);
+						(int)sizeof(buf) - 1, buf);
 		continue;
 	    }
 	    if ((cmd = strchr(buf, '#')) != NULL)
