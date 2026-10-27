@@ -36,6 +36,7 @@ test fails.
 | `TestArticleTypesRoutedByArttypes` | diablo | an `arttypes binary` label gets a yEnc article and an `arttypes !binary` label a text one; a long PGP signature goes to the binary label today (pinned misdetection) |
 | `TestDnewsfeedsLimitsDfeedtest` | dfeedtest | dnewsfeeds `maxsize`, `minsize` (with `k`), `maxcross`, `mincross`, `maxpath` and `minpath`: dfeedtest feeds an article only inside each range, with the edge values on both sides. `minsize` is exclusive and `maxsize` inclusive, and both are pinned |
 | `TestDnewsfeedsLimitsLive` | diablo | the same six limits on a running diablo: an article outside the range does not reach the label's queue, one inside does |
+| `TestDnewsfeedsMaxconnect` | diablo | `maxconnect 2` in a dnewsfeeds label lets two parallel connections in and refuses the third with 502 (D-59). **Fails** on main: the third was accepted |
 | `TestDnewslinkTermStalledPeer` | diablo, dnewslink | SIGTERM while dnewslink waits for a stalled peer (at the greeting, and on an unanswered CHECK/TAKETHIS): it exits within 5 s and both articles stay queued. **Fails** on main before this fix: dnewslink polled again for the full `-T` timeout (600 s) after the signal |
 | `TestReaderFeedAndRead` | dreaderd, dgrpctl | an article fed to the reader by IHAVE shows in GROUP and OVER; BODY and ARTICLE fetch it from the spool server (fake) |
 | `TestReaderQuitAlone` | dreaderd | QUIT gets 205 and nothing follows it |

@@ -36,6 +36,8 @@ For installation instructions, see [`INSTALL`](INSTALL) and [`README.md`](README
   difference is that the average pending count of a queue is no longer counted twice for a label
   that equals its host name. The environment variable `FEEDER_STATS_QUEUECMD` replaces the path of
   `doutq` (used by the test).
+- Fixed the per-label `maxconnect N` of dnewsfeeds letting N+1 connections in; it is now N, like the
+  global `maxconnect`.
 - Modernized legacy C declarations, prototypes, pointer and integer types, socket argument types, header ordering, and obsolete compiler-specific constructs to build cleanly with modern GCC and Clang.
 - Replaced legacy OpenSSL SHA-256 context usage with the EVP digest API and corrected MD5-context clearing.
 - Updated illumos platform detection to recognize `__sun` and `sun`, use the system's `strsep()`, and discard obsolete Solaris file-descriptor-passing selectors. Existing `/dev/zero` mapping and other established Solaris runtime options remain unchanged.

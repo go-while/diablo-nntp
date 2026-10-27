@@ -303,7 +303,8 @@ FeedValid(const char *hlabel, int *pcount)
     }
     if (nf == NULL)
 	return(FEED_MISSINGLABEL);
-    if (nf->nf_MaxConnect && *pcount > nf->nf_MaxConnect) {
+    /* *pcount is the number of connections already open, not counting this one */
+    if (nf->nf_MaxConnect && *pcount >= nf->nf_MaxConnect) {
 	*pcount = nf->nf_MaxConnect;
 	return(FEED_MAXCONNECT);
     }
