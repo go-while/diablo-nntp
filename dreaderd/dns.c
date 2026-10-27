@@ -1470,8 +1470,12 @@ LDAPAuthenticate(char *user, char *pass, char *conf)
 	/* Error - fail auth attempt */
 	logit(LOG_INFO, "LDAP auth failed: %s\n", user);
 	free(filter);
+	ldap_msgfree(res);
 	ldap_unbind_s(ld);
 	ldap_free_urldesc(ludp);
+	/* the statics must not keep the freed handle and URL: the next login would use them */
+	ld = NULL;
+	ludp = NULL;
 	return(NULL);
     }
 
