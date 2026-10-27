@@ -3,6 +3,7 @@
 # keeps the list, -T points the script at it, the rank shows in the HTML for a
 # feed whose dnewsfeeds alias is in the list, and unlisted hosts are silent.
 # Usage: sh test-top1000.sh [path/to/feeder-stats.pl]
+LC_ALL=C; export LC_ALL	# the fixtures use English month names, as syslog does
 HERE=$(cd "$(dirname "$0")" && pwd)
 PL=${1:-$HERE/feeder-stats.pl}
 T=$(mktemp -d "${TMPDIR:-/tmp}/fstest.XXXXXX") || exit 2
