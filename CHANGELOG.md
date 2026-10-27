@@ -75,6 +75,8 @@ For installation instructions, see [`INSTALL`](INSTALL) and [`README.md`](README
   without changing those stores or entering the spool rewrite path.
 - Fixed utility option handling: `dlockhistory -s` consumes its sleep-time argument, and
   `dexpirescoring` and `dprimehostcache` correctly skip the argument to `-C file`.
+- Changed `dreaderd` to queue a new connection or AUTHINFO login for a free DNS/auth worker
+  (`readerdns`) for up to 10 seconds, instead of answering 400 at once when all are busy.
 - Fixed `dgrpctl checkgroups exec` to initialize new groups with the right status, description,
   and creation time while leaving unchanged groups untouched.
 - Corrected sample expiration, feeder-filter, and control-message directives and options so
