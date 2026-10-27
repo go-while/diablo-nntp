@@ -2,6 +2,7 @@
 # Check the %Acc figures of feeder-stats.pl: the Total row was 0.00 for
 # incoming feeds and a fraction (0.57 for 57%) for outgoing feeds, and a row
 # could show more than 100.  Usage: sh test-totals.sh [path/to/feeder-stats.pl]
+LC_ALL=C; export LC_ALL	# the fixtures use English month names, as syslog does
 PL=${1:-$(dirname "$0")/feeder-stats.pl}
 T=$(mktemp -d "${TMPDIR:-/tmp}/fstest.XXXXXX") || exit 2
 trap 'rm -rf "$T"' EXIT
