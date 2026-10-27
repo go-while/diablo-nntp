@@ -200,9 +200,11 @@ LoadDiabloConfig(int ac, char **av)
 	    /*
 	     * A line longer than buf: fine if the part that did not fit
 	     * is a comment, otherwise an error (its tail is not read as
-	     * a line of its own).
+	     * a line of its own).  Lines in a block for a newer version
+	     * are ignored (versOk 0), long ones too.
 	     */
-	    if (tooLong && strchr(buf, '#') == NULL) {
+	    if (tooLong && versOk && strchr(buf, '#') == NULL &&
+				buf[strspn(buf, " \t\r\n")] != 0) {
 		exitMe = 1;
 		fprintf(stderr, "diablo.config line too long (at most %d characters): %.60s...\n",
 						(int)sizeof(buf) - 1, buf);
