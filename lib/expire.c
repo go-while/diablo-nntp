@@ -72,13 +72,14 @@ loadExpireCtl(FILE *fi)
 {
     char buf[MAXGNAME+256];
     int line = 0;
+    int tooLong;
     OverExpire **pov = &OvExBase;
 
     if (DebugOpt)
 	printf("Loading dexpire.ctl\n");
 
     freePool(&EXMemPool);
-    while (fi && fgets(buf, sizeof(buf), fi) != NULL) {
+    while (fi && ConfigGets(buf, sizeof(buf), fi, &tooLong) != NULL) {
 	char *p = buf;
 	char *q = buf;
 
@@ -87,11 +88,23 @@ loadExpireCtl(FILE *fi)
 	    p++;
 	if (!*p || *p == '/' || *p == '#')
 	    continue;
+	if (tooLong) {
+	    logit(LOG_ERR, "dexpire.ctl line %d too long (at most %d characters) - ignoring",
+					line, (int)sizeof(buf) - 2);
+	    continue;
+	}
 
 	if ((q = strchr(p, ':')) != NULL) {
 	    int n;
-	    OverExpire *ov = zalloc(&EXMemPool,
-					sizeof(OverExpire) + (q - p) + 1);
+	    OverExpire *ov;
+
+	    /* oe_Wild has room for sizeof(oe_Wild) - 1 characters */
+	    if (q - p >= (int)sizeof(ov->oe_Wild)) {
+		logit(LOG_ERR, "dexpire.ctl pattern in line %d longer than %d characters - ignoring",
+					line, (int)sizeof(ov->oe_Wild) - 1);
+		continue;
+	    }
+	    ov = zalloc(&EXMemPool, sizeof(OverExpire));
 	    ov->oe_ExpireDays = -2.0;
 	    ov->oe_LimitDays = -2.0;
 	    ov->oe_InitArts = -2;

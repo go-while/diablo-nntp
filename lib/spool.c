@@ -576,6 +576,7 @@ loadSpoolCtl(FILE *fi)
     int status = EXSTAT_NONE;
     int line = 0;
     int i;
+    int tooLong;
     SpoolObject *spoolObj = NULL;
     MetaSpool *metaSpool = NULL;
     GroupExpire *expire = NULL;
@@ -603,7 +604,7 @@ loadSpoolCtl(FILE *fi)
     }
     if (DebugOpt > 1)
 	printf("Loading dspool.ctl\n");
-    while (fi && fgets(buf, sizeof(buf), fi) != NULL) {
+    while (fi && ConfigGets(buf, sizeof(buf), fi, &tooLong) != NULL) {
 	char *cmd = buf;
 	char *arg;
 
@@ -612,6 +613,11 @@ loadSpoolCtl(FILE *fi)
 	    cmd++;
 	if (!*cmd || *cmd == '/' || *cmd == '#')
 	    continue;
+	if (tooLong) {
+	    logit(LOG_ERR, "%s: line %d too long (at most %d characters)",
+			PatLibExpand(DSpoolCtlPat), line, (int)sizeof(buf) - 2);
+	    exit(1);
+	}
 
 	cmd = strtok(cmd, " \t\n\r");
 	arg = strtok(NULL, " \t\n\r");
