@@ -84,6 +84,15 @@ const (
 	hexAlphabet = "!\"#$%&'()*+,-012345689@ABCDEFGHIJKLMNPQRSTUVXYZ[`abcdefhijklmpqr"
 )
 
+// binhexLines returns n BinHex 4.0 data lines of 64 characters: the data starts with ':' on
+// the first line and ends with ':' on the last.
+func binhexLines(n int) []string {
+	l := atLines(n, 64, hexAlphabet, "")
+	l[0] = ":" + l[0][1:]
+	l[n-1] = l[n-1][:63] + ":"
+	return l
+}
+
 // pgp returns an armored block: the begin line, headers, n lines of 64 characters, a CRC line
 // and the end line.
 func pgp(kind string, n int) []string {
@@ -122,7 +131,7 @@ func TestArticleTypes(t *testing.T) {
 			atMIME | atMultipart | atBinary, ""},
 		{"base64 attachment", []string{"Mime-Version: 1.0", "Content-Type: image/png", "Content-Transfer-Encoding: base64"}, b64, atMIME | atBinary | atBase64, ""},
 		{"uuencode", nil, append([]string{"begin 644 file.bin"}, atLines(12, 60, uuAlphabet, "M")...), atUUencode | atBinary, ""},
-		{"binhex", []string{"Mime-Version: 1.0", "Content-Type: application/mac-binhex40"}, append([]string{"(This file must be converted with BinHex 4.0)"}, atLines(12, 64, hexAlphabet, ":")...), atMIME, "BinHex sample not recognised; unverified whether the sample or the detector is wrong, to check before any fix"},
+		{"binhex", []string{"Mime-Version: 1.0", "Content-Type: application/mac-binhex40"}, append([]string{"(This file must be converted with BinHex 4.0)"}, binhexLines(12)...), atMIME | atBinHex | atBinary, ""},
 		// yEnc
 		{"yenc line=", nil, append(append([]string{"=ybegin line=128 size=384 name=a.bin"}, yenc...), "=yend size=384"), atYenc | atBinary, ""},
 		{"yenc part=", nil, append(append([]string{"=ybegin part=1 total=2 line=128 size=768 name=a.bin", "=ypart begin=1 end=384"}, yenc...), "=yend size=384 part=1"), atYenc | atBinary | atPartial, ""},
@@ -208,6 +217,13 @@ end
 	txt := strings.Join(s.waitQueue(t, "txt", 1), "\n")
 	if !strings.Contains(bin, yenc) || !strings.Contains(txt, text) {
 		t.Errorf("dqueue/bin = %q, dqueue/txt = %q: want yEnc %s in bin and text %s in txt", bin, txt, yenc, text)
+	}
+	// And each is absent from the other queue.
+	if strings.Contains(bin, text) {
+		t.Errorf("dqueue/bin = %q, must not have the text article %s", bin, text)
+	}
+	if strings.Contains(txt, yenc) || strings.Contains(txt, sig) {
+		t.Errorf("dqueue/txt = %q, must not have the yEnc article %s or the long-signature article %s", txt, yenc, sig)
 	}
 	// Misdetection: a text article with a 12-line signature goes to the binary label; it should
 	// go to txt.
