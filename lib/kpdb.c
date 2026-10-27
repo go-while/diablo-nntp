@@ -594,6 +594,12 @@ KPDBScanNext(KPDB *kpdb, int offset, int lockMe, int *preclen)
 		break;
 	    kpdb->kp_AppendSeq = aval;
 	    KPDBReSize(kpdb);   /* PRIOR DATA POINTERS BECOME INVALID */
+	    /*
+	     * offset is already the end of the last record: continue
+	     * there, not one record length further (that skipped the first
+	     * appended record, or part of it).
+	     */
+	    *preclen = 0;
 	}
     }
     return(0);
