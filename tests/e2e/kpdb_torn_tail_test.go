@@ -78,3 +78,47 @@ func TestKPDBTornUpdateDoesNotShadow(t *testing.T) {
 		t.Errorf("record ee: %q", out)
 	}
 }
+
+// TestKPDBTornLineEdges: the torn-line scan also works for a torn line longer than its 4 KB
+// read buffer, and for a torn record that starts right after the header (the only record).
+func TestKPDBTornLineEdges(t *testing.T) {
+	t.Run("long torn update", func(t *testing.T) {
+		db := filepath.Join(t.TempDir(), "kp.db")
+		dkpRun(t, "", "-w", db, "aa", "NE=00001234")
+		b, err := os.ReadFile(db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		torn := "+00000000.0000:aa D=" + strings.Repeat("x", 9000)
+		if err := os.WriteFile(db, append(b, torn...), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		dkpRun(t, "", "-w", db, "ee", "x=1")
+		if out := dkpRun(t, "", "-r", db, "aa"); !strings.Contains(out, "NE=00001234") {
+			t.Errorf("record aa after a 9 KB torn update: %.120q, want the intact NE=00001234", out)
+		}
+	})
+	t.Run("torn first record", func(t *testing.T) {
+		db := filepath.Join(t.TempDir(), "kp.db")
+		dkpRun(t, "", "-w", db, "aa", "x=1")
+		b, err := os.ReadFile(db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		i := strings.Index(string(b), "+00000000.0000:aa")
+		if i < 0 {
+			t.Fatalf("no record aa in %q", b)
+		}
+		// Only the header is left, then a torn record of bb.
+		if err := os.WriteFile(db, append(b[:i:i], "+00000000.0000:bb NE=00"...), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		dkpRun(t, "", "-w", db, "ee", "x=1")
+		if out := dkpRun(t, "", "-r", db, "ee"); !strings.Contains(out, ":ee x=1") {
+			t.Errorf("record ee: %q", out)
+		}
+		if out := dkpRun(t, "", "-r", db, "bb"); strings.Contains(out, ":bb ") {
+			t.Errorf("the torn record bb is still found: %q", out)
+		}
+	})
+}
