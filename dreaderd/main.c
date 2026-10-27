@@ -57,6 +57,7 @@ void SendDns(int fd, struct sockaddr_storage *rsin, DnsRes *dres);
 #else
 void SendDns(int fd, struct sockaddr_in *rsin, DnsRes *dres);
 #endif
+void DnsQueueRun(void);
 void FinishRetain(int what);
 void DoListen(ForkDesc *desc, time_t t);
 void DoCommand(int fd);
@@ -94,6 +95,28 @@ int NumDnsForks;
 int NumSDnsForks;
 int NumPending;			/* pending connections	*/
 int NumActive;			/* active connections	*/
+
+/*
+ * Requests (new connections, AUTHINFO logins) that found every DNS worker
+ * busy wait here, in order, until one is free.  Bounded and timed so a
+ * flood cannot grow it or hold clients for long.
+ */
+#define DNSQ_WAIT	10		/* seconds a request may wait	*/
+typedef struct DnsQ {
+    struct DnsQ *dq_Next;
+    int dq_Fd;
+#ifdef INET6
+    struct sockaddr_storage dq_RSin;
+#else
+    struct sockaddr_in dq_RSin;
+#endif
+    int dq_HasRes;
+    DnsRes dq_Res;
+    time_t dq_When;
+} DnsQ;
+DnsQ *DnsQHead;
+DnsQ **DnsQTail = &DnsQHead;
+int DnsQLen;
 
 double TotalClientGroups = 0.0;
 double TotalClientArticles = 0.0;
@@ -976,7 +999,7 @@ main(int ac, char **av)
 	    if (Exiting)
 		NextTimeout(&tv, 50);
 	    else
-		NextTimeout(&tv, 10 * 1000);
+		NextTimeout(&tv, DnsQHead ? 1000 : 10 * 1000);
 
 	    stprintf("Connect=%d Failed=%d Dns=%d/%d Act=%d/%d", 
 		ConnectCount, FailCount,
@@ -1077,6 +1100,7 @@ main(int ac, char **av)
 	    }
 	    (void)ScanTimers(1, 0);
 	}
+	DnsQueueRun();
 
 	/*
 	 * Disable listen socket if we have too many connections pending or
@@ -1444,12 +1468,30 @@ DoCommand(int ufd)
     }
 }
 
+static void
+DnsTooBusy(int fd)
+{
+    char errbuf[1024];
+
+    snprintf(errbuf, sizeof(errbuf), "400 %s: Server too busy - please try later%s%s\r\n",
+	    DOpts.ReaderHostName,
+	    (DOpts.NewsAdmin != NULL) ? " - " : "",
+	    safestr(DOpts.NewsAdmin, ""));
+    WriteBestEffort(fd, errbuf, strlen(errbuf));
+    close(fd);
+    ++FailCount;
+}
+
+/*
+ * Give the request to a free DNS worker.  Returns 0 if there is none; the
+ * caller keeps the descriptor then.
+ */
 #ifdef INET6
-void
-SendDns(int fd, struct sockaddr_storage *rsin, DnsRes *dres)
+static int
+TrySendDns(int fd, struct sockaddr_storage *rsin, DnsRes *dres)
 #else
-void
-SendDns(int fd, struct sockaddr_in *rsin, DnsRes *dres)
+static int
+TrySendDns(int fd, struct sockaddr_in *rsin, DnsRes *dres)
 #endif
 {
     ForkDesc *best;
@@ -1470,10 +1512,8 @@ SendDns(int fd, struct sockaddr_in *rsin, DnsRes *dres)
     if (getsockname(fd, (struct sockaddr *)&lsin, &lslen) < 0) {
 	logit(LOG_ERR, "getsockname(%d) call failed: %s", fd, strerror(errno));
 	close(fd);
-	return;
+	return(1);
     }
-
-    ++ConnectCount;
 
     best = FindLeastUsedThread(THREAD_DNS, 1, 0, NULL, -1, NULL, NULL);
 
@@ -1524,7 +1564,31 @@ SendDns(int fd, struct sockaddr_in *rsin, DnsRes *dres)
 	 */
 	if (WriteAll(best->d_Fd, &dreq, sizeof(dreq)) < 0)
 	    logit(LOG_ERR, "DNS request to worker failed: %s", strerror(errno));
-    } else if (dres != NULL && dres->dr_ResultFlags == DR_SESSEXIT_RPT) {
+	return(1);
+    }
+    return(0);
+}
+
+/*
+ * Send a new connection or an AUTHINFO login to a DNS worker; when all are
+ * busy, queue it (D-51).
+ */
+#ifdef INET6
+void
+SendDns(int fd, struct sockaddr_storage *rsin, DnsRes *dres)
+#else
+void
+SendDns(int fd, struct sockaddr_in *rsin, DnsRes *dres)
+#endif
+{
+    DnsQ *dq;
+
+    ++ConnectCount;
+
+    if (DnsQHead == NULL && TrySendDns(fd, rsin, dres))
+	return;
+
+    if (dres != NULL && dres->dr_ResultFlags == DR_SESSEXIT_RPT) {
 	/*
 	 * Only the end-of-session accounting of a finished session: the
 	 * client already got its 205.  Never write to it; the caller
@@ -1533,17 +1597,66 @@ SendDns(int fd, struct sockaddr_in *rsin, DnsRes *dres)
 	logit(LOG_INFO, "No spare DNS thread - session accounting for %s skipped",
 	    NetAddrToSt(0, (struct sockaddr *)rsin, 1, 1, 1));
 	++FailCount;
-    } else {
-	char errbuf[1024];
-	logit(LOG_CRIT, "Unable to find spare DNS thread - rejecting connection");
-	snprintf(errbuf, sizeof(errbuf), "400 %s: Server too busy - please try later%s%s\r\n",
-	        DOpts.ReaderHostName,
-		(DOpts.NewsAdmin != NULL) ? " - " : "",
-		safestr(DOpts.NewsAdmin, ""));
-	WriteBestEffort(fd, errbuf, strlen(errbuf));
-	close(fd);
-	fd = -1;
-	++FailCount;
+	return;
+    }
+
+    if (DnsQLen >= 4 * DOpts.ReaderDns + 4 ||
+	(dq = malloc(sizeof(*dq))) == NULL) {
+	logit(LOG_CRIT, "Unable to find spare DNS thread, queue full - rejecting connection");
+	DnsTooBusy(fd);
+	return;
+    }
+    dq->dq_Next = NULL;
+    dq->dq_Fd = fd;
+    bcopy(rsin, &dq->dq_RSin, sizeof(dq->dq_RSin));
+    dq->dq_HasRes = (dres != NULL);
+    if (dres != NULL)
+	dq->dq_Res = *dres;
+    dq->dq_When = time(NULL);
+    *DnsQTail = dq;
+    DnsQTail = &dq->dq_Next;
+    ++DnsQLen;
+}
+
+/*
+ * Called every pass of the main loop: drop queued clients that went away or
+ * waited too long, and hand the oldest ones to free workers.
+ */
+static void
+DnsQRemove(DnsQ **pdq)
+{
+    DnsQ *dq = *pdq;
+
+    if ((*pdq = dq->dq_Next) == NULL)
+	DnsQTail = pdq;
+    --DnsQLen;
+    free(dq);
+}
+
+void
+DnsQueueRun(void)
+{
+    DnsQ **pdq = &DnsQHead;
+    time_t now = time(NULL);
+
+    while (*pdq != NULL) {
+	DnsQ *dq = *pdq;
+	char c;
+
+	if (Exiting || now - dq->dq_When >= DNSQ_WAIT) {
+	    logit(LOG_CRIT, "Unable to find spare DNS thread in %d seconds - rejecting connection", DNSQ_WAIT);
+	    DnsTooBusy(dq->dq_Fd);
+	    DnsQRemove(pdq);
+	} else if (recv(dq->dq_Fd, &c, 1, MSG_PEEK | MSG_DONTWAIT) == 0) {
+	    /* the client closed while waiting */
+	    close(dq->dq_Fd);
+	    DnsQRemove(pdq);
+	} else if (TrySendDns(dq->dq_Fd, (void *)&dq->dq_RSin,
+				dq->dq_HasRes ? &dq->dq_Res : NULL)) {
+	    DnsQRemove(pdq);
+	} else {
+	    break;			/* no free worker; keep the order */
+	}
     }
 }
 
