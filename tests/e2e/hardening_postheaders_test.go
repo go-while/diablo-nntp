@@ -97,3 +97,41 @@ func TestPostBareLFAccepted(t *testing.T) {
 		t.Errorf("body at the peer %q, want %q", body, want)
 	}
 }
+
+// TestPostBareLFBlankBodyHeaderLike: with lines ending in LF alone, the blank line ends the
+// headers; a first body line that looks like a header ("Bytes: ...", "X-Trace: ...") is body
+// and reaches the outgoing server unchanged. (A fix that does not end the header at a bare
+// LF blank line drops or refuses it.)
+func TestPostBareLFBlankBodyHeaderLike(t *testing.T) {
+	for _, first := range []string{"Bytes: 123", "X-Trace: just text"} {
+		s, got := postHeadersSite(t, DefaultReaderAccess)
+		id := msgID(t)
+		raw := "From: a <a@example.invalid>\nNewsgroups: e2e.test\nSubject: header-like first body line\nMessage-ID: " + id +
+			"\n\n" + first + "\nsecond body line\n"
+		if code := postRaw(t, s, raw); code != 240 {
+			t.Fatalf("first body line %q: reply %d, want 240", first, code)
+		}
+		waitFor(t, 15*time.Second, "the outgoing server to receive the post", func() bool { return len(got()) > 0 })
+		_, body := splitArticle(got()[0])
+		if want := []string{first, "second body line"}; strings.Join(body, "|") != strings.Join(want, "|") {
+			t.Errorf("body at the peer %q, want %q", body, want)
+		}
+	}
+}
+
+// TestPostBareLFBlankBodyControl: the same post with CR LF line ends, as the control for the
+// test above.
+func TestPostBareLFBlankBodyControl(t *testing.T) {
+	s, got := postHeadersSite(t, DefaultReaderAccess)
+	id := msgID(t)
+	raw := "From: a <a@example.invalid>\r\nNewsgroups: e2e.test\r\nSubject: control\r\nMessage-ID: " + id +
+		"\r\n\r\nBytes: 123\r\nsecond body line\r\n"
+	if code := postRaw(t, s, raw); code != 240 {
+		t.Fatalf("reply %d, want 240", code)
+	}
+	waitFor(t, 15*time.Second, "the outgoing server to receive the post", func() bool { return len(got()) > 0 })
+	_, body := splitArticle(got()[0])
+	if want := []string{"Bytes: 123", "second body line"}; strings.Join(body, "|") != strings.Join(want, "|") {
+		t.Errorf("body at the peer %q, want %q", body, want)
+	}
+}
