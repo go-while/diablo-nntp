@@ -69,4 +69,9 @@ grep -q 'Pos1000' "$T/stdout" && bad "'Pos1000' messages without -v"
 run -v
 grep -q 'Pos1000 is empty for host 203.0.113.9' "$T/stdout" || bad "no 'Pos1000' message with -v"
 
+# with -L the feeds are named by their labels, and the rank follows the label's aliases
+run -L
+grep -q '>uex</td> <td align="right">&nbsp;#1</td>' "$T/out.html" || bad "-L: rank #1 not shown for the label uex"
+grep -q '>other</td> <td align="right">&nbsp;</td>' "$T/out.html" || bad "-L: an unlisted label should have an empty rank cell"
+
 [ $fail = 0 ] && echo "ok: feeder-stats Top1000" || exit 1
