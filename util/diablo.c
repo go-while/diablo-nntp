@@ -3002,7 +3002,7 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		 * The header is too big to be sane
 		 */
 		if (DOpts.FeederMaxHeaderSize > 0 &&
-				headerLen > DOpts.FeederMaxHeaderSize) {
+				bsize(buffer) > DOpts.FeederMaxHeaderSize) {
 		    artError |= LAERR_HEADERTOOBIG;
 		    continue;
 		}

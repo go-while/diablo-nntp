@@ -40,6 +40,7 @@ test fails.
 | `TestDnewsfeedsReloadWithoutArgument` | diablo | saving such a line into dnewsfeeds of a running diablo does not take the master down (D-58). **Fails** on main (the master exits at the next reload); takes 33 s |
 | `TestHostCacheEndEndsLabel` | diablo (dprimehostcache) | an `inhost` line after the `end` of a label is not entered into the host cache under that label (D-60). **Fails** on main |
 | `TestHostCacheDiabloHostsForms` | diablo (dprimehostcache) | diablo.hosts takes an IPv6 address as well as the `host: label` and `host:label` forms (D-61). **Fails** on main: `2001:db8::25` became host `2001`, label `db8` |
+| `TestFeederMaxHeaderSize` | diablo | an article with 130 KB of headers is refused under `feedermaxheadersize 2k`, and a normal article after it is accepted (D-56). **Fails** on main: the limit was never applied |
 | `TestDnewslinkTermStalledPeer` | diablo, dnewslink | SIGTERM while dnewslink waits for a stalled peer (at the greeting, and on an unanswered CHECK/TAKETHIS): it exits within 5 s and both articles stay queued. **Fails** on main before this fix: dnewslink polled again for the full `-T` timeout (600 s) after the signal |
 | `TestReaderFeedAndRead` | dreaderd, dgrpctl | an article fed to the reader by IHAVE shows in GROUP and OVER; BODY and ARTICLE fetch it from the spool server (fake) |
 | `TestReaderQuitAlone` | dreaderd | QUIT gets 205 and nothing follows it |
