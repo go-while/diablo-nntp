@@ -101,7 +101,7 @@ loadExpireCtl(FILE *fi)
 	    ov->oe_StoreGZHours = -2.0;
 	    ov->oe_StoreGZMinFiles = -2;
 
-	    memmove(&ov->oe_Wild, buf, q - p);
+	    memmove(&ov->oe_Wild, p, q - p);	/* p: after the leading white space */
 	    ov->oe_Wild[q-p] = 0;
 	    *pov = ov;
 	    pov = &ov->oe_Next;
