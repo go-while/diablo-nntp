@@ -300,12 +300,22 @@ loadDiabloHosts(FILE *fo, int t, int *count)
 	    HA.testtype |= TESTTYPE_FQDN;
 	    p += 5;
 	}
-	s = strtok(p, ": \t\r\n");	/* hostname	*/
+	/*
+	 * Fields are separated by white space, so that the host can be an
+	 * IPv6 address.  A name with one trailing ':' ("host: label") and
+	 * the old "host:label" form are still understood.
+	 */
+	s = strtok(p, " \t\r\n");	/* hostname	*/
 	if (s == NULL || !*s)
 	    continue;
-        l = strtok(NULL, ": \t\r\n");	/* label	*/
-	if (l == NULL || !*l)
-	    continue;
+        l = strtok(NULL, " \t\r\n");	/* label	*/
+	if (l == NULL || !*l) {
+	    if ((l = strrchr(s, ':')) == NULL || l == s || !l[1])
+		continue;
+	    *l++ = 0;
+	} else if ((p = strchr(s, ':')) != NULL && p[1] == 0 && p != s) {
+	    *p = 0;
+	}
 
 	if (strlen(s) > 255 || strlen(l) > 255)
 	    continue;
@@ -326,6 +336,7 @@ loadDnewsFeeds(FILE *fo, int t, int *count)
     HostAccess HA;
     char label[255];
 
+    label[0] = 0;
     if (DebugOpt)
 	printf("Search for hosts in %s\n", PatLibExpand(DNewsfeedsPat));
 
@@ -344,12 +355,16 @@ loadDnewsFeeds(FILE *fo, int t, int *count)
     while (igets(buf, sizeof(buf), fi) != NULL) {
 	char *cmd = strtok(buf, " \t\n");
 	char *p = (cmd != NULL) ? strtok(NULL, " \t\n") : NULL;
-	if (cmd == NULL || p == NULL || *cmd == '#')
+	if (cmd == NULL || *cmd == '#')
 	    continue;
 
+	/* "end" has no argument */
 	if (strcmp(cmd, "end") == 0) {
 	    label[0] = 0;
+	    continue;
 	}
+	if (p == NULL)
+	    continue;
 	if (strcmp(cmd, "label") == 0) {
 	    strcpy(label, p);
 	    continue;
