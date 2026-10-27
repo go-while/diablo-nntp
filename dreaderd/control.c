@@ -511,9 +511,13 @@ ParseControl(Connection *conn, const char *cmd, const char *from, const char *ne
 	    if ((fd = mkstemp(path)) >= 0) {
 		if (DebugOpt)
 		    printf("created temporary log/copy file %s\n", path);
-		ctl->ct_LogFo = fdopen(fd, "r+");
-		ctl->ct_TmpFileName = zallocStr(&conn->co_MemPool, path);
-		ctl->ct_LogSeekPos = 0;
+		if ((ctl->ct_LogFo = fdopen(fd, "r+")) != NULL) {
+		    ctl->ct_TmpFileName = zallocStr(&conn->co_MemPool, path);
+		    ctl->ct_LogSeekPos = 0;
+		} else {
+		    close(fd);
+		    remove(path);
+		}
 	    }
 	}
     }
