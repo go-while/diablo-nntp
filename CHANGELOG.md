@@ -25,6 +25,8 @@ For installation instructions, see [`INSTALL`](INSTALL) and [`README.md`](README
 
 ### Changed
 
+- Documented the dnewsfeeds options `minpath`, `mincross` and `minsize` in `diablo-files(5)` (with the
+  exclusive `minsize` edge) and corrected `dfeedtest -p`, which takes a Path: value, not a count.
 - Modernized legacy C declarations, prototypes, pointer and integer types, socket argument types, header ordering, and obsolete compiler-specific constructs to build cleanly with modern GCC and Clang.
 - Replaced legacy OpenSSL SHA-256 context usage with the EVP digest API and corrected MD5-context clearing.
 - Updated illumos platform detection to recognize `__sun` and `sun`, use the system's `strsep()`, and discard obsolete Solaris file-descriptor-passing selectors. Existing `/dev/zero` mapping and other established Solaris runtime options remain unchanged.

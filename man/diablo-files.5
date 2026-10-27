@@ -87,6 +87,11 @@ brought in from a valid 'local' newsfeed.
 to an outbound feed if the article's Path: line contains more then the
 specified number of path elements.
 .PP
+.B minpath
+effects OUTBOUND feeds.  Diablo will not send an article to an outbound feed
+if the article's Path: line contains fewer than the specified number of path
+elements.
+.PP
 .B maxcross
 (1.04 or higher) effects OUTBOUND feeds.  Diablo will not send an article 
 to an outbound feed if the article's Newsgroups: line contains more then 
@@ -96,7 +101,19 @@ the specified number of groups.
 (1.04 or higher) effects OUTBOUND feeds.  Diablo will not send an article 
 to an outbound feed if the article is larger then the specified number of 
 bytes.  You may use 'k', 'm', and 'g' to denote kilobytes, megabytes, 
-and gigabytes.  For example, <I>maxsize 100k</I> .
+and gigabytes.  For example, <I>maxsize 100k</I> .  An article of exactly
+the specified size is sent.
+.PP
+.B mincross
+effects OUTBOUND feeds.  Diablo will not send an article to an outbound feed
+if the article's Newsgroups: line contains fewer than the specified number of
+groups.
+.PP
+.B minsize
+effects OUTBOUND feeds.  Diablo will not send an article to an outbound feed
+if the article is not larger than the specified number of bytes, so an
+article of exactly that size is not sent (unlike maxsize).  The size can be
+given with 'k', 'm' and 'g' as for maxsize.
 .PP
 .B rtflush
 (1.12 or higher) effects OUTBOUND feeds.  Diablo will write the queue file

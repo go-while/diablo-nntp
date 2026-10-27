@@ -20,7 +20,7 @@ dfeedtest \- show which dnewsfeeds labels and spool an article would go to
 ]
 [
 .B \-p
-.I numpath
+.I path
 ]
 [
 .B \-t
@@ -90,8 +90,10 @@ The Distribution header (default: none).
 .BI \-s " size"
 The article size in bytes (default 1000).
 .TP
-.BI \-p " numpath"
-The number of Path entries (default 1).
+.BI \-p " path"
+The Path: header value, for example \fIa!b!c\fP; its \(aq!\(aq-separated
+elements are counted for the minpath and maxpath limits of a label (default:
+one element).
 .TP
 .BI \-t " arttype"
 The article type, for example binary or mime (default: plain text).
