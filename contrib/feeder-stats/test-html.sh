@@ -3,6 +3,7 @@
 # not: the out/in ratio cell of an outgoing feed that has no incoming
 # counterpart was written as "&#133;</tr>" (no </td>, and a Windows-1252
 # character reference).  Usage: sh test-html.sh [path/to/feeder-stats.pl]
+LC_ALL=C; export LC_ALL	# the fixtures use English month names, as syslog does
 PL=${1:-$(dirname "$0")/feeder-stats.pl}
 T=$(mktemp -d "${TMPDIR:-/tmp}/fstest.XXXXXX") || exit 2
 trap 'rm -rf "$T"' EXIT
