@@ -1624,12 +1624,12 @@ LoadNewsFeed(time_t t, int force, const char *hlabel)
 			    err = 0;
 			}
 		    } else if (strcmp(s1, "feedertxbuf") == 0) {
-			if (nf) {
+			if (nf && s2) {
 			    nf->nf_FeederTXBuf = atoi(s2);
 			    err = 0;
 			}
 		    } else if (strcmp(s1, "feederrxbuf") == 0) {
-			if (nf) {
+			if (nf && s2) {
 			    nf->nf_FeederRXBuf = atoi(s2);
 			    err = 0;
 			}
@@ -1667,39 +1667,39 @@ LoadNewsFeed(time_t t, int force, const char *hlabel)
 			    err = 0;
 			}
 		    } else if (strcmp(s1, "startdelay") == 0) {
-			if (nf) {
+			if (nf && s2) {
 			    nf->nf_LinkInfo.li_StartDelay = atoi(s2);
 			    err = 0;
 			}
 		    } else if (strcmp(s1, "delayfeed") == 0) {
-			if (nf) {
+			if (nf && s2) {
 			    nf->nf_LinkInfo.li_DelayFeed = atoi(s2);
 			    err = 0;
 			}
 		    } else if (strcmp(s1, "delayinfeed") == 0) {
-			if (nf) {
+			if (nf && s2) {
 			    nf->nf_LinkInfo.li_DelayInFeed = atoi(s2);
 			    err = 0;
 			}
 		    } else if (strcmp(s1, "transmitbuf") == 0) {
-			if (nf) {
+			if (nf && s2) {
 			    nf->nf_LinkInfo.li_TransmitBuf = atoi(s2);
 			    err = 0;
 			}
 		    } else if (strcmp(s1, "receivebuf") == 0) {
-			if (nf) {
+			if (nf && s2) {
 			    nf->nf_LinkInfo.li_ReceiveBuf = atoi(s2);
 			    err = 0;
 			}
 		    /* setqos is now deprecated */
 		    } else if ((strcmp(s1, "setqos") == 0) ||
 			       (strcmp(s1, "settos") == 0)) {
-			if (nf) {
+			if (nf && s2) {
 			    nf->nf_LinkInfo.li_TOS = strtol(s2,NULL,0); /* both hex & decimal */
 			    err = 0;
 			}
 		    } else if (strcmp(s1, "maxparallel") == 0) {
-			if (nf) {
+			if (nf && s2) {
 			    nf->nf_LinkInfo.li_MaxParallel = atoi(s2);
 			    err = 0;
 			}
@@ -1742,7 +1742,7 @@ LoadNewsFeed(time_t t, int force, const char *hlabel)
 			}
 		    } else if ((strcmp(s1, "maxqueuefile") == 0) ||
 			       (strcmp(s1, "maxqueue") == 0)) {
-			if (nf) {
+			if (nf && s2) {
 			    nf->nf_LinkInfo.li_MaxQueueFile = atoi(s2);
 			    err = 0;
 			}
@@ -1772,7 +1772,7 @@ LoadNewsFeed(time_t t, int force, const char *hlabel)
 			    err = 0;
 			}
 		    } else if (strcmp(s1, "compress") == 0) {
-			if (nf) {
+			if (nf && s2) {
 #ifndef	USE_ZLIB
 			    logit(LOG_NOTICE, "%s: compression not enabled - ignoring compress option",
 						PatLibExpand(DNewsfeedsPat));
@@ -1781,12 +1781,12 @@ LoadNewsFeed(time_t t, int force, const char *hlabel)
 			    err = 0;
 			}
 		    } else if (strcmp(s1, "maxstream") == 0) {
-			if (nf) {
+			if (nf && s2) {
 			    nf->nf_LinkInfo.li_MaxStream = atoi(s2);
 			    err = 0;
 			}
 		    } else if (strcmp(s1, "queueskip") == 0) {
-			if (nf) {
+			if (nf && s2) {
 			    nf->nf_LinkInfo.li_QueueSkip = atoi(s2);
 			    err = 0;
 			}
@@ -1801,12 +1801,12 @@ LoadNewsFeed(time_t t, int force, const char *hlabel)
 			    err = 0;
 			}
 		    } else if (strcmp(s1, "priority") == 0) {
-			if (nf) {
+			if (nf && s2) {
 			    nf->nf_LinkInfo.li_Priority = atoi(s2);
 			    err = 0;
 			}
 		    } else if (strcmp(s1, "port") == 0) {
-			if (nf) {
+			if (nf && s2) {
 			    nf->nf_LinkInfo.li_Port = atoi(s2);
 			    err = 0;
 			}
