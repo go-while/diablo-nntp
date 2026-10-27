@@ -40,3 +40,18 @@ func TestDgrpctlGroupinfoLongDescription(t *testing.T) {
 		t.Errorf("dgrpctl groupinfo failed on a group with a 250-character description: %v", err)
 	}
 }
+
+// A checkgroups run that finds the stored description equal to the one in the list changes
+// nothing, however long the description is; a second run after "exec" must be quiet.
+func TestDgrpctlCheckgroupsLongDescriptionStable(t *testing.T) {
+	s := dgrpctlReaderSite(t)
+	desc := dgrpctlDesc(110)
+	s.WriteFile(t, "checkgroups", "e2e.longdesc\t"+desc+"\n")
+	cg := s.Dir + "/checkgroups"
+	out1 := s.Run(t, "dgrpctl", "checkgroups", "exec", cg)
+	out2 := s.Run(t, "dgrpctl", "checkgroups", "exec", cg)
+	t.Logf("first run:\n%s\nsecond run:\n%s", out1, out2)
+	if strings.Contains(out2, "Modified") || strings.Contains(out2, "Created") {
+		t.Errorf("the second checkgroups run changed the group again:\n%s", out2)
+	}
+}
