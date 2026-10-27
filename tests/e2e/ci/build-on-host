@@ -41,7 +41,7 @@ report() {
     else echo "build-on-host: all packages present"; fi
 }
 if command -v apt-get >/dev/null; then
-    have() { dpkg-query -W -f='${Status}' "$1" | grep -q 'ok installed'; }
+    have() { dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q 'ok installed'; }
     need=$(missing build-essential libssl-dev zlib1g-dev); report
     nodb=; if wantdb && ! have libdb5.3-dev; then nodb=1; fi
     if [ -n "$need" ] || [ -n "$nodb" ]; then
