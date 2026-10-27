@@ -330,6 +330,7 @@ DoExpire(int fd, int hsize, int rsize)
 
 	{
 	    ssize_t r;
+	    char emsg[256];
 
 	    /*
 	     * A read error is not the end of the file: stop here and keep
@@ -338,8 +339,11 @@ DoExpire(int fd, int hsize, int rsize)
 	    do {
 		r = read(fd, hbuf, hlen);
 	    } while (r < 0 && errno == EINTR);
-	    if (r < 0)
-		Fail(NewFileName, "Error reading the history file");
+	    if (r < 0) {
+		snprintf(emsg, sizeof(emsg),
+		    "Error reading the history file: %s", strerror(errno));
+		Fail(NewFileName, emsg);
+	    }
 	    n = r / rsize;
 	    /*
 	     * A short read can end inside a record: read that record again
@@ -347,8 +351,11 @@ DoExpire(int fd, int hsize, int rsize)
 	     * of the file a partial last record still reads as 0 records.
 	     */
 	    if (n > 0 && r % rsize != 0 &&
-			lseek(fd, -(off_t)(r % rsize), SEEK_CUR) == (off_t)-1)
-		Fail(NewFileName, "Unable to seek in the history file");
+			lseek(fd, -(off_t)(r % rsize), SEEK_CUR) == (off_t)-1) {
+		snprintf(emsg, sizeof(emsg),
+		    "Unable to seek in the history file: %s", strerror(errno));
+		Fail(NewFileName, emsg);
+	    }
 	}
 
 	if (n == 0) {
