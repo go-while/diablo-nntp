@@ -581,6 +581,7 @@ InitConnection(ForkDesc *desc, DnsRes *dres)
 	conn->co_ClientGroupByteCount = 0.0;
 	conn->co_ClientGroupArticleCount = 0;
 	conn->co_ClientGroupCount = conn->co_ClientPostCount = 0;
+	conn->co_RMBuf.mh_MaxLine = CLIENT_MAXLINE;
     }
 
     return(conn);

@@ -173,6 +173,7 @@ test fails.
 | `TestReaderAuthRejectKeepsMaster` | dreaderd | eight logins of a file-backend user whose entry has a reject string (`600 1 500 ...`) get 500 and the dreaderd master keeps running. **Fails** on main: the master dies on some of the attempts |
 | `TestFeedLFOnlyBodyControl` | dreaderd | an article fed with LF-only line ends and a `Control:` line in its body is accepted (235) and the feeder keeps serving; before, the feeder process died on it |
 | `TestPostBareLFHeaders`, `TestPostBareLFAccepted` | dreaderd | a POST header refused with CR LF line ends (`X-Trace`, `NNTP-Posting-Host`, `Control` with `controlpost no`) is refused with 441 when the lines end in LF alone; a post with LF-only line ends in headers and body is still accepted and passed on with its headers on separate lines and the body unchanged. `TestPostBareLFHeaders` **fails** on main before this fix: the LF-only header lines were not checked |
+| `TestReaderLongLineClosed`, `TestReaderLongLineAtLimit` | dreaderd | a client line is limited to 1 MiB, newline included: 4 MiB sent without a line end close the connection (and the reader still serves others); a command line of exactly 1 MiB gets a 5xx reply and the connection stays usable, one byte more closes it. **Fails** on main before this fix: the data was buffered without limit |
 
 ## Running
 

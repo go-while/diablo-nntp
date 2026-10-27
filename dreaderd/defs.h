@@ -361,6 +361,7 @@ typedef struct MBufHead {
     MemPool	**mh_MemPool;
     MemPool	**mh_BufPool;
     int		mh_Bytes;
+    int		mh_MaxLine;	/* longest line MBReadLine() takes, 0 = any */
     int		mh_Wait;
     int		mh_Fd;
     double	mh_TotalBytes;
@@ -544,6 +545,13 @@ typedef struct Connection {
 #define MBUF_SIZE	8192
 #define MBUF_HIWAT	(MBUF_SIZE*8-(MBUF_SIZE/4))
 #endif /*BIG_MBUF*/
+
+/*
+ * longest line (newline included) accepted from a client.  Commands are
+ * short and article lines are bounded in practice, so this only stops a
+ * client that sends data without ever ending the line.
+ */
+#define CLIENT_MAXLINE	(1024 * 1024)
 
 #define COM_ARTICLE	0
 #define COM_BODY	1

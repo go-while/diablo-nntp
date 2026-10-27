@@ -609,6 +609,12 @@ MBReadLine(MBufHead *mh, char **pptr)
 	}
 
 	/*
+	 * stop reading as soon as the line is too long, see below
+	 */
+	if (mh->mh_MaxLine > 0 && r > mh->mh_MaxLine)
+	    break;
+
+	/*
 	 * NOTE!  if haveit == 1, pmbuf will not be valid.  If haveit == 0
 	 *	  we have exhausted all mbufs and pmbuf is valid to append
 	 *	  a new one.
@@ -699,6 +705,20 @@ MBReadLine(MBufHead *mh, char **pptr)
 		mbuf->mb_NLScan = n;
 	    }
 	}
+    }
+
+    /*
+     * A line longer than mh_MaxLine (newline included) is not returned.
+     * The data is dropped and the descriptor reported as at EOF, so the
+     * caller closes the connection instead of buffering without end.
+     */
+
+    if (mh->mh_MaxLine > 0 && r > mh->mh_MaxLine) {
+	logit(LOG_INFO, "MBReadLine line longer than %d bytes", mh->mh_MaxLine);
+	MBFree(mh);
+	mh->mh_REof = 1;
+	*pptr = "";
+	return(-1);
     }
 
     /*
