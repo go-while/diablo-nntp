@@ -32,7 +32,7 @@ EOF
 	PERL5LIB="$T/lib${PERL5LIB:+:$PERL5LIB}"; export PERL5LIB
 fi
 
-mkdir "$T/cfg"
+mkdir "$T/cfg" "$T/www"
 cat > "$T/cfg/dnewsfeeds" <<'EOF'
 label GLOBAL
 end
@@ -76,7 +76,7 @@ FEEDER_STATS_QUEUECMD="$T/doutq"; export FEEDER_STATS_QUEUECMD
 
 run() {	# run OUTFILE [options]
 	out=$1; shift
-	perl "$PL" -t -d "$D" -C "$T/cfg" -l "$T/news.notice" -o "$out" "$@" > "$T/stdout" 2>&1 ||
+	perl "$PL" -t -d "$D" -C "$T/cfg" -l "$T/news.notice" -o "$out" -w "$T/www" "$@" > "$T/stdout" 2>&1 ||
 		{ echo "FAIL: feeder-stats.pl failed"; cat "$T/stdout"; exit 1; }
 }
 
