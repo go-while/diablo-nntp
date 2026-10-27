@@ -27,6 +27,9 @@ For installation instructions, see [`INSTALL`](INSTALL) and [`README.md`](README
 
 - Documented the dnewsfeeds options `minpath`, `mincross` and `minsize` in `diablo-files(5)` (with the
   exclusive `minsize` edge) and corrected `dfeedtest -p`, which takes a Path: value, not a count.
+- Fixed `dhisexpire` leaving the live history marked dead when it fails (or is killed) after the mark:
+  it is marked alive again, the previous backup is no longer removed before the new one is linked,
+  and a read or seek error while marking no longer deletes the live history file.
 - Fixed a crash of `diablo` and every program that loads dnewsfeeds (including a running diablo at its
   next reload) when a numeric option such as `maxparallel`, `port` or `priority` has no value.
 - Updated the addresses in `contrib/feeder-stats/feeder-stats.pl`: the footer linked a download address
