@@ -8,7 +8,7 @@ import (
 // TestReaderHashHierLongGroupName (GHSA-5cwh-wc3c-f5w5): with "readergrouphash hierarchy" the
 // overview path of a group is about twice as long as its name; dreaderd allocated the path
 // buffer as the group home plus 48 bytes. An 88-character group name must open its overview
-// and answer GROUP and XOVER without corrupting the heap.
+// and answer GROUP and LISTGROUP without corrupting the heap.
 func TestReaderHashHierLongGroupName(t *testing.T) {
 	name := "e2e." + strings.Repeat("longname.", 9) + "end"
 	_, spool := spoolStore(t)
@@ -23,12 +23,11 @@ func TestReaderHashHierLongGroupName(t *testing.T) {
 		if code != 211 {
 			t.Fatalf("GROUP %s (round %d): %d %s", name, i, code, line)
 		}
-		code, line = p.Cmd("XOVER 1-10")
-		if code != 224 && code != 420 && code != 423 {
-			t.Fatalf("XOVER (round %d): %d %s", i, code, line)
+		// LISTGROUP opens the group's overview file (GetOverInfo)
+		code, line = p.Cmd("LISTGROUP %s", name)
+		if code != 211 {
+			t.Fatalf("LISTGROUP (round %d): %d %s", i, code, line)
 		}
-		if code == 224 {
-			p.ReadDotLines()
-		}
+		p.ReadDotLines()
 	}
 }
