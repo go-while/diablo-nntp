@@ -60,8 +60,8 @@ func matched(t *testing.T, s *Site, groups string, size int, path string) []stri
 // way diablo does) reports them. A label with a limit lets an article through only inside it;
 // 'k' means 1024 bytes; sizes are bytes of the whole article; a path is the Path: header
 // value, counted by its '!'-separated elements; crossposts are the groups of Newsgroups:.
-// Not covered: a size of exactly minsize, which is rejected (minsize 1k feeds articles
-// larger than 1k, while maxsize 2k feeds up to and including 2k).
+// minsize is exclusive (minsize 1k feeds articles larger than 1k) while maxsize is inclusive
+// (maxsize 2k feeds up to and including 2k); both are pinned below.
 func TestDnewsfeedsLimitsDfeedtest(t *testing.T) {
 	s := NewSite(t, SiteOptions{Newsfeeds: limitLabels, NoStart: true})
 	all := []string{"maxcross", "maxpath", "maxsize", "mincross", "minpath", "minsize"}
@@ -98,6 +98,9 @@ func TestDnewsfeedsLimitsDfeedtest(t *testing.T) {
 		// minsize 1k = 1024: 1025 is fed, 1023 is not.
 		{"size over minsize", g2, 1025, p2, all},
 		{"size under minsize", g2, 1023, p2, without("minsize")},
+		// Pinned as it is (existing configs depend on it): minsize is exclusive, so exactly
+		// 1024 is not fed, unlike exactly maxsize.
+		{"size at minsize", g2, 1024, p2, without("minsize")},
 		{"size 0", g2, 0, p2, without("minsize")},
 		// maxcross 3: three groups are fed, four are not. mincross 2: one is not.
 		{"3 groups", g3, 1500, p2, all},
@@ -174,6 +177,11 @@ end
 			for _, id := range ids[true] {
 				if !strings.Contains(joined, id) {
 					t.Errorf("dqueue/%s = %q, want %s", c.label, q, id)
+				}
+			}
+			for _, id := range ids[false] {
+				if strings.Contains(joined, id) {
+					t.Errorf("dqueue/%s = %q, must not have %s (outside the limit)", c.label, q, id)
 				}
 			}
 		})
