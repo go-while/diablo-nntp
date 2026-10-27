@@ -53,3 +53,28 @@ func TestKPDBTornTail(t *testing.T) {
 		})
 	}
 }
+
+// TestKPDBTornUpdateDoesNotShadow: a crash in the middle of updating a record leaves a
+// half-written copy of it at the end of the file, while the intact old record is still live (it
+// is only marked deleted after the new one is complete). The tail repair ends that line with a
+// newline; the half-written copy must then be marked deleted too, or the lookup, which scans the
+// unsorted records from the end, returns it instead of the intact one.
+func TestKPDBTornUpdateDoesNotShadow(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "kp.db")
+	dkpRun(t, "", "-w", db, "aa", "NE=00001234")
+	b, err := os.ReadFile(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A torn update of aa: the value is cut off after two digits.
+	if err := os.WriteFile(db, append(b, "+00000000.0000:aa NE=00"...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dkpRun(t, "", "-w", db, "ee", "x=1")
+	if out := dkpRun(t, "", "-r", db, "aa"); !strings.Contains(out, "NE=00001234") {
+		t.Errorf("record aa after a torn update and the tail repair: %q, want the intact NE=00001234", out)
+	}
+	if out := dkpRun(t, "", "-r", db, "ee"); !strings.Contains(out, ":ee x=1") {
+		t.Errorf("record ee: %q", out)
+	}
+}

@@ -655,6 +655,51 @@ KPDBWriteEncode(KPDB *kpdb, const char *key, const char *tok, const char *data, 
  *					after write complete.
  */
 
+/*
+ * The line ending at nl (the newline just added by the tail repair) is the
+ * torn record.  If it starts like a record, mark it deleted as a replaced
+ * record is: a half-written record of an existing key must not hide the
+ * intact older one from the lookup, which scans the unsorted records from
+ * the end.
+ */
+static void
+KPDBDeleteTornLine(KPDB *kpdb, off_t nl)
+{
+    char buf[4096];
+    off_t off = nl;
+
+    while (off > kpdb->kp_HeadLen) {
+	off_t from = off - (off_t)sizeof(buf);
+	ssize_t n;
+	ssize_t i;
+
+	if (from < kpdb->kp_HeadLen)
+	    from = kpdb->kp_HeadLen;
+	n = pread(kpdb->kp_Fd, buf, off - from, from);
+	if (n != off - from)
+	    return;
+	for (i = n - 1; i >= 0; --i) {
+	    if (buf[i] == '\n')
+		break;
+	}
+	if (i >= 0) {
+	    off = from + i + 1;
+	    break;
+	}
+	off = from;
+    }
+    if (off >= nl)
+	return;
+    {
+	char c;
+
+	if (pread(kpdb->kp_Fd, &c, 1, off) == 1 && c == '+') {
+	    if (KPDBWriteAt(kpdb->kp_Fd, "-", 1, off) < 0)
+		KPDBFatalIO(kpdb, "tail repair");
+	}
+    }
+}
+
 int
 KPDBWrite(KPDB *kpdb, const char *key, const char *tok, const char *data, int lockMe)
 {
@@ -810,6 +855,7 @@ KPDBWrite(KPDB *kpdb, const char *key, const char *tok, const char *data, int lo
 		if (KPDBWriteAt(kpdb->kp_Fd, "\n", 1, nlockoff) < 0)
 		    KPDBFatalIO(kpdb, "tail repair");
 		++nlockoff;
+		KPDBDeleteTornLine(kpdb, nlockoff - 1);
 	    }
 	}
 	if (hflock(kpdb->kp_Fd, nlockoff, XLOCK_EX|XLOCK_NB) < 0) {
