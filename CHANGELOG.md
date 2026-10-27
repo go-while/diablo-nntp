@@ -31,6 +31,18 @@ For installation instructions, see [`INSTALL`](INSTALL) and [`README.md`](README
   showed 0.00 (a misspelled variable), the outgoing Total row showed a fraction (0.57 for 57%), the
   incoming total left out the too-old count the rows include, and a row could show more than 100.
   The environment variable `FEEDER_STATS_QUEUECMD` replaces the path of `doutq` (used by the test).
+- Fixed `contrib/feeder-stats/feeder-stats.pl` writing the out/in ratio cell of an outgoing feed with no
+  incoming counterpart as `&#133;</tr>`: the cell now has its `</td>` and uses `&hellip;`. The
+  environment variable `FEEDER_STATS_QUEUECMD` replaces the path of `doutq` (used by the test).
+- Made the Top1000 rank of `contrib/feeder-stats` work with https://top1000.anthologeek.net/: the new
+  `top1000-fetch.sh` downloads the list (`diablo-stats.sh` runs it daily), the new `-T dir` option
+  tells `feeder-stats.pl` where it is, and the "Pos1000 is empty" message for hosts not in the list is
+  only printed with `-v`. The environment variable `FEEDER_STATS_QUEUECMD` replaces the path of
+- Added `-L` to `contrib/feeder-stats/feeder-stats.pl`: report incoming and outgoing feeds per
+  dnewsfeeds label instead of per host name, with `test-label.sh` to check it. Without `-L` the only
+  difference is that the average pending count of a queue is no longer counted twice for a label
+  that equals its host name. The environment variable `FEEDER_STATS_QUEUECMD` replaces the path of
+  `doutq` (used by the test).
 - Modernized legacy C declarations, prototypes, pointer and integer types, socket argument types, header ordering, and obsolete compiler-specific constructs to build cleanly with modern GCC and Clang.
 - Replaced legacy OpenSSL SHA-256 context usage with the EVP digest API and corrected MD5-context clearing.
 - Updated illumos platform detection to recognize `__sun` and `sun`, use the system's `strsep()`, and discard obsolete Solaris file-descriptor-passing selectors. Existing `/dev/zero` mapping and other established Solaris runtime options remain unchanged.
