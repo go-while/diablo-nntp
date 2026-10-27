@@ -1585,7 +1585,13 @@ SendDns(int fd, struct sockaddr_in *rsin, DnsRes *dres)
 
     ++ConnectCount;
 
-    if (DnsQHead == NULL && TrySendDns(fd, rsin, dres))
+    /*
+     * Session-exit accounting is never queued (see below), so it doesn't wait
+     * behind the queue either.
+     */
+    if ((DnsQHead == NULL ||
+	    (dres != NULL && dres->dr_ResultFlags == DR_SESSEXIT_RPT)) &&
+	    TrySendDns(fd, rsin, dres))
 	return;
 
     if (dres != NULL && dres->dr_ResultFlags == DR_SESSEXIT_RPT) {

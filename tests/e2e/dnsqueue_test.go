@@ -101,8 +101,10 @@ func TestReaderDNSQueueLimit(t *testing.T) {
 		}
 	}
 	t.Logf("%d logins succeeded, %d got 400", ok, busy)
-	if ok == 0 {
-		t.Errorf("no login of the burst succeeded")
+	// One worker and a queue of 8 hold 9 logins at a time, so at least 9 get 281 and, of 40,
+	// some get 400.
+	if ok < 9 || busy == 0 {
+		t.Errorf("%d logins succeeded and %d got 400, want at least 9 and at least 1", ok, busy)
 	}
 	c := s.Reader(t)
 	expect(t, c, 381, "AUTHINFO USER fred")
