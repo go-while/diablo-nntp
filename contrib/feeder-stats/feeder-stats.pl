@@ -3,7 +3,7 @@
 # ABSOLUTELY NO WARRANTY WITH THIS PACKAGE. USE IT AT YOUR OWN RISK.
 #
 # Parse DIABLO/CYCLONE logfile and generate incoming & outgoing feed stats.
-# URL: http://info.news.surf.net/src/feeder-stats-v4.tgz
+# URL: https://github.com/jrehmer/diablo-nntp/tree/main/contrib/feeder-stats
 # (NOTE: The above URL is for the time being)
 #
 # $Id: feeder-stats.pl,v 1.23 2007/08/09 19:43:18 jgreco Exp $
@@ -429,8 +429,8 @@ $ImgDir = "";
 $ImgLogo = "$ImgDir" . "logo.gif";
 $ImgInfo = "border=0";
 #
-$Top1000Url = "http://www.top1000.org/";
-$FtpUrl = "http://info.news.surf.net/src/feeder-stats-v4.tgz" ;
+$Top1000Url = "https://top1000.anthologeek.net/";
+$FtpUrl = "https://github.com/jrehmer/diablo-nntp/tree/main/contrib/feeder-stats" ;
 if (defined $ENV{WWWURL}) {
 	$WwwUrl = "$ENV{WWWURL}";
 } else {
