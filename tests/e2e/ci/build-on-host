@@ -18,30 +18,57 @@ set -eu
 . /etc/os-release
 echo "== $PRETTY_NAME"
 
-# Berkeley DB is optional: install it where the distribution still has it.
+# Packages are installed only when missing: have() is the distribution's own
+# query for one package, and missing() lists those of its arguments not
+# installed.  Berkeley DB is optional: install it where the distribution still
+# has it (and skip the attempt when db_185.h is already there).
+missing() {
+    for p; do have "$p" >/dev/null 2>&1 || printf '%s ' "$p"; done
+}
+report() {
+    if [ -n "$need" ]; then echo "build-on-host: installing: $need"
+    else echo "build-on-host: all packages present"; fi
+}
 if command -v apt-get >/dev/null; then
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get -qq update
-    apt-get -qq install -y build-essential libssl-dev zlib1g-dev >/dev/null
-    apt-get -qq install -y libdb5.3-dev >/dev/null 2>&1 || true
+    have() { dpkg-query -W -f='${Status}' "$1" | grep -q 'ok installed'; }
+    need=$(missing build-essential libssl-dev zlib1g-dev); report
+    nodb=; [ -e /usr/include/db_185.h ] || have libdb5.3-dev || nodb=1
+    if [ -n "$need" ] || [ -n "$nodb" ]; then
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get -qq update
+        [ -z "$need" ] || apt-get -qq install -y $need >/dev/null
+        [ -z "$nodb" ] || apt-get -qq install -y libdb5.3-dev >/dev/null 2>&1 || true
+    fi
 elif command -v dnf >/dev/null; then
-    dnf -q -y install gcc make findutils openssl-devel zlib-devel shadow-utils >/dev/null
-    dnf -q -y install libdb-devel >/dev/null 2>&1 || true
+    have() { rpm -q "$1"; }
+    need=$(missing gcc make findutils openssl-devel zlib-devel shadow-utils); report
+    [ -z "$need" ] || dnf -q -y install $need >/dev/null
+    [ -e /usr/include/db_185.h ] || dnf -q -y install libdb-devel >/dev/null 2>&1 || true
 elif command -v zypper >/dev/null; then
-    zypper -n -q install gcc make findutils libopenssl-devel zlib-devel shadow >/dev/null
-    zypper -n -q install libdb-4_8-devel >/dev/null 2>&1 || true
+    have() { rpm -q "$1"; }
+    need=$(missing gcc make findutils libopenssl-devel zlib-devel shadow); report
+    [ -z "$need" ] || zypper -n -q install $need >/dev/null
+    [ -e /usr/include/db_185.h ] || zypper -n -q install libdb-4_8-devel >/dev/null 2>&1 || true
 elif command -v pacman >/dev/null; then
-    # pacman 7 sandboxes downloads with Landlock, which containers may lack.
-    nosandbox=
-    pacman --help --sync 2>/dev/null | grep -q -- --disable-sandbox && nosandbox=--disable-sandbox
-    pacman -Sy --noconfirm --needed --quiet $nosandbox base-devel openssl zlib >/dev/null
-    pacman -S --noconfirm --needed --quiet $nosandbox db >/dev/null 2>&1 || true
+    have() { pacman -Q "$1"; }
+    need=$(missing base-devel openssl zlib); report
+    if [ -n "$need" ] || [ ! -e /usr/include/db_185.h ]; then
+        # pacman 7 sandboxes downloads with Landlock, which containers may lack.
+        nosandbox=
+        pacman --help --sync 2>/dev/null | grep -q -- --disable-sandbox && nosandbox=--disable-sandbox
+        [ -z "$need" ] || pacman -Sy --noconfirm --needed --quiet $nosandbox $need >/dev/null
+        [ -e /usr/include/db_185.h ] || pacman -S --noconfirm --needed --quiet $nosandbox db >/dev/null 2>&1 || true
+    fi
 elif command -v apk >/dev/null; then
-    apk add -q build-base openssl-dev zlib-dev
-    apk add -q db-dev 2>/dev/null || true
+    have() { apk info -e "$1"; }
+    need=$(missing build-base openssl-dev zlib-dev); report
+    [ -z "$need" ] || apk add -q $need
+    [ -e /usr/include/db_185.h ] || apk add -q db-dev 2>/dev/null || true
 elif command -v emerge >/dev/null; then
     # A stage3 has the compiler, OpenSSL and zlib.
-    emerge --quiet --noreplace --getbinpkg sys-libs/db >/dev/null 2>&1 || true
+    need=; report
+    [ -e /usr/include/db_185.h ] || ls -d /var/db/pkg/sys-libs/db-[0-9]* >/dev/null 2>&1 ||
+        emerge --quiet --noreplace --getbinpkg sys-libs/db >/dev/null 2>&1 || true
 else
     echo "no supported package manager" >&2
     exit 1
