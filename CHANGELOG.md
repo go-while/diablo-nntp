@@ -60,6 +60,8 @@ For installation instructions, see [`INSTALL`](INSTALL) and [`README.md`](README
   split at every colon; the older `host: label` and `host:label` forms still work.
 - Fixed an accepted checkgroups control message creating half-formed groups (listed as `0 0 n`, `GROUP`
   answering `211 1 -1 -1`): it only updates the description of groups that exist.
+- Made `contrib/feeder-stats/feeder-stats.pl` run on current perl: it used `getopts.pl` and `timelocal.pl`,
+  which perl no longer ships; it uses the `Getopt::Std` and `Time::Local` modules now.
 - Fixed diablo dying with SIGFPE at start with `allocstrat weighted` when every spool has weight 0 (the
   default for a partition under 1 GiB); the articles are now spread evenly.
 - Modernized legacy C declarations, prototypes, pointer and integer types, socket argument types, header ordering, and obsolete compiler-specific constructs to build cleanly with modern GCC and Clang.
