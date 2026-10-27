@@ -2381,7 +2381,7 @@ DoSession(int fd, int count)
 		xfprintf(fo, "443 Bad Message-ID\r\n");
 		DoSpoolStats(STATS_S_STATERR);
 	    } else if (HistoryLookup(msgid, &h) == 0 && !H_EXPIRED(h.exp)) {
-		char path[128];
+		char path[PATH_MAX];
 		struct stat st;
 
 		/*
