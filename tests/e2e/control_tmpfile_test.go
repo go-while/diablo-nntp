@@ -41,7 +41,13 @@ func TestControlMailRuleTempFile(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond)
 	for _, pid := range sitePids(s, "dreaderd") {
-		left, _ := filepath.Glob("/tmp/dreaderd.ctl" + strconv.Itoa(pid) + "*")
+		// the old fixed name and the mkstemp names of this pid ("." keeps pid 123 from
+		// matching the files of pid 1234)
+		base := "/tmp/dreaderd.ctl" + strconv.Itoa(pid)
+		left, _ := filepath.Glob(base + ".*")
+		if _, err := os.Lstat(base); err == nil {
+			left = append(left, base)
+		}
 		for _, f := range left {
 			if fi, err := os.Lstat(f); err == nil {
 				t.Errorf("temporary control file left behind: %s (%v)", f, fi.Mode())
