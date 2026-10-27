@@ -21,6 +21,7 @@ int UnDead = 0;
 int FileCopy = 0;
 time_t MaxAge = -1;
 int MustExit = 0;
+int DeadFd = -1;	/* history marked dead and not yet replaced */
 char *FileName = NULL;
 char NewFileName[PATH_MAX];
 char OldFileName[PATH_MAX];
@@ -55,6 +56,25 @@ Usage(void)
     printf("\t-V\t- print version and exit\n");
     exit(1);
 }
+
+#ifdef USE_DEADMAGIC
+/*
+ * A signal while the history is marked dead: mark it alive again.  Only
+ * calls that are safe in a signal handler.
+ */
+void
+sigDead(int sigNo)
+{
+    HistHead hh;
+
+    if (DeadFd >= 0 && pread(DeadFd, &hh, sizeof(hh), 0) == sizeof(hh) &&
+						hh.hmagic == HDEADMAGIC) {
+	hh.hmagic = HMAGIC;
+	(void)pwrite(DeadFd, &hh, sizeof(hh), 0);
+    }
+    _exit(1);
+}
+#endif
 
 void
 sigInt(int sigNo)
@@ -314,20 +334,36 @@ DoExpire(int fd, int hsize, int rsize)
 		    DonePause = 5;
 		    HistoryClose();
 		    if (UseNewHistory) {
-			if (OldFileName[0])
-			    remove(OldFileName);
 			if (FileCopy) {
+			    if (OldFileName[0])
+				remove(OldFileName);
 			    if (OldFileName[0] && MoveFile(FileName, OldFileName) == -1)
 				Fail(NewFileName, "Unable to move history backup");
 			    if (MoveFile(NewFileName, FileName) == -1)
 				Fail(NewFileName, "Unable to move new history");
 			} else {
-			    if (OldFileName[0] && link(FileName, OldFileName) == -1)
-				Fail(NewFileName, "Unable to link history backup");
+			    /*
+			     * Link the backup under a temporary name and
+			     * rename it over the previous one, so that a
+			     * failure keeps the previous backup.
+			     */
+			    if (OldFileName[0]) {
+				char tmpName[PATH_MAX + 8];
+
+				snprintf(tmpName, sizeof(tmpName), "%s.new", OldFileName);
+				remove(tmpName);
+				if (link(FileName, tmpName) == -1)
+				    Fail(NewFileName, "Unable to link history backup");
+				if (rename(tmpName, OldFileName) == -1) {
+				    remove(tmpName);
+				    Fail(NewFileName, "Unable to rename history backup");
+				}
+			    }
 			    if (rename(NewFileName, FileName) == -1)
 				Fail(NewFileName, "Unable to rename new history");
 			}
 		    }
+		    DeadFd = -1;	/* the old history is replaced, or a backup */
 		}
 		finished = 1;
 	    } else {
@@ -336,16 +372,24 @@ DoExpire(int fd, int hsize, int rsize)
 		if (lseek(fd, 0, SEEK_SET) == -1)
 		    Fail(FileName, "Unable to seek to pos 0 in history");
 		if (read(fd, &hh, sizeof(hh)) == -1)
-		    Fail(FileName, "Unable to read history header");
+		    Fail(NULL, "Unable to read history header");
 		hh.hmagic = HDEADMAGIC;
 		if (lseek(fd, 0, SEEK_SET) == -1)
-		    Fail(FileName, "Unable to seek to pos 0 in history");
+		    Fail(NULL, "Unable to seek to pos 0 in history");
 		if (write(fd, &hh, sizeof(hh)) == -1) {
 		    perror("historyheadwrite");
-		    Fail(FileName, "Unable to write history header");
+		    Fail(NULL, "Unable to write history header");
 		}
+		/*
+		 * From here the history stays dead until it is replaced:
+		 * Fail() and the signal handler mark it alive again.
+		 */
+		DeadFd = fd;
+		rsignal(SIGINT, sigDead);
+		rsignal(SIGHUP, sigDead);
+		rsignal(SIGTERM, sigDead);
 		if (lseek(fd, seekpos, SEEK_SET) == -1)
-		    Fail(FileName, "Unable to seek in history");
+		    Fail(NULL, "Unable to seek in history");
 		DonePause = 2;
 	    }
 #else
@@ -361,20 +405,36 @@ DoExpire(int fd, int hsize, int rsize)
 		    DonePause = 4;
 		    HistoryClose();
 		    if (UseNewHistory) {
-			if (OldFileName[0])
-			    remove(OldFileName);
 			if (FileCopy) {
+			    if (OldFileName[0])
+				remove(OldFileName);
 			    if (OldFileName[0] && MoveFile(FileName, OldFileName) == -1)
 				Fail(NewFileName, "Unable to move history backup");
 			    if (MoveFile(NewFileName, FileName) == -1)
 				Fail(NewFileName, "Unable to move new history");
 			} else {
-			    if (OldFileName[0] && link(FileName, OldFileName) == -1)
-				Fail(NewFileName, "Unable to link history backup");
+			    /*
+			     * Link the backup under a temporary name and
+			     * rename it over the previous one, so that a
+			     * failure keeps the previous backup.
+			     */
+			    if (OldFileName[0]) {
+				char tmpName[PATH_MAX + 8];
+
+				snprintf(tmpName, sizeof(tmpName), "%s.new", OldFileName);
+				remove(tmpName);
+				if (link(FileName, tmpName) == -1)
+				    Fail(NewFileName, "Unable to link history backup");
+				if (rename(tmpName, OldFileName) == -1) {
+				    remove(tmpName);
+				    Fail(NewFileName, "Unable to rename history backup");
+				}
+			    }
 			    if (rename(NewFileName, FileName) == -1)
 				Fail(NewFileName, "Unable to rename new history");
 			}
 		    }
+		    DeadFd = -1;	/* the old history is replaced, or a backup */
 		    if (ServerCmd("go") == 0)
 			Fail(NewFileName, "Unable to resume diablo server");
 		    DonePause = 5;
@@ -514,6 +574,10 @@ Fail(char *fname, char *errmsg)
 {
     printf("%s\n", errmsg);
     printf("History rebuild is not complete - keeping old history\n");
+    if (DeadFd >= 0) {
+	DoUnDead(DeadFd);
+	DeadFd = -1;
+    }
     HistoryClose();
     if (fname != NULL)
 	remove(fname);
