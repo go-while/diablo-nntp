@@ -123,7 +123,7 @@ ArticleFileName(char *path, int pathSize, History *h, int opt)
 int
 SpoolCompressed(uint16 spool)
 {
-    if (spool > MAX_SPOOL_OBJECTS)
+    if (spool >= MAX_SPOOL_OBJECTS)
 	return(0);
     if (SpoolObjectMap[spool] != NULL &&
 				SpoolObjectMap[spool]->so_CompressLvl != -1)
@@ -147,7 +147,7 @@ GetSpoolPath(uint16 spool, int gmt, int opt)
     static char path[PATH_MAX];
     int n;
 
-    if (spool > MAX_SPOOL_OBJECTS)
+    if (spool >= MAX_SPOOL_OBJECTS)
 	return(NULL);
     if (SpoolObjectMap[spool] != NULL) {
 	if (*SpoolObjectMap[spool]->so_Path == '/' ||
