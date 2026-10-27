@@ -1030,6 +1030,14 @@ KPDBLookup(KPDB *kpdb, const char *key, int lockMe, int forceCheck)
 	     * beginning of record, scan 00000000 (unsorted) records only
 	     */
 
+	    /*
+	     * A line shorter than a record (blank or damaged) has no offset
+	     * to parse, and the digits of a blank last line would lie past
+	     * the map.
+	     */
+	    if (rl <= KEY_OFF)
+		continue;
+
 	    if (strtol(p + i + 1, NULL, 16) != 0)
 		break;
 
@@ -1100,7 +1108,8 @@ KPDBLookupBinary(
     if (DebugOpt > 8)
 	printf("LookupBinary %d (%d) %d %*.*s\n", b, c, e, cl, cl, &p[c]);
 
-    if (cl && c < kpdb->kp_MapSize)
+    /* only a line of at least KEY_OFF bytes, all inside the map, carries an offset */
+    if (cl > KEY_OFF && c + 9 <= kpdb->kp_MapSize)
 	s = strtol(p + c + 1, NULL, 16);  /* offset of sorted record or 0 */
 
     if (s < kpdb->kp_HeadLen || s >= kpdb->kp_MapSize || p[s-1] != '\n') {
@@ -1180,8 +1189,16 @@ KPDBLookupBinary(
 	    /* do not restore p and sl */
 	}
     }
-    if (r < 0 && doLeft && b != c)
-	r = KPDBLookupBinary(kpdb, key, l, b, c);
+    if (r < 0 && doLeft && b != c) {
+	/*
+	 * A blank line at the middle makes c reach e; the range must still
+	 * shrink or the recursion never ends.
+	 */
+	int ne = (c >= e) ? e - 1 : c;
+
+	if (ne > b)
+	    r = KPDBLookupBinary(kpdb, key, l, b, ne);
+    }
     if (r < 0 && doRight && c + cl < e)
 	r = KPDBLookupBinary(kpdb, key, l, c + cl, e);
     return(r);
@@ -1223,6 +1240,7 @@ KPDBSort(KPDB *kpdb)
     int i;
     int c;
     int nc;
+    int nal;
     int t;
     const char *p = kpdb->kp_MapBase;
     const char **ary;
@@ -1230,22 +1248,38 @@ KPDBSort(KPDB *kpdb)
     if (DebugOpt > 8)
 	printf("KPDBSort(): sorting %s\n", kpdb->kp_FileName);
 
-    for ((c = 0), (i = kpdb->kp_HeadLen); i < kpdb->kp_MapSize; ++i) {
-	if (p[i] == '\n')
-	   ++c;
-    }
-    nc = c;
-    ary = pagealloc(&t, nc * sizeof(char *));
-
-    for ((c = 0), (i = kpdb->kp_HeadLen); c < nc; ++c) {
-	ary[c] = p + i;
+    /*
+     * Only lines of at least KEY_OFF bytes are records: a blank or short
+     * line (hand edit, crash debris) has no key at KEY_OFF and
+     * is left out of the sort and of the offset table.
+     */
+    for ((c = 0), (i = kpdb->kp_HeadLen); i < kpdb->kp_MapSize; ) {
+	int ls = i;
 
 	while (i < kpdb->kp_MapSize && p[i] != '\n')
 	    ++i;
 	if (i == kpdb->kp_MapSize)
 	    break;
+	if (i - ls >= KEY_OFF)
+	    ++c;
 	++i;
     }
+    nc = c;
+    nal = nc ? nc : 1;
+    ary = pagealloc(&t, nal * sizeof(char *));
+
+    for ((c = 0), (i = kpdb->kp_HeadLen); c < nc; ) {
+	int ls = i;
+
+	while (i < kpdb->kp_MapSize && p[i] != '\n')
+	    ++i;
+	if (i == kpdb->kp_MapSize)
+	    break;
+	if (i - ls >= KEY_OFF)
+	    ary[c++] = p + ls;
+	++i;
+    }
+    nc = c;
 
     qsort(ary, nc, sizeof(char *), kpdqsort);
 
@@ -1256,21 +1290,25 @@ KPDBSort(KPDB *kpdb)
     if (KPDBWriteAt(kpdb->kp_Fd, "0FFFFFFF", 8, C_OFF) < 0)
 	KPDBFatalIO(kpdb, "resort marker write");
 
-    for ((c = 0), (i = kpdb->kp_HeadLen); c < nc; ++c) {
+    for ((c = 0), (i = kpdb->kp_HeadLen); c < nc; ) {
 	char buf[9];
-	int al = strchr(ary[c], '\n') - ary[c];
-
-	if (DebugOpt > 8)
-	    printf("ary[%d] = %*.*s\n", c, al, al, ary[c]);
-
-	sprintf(buf, "%08x", (unsigned int)(ary[c] - kpdb->kp_MapBase));
-	if (KPDBWriteAt(kpdb->kp_Fd, buf, 8, i + 1) < 0)
-	    KPDBFatalIO(kpdb, "sort offset write");
+	int ls = i;
 
 	while (i < kpdb->kp_MapSize && p[i] != '\n')
 	    ++i;
 	if (i == kpdb->kp_MapSize)
 	    break;
+	if (i - ls >= KEY_OFF) {
+	    int al = strchr(ary[c], '\n') - ary[c];
+
+	    if (DebugOpt > 8)
+		printf("ary[%d] = %*.*s\n", c, al, al, ary[c]);
+
+	    sprintf(buf, "%08x", (unsigned int)(ary[c] - kpdb->kp_MapBase));
+	    if (KPDBWriteAt(kpdb->kp_Fd, buf, 8, ls + 1) < 0)
+		KPDBFatalIO(kpdb, "sort offset write");
+	    ++c;
+	}
 	++i;
     }
     {
@@ -1282,7 +1320,7 @@ KPDBSort(KPDB *kpdb)
     /* Clearing the marker is the last step of a completed sort. */
     if (KPDBWriteAt(kpdb->kp_Fd, "00000000", 8, C_OFF) < 0)
 	KPDBFatalIO(kpdb, "sort completion write");
-    pagefree(ary, nc * sizeof(char *));
+    pagefree(ary, nal * sizeof(char *));
     kpdb->kp_Modified = 1;
     return(0);
 }
