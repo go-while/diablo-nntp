@@ -948,7 +948,15 @@ CtlCheckGroups(Connection *conn, Control *ctl, const char **cmd, const char *bod
 	 */
 
 	if (WildOrCmp(ctl->ct_Groups, newsgroup) == 0) {
-	    KPDBWriteEncode(KDBActive, newsgroup, "GD", description, 0);
+	    int recLen;
+
+	    /*
+	     * Only the description of a group that exists is updated:
+	     * writing the field would create a record without a status
+	     * or article numbers.
+	     */
+	    if (KPDBReadRecord(KDBActive, newsgroup, 0, &recLen) != NULL)
+		KPDBWriteEncode(KDBActive, newsgroup, "GD", description, 0);
 	}
     }
     return(NULL);
