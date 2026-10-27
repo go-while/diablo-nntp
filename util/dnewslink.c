@@ -168,6 +168,7 @@ int StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int siz
 void StreamReload(int cfd);
 Stream *LocateStream(const char *msgId, int state);
 int RefilePendingStreams(FILE *fo);
+int StreamHolds(const char *msgId);
 int commandResponse(int cfd, char **rptr, const char *ctl, ...);
 int commandWrite(int cfd, const void *buf, int bytes, int artdata);
 void clearResponseBuf(void);
@@ -795,6 +796,7 @@ main(int ac, char **av)
 	    int connectCount = 0;
 	    int bufInval = 1;
 	    int loggedMark = 0;
+	    int more = 0;
 	    int deferbegin = 0;
 	    int deferend = 0;
 	    int cSize = 0;
@@ -1161,8 +1163,15 @@ main(int ac, char **av)
 			    if (fo == NULL)
 				fo = fopen(path, "w");
 			    if (fo != NULL) {
+				/*
+				 * The entry in buf may be one of the pending
+				 * streams, which are written back with their
+				 * own flags: don't write it twice.
+				 */
+				int inStream = !bufInval && StreamHolds(msgId);
+
 				(void)RefilePendingStreams(fo);
-				if (!bufInval)
+				if (!bufInval && !inStream)
 				    fputs(buf, fo);
 			    }
 			} else {
@@ -1272,15 +1281,23 @@ main(int ac, char **av)
 		    }
 		}
 
-		if (readline(fd, buf, sizeof(buf), TimeNow) == 0 || fo != NULL) {
+		/*
+		 * At the end of the file buf still holds the last line that
+		 * was handled (and written above), so only copy lines that
+		 * were read.
+		 */
+		more = (readline(fd, buf, sizeof(buf), TimeNow) == 0);
+		if (more || fo != NULL) {
 		    struct stat st;
 
 		    if (fo == NULL)
 			fo = fopen(path, "w");
 		    if (fo != NULL) {
-			do {
-			    fputs(buf, fo);
-			} while (readline(fd, buf, sizeof(buf), TimeNow) == 0);
+			if (more) {
+			    do {
+				fputs(buf, fo);
+			    } while (readline(fd, buf, sizeof(buf), TimeNow) == 0);
+			}
 			fflush(fo);
 			fclose(fo);
 			fo = NULL;
@@ -2619,6 +2636,25 @@ LocateStream(const char *msgId, int state)
  * we now wish to write to a file.
  */
 
+/*
+ * StreamHolds() - is a stream slot in use for this message-id?
+ */
+
+int
+StreamHolds(const char *msgId)
+{
+    int i;
+
+    for (i = 0; i < MaxStream; ++i) {
+	Stream *s = &StreamAry[i];
+
+	if (s->st_State != STATE_EMPTY && s->st_MsgId != NULL &&
+						strcmp(s->st_MsgId, msgId) == 0)
+	    return(1);
+    }
+    return(0);
+}
+
 int
 RefilePendingStreams(FILE *fo)
 {
@@ -2636,12 +2672,21 @@ RefilePendingStreams(FILE *fo)
 	     */
 
 	    if (fo) {
+		/* the ' H' and ' C<size>' flags are those of the queue line */
+		char cst[16];
+
+		if (s->st_CompSize > 0)
+		    snprintf(cst, sizeof(cst), " C%d", s->st_CompSize);
+		else
+		    cst[0] = 0;
 		if (s->st_Off || s->st_Size) {
-		    fprintf(fo, "%s\t%s\t%d,%d\n", 
+		    fprintf(fo, "%s\t%s\t%d,%d%s%s\n", 
 			s->st_RelPath, 
 			s->st_MsgId,
 			(int)s->st_Off, 
-			(int)s->st_Size
+			(int)s->st_Size,
+			HeaderOnlyFeed ? " H" : "",
+			cst
 		    );
 		} else {
 		    fprintf(fo, "%s\t%s\n", s->st_RelPath, s->st_MsgId);
