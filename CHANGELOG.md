@@ -49,6 +49,8 @@ For installation instructions, see [`INSTALL`](INSTALL) and [`README.md`](README
 - Fixed the host cache: an `inhost` line after the `end` of a label was authorised under that label (and
   `label` was not initialised), and `diablo.hosts` could not hold an IPv6 address because its fields were
   split at every colon; the older `host: label` and `host:label` forms still work.
+- Fixed the Top1000 rank of `contrib/feeder-stats` with `-L`: a feed named by its label now gets the rank of
+  the label's `alias` lines.
 - Modernized legacy C declarations, prototypes, pointer and integer types, socket argument types, header ordering, and obsolete compiler-specific constructs to build cleanly with modern GCC and Clang.
 - Replaced legacy OpenSSL SHA-256 context usage with the EVP digest API and corrected MD5-context clearing.
 - Updated illumos platform detection to recognize `__sun` and `sun`, use the system's `strsep()`, and discard obsolete Solaris file-descriptor-passing selectors. Existing `/dev/zero` mapping and other established Solaris runtime options remain unchanged.
