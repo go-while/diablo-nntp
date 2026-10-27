@@ -27,6 +27,9 @@ For installation instructions, see [`INSTALL`](INSTALL) and [`README.md`](README
 
 - Documented the dnewsfeeds options `minpath`, `mincross` and `minsize` in `diablo-files(5)` (with the
   exclusive `minsize` edge) and corrected `dfeedtest -p`, which takes a Path: value, not a count.
+- Fixed `contrib/feeder-stats/feeder-stats.pl` writing the out/in ratio cell of an outgoing feed with no
+  incoming counterpart as `&#133;</tr>`: the cell now has its `</td>` and uses `&hellip;`. The
+  environment variable `FEEDER_STATS_QUEUECMD` replaces the path of `doutq` (used by the test).
 - Modernized legacy C declarations, prototypes, pointer and integer types, socket argument types, header ordering, and obsolete compiler-specific constructs to build cleanly with modern GCC and Clang.
 - Replaced legacy OpenSSL SHA-256 context usage with the EVP digest API and corrected MD5-context clearing.
 - Updated illumos platform detection to recognize `__sun` and `sun`, use the system's `strsep()`, and discard obsolete Solaris file-descriptor-passing selectors. Existing `/dev/zero` mapping and other established Solaris runtime options remain unchanged.

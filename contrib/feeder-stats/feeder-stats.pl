@@ -408,7 +408,7 @@ $NameUrl = "";
 # DIABLO
 $DiabloUrl = "http://www.openusenet.org/";
 $CtlFile = "$CfgDir/dnntpspool.ctl";
-$QueueCmd = "/news/dbin/doutq";
+$QueueCmd = defined($ENV{FEEDER_STATS_QUEUECMD}) ? $ENV{FEEDER_STATS_QUEUECMD} : "/news/dbin/doutq";
 $DiabloUptime = "";
 $CmdDiablo = "$CmdPs | egrep -v grep | egrep diablo | wc -l";
 $CmdDnewslink = "$CmdPs | egrep -v grep | egrep dnewslink | wc -l";
@@ -2390,7 +2390,7 @@ sub PrintOutgoingFeeds
 				}
 				else
 				{
-					printf FILE "%s&#133;", $TDR;
+					printf FILE "%s&hellip;%s", $TDR, "</td>";
 				}
 				printf FILE "%s\n", "</tr>";
 			}
