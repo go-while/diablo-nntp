@@ -52,12 +52,12 @@ if command -v apt-get >/dev/null; then
         enddb
     fi
 elif command -v dnf >/dev/null; then
-    have() { rpm -q "$1"; }
+    have() { rpm -q --whatprovides "$1"; }
     need=$(missing gcc make findutils openssl-devel zlib-devel shadow-utils); report
     [ -z "$need" ] || dnf -q -y install $need >/dev/null
     if wantdb; then dnf -q -y install libdb-devel >/dev/null 2>&1 || true; enddb; fi
 elif command -v zypper >/dev/null; then
-    have() { rpm -q "$1"; }
+    have() { rpm -q --whatprovides "$1"; }
     need=$(missing gcc make findutils libopenssl-devel zlib-devel shadow); report
     [ -z "$need" ] || zypper -n -q install $need >/dev/null
     if wantdb; then zypper -n -q install libdb-4_8-devel >/dev/null 2>&1 || true; enddb; fi
