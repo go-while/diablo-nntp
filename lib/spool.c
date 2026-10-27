@@ -295,7 +295,7 @@ AllocateSpools(time_t t)
     uint32 gmt = t / 60;
     MetaSpool *ms;
     int i;
-    int w, n, totw;
+    int w, n, totw, even;
     double space;
     double maxspace;
 
@@ -360,6 +360,20 @@ AllocateSpools(time_t t)
 		    if (so)
 			totw += so->so_Weight;
 		}
+		/*
+		 * All weights 0 (a small partition, or weight 0 on every
+		 * spool): spread evenly rather than divide by zero.
+		 */
+		even = 0;
+		if (totw <= 0) {
+		    even = 1;
+		    for (i = 0; i < ms->ms_NumSpoolObjects; i++) {
+			if (ms->ms_SpoolObjects[i])
+			    totw++;
+		    }
+		}
+		if (totw <= 0)
+		    break;
 		w = random() % totw;
 
 		n = 0;
@@ -368,11 +382,11 @@ AllocateSpools(time_t t)
 		    SpoolObject *so = ms->ms_SpoolObjects[i];
 		    if (!so)
 			continue;
-		    if (w >= n && w < n + so->so_Weight) {
+		    if (w >= n && w < n + (even ? 1 : so->so_Weight)) {
 			ms->ms_AllocatedSpool = so;
 			break;
 		    }
-		    n += so->so_Weight;
+		    n += (even ? 1 : so->so_Weight);
 		}
 		break;
 	}
