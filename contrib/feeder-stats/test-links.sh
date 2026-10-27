@@ -1,6 +1,7 @@
 #!/bin/sh
 # feeder-stats.pl linked a download address that no longer resolves
 # (info.news.surf.net) and the old Top1000 site.  Usage: sh test-links.sh [feeder-stats.pl]
+LC_ALL=C; export LC_ALL	# the fixtures use English month names, as syslog does
 PL=${1:-$(dirname "$0")/feeder-stats.pl}
 T=$(mktemp -d "${TMPDIR:-/tmp}/fstest.XXXXXX") || exit 2
 trap 'rm -rf "$T"' EXIT
