@@ -34,6 +34,7 @@
 #     -Q       report queue status for all feeds even those with no backlogs
 #     -r       report (estimated) reject and total volumes in dir/index.html
 #     -S       read logfile in pipe mode from STDIN
+#     -T dir   directory with the Top1000 list, the file 'current' (default: /news/top1000)
 #     -t       output format as text (default: HTML)
 #     -b       generate 'bare' HTML (no HEAD/BODY/HTML tags)
 #     -v       verbose
@@ -408,7 +409,7 @@ $NameUrl = "";
 # DIABLO
 $DiabloUrl = "http://www.openusenet.org/";
 $CtlFile = "$CfgDir/dnntpspool.ctl";
-$QueueCmd = "/news/dbin/doutq";
+$QueueCmd = defined($ENV{FEEDER_STATS_QUEUECMD}) ? $ENV{FEEDER_STATS_QUEUECMD} : "/news/dbin/doutq";
 $DiabloUptime = "";
 $CmdDiablo = "$CmdPs | egrep -v grep | egrep diablo | wc -l";
 $CmdDnewslink = "$CmdPs | egrep -v grep | egrep dnewslink | wc -l";
@@ -585,7 +586,7 @@ sub ParseCmdLine
 {
 	my ($ProgName) = @_;
 	
-	&Getopts('a:A:bB:cC:E:d:D:eghH:l:mo:s:qQrStvVw:W:');
+	&Getopts('a:A:bB:cC:E:d:D:eghH:l:mo:s:qQrST:tvVw:W:');
 
 	if ($opt_h) {
 		print <<EOT
@@ -616,6 +617,7 @@ Usage: $ProgName [options]
        -Q       report queue status for all feeds even those with no backlogs
        -r       report (estimated) reject and total volumes in dir/index.html
        -S       read logfile in pipe mode from STDIN
+       -T dir   directory with the Top1000 list, the file 'current' (default: $Top1000Dir)
        -t       output format as text (default: HTML)
        -b       generate 'bare' HTML (no HEAD/BODY/HTML tags)
        -v       verbose
@@ -649,6 +651,7 @@ EOT
 	$Verbose++ if (defined($opt_v));
 	$Debug++ if (defined($opt_V));
 	$HtmlDir = $opt_w if (defined($opt_w));
+	$Top1000Dir = $opt_T if (defined($opt_T));
 	if (defined($opt_C)) {
 		$CfgDir = $opt_C ;
 		$CfgFile = "$CfgDir/feeder-stats.conf";
@@ -4125,7 +4128,7 @@ sub GetTop1000
 	}
 	if ($Pos1000 eq "")
 	{
-		print "Error: Pos1000 is empty for host $Host\n" unless  $Missing1000{$Host};
+		print "Error: Pos1000 is empty for host $Host\n" if $Verbose && ! $Missing1000{$Host};
 		$Missing1000{$Host}=1; # report missing only once
 	}
 	else

@@ -24,6 +24,20 @@ To use:
 7. install a crontab job to run diablo-stats.sh (or cyclone-stats.sh):
    ie.  59 * * * * /usr/local/bin/diablo-stats.sh > /dev/null 2>&1
 
+Top1000 rank:
+
+   feeder-stats shows the position of a feed in the Top1000 list
+   (https://top1000.anthologeek.net/) next to its name.  The list is the
+   file 'current' in the directory given with -T (default /news/top1000).
+   diablo-stats.sh fetches it daily with top1000-fetch.sh (needs curl,
+   fetch or wget; set TOP1000URL empty in diablo-stats.sh to turn this
+   off), so copy top1000-fetch.sh to your bin directory as well.  A feed
+   gets the best rank among the path names in the list that match its host
+   name or one of the 'alias' lines of its label in dnewsfeeds: put the
+   path name the peer uses in a Path: header there.  Hosts that are not in
+   the list are left blank; -v tells which ones.  'sh test-top1000.sh' in
+   this directory checks all of this on made-up data.
+
 Original additional notes from Iain kept for historical sake ;-)
 -----------------------------------------------------------
 8. send me money/pizza/your wife or anything you have handy
