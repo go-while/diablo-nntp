@@ -29,6 +29,9 @@ For installation instructions, see [`INSTALL`](INSTALL) and [`README.md`](README
   exclusive `minsize` edge) and corrected `dfeedtest -p`, which takes a Path: value, not a count.
 - Fixed a crash of `diablo` and every program that loads dnewsfeeds (including a running diablo at its
   next reload) when a numeric option such as `maxparallel`, `port` or `priority` has no value.
+- Updated the addresses in `contrib/feeder-stats/feeder-stats.pl`: the footer linked a download address
+  that no longer resolves (`info.news.surf.net`), now this repository, and the Top1000 link is
+  `https://top1000.anthologeek.net/`.
 - Fixed the %Acc figures of `contrib/feeder-stats/feeder-stats.pl`: the Total row of the incoming tables
   showed 0.00 (a misspelled variable), the outgoing Total row showed a fraction (0.57 for 57%), the
   incoming total left out the too-old count the rows include, and a row could show more than 100.
