@@ -825,6 +825,7 @@ GetOverInfo(const char *group)
 	OverExpire save;
 	struct stat st;
 	char *path;
+	size_t pathSize;
 	int iter = 0;
 	artno_t endNo = 0;
 
@@ -874,13 +875,15 @@ GetOverInfo(const char *group)
 	    KPDBUnlock(KDBActive, rec);
 	}
 
-	path = zalloc(&SysMemPool, strlen(MyGroupHome) + 48);
+	/* GFName() may return up to PATH_MAX bytes ('readergrouphash hier' about twice the group name) */
+	pathSize = strlen(MyGroupHome) + PATH_MAX + 2;
+	path = zalloc(&SysMemPool, pathSize);
 again:
 	{
 	    const char *gfname = GFName(group, GRPFTYPE_OVER, 0, 1, iter,
 						&DOpts.ReaderGroupHashMethod);
 
-	    sprintf(path, "%s/%s", MyGroupHome, gfname);
+	    snprintf(path, pathSize, "%s/%s", MyGroupHome, gfname);
 	    ov->ov_OFd = -1;
 	    if (MakeGroupDirectory(path) == -1)
 		logit(LOG_ERR, "Error on overview dir open/create: %s (%s)",
@@ -1011,7 +1014,7 @@ again:
 		*pov = ov;
 	    }
 	}
-	zfree(&SysMemPool, path, strlen(MyGroupHome) + 48);
+	zfree(&SysMemPool, path, pathSize);
     }
     if (ov)
 	++ov->ov_Refs;
