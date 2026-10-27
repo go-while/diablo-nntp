@@ -1779,7 +1779,7 @@ sub PrintIncomingFeeds
 		}
 	}
 
-	$InTot = $InChk + $InIhave + $InSpam + $InRej + $InErr;
+	$InTot = $InChk + $InIhave + $InSpam + $InRej + $InErr + $TooOld;
 
 	foreach $Key (reverse sort keys %OrderedList) {
 		$Host = $OrderedList{$Key};
@@ -1795,6 +1795,8 @@ printf STDERR "HOST=[$Host]  SECS=[$Feeds{$Host}->{InSecs}]  ADDED=[$Feeds{$Host
 		    $Feeds{$Host}->{InRej}) {
 
 			$InSubPercentAcc = &GetPercent ($Feeds{$Host}->{InChk} + $Feeds{$Host}->{InIhave} + $Feeds{$Host}->{InSpam} + $Feeds{$Host}->{InErr} + $Feeds{$Host}->{InRej} + $Feeds{$Host}->{TooOld}, $Feeds{$Host}->{InAdded});
+			# the counters of one log line can straddle the period, so it can be a hair over
+			$InSubPercentAcc = 100 if ($InSubPercentAcc > 100);
 
 			$InSubPercentTot = &GetPercent ($InAdded, $Feeds{$Host}->{InAdded});
 			$InPercentTot += $InSubPercentTot;
@@ -1903,14 +1905,9 @@ printf STDERR "HOST=[$Host]  SECS=[$Feeds{$Host}->{InSecs}]  ADDED=[$Feeds{$Host
 		}
 	}
 
-	if ($InTot > 0)
-	{
-		$InPercentAcc = $inAdded / $InTot;
-	}
-	else
-	{
-		$InPercentAcc = 1.0;
-	}
+	# Same figure as in the rows: accepted as a percentage of everything offered.
+	$InPercentAcc = &GetPercent ($InTot, $InAdded);
+	$InPercentAcc = 100 if ($InPercentAcc > 100);
 
 	if ($ListByVolume == 1) {
 		$Total1 = &GetVolume ($InBytes);
@@ -2416,14 +2413,7 @@ sub PrintOutgoingFeeds
 		}
 	}
 
-	if ($OutAccepted != 0)
-	{
-		$OutPercentAcc = $OutAccepted / ($OutDup + $OutRej + $OutAccepted);
-	}
-	else
-	{
-		$OutPercentAcc = 0;
-	}
+	$OutPercentAcc = &GetPercent ($OutDup + $OutRej + $OutAccepted, $OutAccepted);
 
 	if ($ListByVolume == 1) {
 		$Total1 = &GetVolume ($OutBytes);
