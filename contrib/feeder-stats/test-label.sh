@@ -2,6 +2,7 @@
 # Check feeder-stats.pl -L (report feeds per dnewsfeeds label) on made-up
 # log lines.  Usage: sh test-label.sh [path/to/feeder-stats.pl]
 # Needs perl with Math::BigFloat; no news server, no network.
+LC_ALL=C; export LC_ALL	# the fixtures use English month names, as syslog does
 PL=${1:-$(dirname "$0")/feeder-stats.pl}
 T=$(mktemp -d "${TMPDIR:-/tmp}/fstest.XXXXXX") || exit 2
 trap 'rm -rf "$T"' EXIT
