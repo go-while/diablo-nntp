@@ -181,6 +181,14 @@ NNFeedOverview(Connection *conn)
 	}
     }
 
+    /*
+     * no Control: header in the headers we scanned: not a control message,
+     * whatever the lines before said
+     */
+
+    if (control == NULL)
+	conn->co_Flags &= ~COF_WASCONTROL;
+
     if (conn->co_Flags & COF_POSTTOOBIG) {
 	conn->co_Auth.dr_PostFailCount++;
 	if (conn->co_Flags & COF_IHAVE) {

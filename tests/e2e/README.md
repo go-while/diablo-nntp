@@ -169,6 +169,7 @@ test fails.
 | `TestDsyncgroupsBlankNewsgroupLine`, `TestDsyncgroupsShortActiveLine`, `TestDsyncgroupsPeerClosesAtQuit` | dsyncgroups | D-109: a blank LIST NEWSGROUPS line with `-w`, and a blank or short LIST ACTIVE line (with and without `-w`), are skipped, and a peer that closes instead of answering QUIT gives an error with an empty reply and exit 1. **Fail** on main before this fix: SIGSEGV, or the earlier reply printed from an unset pointer |
 | `TestReaderListWildcardLinear` | dreaderd | `LIST ACTIVE` with a 45-character `*?` pattern against a 56-character group name is answered at once and a second client is served meanwhile; ordinary `*` and `?` patterns still match as before. **Fails** on main: the reader stalls |
 | `TestReaderAuthRejectKeepsMaster` | dreaderd | eight logins of a file-backend user whose entry has a reject string (`600 1 500 ...`) get 500 and the dreaderd master keeps running. **Fails** on main: the master dies on some of the attempts |
+| `TestFeedLFOnlyBodyControl` | dreaderd | an article fed with LF-only line ends and a `Control:` line in its body is accepted (235) and the feeder keeps serving; before, the feeder process died on it |
 
 ## Running
 
