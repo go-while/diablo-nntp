@@ -341,6 +341,14 @@ DoExpire(int fd, int hsize, int rsize)
 	    if (r < 0)
 		Fail(NewFileName, "Error reading the history file");
 	    n = r / rsize;
+	    /*
+	     * A short read can end inside a record: read that record again
+	     * next time instead of losing the record boundary.  At the end
+	     * of the file a partial last record still reads as 0 records.
+	     */
+	    if (n > 0 && r % rsize != 0 &&
+			lseek(fd, -(off_t)(r % rsize), SEEK_CUR) == (off_t)-1)
+		Fail(NewFileName, "Unable to seek in the history file");
 	}
 
 	if (n == 0) {
