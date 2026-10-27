@@ -1,0 +1,1 @@
+- After a crash in the middle of a KP database update, the half-written record at the end of the file is marked deleted when the next write repairs the tail, so lookups return the intact older record instead of the truncated one (follow-up to D-80).
