@@ -27,6 +27,8 @@ For installation instructions, see [`INSTALL`](INSTALL) and [`README.md`](README
 
 - Documented the dnewsfeeds options `minpath`, `mincross` and `minsize` in `diablo-files(5)` (with the
   exclusive `minsize` edge) and corrected `dfeedtest -p`, which takes a Path: value, not a count.
+- Fixed a crash of `diablo` and every program that loads dnewsfeeds (including a running diablo at its
+  next reload) when a numeric option such as `maxparallel`, `port` or `priority` has no value.
 - Updated the addresses in `contrib/feeder-stats/feeder-stats.pl`: the footer linked a download address
   that no longer resolves (`info.news.surf.net`), now this repository, and the Top1000 link is
   `https://top1000.anthologeek.net/`.
