@@ -372,8 +372,8 @@
 use Math::BigInt;
 use Math::BigFloat;
 use File::Basename;
-require 'getopts.pl';
-require "timelocal.pl";
+use Getopt::Std;
+use Time::Local;
 
 BEGIN {
 	eval "use Chart::Lines;";
@@ -594,7 +594,7 @@ sub ParseCmdLine
 {
 	my ($ProgName) = @_;
 	
-	&Getopts('a:A:bB:cC:E:d:D:eghH:l:Lmo:s:qQrST:tvVw:W:');
+	getopts('a:A:bB:cC:E:d:D:eghH:l:Lmo:s:qQrST:tvVw:W:');
 
 	if ($opt_h) {
 		print <<EOT

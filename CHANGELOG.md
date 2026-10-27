@@ -59,6 +59,10 @@ For installation instructions, see [`INSTALL`](INSTALL) and [`README.md`](README
   `label` was not initialised), and `diablo.hosts` could not hold an IPv6 address because its fields were
   split at every colon; the older `host: label` and `host:label` forms still work.
 - Silenced the `warn_unused_result` warning for `pwrite()` in the signal handler of `dhisexpire` (glibc).
+- Made `contrib/feeder-stats/feeder-stats.pl` run on current perl: it used `getopts.pl` and `timelocal.pl`,
+  which perl no longer ships; it uses the `Getopt::Std` and `Time::Local` modules now.
+- Fixed diablo dying with SIGFPE at start with `allocstrat weighted` when every spool has weight 0 (the
+  default for a partition under 1 GiB); the articles are now spread evenly.
 - Modernized legacy C declarations, prototypes, pointer and integer types, socket argument types, header ordering, and obsolete compiler-specific constructs to build cleanly with modern GCC and Clang.
 - Replaced legacy OpenSSL SHA-256 context usage with the EVP digest API and corrected MD5-context clearing.
 - Updated illumos platform detection to recognize `__sun` and `sun`, use the system's `strsep()`, and discard obsolete Solaris file-descriptor-passing selectors. Existing `/dev/zero` mapping and other established Solaris runtime options remain unchanged.
