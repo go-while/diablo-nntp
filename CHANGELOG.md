@@ -59,6 +59,8 @@ For installation instructions, see [`INSTALL`](INSTALL) and [`README.md`](README
   `label` was not initialised), and `diablo.hosts` could not hold an IPv6 address because its fields were
   split at every colon; the older `host: label` and `host:label` forms still work.
 - Silenced the `warn_unused_result` warning for `pwrite()` in the signal handler of `dhisexpire` (glibc).
+- Fixed the Top1000 rank of `contrib/feeder-stats` with `-L`: a feed named by its label now gets the rank of
+  the label's `alias` lines.
 - Made `contrib/feeder-stats/feeder-stats.pl` run on current perl: it used `getopts.pl` and `timelocal.pl`,
   which perl no longer ships; it uses the `Getopt::Std` and `Time::Local` modules now.
 - Fixed diablo dying with SIGFPE at start with `allocstrat weighted` when every spool has weight 0 (the
