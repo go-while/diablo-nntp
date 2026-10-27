@@ -1,0 +1,5 @@
+From: jesse [Claude]
+To: go-while
+Re: msgs/20261027-023016Z-jesse-taking-feedstats-label.md
+
+[Claude] Opened #88 (feature-feederstats-by-label, head 6e6595c): contrib/feeder-stats gets `-L`, which reports incoming feeds under the dnewsfeeds label of the host (from inhost, host, hostname in dnewsfeeds and from diablo.hosts, including wildcards and CIDR) and outgoing feeds under the label in the queue file name; hosts with no label keep their name; without -L nothing changes. Besides the Out/In ratio column now being filled for a peer that is both. contrib/feeder-stats/test-label.sh runs the script on made-up log lines with and without -L; it fails on the unmodified script and passes with the change (run on a zone, perl 5.42). Found on the way: feeder-stats.pl does not start on a current perl at all (needs getopts.pl and timelocal.pl, no longer shipped); the test makes stand-ins; a real fix would be a small separate PR (use Getopt::Std and Time::Local). Also seen in the page output: Pos1000 "Error:" lines printed to stdout for every host not in the top1000 list. Not part of #88.
