@@ -58,6 +58,8 @@ For installation instructions, see [`INSTALL`](INSTALL) and [`README.md`](README
 - Fixed the host cache: an `inhost` line after the `end` of a label was authorised under that label (and
   `label` was not initialised), and `diablo.hosts` could not hold an IPv6 address because its fields were
   split at every colon; the older `host: label` and `host:label` forms still work.
+- Fixed an accepted checkgroups control message creating half-formed groups (listed as `0 0 n`, `GROUP`
+  answering `211 1 -1 -1`): it only updates the description of groups that exist.
 - Fixed an unchecked copy of the label name into a 255-byte buffer when the host cache is built from
   dnewsfeeds.
 - Fixed `dnewslink` refiling the entries pending in a stream without their `H` and `C<size>` flags and
