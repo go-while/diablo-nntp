@@ -12,7 +12,7 @@ re-checked yet.
 Status values: **open**, **PR** (fix waiting for review, with its number), **fixed** (with
 the PR that fixed it), **decision** (needs the maintainer to decide), **won't fix**.
 
-Last updated 2026-10-26, after batch 1 (#30, #31, #37 to #44, #47 to #49) and the first part
+Last updated 2026-10-27: D-53 to D-64 added from the review of `main` at `ca648d4`. Before that, 2026-10-26, after batch 1 (#30, #31, #37 to #44, #47 to #49) and the first part
 of batch 2 (#46, #50, #52, #62) were merged. Open: #35 (GnuPG pgpverify, held for a private
 advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 
@@ -69,6 +69,18 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-49](#d-49-moderation-handling) | Medium | Moderation: Approved: from any reader, posts to "n" groups, crosspost mails every moderator, failures not reported | fixed (#42, #43, #45 via #56, #46, #50) |
 | [D-50](#d-50-codeql-robustness-findings) | Low | CodeQL: a `%` in a feed label or in the diablo.config path is used as a format; two log lines with wrong format types | fixed (#72) |
 | [D-51](#d-51-logins-beyond-readerdns-are-turned-away-not-queued) | Medium | Logins beyond `readerdns` get 400 "Server too busy" instead of waiting for a worker | fixed (#83) |
+| [D-53](#d-53-checkgroups-creates-half-formed-groups) | Low | checkgroups control message creates half-formed groups; `GROUP` answers `211 1 -1 -1` | open |
+| [D-54](#d-54-transient-list-active-gap-after-a-record-is-rewritten) | Low | First LIST ACTIVE after a control message rewrote a group record omits that group | open |
+| [D-55](#d-55-dreaderd-small-items) | Low | dreaderd small items: descriptor leaks on `!` deny files, OVER range clamp | open |
+| [D-56](#d-56-feedermaxheadersize-is-never-enforced) | Medium | `feedermaxheadersize` is never enforced | open |
+| [D-57](#d-57-dhisexpire-leaves-the-history-dead-when-it-fails) | Medium | `dhisexpire` leaves the live history marked dead when it fails after the mark | open |
+| [D-58](#d-58-dnewsfeeds-directive-without-an-argument-crashes) | Medium | dnewsfeeds directive without its argument crashes every program that loads the file | open |
+| [D-59](#d-59-per-label-maxconnect-allows-one-too-many) | Low | Per-label `maxconnect N` lets N+1 connections in | open |
+| [D-60](#d-60-host-cache-end-does-not-end-a-label) | Low | Host cache: `end` does not end a label; a stray `inhost` joins the previous one | open |
+| [D-61](#d-61-diablohosts-cannot-hold-an-ipv6-address) | Low | `diablo.hosts` cannot hold an IPv6 address | open |
+| [D-62](#d-62-stat-uses-a-128-byte-path-buffer) | Low | `STAT` uses a 128-byte path buffer and answers 430 for existing articles | open |
+| [D-63](#d-63-dnewslink-refile-loses-flags) | Medium | `dnewslink` refiles pending streams without their H and C flags and writes one entry twice | open |
+| [D-64](#d-64-weighted-spool-allocation-divides-by-zero) | Low | Weighted spool allocation divides by zero with weight 0 | open |
 
 Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315).
 
@@ -425,6 +437,93 @@ Fixed: SendDns() keeps such a request in a queue in the master (at most 4 * `rea
 entries, in order) until a worker is free; a request that waits 10 s, or finds the queue full,
 gets the same 400, and a client that closes while waiting is dropped. Tests:
 `TestReaderLoginsQueueForDNSWorker`, `TestReaderDNSQueueLimit`.
+
+### D-53 checkgroups creates half-formed groups
+`dreaderd/control.c:951`. A checkgroups control message that is accepted (`doit`) writes the
+description of a group named in its body that does not exist. The group then appears in LIST
+ACTIVE as `0 0 n`, and `GROUP` answers `211 1 -1 -1`: the record has no creation status or
+article numbers. Fix: write the description only when the record exists, or create a complete
+record. Reproduced.
+
+### D-54 Transient LIST ACTIVE gap after a record is rewritten
+`lib/kpdb.c:529` (`KPDBScanFirst`), triggered by `CtlNewGroup` and `CtlCheckGroups` in
+`dreaderd/control.c`. When a control message rewrites an existing group record, the next LIST
+ACTIVE omits that group and the one after lists it again; appended groups are seen at once.
+Reproduced. Cause (from reading): the scan walks the mapping it already has, and the append
+counter does not change when a record is rewritten. Fix: bump the counter on a rewrite, or
+remap at the start of a scan.
+
+### D-55 dreaderd small items
+From reading, not run: `dreaderd/dns.c:365`, `:491`, `:560` and `:584`: a `!`-prefixed deny
+file, cdb or db returns without closing its handle, which leaks a descriptor in the DNS worker
+for each matching login (the `!` form is undocumented). `dreaderd/xover.c`
+(`NNStartListOverviewRange`): the OVER/XOVER range is only clamped to the group's low and high
+marks, so a very wide range (possible in xref-slave mode) is walked in one pass.
+
+### D-56 `feedermaxheadersize` is never enforced
+`util/diablo.c:3004-3007`, `:2824`, `:3060`. `headerLen` is still 0 when it is compared with
+`FeederMaxHeaderSize` (it is set after the blank line, once `inHeader` is cleared), so
+`LAERR_HEADERTOOBIG` never fires and headers can be as large as `feedermaxartsize` (10 MB by
+default). Reproduced: with `feedermaxheadersize 2k`, an article with about 130 KB of headers is
+accepted (235). Fix: compare the running header byte count.
+
+### D-57 dhisexpire leaves the history dead when it fails
+`util/dhisexpire.c:311-350` and `Fail()` at `:512-521`. With `USE_DEADMAGIC` (the default),
+dhisexpire writes the dead magic into the live dhistory and only then does the backup `link()`
+and `rename()`. A failure after that (an unwritable `-o` directory, another file system, a write
+error, a kill) prints "keeping old history" but never restores the magic, and every new feeder
+connection exits in `HistoryOpen` until `dhisexpire -u`. Reproduced with
+`dhisexpire -a -o /missing/dir/x.bak dhistory`. The previous backup is also removed before the
+link. Fix: call `DoUnDead()` from `Fail()` and from a signal handler once the mark is written, and
+do the link checks before the mark.
+
+### D-58 dnewsfeeds directive without an argument crashes
+`lib/newsfeed.c:1626-1812`. Directives such as `feedertxbuf`, `feederrxbuf`, `startdelay`,
+`delayfeed`, `delayinfeed`, `transmitbuf`, `receivebuf`, `setqos`/`settos`, `maxparallel`,
+`maxqueue`, `compress`, `maxstream`, `queueskip`, `priority` and `port` pass a NULL argument to
+`atoi()`/`strtol()` when the value is missing. `dfeedtest` and every other program that loads
+dnewsfeeds crash with SIGSEGV, and diablo, which reloads dnewsfeeds about once a minute, loses
+its master when such a line is saved. Reproduced for `maxparallel`, `port`, `priority`,
+`feederrxbuf` and `startdelay`, and for the reload. `lib/spool.c` `loadSpoolCtl` has the same
+pattern (from reading). Fix: `if (nf && s2)`, as the other directives do.
+
+### D-59 Per-label maxconnect allows one too many
+`lib/newsfeed.c:306` tests `*pcount > nf_MaxConnect`, but the count (`util/diablo.c:1170-1177`) is
+the number of existing connections, without the new one. `maxconnect 2` on a label lets three
+connections in (the fourth gets 502); the global `maxconnect` uses `>=` and is right.
+Reproduced. Fix: `>=`.
+
+### D-60 Host cache: `end` does not end a label
+`lib/hostauth.c:344-358` (`loadDnewsFeeds`). The skip for lines without an argument runs before
+the test for `end`, and `end` has no argument, so the current label is never cleared; an `inhost`
+or `host` line after `end` is authorised under the previous label. `char label[255]` is also
+never initialised. Reproduced with `dprimehostcache -dump`. diablo's own parser only logs
+"unexpected position". Fix: test `end` first and initialise `label`.
+
+### D-61 diablo.hosts cannot hold an IPv6 address
+`lib/hostauth.c:303-306` splits the line with `strtok(p, ": \t\r\n")`, so `2001:db8::25 mylabel`
+becomes host `2001` (which resolves to 0.0.7.209) and label `db8`. The IPv6 peer is not
+authorised and a made-up IPv4 address is. The `IP:` and `FQDN:` prefix is stripped before the
+address is converted. Verified in the host cache dump. Fix: split on white space only.
+
+### D-62 STAT uses a 128-byte path buffer
+`util/diablo.c:2384` has `char path[128]`. When the spool path plus `/D.xxxxxxxx/B.xxxx` is
+longer than 127 characters, `STAT` of an existing article answers `430 Article expired` while
+`HEAD` works. Reproduced with a 125-character spool path. Fix: `PATH_MAX`.
+
+### D-63 dnewslink refile loses flags
+`util/dnewslink.c:2640-2648` (`RefilePendingStreams`) and `:1161-1166`. After a lost peer with
+streaming entries pending, the refiled lines have no ` H` (header only) and ` C<size>`
+(compressed spool) fields, so a later run sends a header-only record as a full article and a
+compressed article as plain bytes. The entry in `buf` is also written twice. Reproduced with a
+queue of two `... H C50` lines and a peer that drops after the CHECKs. Fix: keep the flags in the
+Stream struct and write them back in the queue format.
+
+### D-64 Weighted spool allocation divides by zero
+`lib/spool.c:357-363` computes `random() % totw`. The default weight (`spoolSizeGb()`, `:451-452`)
+is 0 for a partition under 1 GiB, and `weight 0` (`:738`) is accepted. Reproduced: `allocstrat
+weighted` with `weight 0` makes diablo die with SIGFPE at start; the small-partition case is
+from reading. Fix: treat a weight <= 0 as 1, or fall back to sequential when the total is 0.
 
 ## Feature requests
 
