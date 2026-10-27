@@ -17,7 +17,7 @@ func TestReaderHashHierLongGroupName(t *testing.T) {
 		Groups: []string{name},
 		Config: map[string]string{"readergrouphash": "hierarchy"},
 	})
-	p := s.Peer(t)
+	p := s.Reader(t)
 	for i := 0; i < 3; i++ {
 		code, line := p.Cmd("GROUP %s", name)
 		if code != 211 {
