@@ -1858,6 +1858,7 @@ HandleDnsThread(ForkDesc *desc)
     static int RandCounter = 0;
     const char *error1 = NULL;
     const char *error2 = NULL;
+    const char *vsname = "-";	/* only known once SetAuthDetails() ran */
     char errbuf[1024], *p;
     int r;
 #ifdef READER_BAN_LISTS
@@ -1942,6 +1943,7 @@ HandleDnsThread(ForkDesc *desc)
 	    exit(1);
         }
         SetAuthDetails(&dres, dres.dr_ReaderName);
+        vsname = dres.dr_VServerDef->vs_Name;
         dres.dr_TimeStart = time(NULL);
         if (r == 1)
 	    ClearOldAccessMap();
@@ -2206,7 +2208,7 @@ HandleDnsThread(ForkDesc *desc)
 	    logit(
 		LOG_NOTICE, 
 		"connection to %s from %s%s%s (%s) rejected: %s", 
-		dres.dr_VServerDef->vs_Name,
+		vsname,
 		(dres.dr_IdentUser[0] ? dres.dr_IdentUser : ""),
 		(dres.dr_IdentUser[0] ? "@" : ""),
 		dres.dr_Host,
