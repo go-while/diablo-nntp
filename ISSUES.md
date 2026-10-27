@@ -79,6 +79,9 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-60](#d-60-host-cache-end-does-not-end-a-label) | Low | Host cache: `end` does not end a label; a stray `inhost` joins the previous one | fixed (#97) |
 | [D-61](#d-61-diablohosts-cannot-hold-an-ipv6-address) | Low | `diablo.hosts` cannot hold an IPv6 address | fixed (#97) |
 | [D-62](#d-62-stat-uses-a-128-byte-path-buffer) | Low | `STAT` uses a 128-byte path buffer and answers 430 for existing articles | fixed (#98) |
+| [D-63](#d-63-dnewslink-refile-loses-flags) | Medium | `dnewslink` refiles pending streams without their H and C flags and writes one entry twice | open |
+| [D-64](#d-64-weighted-spool-allocation-divides-by-zero) | Low | Weighted spool allocation divides by zero with weight 0 | open |
+| [D-65](#d-65-dnewsfeeds-label-name-overflows-the-host-cache-buffer) | Low | A label name over 254 characters overflows a buffer when the host cache is built | fixed (#104) |
 | [D-63](#d-63-dnewslink-refile-loses-flags) | Medium | `dnewslink` refiles pending streams without their H and C flags and writes one entry twice | fixed (#103) |
 | [D-64](#d-64-weighted-spool-allocation-divides-by-zero) | Low | Weighted spool allocation divides by zero with weight 0 | fixed (#99) |
 
@@ -524,6 +527,12 @@ Stream struct and write them back in the queue format.
 is 0 for a partition under 1 GiB, and `weight 0` (`:738`) is accepted. Reproduced: `allocstrat
 weighted` with `weight 0` makes diablo die with SIGFPE at start; the small-partition case is
 from reading. Fix: treat a weight <= 0 as 1, or fall back to sequential when the total is 0.
+
+### D-65 dnewsfeeds label name overflows the host cache buffer
+`lib/hostauth.c` `loadDnewsFeeds()` copied the label name with `strcpy(label, p)` into `char label[255]`.
+A label name of 255 characters or more in dnewsfeeds (a local file) overflowed it when the host cache
+was built. Found by go-while in review of #97. Reproduced with a 3000-character name (dprimehostcache
+aborts). Fix: a name that does not fit is skipped, with the hosts of its label.
 
 ## Feature requests
 
