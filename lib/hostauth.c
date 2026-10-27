@@ -366,6 +366,11 @@ loadDnewsFeeds(FILE *fo, int t, int *count)
 	if (p == NULL)
 	    continue;
 	if (strcmp(cmd, "label") == 0) {
+	    if (strlen(p) >= sizeof(label)) {
+		/* too long to be a label of ours; its hosts are not entered */
+		label[0] = 0;
+		continue;
+	    }
 	    strcpy(label, p);
 	    continue;
 	}
