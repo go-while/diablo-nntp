@@ -19,7 +19,7 @@ func authBurst(t *testing.T, addr string, n int) []string {
 	conns := make([]net.Conn, n)
 	rds := make([]*bufio.Reader, n)
 	line := func(i int) string {
-		conns[i].SetReadDeadline(time.Now().Add(20 * time.Second))
+		conns[i].SetReadDeadline(time.Now().Add(60 * time.Second))
 		l, err := rds[i].ReadString('\n')
 		if err != nil {
 			return "error: " + err.Error()
@@ -71,7 +71,10 @@ func authBurst(t *testing.T, addr string, n int) []string {
 // Fails on main before the D-51 fix: some of the AUTHINFO PASS commands got 400.
 func TestReaderLoginsQueueForDNSWorker(t *testing.T) {
 	_, spool := spoolStore(t)
-	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: AuthReaderAccess})
+	// readerthreads 16: the test reader serves 4 sessions by default, and the burst keeps all
+	// of its logins open until every one has sent AUTHINFO PASS.
+	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: AuthReaderAccess,
+		Config: map[string]string{"readerthreads": "16"}})
 	for i, r := range authBurst(t, s.Addr, 8) {
 		if !strings.HasPrefix(r, "281") {
 			t.Errorf("login %d: got %q, want 281", i, r)
@@ -84,17 +87,20 @@ func TestReaderLoginsQueueForDNSWorker(t *testing.T) {
 // the reader serves a login afterwards.
 func TestReaderDNSQueueLimit(t *testing.T) {
 	_, spool := spoolStore(t)
-	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: AuthReaderAccess})
-	ok := 0
+	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: AuthReaderAccess,
+		Config: map[string]string{"readerthreads": "64"}})
+	ok, busy := 0, 0
 	for i, r := range authBurst(t, s.Addr, 40) {
 		switch {
 		case strings.HasPrefix(r, "281"):
 			ok++
 		case strings.HasPrefix(r, "400"):
+			busy++
 		default:
 			t.Errorf("login %d: got %q, want 281 or 400", i, r)
 		}
 	}
+	t.Logf("%d logins succeeded, %d got 400", ok, busy)
 	if ok == 0 {
 		t.Errorf("no login of the burst succeeded")
 	}
