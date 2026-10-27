@@ -40,6 +40,8 @@ Usage(void)
     printf("           [-C diablo.config] [-d[n]] [-V] dhistory-file [new-history]\n");
     printf("  where:\n");
     printf("\t-a\t- rename the new history to old history when finished\n");
+    printf("\t\t  (without -a the old history stays marked dead: run dhisexpire -u\n");
+    printf("\t\t  to make it usable again, or install the new one yourself)\n");
     printf("\t-m\t- rename history files across filesystems (file copy)\n");
 #ifndef	USE_DEADMAGIC
     printf("\t-P\t- don't pause diablo server\n");
@@ -548,6 +550,10 @@ DoExpire(int fd, int hsize, int rsize)
         printf("%u expired entries dropped\n", ExpireDropCount);
         printf("%u dropped as beyond max age\n", MaxAgeCount);
     }
+#ifdef USE_DEADMAGIC
+    if (!UseNewHistory && DeadFd >= 0)
+	printf("Note: the old history stays marked dead (no -a): run dhisexpire -u %s or use -a\n", FileName);
+#endif
 }
 
 int
