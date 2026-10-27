@@ -444,6 +444,9 @@ ValidGroupName(const char *name)
 
     if (name[0] == 0 || name[0] == '.') {
 	r = -1;
+    } else if (strlen(name) >= MAXGNAME) {
+	/* longer names are skipped by LIST ACTIVE and can never get articles */
+	r = -1;
     } else {
 	for (; *name; ++name) {
 	    if (*name == ' ' || *name == '/' || !isprint((unsigned char)*name)) {

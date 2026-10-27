@@ -95,3 +95,26 @@ func TestGroupNameSlashRefused(t *testing.T) {
 		t.Errorf("e2e.plus+minus-9 missing:\n%s", active)
 	}
 }
+
+// TestGroupNameTooLongRefused: a group name of MAXGNAME (256) characters or more is not
+// valid; one of 255 characters still is.
+func TestGroupNameTooLongRefused(t *testing.T) {
+	_, spool := spoolStore(t)
+	s := NewReaderSite(t, ReaderOptions{Spool: spool, NoStart: true})
+
+	long := "e2e." + strings.Repeat("a", 300)
+	out, _ := s.TryRun("dgrpctl", "newgroup", long, "y")
+	if !strings.Contains(out, "Illegal newsgroup name") {
+		t.Errorf("dgrpctl newgroup with a 304-character name: %q, want Illegal newsgroup name", out)
+	}
+	ok := "e2e." + strings.Repeat("b", 251)
+	s.Run(t, "dgrpctl", "newgroup", ok, "y")
+
+	active := s.Run(t, "dgrpctl", "listactive")
+	if strings.Contains(active, long) {
+		t.Errorf("the 304-character name was created")
+	}
+	if !strings.Contains(active, ok) {
+		t.Errorf("the 255-character name is missing from listactive")
+	}
+}
