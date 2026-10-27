@@ -37,6 +37,7 @@ void freeReaderSlot(int slot);
 void sigHup(int SigNo);
 void sigUsr1(int SigNo);
 void sigSegVReader(int sigNo);
+static char *MaskAuthInfo(char *line);
 
 KPDB *KDBActive;
 int   TFd = -1;		/* thread's return fd to the parent */
@@ -83,6 +84,34 @@ void LogCmd(Connection *conn, char dir, char *msg)
 		conn->co_Auth.dr_Host, getpid(), conn->co_Desc->d_Slot,
 		dir, msg);
     }
+}
+
+/*
+ * MaskAuthInfo() - return the command line as it may be logged: an
+ *		    AUTHINFO command other than AUTHINFO USER (PASS, or
+ *		    SASL/GENERIC which carry credentials too) is replaced
+ *		    by a fixed text.  The words are recognised the way the
+ *		    command parser splits them, case insensitive and
+ *		    separated by any run of spaces and tabs.
+ */
+
+static char *
+MaskAuthInfo(char *line)
+{
+    char *p = line;
+
+    if (strncasecmp(p, "authinfo", 8) != 0 || (p[8] != ' ' && p[8] != '\t'))
+	return(line);
+    p += 8;
+    while (*p == ' ' || *p == '\t')
+	++p;
+    if (strncasecmp(p, "user", 4) == 0 &&
+	(p[4] == 0 || p[4] == ' ' || p[4] == '\t'))
+	return(line);
+    if (strncasecmp(p, "pass", 4) == 0 &&
+	(p[4] == 0 || p[4] == ' ' || p[4] == '\t'))
+	return("authinfo pass **unlogged**");
+    return("authinfo **unlogged**");
 }
 
 void
@@ -1229,13 +1258,9 @@ NNCommand2(Connection *conn)
 	ptr[len-2] = 0;
 
     if (DebugOpt)
-	printf("command: %s\n", ptr);
+	printf("command: %s\n", MaskAuthInfo(ptr));
 
-    if (strncasecmp(ptr, "authinfo pass ", 14)) {
-        LogCmd(conn, '<', ptr);
-    } else {
-        LogCmd(conn, '<', "authinfo pass **unlogged**");
-    }
+    LogCmd(conn, '<', MaskAuthInfo(ptr));
 
     if ((conn->co_Auth.dr_Flags & (DF_HAPROXY|DF_USEPROXIED)) &&
 	!ProxyFromOk(conn->co_Auth.dr_ReaderDef, &conn->co_Auth.dr_Addr)) {
@@ -1341,7 +1366,7 @@ NNCommand2(Connection *conn)
      * extract command (note: StatusUpdate() will limit the line length)
      */
 
-    StatusUpdate(conn, "%s", ptr);
+    StatusUpdate(conn, "%s", MaskAuthInfo(ptr));
 
     if ((cmd = parseword(&ptr, " \t")) == NULL) {
 	NNCommand(conn);
