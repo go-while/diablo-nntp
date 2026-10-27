@@ -501,13 +501,16 @@ ParseControl(Connection *conn, const char *cmd, const char *from, const char *ne
 	    char path[256];
 	    int fd;
 
-	    sprintf(path, "/tmp/dreaderd.ctl%d", (int)getpid());
-	    remove(path);
+	    /*
+	     * mkstemp: a fixed name in /tmp could be replaced by a symlink
+	     * between remove() and open() (GHSA-7prm-44hq-cpq3).
+	     */
+	    snprintf(path, sizeof(path), "/tmp/dreaderd.ctl%d.XXXXXX",
+								(int)getpid());
 
-	    if (DebugOpt)
-		printf("creating temporary log/copy file %s\n", path);
-
-	    if ((fd = open(path, O_RDWR|O_CREAT|O_TRUNC, 0644)) >= 0) {
+	    if ((fd = mkstemp(path)) >= 0) {
+		if (DebugOpt)
+		    printf("created temporary log/copy file %s\n", path);
 		ctl->ct_LogFo = fdopen(fd, "r+");
 		ctl->ct_TmpFileName = zallocStr(&conn->co_MemPool, path);
 		ctl->ct_LogSeekPos = 0;
