@@ -68,6 +68,7 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-48](#d-48-feeder-reply-codes) | Low | diablo: MODE READER 500, IHAVE/CHECK without an argument | fixed (#67) |
 | [D-49](#d-49-moderation-handling) | Medium | Moderation: Approved: from any reader, posts to "n" groups, crosspost mails every moderator, failures not reported | fixed (#42, #43, #45 via #56, #46, #50) |
 | [D-50](#d-50-codeql-robustness-findings) | Low | CodeQL: a `%` in a feed label or in the diablo.config path is used as a format; two log lines with wrong format types | fixed (#72) |
+| [D-51](#d-51-logins-beyond-readerdns-are-turned-away-not-queued) | Medium | Logins beyond `readerdns` get 400 "Server too busy" instead of waiting for a worker | fixed (PR) |
 
 Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315).
 
@@ -420,6 +421,10 @@ busy for a moment. Seen in the e2e suite: with `readerdns 1`, two conformance ch
 at the same time got 400. Fix: queue the request until a worker is free (with a time limit),
 or at least document that `readerdns` must cover the expected number of logins arriving at
 once.
+Fixed: SendDns() keeps such a request in a queue in the master (at most 4 * `readerdns` + 4
+entries, in order) until a worker is free; a request that waits 10 s, or finds the queue full,
+gets the same 400, and a client that closes while waiting is dropped. Tests:
+`TestReaderLoginsQueueForDNSWorker`, `TestReaderDNSQueueLimit`.
 
 ## Feature requests
 
