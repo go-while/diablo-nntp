@@ -66,11 +66,14 @@ void
 sigDead(int sigNo)
 {
     HistHead hh;
+    ssize_t n;
 
     if (DeadFd >= 0 && pread(DeadFd, &hh, sizeof(hh), 0) == sizeof(hh) &&
 						hh.hmagic == HDEADMAGIC) {
 	hh.hmagic = HMAGIC;
-	(void)pwrite(DeadFd, &hh, sizeof(hh), 0);
+	/* a failure cannot be reported from here; a cast does not silence gcc */
+	n = pwrite(DeadFd, &hh, sizeof(hh), 0);
+	(void)n;
     }
     _exit(1);
 }
