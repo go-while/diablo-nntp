@@ -799,6 +799,7 @@ main(int ac, char **av)
 	    int more = 0;
 	    int deferbegin = 0;
 	    int deferend = 0;
+	    int keepOld = 0;	/* queue rewrite could not be opened */
 	    int cSize = 0;
 	    /* We kept a list of defer requests (431 response) and procedd
 	     * it from time to time.
@@ -1173,6 +1174,8 @@ main(int ac, char **av)
 				(void)RefilePendingStreams(fo);
 				if (!bufInval && !inStream)
 				    fputs(buf, fo);
+			    } else {
+				keepOld = 1;
 			    }
 			} else {
 			    WouldHaveRefiled += RefilePendingStreams(NULL);
@@ -1278,6 +1281,8 @@ main(int ac, char **av)
 			fo = fopen(path, "w");
 		    if (fo) {
 			(void)RefilePendingStreams(fo);
+		    } else {
+			keepOld = 1;
 		    }
 		}
 
@@ -1285,8 +1290,11 @@ main(int ac, char **av)
 		 * Entries the peer deferred (431) and that were not retried
 		 * yet go back into the queue with the unsent ones.
 		 */
-		if (deferbegin < deferend && fo == NULL)
+		if (deferbegin < deferend && fo == NULL) {
 		    fo = fopen(path, "w");
+		    if (fo == NULL)
+			keepOld = 1;
+		}
 		while (deferbegin < deferend) {
 		    if (fo != NULL)
 			fputs(deferbuf[deferbegin], fo);
@@ -1299,22 +1307,49 @@ main(int ac, char **av)
 		 * were read.
 		 */
 		more = (readline(fd, buf, sizeof(buf), TimeNow) == 0);
-		if (more || fo != NULL) {
+		if (keepOld) {
+		    /*
+		     * The rewrite file could not be opened while there was
+		     * something to put into it: leave the old queue alone.
+		     */
+		    dl_logit("Cannot write %s: %s, keeping the old queue",
+						path, strerror(errno));
+		    if (fo != NULL) {
+			fclose(fo);
+			fo = NULL;
+			if (PipeOpt == 0)
+			    remove(path);
+		    }
+		} else if (more || fo != NULL) {
 		    struct stat st;
+		    int writeFailed = 0;
 
 		    if (fo == NULL)
 			fo = fopen(path, "w");
-		    if (fo != NULL) {
+		    if (fo == NULL) {
+			writeFailed = 1;
+		    } else {
 			if (more) {
 			    do {
 				fputs(buf, fo);
 			    } while (readline(fd, buf, sizeof(buf), TimeNow) == 0);
 			}
-			fflush(fo);
-			fclose(fo);
+			if (fflush(fo) != 0 || ferror(fo))
+			    writeFailed = 1;
+			if (fclose(fo) != 0)
+			    writeFailed = 1;
 			fo = NULL;
 		    }
-		    if (DeleteDetectOpt && 
+		    if (writeFailed) {
+			/*
+			 * A truncated rewrite must not replace the queue.
+			 */
+			dl_logit("Cannot write %s: %s, keeping the old queue",
+						path, strerror(errno));
+			/* in pipe mode path is the queue itself */
+			if (PipeOpt == 0)
+			    remove(path);
+		    } else if (DeleteDetectOpt && 
 			!PipeOpt && 
 			!RealTimeOpt &&
 			(fstat(fd, &st) != 0 || st.st_nlink == 0)
@@ -1326,7 +1361,11 @@ main(int ac, char **av)
 			remove(path);
 			NumBatches = 0;
 		    } else if (PipeOpt == 0 && RealTimeOpt == 0) {
-			rename(path, CurrentBatchFile);
+			if (rename(path, CurrentBatchFile) != 0) {
+			    dl_logit("Cannot rename %s to %s: %s, keeping the old queue",
+					path, CurrentBatchFile, strerror(errno));
+			    remove(path);
+			}
 		    }
 		} else {
 		    if (PipeOpt == 0 && RealTimeOpt == 0)
@@ -3294,10 +3333,11 @@ credreset(void)
 #endif
 
 typedef struct {
-    char rb_Buf[MAXCLINE-sizeof(int)*3];
+    char rb_Buf[MAXCLINE-sizeof(int)*4];
     int  rb_Base;
     int  rb_Index;
     int	 rb_Len;
+    int	 rb_Skip;	/* dropping the rest of an overlong line */
 } RBlock;
 
 /* Only one queue file is read at a time.  The old array indexed by
@@ -3416,6 +3456,26 @@ readline(int fd, char *buf, int size, time_t t)
 	int n;
 
 	/*
+	 * Drop the rest of an overlong line up to its newline
+	 */
+
+	if (rbs->rb_Skip) {
+	    for (n = rbs->rb_Index; n < rbs->rb_Len; ++n) {
+		if (rbs->rb_Buf[n] == '\n')
+		    break;
+	    }
+	    if (n < rbs->rb_Len) {
+		rbs->rb_Skip = 0;
+		++n;
+	    }
+	    if (n >= rbs->rb_Len) {
+		rbs->rb_Base = rbs->rb_Index = rbs->rb_Len = 0;
+	    } else {
+		rbs->rb_Base = rbs->rb_Index = n;
+	    }
+	}
+
+	/*
 	 * Look for newline
 	 */
 
@@ -3447,8 +3507,10 @@ readline(int fd, char *buf, int size, time_t t)
 	 */
 
 	if (rbs->rb_Len == sizeof(rbs->rb_Buf)) {
-	    dl_logit("Line too long in batchfile!");
-	    return(-1);
+	    /* Skip the line and keep reading, the entries behind it are valid */
+	    dl_logit("Line too long in batchfile, skipping it");
+	    rbs->rb_Skip = 1;
+	    rbs->rb_Base = rbs->rb_Index = rbs->rb_Len = 0;
 	}
 	n = read(fd, rbs->rb_Buf + rbs->rb_Len, sizeof(rbs->rb_Buf) - rbs->rb_Len);
 	if (n <= 0) {
