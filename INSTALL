@@ -3,9 +3,9 @@
 Diablo builds with GNU Make (Linux, illumos/SmartOS/OmniOS, optionally
 FreeBSD) or with FreeBSD's own make.  XMake is no longer needed.
 README.md lists the build requirements and the packages to install.
-lib/vendor.h enables RADIUS by default: install the RADIUS library
-(radlib.h; libradius on SmartOS) or #undef RADIUS_ENABLED, which is
-needed on Linux.
+RADIUS is off by default in lib/vendor.h.  To use it, install the
+RADIUS library (radlib.h; libradius on SmartOS) and #define
+RADIUS_ENABLED there; Linux has no BSD libradius.
 
 Please read the README.READER and README.SERVER files if you haven't
 already.

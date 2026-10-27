@@ -5,8 +5,8 @@
 ##
 ##      tests/e2e/ci/build-on-host
 ##
-##  This copy's lib/vendor.h is changed: RADIUS is turned off (Linux has no
-##  BSD libradius), and DB_ENABLED and REJECT_DB are turned off when the
+##  This copy's lib/vendor.h is changed: RADIUS is turned off if a local
+##  vendor.h turned it on (Linux has no BSD libradius), and DB_ENABLED and REJECT_DB are turned off when the
 ##  system has no Berkeley DB 1.85 API (db_185.h; several distributions
 ##  dropped Berkeley DB).  The binaries end up in dbin/.  The news user and
 ##  group are created when missing (diablo switches to them at startup).

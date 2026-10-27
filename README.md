@@ -52,10 +52,10 @@ On RPM-based systems, add `gcc` and `make` to the `dnf` line if they aren't inst
 
 These supply the zlib, Berkeley DB, and OpenSSL headers and libraries required by the tested Linux configuration. The Berkeley DB package (`libdb-devel`, `libdb5.3-dev`) is needed when `DB_ENABLED` is enabled in `lib/vendor.h` or `REJECT_DB` is enabled in `lib/vendor.h`. Other Linux distributions may use different package names.
 
-**RADIUS on Linux:** the default `lib/vendor.h` defines `RADIUS_ENABLED`, and Linux has no usable `radlib.h`, so the build fails until you turn it off. Change that line in `lib/vendor.h` to:
+**RADIUS:** off by default in `lib/vendor.h`. Linux has no usable `radlib.h`; on FreeBSD or SmartOS (libradius) you can turn it on by changing that line to:
 
 ```c
-#undef	RADIUS_ENABLED
+#define	RADIUS_ENABLED
 ```
 
 **The news user:** create the `news` user and group, home `/news`, before `make install`; see `INSTALL`.
