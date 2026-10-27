@@ -2526,10 +2526,21 @@ DoSession(int fd, int count)
 #ifdef	USE_ZLIB
 	    } else if (p && strcasecmp(p, "compress") == 0) {
 		/* added for compression support */
-		bi->bu_CBuf = (CompressBuffer *)malloc(sizeof(CompressBuffer));
-                bzero(bi->bu_CBuf,sizeof(CompressBuffer));
-                inflateInit(&bi->bu_CBuf->z_str);
-		xfprintf(fo, "207 Compression enabled\r\n");
+		if (bi->bu_CBuf != NULL) {
+		    /* a second state would leak the first one */
+		    xfprintf(fo, "502 Compression already enabled\r\n");
+		} else if ((bi->bu_CBuf = (CompressBuffer *)malloc(sizeof(CompressBuffer))) == NULL) {
+		    xfprintf(fo, "403 Out of memory\r\n");
+		} else {
+		    bzero(bi->bu_CBuf,sizeof(CompressBuffer));
+		    if (inflateInit(&bi->bu_CBuf->z_str) != Z_OK) {
+			free(bi->bu_CBuf);
+			bi->bu_CBuf = NULL;
+			xfprintf(fo, "403 Compression not available\r\n");
+		    } else {
+			xfprintf(fo, "207 Compression enabled\r\n");
+		    }
+		}
 #endif
 	    } else {
 		syntax = 1;

@@ -116,6 +116,13 @@ bclose(Buffer *b, int closeFd)
 	    b->bu_Fd = -1;
 	    b->bu_gzFile = NULL;
 	}
+#ifdef USE_ZLIB
+	if (b->bu_CBuf != NULL) {
+	    inflateEnd(&b->bu_CBuf->z_str);
+	    free(b->bu_CBuf);
+	    b->bu_CBuf = NULL;
+	}
+#endif
 	b->bu_Beg = 0;
 	b->bu_NLScan = 0;
 	b->bu_End = 0;
