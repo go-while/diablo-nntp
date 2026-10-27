@@ -30,6 +30,9 @@ For installation instructions, see [`INSTALL`](INSTALL) and [`README.md`](README
 - Fixed `dhisexpire` leaving the live history marked dead when it fails (or is killed) after the mark:
   it is marked alive again, the previous backup is no longer removed before the new one is linked,
   and a read or seek error while marking no longer deletes the live history file.
+- Updated the addresses in `contrib/feeder-stats/feeder-stats.pl`: the footer linked a download address
+  that no longer resolves (`info.news.surf.net`), now this repository, and the Top1000 link is
+  `https://top1000.anthologeek.net/`.
 - Fixed the %Acc figures of `contrib/feeder-stats/feeder-stats.pl`: the Total row of the incoming tables
   showed 0.00 (a misspelled variable), the outgoing Total row showed a fraction (0.57 for 57%), the
   incoming total left out the too-old count the rows include, and a row could show more than 100.
