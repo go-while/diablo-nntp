@@ -60,6 +60,8 @@ For installation instructions, see [`INSTALL`](INSTALL) and [`README.md`](README
   split at every colon; the older `host: label` and `host:label` forms still work.
 - Fixed an accepted checkgroups control message creating half-formed groups (listed as `0 0 n`, `GROUP`
   answering `211 1 -1 -1`): it only updates the description of groups that exist.
+- Fixed `dnewslink` refiling the entries pending in a stream without their `H` and `C<size>` flags and
+  writing the entry being sent twice when the peer goes away.
 - Fixed `feedermaxheadersize`, which was never applied (the header size was compared before it was known);
   an article with larger headers is now refused.
 - Fixed the Top1000 rank of `contrib/feeder-stats` with `-L`: a feed named by its label now gets the rank of
