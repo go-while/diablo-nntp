@@ -4413,6 +4413,12 @@ sub ReadDiabloConf
 		$label = $dhosts{$i};
 		$TopAliases{$i} .= lc $dnewsfeeds{$label};
 	}
+	#
+	# With -L a feed is known by its label, so the label has the aliases too.
+	#
+	foreach $i (keys %dnewsfeeds) {
+		$TopAliases{lc $i} .= lc $dnewsfeeds{$i};
+	}
 }
 
 

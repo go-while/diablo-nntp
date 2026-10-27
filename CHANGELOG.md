@@ -60,6 +60,8 @@ For installation instructions, see [`INSTALL`](INSTALL) and [`README.md`](README
   split at every colon; the older `host: label` and `host:label` forms still work.
 - Fixed an unchecked copy of the label name into a 255-byte buffer when the host cache is built from
   dnewsfeeds.
+- Fixed the Top1000 rank of `contrib/feeder-stats` with `-L`: a feed named by its label now gets the rank of
+  the label's `alias` lines.
 - Made `contrib/feeder-stats/feeder-stats.pl` run on current perl: it used `getopts.pl` and `timelocal.pl`,
   which perl no longer ships; it uses the `Getopt::Std` and `Time::Local` modules now.
 - Fixed diablo dying with SIGFPE at start with `allocstrat weighted` when every spool has weight 0 (the
