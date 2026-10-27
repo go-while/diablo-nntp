@@ -70,8 +70,12 @@ elif command -v pacman >/dev/null; then
         nosandbox=
         pacman --help --sync 2>/dev/null | grep -q -- --disable-sandbox && nosandbox=--disable-sandbox
         [ -z "$need" ] || pacman -Sy --noconfirm --needed --quiet $nosandbox $need >/dev/null
-        [ -z "$nodb" ] || pacman -S --noconfirm --needed --quiet $nosandbox db >/dev/null 2>&1 || true
-        [ -z "$nodb" ] || enddb
+        if [ -n "$nodb" ]; then
+            # refresh the sync databases if the line above did not
+            sync=-S; [ -n "$need" ] || sync=-Sy
+            pacman $sync --noconfirm --needed --quiet $nosandbox db >/dev/null 2>&1 || true
+            enddb
+        fi
     fi
 elif command -v apk >/dev/null; then
     have() { apk info -e "$1"; }
