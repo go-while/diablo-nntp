@@ -7,7 +7,6 @@ unless noted; none security-relevant; items under embargo are not listed
 here). Numbers are yours to give; low unless marked.
 
 dreaderd / diablo input:
-- lib/msgid.c is NOT listed here on purpose (go-while talks to Jesse).
 - dreaderd/group.c:167: the article's Message-ID header is not checked
   with MsgId() and can differ from the offered id (acks name the offered
   id, overview/history use the header).
