@@ -69,6 +69,11 @@ line() {	# line NAME ACC
 	echo "$TS news newslink[201]: 192.0.2.77:/news/dqueue/peerb.S00002 final secs=60 acc=3 dup=0 rej=0 tot=3 bytes=3000 (1/min) avpend=1.0 x"
 } > "$T/news.notice"
 
+# The script runs doutq for the queue table; use a stand-in that lists no queues.
+printf '#!/bin/sh\nexit 0\n' > "$T/doutq"
+chmod 755 "$T/doutq"
+FEEDER_STATS_QUEUECMD="$T/doutq"; export FEEDER_STATS_QUEUECMD
+
 run() {	# run OUTFILE [options]
 	out=$1; shift
 	perl "$PL" -t -d "$D" -C "$T/cfg" -l "$T/news.notice" -o "$out" "$@" > "$T/stdout" 2>&1 ||
