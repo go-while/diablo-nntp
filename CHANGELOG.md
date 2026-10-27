@@ -60,6 +60,8 @@ For installation instructions, see [`INSTALL`](INSTALL) and [`README.md`](README
   split at every colon; the older `host: label` and `host:label` forms still work.
 - Fixed an accepted checkgroups control message creating half-formed groups (listed as `0 0 n`, `GROUP`
   answering `211 1 -1 -1`): it only updates the description of groups that exist.
+- Fixed `feedermaxheadersize`, which was never applied (the header size was compared before it was known);
+  an article with larger headers is now refused.
 - Fixed the Top1000 rank of `contrib/feeder-stats` with `-L`: a feed named by its label now gets the rank of
   the label's `alias` lines.
 - Made `contrib/feeder-stats/feeder-stats.pl` run on current perl: it used `getopts.pl` and `timelocal.pl`,
