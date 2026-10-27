@@ -27,6 +27,10 @@ For installation instructions, see [`INSTALL`](INSTALL) and [`README.md`](README
 
 - Documented the dnewsfeeds options `minpath`, `mincross` and `minsize` in `diablo-files(5)` (with the
   exclusive `minsize` edge) and corrected `dfeedtest -p`, which takes a Path: value, not a count.
+- Fixed the %Acc figures of `contrib/feeder-stats/feeder-stats.pl`: the Total row of the incoming tables
+  showed 0.00 (a misspelled variable), the outgoing Total row showed a fraction (0.57 for 57%), the
+  incoming total left out the too-old count the rows include, and a row could show more than 100.
+  The environment variable `FEEDER_STATS_QUEUECMD` replaces the path of `doutq` (used by the test).
 - Fixed `contrib/feeder-stats/feeder-stats.pl` writing the out/in ratio cell of an outgoing feed with no
   incoming counterpart as `&#133;</tr>`: the cell now has its `</td>` and uses `&hellip;`. The
   environment variable `FEEDER_STATS_QUEUECMD` replaces the path of `doutq` (used by the test).
