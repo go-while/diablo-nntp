@@ -21,7 +21,18 @@ echo "== $PRETTY_NAME"
 # Packages are installed only when missing: have() is the distribution's own
 # query for one package, and missing() lists those of its arguments not
 # installed.  Berkeley DB is optional: install it where the distribution still
-# has it (and skip the attempt when db_185.h is already there).
+# has it.  wantdb() is true when db_185.h is absent and no earlier attempt
+# failed; after an attempt, enddb() leaves a marker (outside the wiped build
+# directory) if db_185.h is still absent, so later builds skip the attempt.
+nodbmark=/var/tmp/diablo-e2e-no-berkeley-db
+wantdb() {
+    [ ! -e /usr/include/db_185.h ] || return 1
+    if [ -e "$nodbmark" ]; then
+        echo "build-on-host: berkeley db install skipped (failed before; rm $nodbmark to retry)"
+        return 1
+    fi
+}
+enddb() { [ -e /usr/include/db_185.h ] || : > "$nodbmark"; }
 missing() {
     for p; do have "$p" >/dev/null 2>&1 || printf '%s ' "$p"; done
 }
@@ -32,43 +43,48 @@ report() {
 if command -v apt-get >/dev/null; then
     have() { dpkg-query -W -f='${Status}' "$1" | grep -q 'ok installed'; }
     need=$(missing build-essential libssl-dev zlib1g-dev); report
-    nodb=; [ -e /usr/include/db_185.h ] || have libdb5.3-dev || nodb=1
+    nodb=; if wantdb && ! have libdb5.3-dev; then nodb=1; fi
     if [ -n "$need" ] || [ -n "$nodb" ]; then
         export DEBIAN_FRONTEND=noninteractive
         apt-get -qq update
         [ -z "$need" ] || apt-get -qq install -y $need >/dev/null
         [ -z "$nodb" ] || apt-get -qq install -y libdb5.3-dev >/dev/null 2>&1 || true
+        enddb
     fi
 elif command -v dnf >/dev/null; then
     have() { rpm -q "$1"; }
     need=$(missing gcc make findutils openssl-devel zlib-devel shadow-utils); report
     [ -z "$need" ] || dnf -q -y install $need >/dev/null
-    [ -e /usr/include/db_185.h ] || dnf -q -y install libdb-devel >/dev/null 2>&1 || true
+    if wantdb; then dnf -q -y install libdb-devel >/dev/null 2>&1 || true; enddb; fi
 elif command -v zypper >/dev/null; then
     have() { rpm -q "$1"; }
     need=$(missing gcc make findutils libopenssl-devel zlib-devel shadow); report
     [ -z "$need" ] || zypper -n -q install $need >/dev/null
-    [ -e /usr/include/db_185.h ] || zypper -n -q install libdb-4_8-devel >/dev/null 2>&1 || true
+    if wantdb; then zypper -n -q install libdb-4_8-devel >/dev/null 2>&1 || true; enddb; fi
 elif command -v pacman >/dev/null; then
     have() { pacman -Q "$1"; }
     need=$(missing base-devel openssl zlib); report
-    if [ -n "$need" ] || [ ! -e /usr/include/db_185.h ]; then
+    nodb=; if wantdb; then nodb=1; fi
+    if [ -n "$need" ] || [ -n "$nodb" ]; then
         # pacman 7 sandboxes downloads with Landlock, which containers may lack.
         nosandbox=
         pacman --help --sync 2>/dev/null | grep -q -- --disable-sandbox && nosandbox=--disable-sandbox
         [ -z "$need" ] || pacman -Sy --noconfirm --needed --quiet $nosandbox $need >/dev/null
-        [ -e /usr/include/db_185.h ] || pacman -S --noconfirm --needed --quiet $nosandbox db >/dev/null 2>&1 || true
+        [ -z "$nodb" ] || pacman -S --noconfirm --needed --quiet $nosandbox db >/dev/null 2>&1 || true
+        [ -z "$nodb" ] || enddb
     fi
 elif command -v apk >/dev/null; then
     have() { apk info -e "$1"; }
     need=$(missing build-base openssl-dev zlib-dev); report
     [ -z "$need" ] || apk add -q $need
-    [ -e /usr/include/db_185.h ] || apk add -q db-dev 2>/dev/null || true
+    if wantdb; then apk add -q db-dev 2>/dev/null || true; enddb; fi
 elif command -v emerge >/dev/null; then
     # A stage3 has the compiler, OpenSSL and zlib.
     need=; report
-    [ -e /usr/include/db_185.h ] || ls -d /var/db/pkg/sys-libs/db-[0-9]* >/dev/null 2>&1 ||
+    if wantdb && ! ls -d /var/db/pkg/sys-libs/db-[0-9]* >/dev/null 2>&1; then
         emerge --quiet --noreplace --getbinpkg sys-libs/db >/dev/null 2>&1 || true
+        enddb
+    fi
 else
     echo "no supported package manager" >&2
     exit 1
