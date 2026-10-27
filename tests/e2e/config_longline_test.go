@@ -22,9 +22,10 @@ func TestConfigLongLine(t *testing.T) {
 	}
 	s.WriteFile(t, "diablo.config", conf[0]+"\n"+comment+"\n"+conf[1])
 
-	// no server is running: dicmd gets past the configuration and then can't connect
+	// No server is running: once the whole configuration is read, dicmd tries its control
+	// socket (from path_run) and fails there.
 	out, _ := s.TryRun("dicmd", "info")
-	if strings.Contains(out, "Unknown diablo.config command") {
-		t.Errorf("dicmd with a %d character comment line in diablo.config: %q", len(comment), out)
+	if strings.Contains(out, "Unknown diablo.config command") || !strings.Contains(out, "udom-connect") {
+		t.Errorf("dicmd with a %d character comment line in diablo.config: %q, want it to read the configuration and fail to connect (udom-connect)", len(comment), out)
 	}
 }
