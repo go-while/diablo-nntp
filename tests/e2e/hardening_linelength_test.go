@@ -62,7 +62,12 @@ func TestReaderLongLineAtLimit(t *testing.T) {
 
 	c = s.Reader(t)
 	send(t, c, "X"+strings.Repeat("a", clientMaxLine-2)+"\r\n")
-	if code, line, err := c.ReadStatus(); err == nil {
+	code, line, err = c.ReadStatus()
+	if err == nil && code == 500 {
+		// "500 Line too long", then the close
+		code, line, err = c.ReadStatus()
+	}
+	if err == nil {
 		t.Fatalf("line of %d bytes answered: %d %q, want the connection closed", clientMaxLine+1, code, line)
 	} else if ne, ok := err.(net.Error); ok && ne.Timeout() {
 		t.Fatalf("line of %d bytes: connection still open", clientMaxLine+1)

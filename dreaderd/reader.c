@@ -1163,6 +1163,8 @@ NNCommand2(Connection *conn)
      */
 
     if (len < 0 || conn->co_TMBuf.mh_WError) {
+	if (conn->co_RMBuf.mh_RError)
+	    MBLogPrintf(conn, &conn->co_TMBuf, "500 Line too long\r\n");
 	NNTerminate(conn);
 	return;
     }

@@ -559,6 +559,12 @@ MBRead(MBufHead *mh, void *data, int len)
  *		  newline, we add a \0 terminator but do NOT
  *		  include it in the length.  If the caller is adding
  *		  newlines back in, it must check for this condition.
+ *
+ *		  A line longer than mh_MaxLine is never returned.  If
+ *		  mh_SkipLong is 0 we report EOF with mh_RError set.  If
+ *		  it is 1 we drop the line, set mh_LongLine and return an
+ *		  empty line (length 1); the rest of the line, if not yet
+ *		  received, is dropped as it arrives (mh_Skip).
  */
 
 int
@@ -686,6 +692,24 @@ MBReadLine(MBufHead *mh, char **pptr)
 		    }
 		    break;
 		}
+		if (mh->mh_Skip) {
+		    /*
+		     * end of a long line not yet reached, drop the data
+		     * unless it holds the newline.  The rest is kept.
+		     */
+		    char *nl = memchr(mbuf->mb_Buf + mbuf->mb_Size, '\n', n);
+
+		    mh->mh_TotalBytes += n;
+		    if (nl == NULL)
+			continue;
+		    mh->mh_Skip = 0;
+		    n -= nl + 1 - (mbuf->mb_Buf + mbuf->mb_Size);
+		    mbuf->mb_Size = mbuf->mb_Index = mbuf->mb_NLScan =
+					nl + 1 - mbuf->mb_Buf;
+		    mbuf->mb_Size += n;
+		    mh->mh_Bytes += n;
+		    continue;
+		}
 		if (DebugOpt > 1) {
 		    DebugData("<<", mbuf->mb_Buf + mbuf->mb_Size, n);
 		}
@@ -714,11 +738,35 @@ MBReadLine(MBufHead *mh, char **pptr)
      */
 
     if (mh->mh_MaxLine > 0 && r > mh->mh_MaxLine) {
+	MBuf *scan;
+
 	logit(LOG_INFO, "MBReadLine line longer than %d bytes", mh->mh_MaxLine);
-	MBFree(mh);
-	mh->mh_REof = 1;
 	*pptr = "";
-	return(-1);
+	if (mh->mh_SkipLong == 0) {
+	    MBFree(mh);
+	    mh->mh_REof = 1;
+	    mh->mh_RError = 1;
+	    return(-1);
+	}
+
+	/*
+	 * Drop the line but keep the connection.  If the newline is in
+	 * mbuf, keep what follows it, else skip up to the next newline.
+	 */
+
+	while ((scan = mh->mh_MBuf) != NULL && (!haveit || scan != mbuf)) {
+	    mh->mh_MBuf = scan->mb_Next;
+	    if (scan->mb_Buf)
+		zfree(mh->mh_BufPool, scan->mb_Buf, scan->mb_Max);
+	    zfree(mh->mh_MemPool, scan, sizeof(MBuf));
+	}
+	if (haveit)
+	    mbuf->mb_Index = mbuf->mb_NLScan;
+	else
+	    mh->mh_Skip = 1;
+	mh->mh_Bytes -= r;
+	mh->mh_LongLine = 1;
+	return(1);
     }
 
     /*
