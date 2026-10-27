@@ -75,7 +75,7 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-56](#d-56-feedermaxheadersize-is-never-enforced) | Medium | `feedermaxheadersize` is never enforced | open |
 | [D-57](#d-57-dhisexpire-leaves-the-history-dead-when-it-fails) | Medium | `dhisexpire` leaves the live history marked dead when it fails after the mark | fixed (#95) |
 | [D-58](#d-58-dnewsfeeds-directive-without-an-argument-crashes) | Medium | dnewsfeeds directive without its argument crashes every program that loads the file | fixed (#94) |
-| [D-59](#d-59-per-label-maxconnect-allows-one-too-many) | Low | Per-label `maxconnect N` lets N+1 connections in | open |
+| [D-59](#d-59-per-label-maxconnect-allows-one-too-many) | Low | Per-label `maxconnect N` lets N+1 connections in | fixed (#96) |
 | [D-60](#d-60-host-cache-end-does-not-end-a-label) | Low | Host cache: `end` does not end a label; a stray `inhost` joins the previous one | fixed (#97) |
 | [D-61](#d-61-diablohosts-cannot-hold-an-ipv6-address) | Low | `diablo.hosts` cannot hold an IPv6 address | fixed (#97) |
 | [D-62](#d-62-stat-uses-a-128-byte-path-buffer) | Low | `STAT` uses a 128-byte path buffer and answers 430 for existing articles | open |
