@@ -60,6 +60,8 @@ For installation instructions, see [`INSTALL`](INSTALL) and [`README.md`](README
   split at every colon; the older `host: label` and `host:label` forms still work.
 - Fixed an unchecked copy of the label name into a 255-byte buffer when the host cache is built from
   dnewsfeeds.
+- Fixed diablo dying with SIGFPE at start with `allocstrat weighted` when every spool has weight 0 (the
+  default for a partition under 1 GiB); the articles are now spread evenly.
 - Modernized legacy C declarations, prototypes, pointer and integer types, socket argument types, header ordering, and obsolete compiler-specific constructs to build cleanly with modern GCC and Clang.
 - Replaced legacy OpenSSL SHA-256 context usage with the EVP digest API and corrected MD5-context clearing.
 - Updated illumos platform detection to recognize `__sun` and `sun`, use the system's `strsep()`, and discard obsolete Solaris file-descriptor-passing selectors. Existing `/dev/zero` mapping and other established Solaris runtime options remain unchanged.
