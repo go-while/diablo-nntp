@@ -31,6 +31,10 @@ For installation instructions, see [`INSTALL`](INSTALL) and [`README.md`](README
   `top1000-fetch.sh` downloads the list (`diablo-stats.sh` runs it daily), the new `-T dir` option
   tells `feeder-stats.pl` where it is, and the "Pos1000 is empty" message for hosts not in the list is
   only printed with `-v`. The environment variable `FEEDER_STATS_QUEUECMD` replaces the path of
+- Added `-L` to `contrib/feeder-stats/feeder-stats.pl`: report incoming and outgoing feeds per
+  dnewsfeeds label instead of per host name, with `test-label.sh` to check it. Without `-L` the only
+  difference is that the average pending count of a queue is no longer counted twice for a label
+  that equals its host name. The environment variable `FEEDER_STATS_QUEUECMD` replaces the path of
   `doutq` (used by the test).
 - Modernized legacy C declarations, prototypes, pointer and integer types, socket argument types, header ordering, and obsolete compiler-specific constructs to build cleanly with modern GCC and Clang.
 - Replaced legacy OpenSSL SHA-256 context usage with the EVP digest API and corrected MD5-context clearing.

@@ -27,6 +27,7 @@
 #     -g       generate various graphs of traffic statistics
 #     -H hour  create graphs ending at this hour
 #     -l file  log file (default: /var/log/news/news.notice)
+#     -L       group feeds by dnewsfeeds label instead of host name (Diablo)
 #     -m       use date/time in .png files rather than .png.meta
 #     -o file  output file (default: stdout)
 #     -s host  server hostname to use in report (default: newsfeed.foo.net)
@@ -84,6 +85,12 @@
 #
 # ChangeLog:
 # ----------
+# v4.006+ Diablo Project
+# - added: -L option: report incoming and outgoing feeds per dnewsfeeds label
+#   instead of per host name (or bare IP address when there is no PTR). The
+#   label of an incoming host is read from the inhost/host/hostname lines of
+#   dnewsfeeds and from diablo.hosts, including wildcards and CIDR ranges.
+#   Names that match no label are reported as before.
 # v?????  Pekka Kytölaakso
 # - added diablo reader statistics
 # - added variable $Subnet to control reader stats collection by
@@ -464,6 +471,7 @@ $EmbeddedHTML = 0;
 #
 $WallTime = 0;
 $QueueHost = 0;
+$ByLabel = 0;
 $QueueShowAll = 0;
 $RejTotReport = 0;
 $TextFormat = 0;
@@ -586,7 +594,7 @@ sub ParseCmdLine
 {
 	my ($ProgName) = @_;
 	
-	&Getopts('a:A:bB:cC:E:d:D:eghH:l:mo:s:qQrST:tvVw:W:');
+	&Getopts('a:A:bB:cC:E:d:D:eghH:l:Lmo:s:qQrST:tvVw:W:');
 
 	if ($opt_h) {
 		print <<EOT
@@ -610,6 +618,7 @@ Usage: $ProgName [options]
        -g       generate various graphs of traffic statistics
        -H hour  create graphs ending at this hour
        -l file  diablo log file (default: $LogFile)
+       -L       group feeds by dnewsfeeds label instead of host name
        -m       use date/time in .png files rather than .png.meta
        -o file  output file (default: stdout)
        -s host  server hostname to use in report (default: $NewsHost)
@@ -640,6 +649,7 @@ EOT
 	$GraphMode++ if (defined($opt_g));
 	$GenHour = $opt_H if (defined($opt_H));
 	$LogFile = $opt_l if (defined($opt_l));
+	$ByLabel++ if (defined($opt_L));
 	$MetaMode++ if (defined($opt_m));
 	$OutFile = $opt_o if (defined($opt_o));
 	$NewsHost = $opt_s if (defined($opt_s));
@@ -656,6 +666,11 @@ EOT
 		$CfgDir = $opt_C ;
 		$CfgFile = "$CfgDir/feeder-stats.conf";
 		$CtlFile = "$CfgDir/dnntpspool.ctl";
+	}
+
+	if ($ByLabel && defined($opt_c)) {
+		print STDERR "Warning: -L is only supported for Diablo log files, ignored with -c\n";
+		$ByLabel = 0;
 	}
 
 	if (defined($opt_c)) {
@@ -933,7 +948,7 @@ sub ParseDiabloLogFile
 				{
 #					$DiabloHost = $1;
 #					$DiabloPid = $2;
-					$InHost = $Aliases{lc $3} ? $Aliases{lc $3} : $3 ;
+					$InHost = &FeedName ($3);
 					$TooOld = $4;
 					# $Acc = $4;
 					# $Ctl = $5;
@@ -975,7 +990,7 @@ sub ParseDiabloLogFile
 				elsif ($Line =~ /(.*)\s+diablo\[(\d+)\]:\s+(\S+)\s+secs=(\d+)\s+ihave=(\d+)\s+chk=(\d+)\s+rec=(\d+)\s+rej=(\d+)\s+.*\s+err=(\d+)\s+added=(\d+)/o) {
 #					$DiabloHost = $1;
 #					$DiabloPid = $2;
-					$InHost = $Aliases{lc $3} ? $Aliases{lc $3} : $3 ;
+					$InHost = &FeedName ($3);
 					$InSecs = $4;
 					$InIhave = $5;
 					$InChk = $6;
@@ -1037,7 +1052,7 @@ sub ParseDiabloLogFile
                                 elsif ($Line =~ /(.*)\s+diablo\[(\d+)\]:\s+(\S+)\s+secs=(\d+)\s+ihave=(\d+)\s+chk=(\d+)\s+.*\s+rec=(\d+)\s+acc=(\d+)\s+.*\s+rej=(\d+)\s+.*\s+spam=(\d+)\s+err=(\d+)\s+.*\s+accbytes=(\d+)\s+rejbytes=(\d+)/o) {
 #					$DiabloHost = $1;
 #					$DiabloPid = $2;
-					$InHost = $Aliases{lc $3} ? $Aliases{lc $3} : $3 ;
+					$InHost = &FeedName ($3);
 					$InSecs = $4;
 					$InIhave = $5;
 					$InChk = $6;
@@ -1197,6 +1212,7 @@ sub ParseDiabloLogFile
 					$OutHost = $Aliases{lc $2} ? $Aliases{lc $2} : $2 ;
 					$OutBatch = $3;
 					($OutLabel, $OutBatchPath, $OutBatchNum) = fileparse($OutBatch,'\..*?') ;
+					$OutHost = $OutLabel if $ByLabel;
 					$OutSecs = $4;
 					$OutAccepted = $5;
 					$OutDup = $6;
@@ -1215,7 +1231,7 @@ sub ParseDiabloLogFile
 					}
 
 					$Feeds{$OutHost}->{OutCons} += 1;
-					$Feeds{$OutLabel}->{OutCons} += 1;
+					$Feeds{$OutLabel}->{OutCons} += 1 if $OutLabel ne $OutHost;
 					$Feeds{$OutHost}->{OutAccepted} += $OutAccepted;
 					$Feeds{$OutHost}->{OutDup} += $OutDup;
 					$Feeds{$OutHost}->{OutRej} += $OutRej;
@@ -4187,6 +4203,126 @@ sub GetMetaExpires
 #
 # Read the dnewsfeeds, diablo.hosts and dnntpspool.ctl files.
 #
+#
+# Remember that incoming connections from HOST (a host name, an IP address,
+# a wildcard pattern or a CIDR range, as in the inhost option of dnewsfeeds)
+# belong to LABEL.  WEAK is set for the 'hostname' option: it is the host we
+# feed, which is usually the one that feeds us as well, so it is only used
+# when nothing else names the host.
+#
+sub AddLabelHost
+{
+	my ($label, $host, $weak) = @_;
+	my ($addr, $bits, $re);
+
+	return if ($label eq '' || $host eq '');
+	$host =~ s/^(IP|FQDN)://i;
+	$host = lc $host;
+
+	if ($host =~ m#^(\d+\.\d+\.\d+\.\d+)/(\d+)$# && $2 <= 32) {
+		push (@LabelCidr, [ unpack ('N', pack ('C4', split (/\./, $1))), $2, $label, $weak ]);
+	} elsif ($host =~ m#^([0-9a-f:]+)/(\d+)$# && $2 <= 128) {
+		push (@LabelCidr6, [ &ExpandIPv6 ($1), $2, $label, $weak ]);
+	} elsif ($host =~ /[*?]/) {
+		$re = quotemeta ($host);
+		$re =~ s/\\\*/.*/g;
+		$re =~ s/\\\?/./g;
+		push (@LabelGlob, [ qr/^$re$/, $label, $weak ]);
+	} elsif ($weak) {
+		$LabelWeak{$host} = $label unless $LabelWeak{$host};
+	} else {
+		$LabelHost{$host} = $label;
+	}
+}
+
+
+#
+# 128 bit string of an IPv6 address (or '' if it is not one)
+#
+sub ExpandIPv6
+{
+	my ($addr) = @_;
+	my (@front, @back, @all);
+
+	return '' unless ($addr =~ /^[0-9a-f:]+$/i);
+	if ($addr =~ /^(.*)::(.*)$/) {
+		@front = split (/:/, $1);
+		@back = split (/:/, $2);
+		return '' if (@front + @back > 7);
+		@all = (@front, (0) x (8 - @front - @back), @back);
+	} else {
+		@all = split (/:/, $addr);
+	}
+	return '' unless (@all == 8);
+	return join ('', map { unpack ('B16', pack ('n', hex ($_))) } @all);
+}
+
+
+#
+# Label of the incoming host NAME as it is written in the log: a host name
+# or, when the address has no (matching) PTR record, the IP address.
+# Returns '' if no label is known for it.
+#
+sub LabelOf
+{
+	my ($name) = @_;
+	my ($n, $ip, $bits6, $e, $hit, $mask);
+
+	$n = lc $name;
+	return $LabelCache{$n} if exists $LabelCache{$n};
+
+	$hit = $LabelHost{$n};
+	if (! $hit && $n =~ /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/) {
+		$ip = unpack ('N', pack ('C4', $1, $2, $3, $4));
+		foreach $e (@LabelCidr) {
+			$mask = $e->[1] ? (0xFFFFFFFF << (32 - $e->[1])) & 0xFFFFFFFF : 0;
+			if (($ip & $mask) == ($e->[0] & $mask) && ! $e->[3]) {
+				$hit = $e->[2];
+				last;
+			}
+		}
+	} elsif (! $hit && $n =~ /^[0-9a-f:]+$/ && $n =~ /:/) {
+		$bits6 = &ExpandIPv6 ($n);
+		if ($bits6 ne '') {
+			foreach $e (@LabelCidr6) {
+				if ($e->[0] ne '' && ! $e->[3] &&
+				    substr ($bits6, 0, $e->[1]) eq substr ($e->[0], 0, $e->[1])) {
+					$hit = $e->[2];
+					last;
+				}
+			}
+		}
+	}
+	if (! $hit) {
+		foreach $e (@LabelGlob) {
+			if (! $e->[2] && $n =~ $e->[0]) {
+				$hit = $e->[1];
+				last;
+			}
+		}
+	}
+	$hit = $LabelWeak{$n} unless $hit;
+	return $LabelCache{$n} = $hit;
+}
+
+
+#
+# Name a feed is reported under: its alias: from feeder-stats.conf or, with
+# -L, the dnewsfeeds label of the host.
+#
+sub FeedName
+{
+	my ($name) = @_;
+	my ($label);
+
+	if ($ByLabel) {
+		$label = &LabelOf ($name);
+		return $label if $label;
+	}
+	return $Aliases{lc $name} ? $Aliases{lc $name} : $name;
+}
+
+
 sub ReadDiabloConf
 {
 	my ($state, $label, $alias, $host, $i);
@@ -4223,12 +4359,19 @@ sub ReadDiabloConf
 			#
 			# new versions of diablo put hostname here
 			$dhosts{$host} = $label;
+			&AddLabelHost ($label, $host, 1);
 		}
 		if (/^\s*inhost/) {
 			($host) = /^\s*inhost\s+(\S+)/;
 			#
 			# new versions of diablo put hostname here
 			$dhosts{$host} = $label;
+			&AddLabelHost ($label, $host, 0);
+		}
+		if (/^\s*host\s/) {
+			# 'host' sets hostname, alias and inhost in one line
+			($host) = /^\s*host\s+(\S+)/;
+			&AddLabelHost ($label, $host, 0);
 		}
 	}
 	close FD;
@@ -4242,6 +4385,7 @@ sub ReadDiabloConf
 			($host, $label) = /^(\S+)\s+(\S+)/;
 			next if ($host eq '' || $label eq '');
 			$dhosts{$host} = $label;
+			&AddLabelHost ($label, $host, 0);
 		}
 		close FD;
 	}

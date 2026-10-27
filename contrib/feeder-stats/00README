@@ -37,6 +37,20 @@ Top1000 rank:
    path name the peer uses in a Path: header there.  Hosts that are not in
    the list are left blank; -v tells which ones.  'sh test-top1000.sh' in
    this directory checks all of this on made-up data.
+Grouping by label (Diablo log files only):
+
+   Add -L to the feeder-stats.pl command line in diablo-stats.sh to report
+   incoming and outgoing feeds per dnewsfeeds label instead of per host
+   name.  This helps when peers have no PTR record (the tables then show
+   bare IP addresses) or feed from several addresses.  The label of an
+   incoming host is taken from the inhost, host and hostname lines of
+   dnewsfeeds and from diablo.hosts, including wildcards and CIDR ranges
+   (read from the directory given with -C).  A host that matches no label
+   is reported under its own name, as before; alias: lines in
+   feeder-stats.conf still apply to such hosts.  Where ranges overlap, the first
+   matching line wins, not the longest prefix.  Outgoing feeds use the
+   label in the name of the queue file.  Run 'sh test-label.sh' in this
+   directory to check the option on made-up log lines.
 
 Original additional notes from Iain kept for historical sake ;-)
 -----------------------------------------------------------
