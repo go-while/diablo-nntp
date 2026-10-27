@@ -27,6 +27,9 @@ For installation instructions, see [`INSTALL`](INSTALL) and [`README.md`](README
 
 - Documented the dnewsfeeds options `minpath`, `mincross` and `minsize` in `diablo-files(5)` (with the
   exclusive `minsize` edge) and corrected `dfeedtest -p`, which takes a Path: value, not a count.
+- Fixed `contrib/feeder-stats/feeder-stats.pl` writing the out/in ratio cell of an outgoing feed with no
+  incoming counterpart as `&#133;</tr>`: the cell now has its `</td>` and uses `&hellip;`. The
+  environment variable `FEEDER_STATS_QUEUECMD` replaces the path of `doutq` (used by the test).
 - Made the Top1000 rank of `contrib/feeder-stats` work with https://top1000.anthologeek.net/: the new
   `top1000-fetch.sh` downloads the list (`diablo-stats.sh` runs it daily), the new `-T dir` option
   tells `feeder-stats.pl` where it is, and the "Pos1000 is empty" message for hosts not in the list is

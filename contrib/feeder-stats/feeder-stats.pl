@@ -2409,7 +2409,7 @@ sub PrintOutgoingFeeds
 				}
 				else
 				{
-					printf FILE "%s&#133;", $TDR;
+					printf FILE "%s&hellip;%s", $TDR, "</td>";
 				}
 				printf FILE "%s\n", "</tr>";
 			}
