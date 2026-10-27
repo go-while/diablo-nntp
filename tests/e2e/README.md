@@ -37,6 +37,8 @@ test fails.
 | `TestDnewsfeedsLimitsDfeedtest` | dfeedtest | dnewsfeeds `maxsize`, `minsize` (with `k`), `maxcross`, `mincross`, `maxpath` and `minpath`: dfeedtest feeds an article only inside each range, with the edge values on both sides. `minsize` is exclusive and `maxsize` inclusive, and both are pinned |
 | `TestDnewsfeedsLimitsLive` | diablo | the same six limits on a running diablo: an article outside the range does not reach the label's queue, one inside does |
 | `TestStatWithLongSpoolPath` | diablo | STAT of a stored article answers 223 with a spool path of about 125 characters (D-62). **Fails** on main: 430 Article expired |
+| `TestHostCacheEndEndsLabel` | diablo (dprimehostcache) | an `inhost` line after the `end` of a label is not entered into the host cache under that label (D-60). **Fails** on main |
+| `TestHostCacheDiabloHostsForms` | diablo (dprimehostcache) | diablo.hosts takes an IPv6 address as well as the `host: label` and `host:label` forms (D-61). **Fails** on main: `2001:db8::25` became host `2001`, label `db8` |
 | `TestDnewslinkTermStalledPeer` | diablo, dnewslink | SIGTERM while dnewslink waits for a stalled peer (at the greeting, and on an unanswered CHECK/TAKETHIS): it exits within 5 s and both articles stay queued. **Fails** on main before this fix: dnewslink polled again for the full `-T` timeout (600 s) after the signal |
 | `TestReaderFeedAndRead` | dreaderd, dgrpctl | an article fed to the reader by IHAVE shows in GROUP and OVER; BODY and ARTICLE fetch it from the spool server (fake) |
 | `TestReaderQuitAlone` | dreaderd | QUIT gets 205 and nothing follows it |

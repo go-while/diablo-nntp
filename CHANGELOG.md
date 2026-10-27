@@ -27,6 +27,13 @@ For installation instructions, see [`INSTALL`](INSTALL) and [`README.md`](README
 
 - Documented the dnewsfeeds options `minpath`, `mincross` and `minsize` in `diablo-files(5)` (with the
   exclusive `minsize` edge) and corrected `dfeedtest -p`, which takes a Path: value, not a count.
+- Fixed the %Acc figures of `contrib/feeder-stats/feeder-stats.pl`: the Total row of the incoming tables
+  showed 0.00 (a misspelled variable), the outgoing Total row showed a fraction (0.57 for 57%), the
+  incoming total left out the too-old count the rows include, and a row could show more than 100.
+  The environment variable `FEEDER_STATS_QUEUECMD` replaces the path of `doutq` (used by the test).
+- Fixed `contrib/feeder-stats/feeder-stats.pl` writing the out/in ratio cell of an outgoing feed with no
+  incoming counterpart as `&#133;</tr>`: the cell now has its `</td>` and uses `&hellip;`. The
+  environment variable `FEEDER_STATS_QUEUECMD` replaces the path of `doutq` (used by the test).
 - Made the Top1000 rank of `contrib/feeder-stats` work with https://top1000.anthologeek.net/: the new
   `top1000-fetch.sh` downloads the list (`diablo-stats.sh` runs it daily), the new `-T dir` option
   tells `feeder-stats.pl` where it is, and the "Pos1000 is empty" message for hosts not in the list is
@@ -38,6 +45,9 @@ For installation instructions, see [`INSTALL`](INSTALL) and [`README.md`](README
   `doutq` (used by the test).
 - Fixed `STAT` answering `430 Article expired` for an article that exists when the spool path plus the
   article file name is longer than 127 characters.
+- Fixed the host cache: an `inhost` line after the `end` of a label was authorised under that label (and
+  `label` was not initialised), and `diablo.hosts` could not hold an IPv6 address because its fields were
+  split at every colon; the older `host: label` and `host:label` forms still work.
 - Modernized legacy C declarations, prototypes, pointer and integer types, socket argument types, header ordering, and obsolete compiler-specific constructs to build cleanly with modern GCC and Clang.
 - Replaced legacy OpenSSL SHA-256 context usage with the EVP digest API and corrected MD5-context clearing.
 - Updated illumos platform detection to recognize `__sun` and `sun`, use the system's `strsep()`, and discard obsolete Solaris file-descriptor-passing selectors. Existing `/dev/zero` mapping and other established Solaris runtime options remain unchanged.
