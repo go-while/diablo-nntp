@@ -30,6 +30,8 @@ For installation instructions, see [`INSTALL`](INSTALL) and [`README.md`](README
 - Fixed `dhisexpire` leaving the live history marked dead when it fails (or is killed) after the mark:
   it is marked alive again, the previous backup is no longer removed before the new one is linked,
   and a read or seek error while marking no longer deletes the live history file.
+- Fixed a crash of `diablo` and every program that loads dnewsfeeds (including a running diablo at its
+  next reload) when a numeric option such as `maxparallel`, `port` or `priority` has no value.
 - Updated the addresses in `contrib/feeder-stats/feeder-stats.pl`: the footer linked a download address
   that no longer resolves (`info.news.surf.net`), now this repository, and the Top1000 link is
   `https://top1000.anthologeek.net/`.
