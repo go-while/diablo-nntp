@@ -1,0 +1,1 @@
+- dreaderd: Cancel-Lock generation (F-01, RFC 8315). With `canlockadmin` and `canlockuser` secrets in a vserverdef, posts get a Cancel-Lock (sha256 and sha1; `canlocksha1 no` for sha256 only), and a user's own cancel or supersede gets the matching Cancel-Key. `addcanlockuser username|ip|none` in the readerdef says who the user lock is for. Without secrets nothing changes.

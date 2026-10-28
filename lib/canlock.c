@@ -7,16 +7,21 @@
  *	string itself (RFC 8315 section 3).  Schemes: sha256 (mandatory),
  *	sha512, and sha1 (deprecated, still accepted when verifying).
  *
- *	Verification needs no secret; generating locks and keys (for local
- *	posts) is not done here yet.
+ *	Verification needs no secret.  Generating a key takes a local secret:
+ *	c-key = base64(HMAC(secret, uid + message-id)), the recommended
+ *	derivation of RFC 8315 section 4, which is what INN's libcanlock
+ *	computes; the HMAC uses the hash of the scheme.
  */
 
 #include "defs.h"
 #include <openssl/evp.h>
+#include <openssl/hmac.h>
 #include <openssl/crypto.h>
 
 Prototype int CanLockFindHeader(const char *hdrs, int hlen, const char *name, char *buf, int bufLen);
 Prototype int CanLockVerify(const char *keys, const char *locks);
+Prototype int CanLockKey(const char *scheme, const char *secret, const char *uid, const char *mid, char *buf, int bufLen);
+Prototype int CanLockLock(const char *scheme, const char *key, char *buf, int bufLen);
 Prototype const char *CanLockModeName(int mode);
 
 /*
@@ -179,6 +184,56 @@ CanLockVerify(const char *keys, const char *locks)
 	}
     }
     return(0);
+}
+
+/*
+ * CanLockKey() - the Cancel-Key element value for a scheme ("sha256",
+ * "sha1", "sha512"): base64(HMAC(secret, uid + mid)).  uid is the user the
+ * article belongs to ("" for the admin secret) and mid the Message-ID with
+ * its angle brackets.  Returns the length of the value written to buf, or -1
+ * for an unknown scheme, a secret or an input that doesn't fit, or an
+ * OpenSSL error.
+ */
+int
+CanLockKey(const char *scheme, const char *secret, const char *uid, const char *mid, char *buf, int bufLen)
+{
+    const EVP_MD *md = schemeDigest(scheme, strlen(scheme));
+    unsigned char mac[EVP_MAX_MD_SIZE];
+    unsigned int macLen = 0;
+    char data[1024];
+    int dataLen;
+
+    if (md == NULL || *secret == 0 || strchr(uid, '<') || strchr(uid, '>'))
+	return(-1);
+    dataLen = snprintf(data, sizeof(data), "%s%s", uid, mid);
+    if (dataLen < 0 || dataLen >= (int)sizeof(data))
+	return(-1);
+    if (HMAC(md, secret, strlen(secret), (unsigned char *)data, dataLen, mac, &macLen) == NULL)
+	return(-1);
+    if (bufLen < (int)(4 * ((macLen + 2) / 3) + 1))
+	return(-1);
+    return(EVP_EncodeBlock((unsigned char *)buf, mac, macLen));
+}
+
+/*
+ * CanLockLock() - the Cancel-Lock element value for the scheme of a
+ * Cancel-Key value key: base64(H(key)).  Returns the length written to buf,
+ * or -1 like CanLockKey().
+ */
+int
+CanLockLock(const char *scheme, const char *key, char *buf, int bufLen)
+{
+    const EVP_MD *md = schemeDigest(scheme, strlen(scheme));
+    unsigned char hash[EVP_MAX_MD_SIZE];
+    unsigned int hashLen = 0;
+
+    if (md == NULL)
+	return(-1);
+    if (EVP_Digest(key, strlen(key), hash, &hashLen, md, NULL) != 1)
+	return(-1);
+    if (bufLen < (int)(4 * ((hashLen + 2) / 3) + 1))
+	return(-1);
+    return(EVP_EncodeBlock((unsigned char *)buf, hash, hashLen));
 }
 
 /*

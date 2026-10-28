@@ -2496,6 +2496,40 @@ readAccessLine(FILE *af, char *fname, AccessDef *adef)
 }
 
 /*
+ * addCanLockSecret() - store the value of a canlockadmin or canlockuser line
+ * in the next free slot of a vserverdef (the first is the one that makes new
+ * locks, the others only make keys, for secrets that were rotated out).
+ * Trailing white space is not part of the secret.  A secret that doesn't
+ * fit is refused, never truncated: it would make locks nobody can answer.
+ * The secret is never logged.
+ */
+static void
+addCanLockSecret(char secrets[][CANLOCK_SECRETLEN], const char *opt, const char *val, int linecount)
+{
+    int len = strlen(val);
+    int i;
+
+    while (len > 0 && isspace((unsigned char)val[len - 1]))
+	--len;
+    if (len == 0)
+	return;
+    if (len >= CANLOCK_SECRETLEN) {
+	logit(LOG_ERR, "dreader.access: %s in line %d is longer than %d characters, ignored",
+				opt, linecount, CANLOCK_SECRETLEN - 1);
+	return;
+    }
+    for (i = 0; i < CANLOCK_MAXSECRETS; ++i) {
+	if (secrets[i][0] == 0) {
+	    memcpy(secrets[i], val, len);
+	    secrets[i][len] = 0;
+	    return;
+	}
+    }
+    logit(LOG_ERR, "dreader.access: more than %d %s lines, line %d ignored",
+				CANLOCK_MAXSECRETS, opt, linecount);
+}
+
+/*
  * Install a new copy of the access cache
  * This is done by creating the new cache files first, locking and then
  * renaming the files.
@@ -2800,6 +2834,21 @@ InstallAccessCache(void) {
 			vserver.vs_NoReadPath = 1;
 		    else
 			vserver.vs_NoReadPath = 0;
+		    continue;
+		}
+		if (*val && strcmp(opt, "canlockadmin") == 0) {
+		    addCanLockSecret(vserver.vs_CanLockAdmin, opt, val, linecount);
+		    continue;
+		}
+		if (*val && strcmp(opt, "canlockuser") == 0) {
+		    addCanLockSecret(vserver.vs_CanLockUser, opt, val, linecount);
+		    continue;
+		}
+		if (*val && strcmp(opt, "canlocksha1") == 0) {
+		    if (*val == 'n' || *val == 'N' || *val == '0')
+			vserver.vs_NoCanLockSha1 = 1;
+		    else
+			vserver.vs_NoCanLockSha1 = 0;
 		    continue;
 		}
 		if (*val && strcmp(opt, "postcomments") == 0) {
@@ -3137,6 +3186,17 @@ InstallAccessCache(void) {
 		}
 		if (*val && strcmp(opt, "maxagepolicy") == 0) {
 		    readerdef.rd_MaxAgePolicy = atoi(val);
+		    continue;
+		}
+		if (*val && strcmp(opt, "addcanlockuser") == 0) {
+		    if (strcasecmp(val, "username") == 0)
+			readerdef.rd_AddCanLockUser = CANLOCK_USER_NAME;
+		    else if (strcasecmp(val, "ip") == 0)
+			readerdef.rd_AddCanLockUser = CANLOCK_USER_IP;
+		    else if (strcasecmp(val, "none") == 0)
+			readerdef.rd_AddCanLockUser = CANLOCK_USER_NONE;
+		    else
+			logit(LOG_ERR, "dreader.access: addcanlockuser must be username, ip or none, line %d\n", linecount);
 		    continue;
 		}
 		if (*val && strcmp(opt, "turnoffnnph") == 0) {
@@ -3745,6 +3805,9 @@ PrintAuthDetails(DnsRes *dres)
     printf(" vs_Org: %s\n", dres->dr_VServerDef->vs_Org);
     printf(" vs_AbuseTo: %s\n", dres->dr_VServerDef->vs_AbuseTo);
     printf(" vs_CryptPw: %s\n", dres->dr_VServerDef->vs_CryptPw);
+    printf(" vs_CanLockAdmin: %s\n", dres->dr_VServerDef->vs_CanLockAdmin[0][0] ? "set" : "none");
+    printf(" vs_CanLockUser: %s\n", dres->dr_VServerDef->vs_CanLockUser[0][0] ? "set" : "none");
+    printf(" vs_NoCanLockSha1: %d\n", dres->dr_VServerDef->vs_NoCanLockSha1);
     printf(" vs_Interface: %s\n", "XXX"); /* dres->dr_VServerDef->vs_Interface); */
     printf(" vs_AccessFile: %s\n", dres->dr_VServerDef->vs_AccessFile);
    printf("au_Name: %s\n", dres->dr_AuthDef->au_Name);

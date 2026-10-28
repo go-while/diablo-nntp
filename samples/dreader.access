@@ -40,6 +40,26 @@
 # cryptpw	 : The password used to DES encrypt X-Trace, if set in vendor.h
 #		   Default: No crypting of X-Trace:
 #
+# canlockadmin	 : A secret for Cancel-Lock (RFC 8315). With it, every local
+#		   post gets a Cancel-Lock that only the holder of the secret
+#		   can answer with a Cancel-Key (the admin key, for withdrawing
+#		   any article). Up to 4 lines; the first one makes the locks.
+#		   Default: none.
+# canlockuser	 : A secret for the user locks. A post by an identified user
+#		   (see 'addcanlockuser' in the readerdef) gets a lock from
+#		   this secret and that user, and the user's own cancel or
+#		   supersede of an article gets the matching Cancel-Key
+#		   added. Up to 4 lines; the first one makes the locks, all of
+#		   them make keys, so that a replaced secret (put it after the
+#		   new one) still withdraws the old articles. Use a secret
+#		   different from canlockadmin, random and at least 32
+#		   characters long (up to 127). Default: none.
+#		   The secrets are kept in clear in this file and in the
+#		   vserver cache next to it in the db directory: keep both
+#		   readable by root and news only.
+# canlocksha1	 : 'no' leaves out the sha1 locks and keys; by default
+#		   sha256 and sha1 are made. sha1 is deprecated by RFC 8315
+#		   and kept for readers and servers that only check it.
 # interface	 : IP address for which we accept connections for this vserver
 #		   May be a cidr ip/mask. Max 4 per vserver.
 #		   Default: All interfaces
@@ -90,6 +110,8 @@
 #  organisation	An Organisation
 #  abuseto	abuse@current.host.name
 #  cryptpw	apassword
+#  canlockadmin	a-random-secret-of-at-least-32-characters
+#  canlockuser	another-random-secret-of-at-least-32-characters
 #  interface	1.2.3.4
 #  accessfile	%s/access.ahost
 #end
@@ -271,6 +293,11 @@
 #
 # logcmd : Log every reader command issued (via syslog). Overrides the
 #	   global configuration option "readerdetaillog" for this reader.
+#
+# addcanlockuser : Who the user lock of a post is made for, when the vserverdef
+#		   has a canlockuser secret: 'username' (the default: the
+#		   AUTHINFO user; nobody is identified without one), 'ip'
+#		   (the client's IP address) or 'none' (only the admin lock).
 #
 # xzver : Specify zlib-compression level to support for xzver; 1 is fairly
 #         fast but is not as compressed as 9.  Typical compression tradeoff

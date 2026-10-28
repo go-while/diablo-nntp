@@ -452,8 +452,33 @@
 
     The locks and keys are computed the same way as INN's (libcanlock), so
     articles posted through INN with the same secrets stay cancellable.
-    Checking needs no secret.  dreaderd doesn't add Cancel-Lock to local
-    posts yet.
+    Checking needs no secret.
+
+    Generating: with a 'canlockadmin' and/or 'canlockuser' secret in the
+    vserverdef (samples/dreader.access), dreaderd adds a Cancel-Lock header
+    to the articles posted through it:
+
+	- the admin lock, made from the canlockadmin secret and the
+	  Message-ID.  Whoever holds the secret can withdraw any local article;
+	  there is no tool for the key yet.
+	- the user lock, made from the canlockuser secret, the user and the
+	  Message-ID, for a poster that AUTHINFO identified (readerdef
+	  'addcanlockuser': username, the default, ip or none).  When the same
+	  user posts a cancel (Control: cancel) or a Supersedes for the article,
+	  dreaderd adds the Cancel-Key, so that clients need no key handling.
+
+    Each lock is made with sha256 and with sha1.  sha1 is deprecated (RFC 8315
+    section 6) but older readers and servers may only check that; 'canlocksha1
+    no' in the vserverdef leaves it out.  A Cancel-Lock the poster sent stays,
+    as the first element of the one header, with the admin locks added after
+    it (no user lock then); a Cancel-Key the poster sent is not touched.
+
+    The secrets must be random and different from each other, and at least 32
+    characters long.  To replace a canlockuser secret, add the new one as the
+    first canlockuser line and keep the old one below it: new articles get
+    locks from the new secret, while cancels of older articles carry keys of
+    both.  The secrets are in clear in dreader.access and in the vserver
+    cache in the db directory: only root and news may read them.
 
 				    MONITORING
 
