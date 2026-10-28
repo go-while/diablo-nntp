@@ -186,17 +186,18 @@ canLockUid(Connection *conn, char *buf, int bufLen)
 }
 
 /*
- * canLockAppend() - append " scheme:value" (no space first in an empty
- * list) to the list in out, outLen bytes.  Returns 0 when it doesn't fit.
+ * canLockAppend() - append the element "scheme:value" (no space first in an
+ * empty list) to the list in out, outLen bytes.  Returns 0 when it doesn't
+ * fit.
  */
 static int
-canLockAppend(char *out, int outLen, const char *scheme, const char *value)
+canLockAppend(char *out, int outLen, const char *element)
 {
     int n = strlen(out);
 
-    if (n + (n ? 1 : 0) + (int)strlen(scheme) + 1 + (int)strlen(value) + 1 > outLen)
+    if (n + (n ? 1 : 0) + (int)strlen(element) + 1 > outLen)
 	return(0);
-    snprintf(out + n, outLen - n, "%s%s:%s", n ? " " : "", scheme, value);
+    snprintf(out + n, outLen - n, "%s%s", n ? " " : "", element);
     return(1);
 }
 
@@ -217,14 +218,12 @@ canLockLocks(char *out, int outLen, const Vserver *vs, const char secrets[][CANL
 
     for (j = 0; j < CANLOCK_MAXSECRETS && secrets[j][0]; ++j) {
 	for (i = 0; i < 2; ++i) {
-	    char key[128];
-	    char lock[128];
+	    char lock[192];
 
 	    if (i == 1 && vs->vs_NoCanLockSha1)
 		break;
-	    if (CanLockKey(schemes[i], secrets[j], uid, mid, key, sizeof(key)) < 0 ||
-		CanLockLock(schemes[i], key, lock, sizeof(lock)) < 0 ||
-		!canLockAppend(out, outLen, schemes[i], lock))
+	    if (CanLockLock(schemes[i], secrets[j], uid, mid, lock, sizeof(lock)) < 0 ||
+		!canLockAppend(out, outLen, lock))
 		logit(LOG_ERR, "Cancel-Lock: cannot make a %s lock for %s", schemes[i], mid);
 	}
     }
@@ -244,12 +243,12 @@ canLockKeys(char *out, int outLen, const Vserver *vs, const char *uid, const cha
 
     for (j = 0; j < CANLOCK_MAXSECRETS && vs->vs_CanLockUser[j][0]; ++j) {
 	for (i = 0; i < 2; ++i) {
-	    char key[128];
+	    char key[192];
 
 	    if (i == 1 && vs->vs_NoCanLockSha1)
 		break;
 	    if (CanLockKey(schemes[i], vs->vs_CanLockUser[j], uid, target, key, sizeof(key)) < 0 ||
-		!canLockAppend(out, outLen, schemes[i], key))
+		!canLockAppend(out, outLen, key))
 		logit(LOG_ERR, "Cancel-Key: cannot make a %s key for %s", schemes[i], target);
 	}
     }

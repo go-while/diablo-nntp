@@ -1,0 +1,1 @@
+- Cancel-Lock now uses libcanlock (3.3.0 or later) for its computations, the library INN uses, instead of its own OpenSSL code. `CANLOCK_ENABLED` in `lib/vendor.h` (on by default) turns it on; without the library only `readercanlock all` works. Install `libcanlock-dev` / `libcanlock`, or `#undef CANLOCK_ENABLED`.
