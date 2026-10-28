@@ -22,6 +22,7 @@ int FileCopy = 0;
 time_t MaxAge = -1;
 int MustExit = 0;
 int DeadFd = -1;	/* history marked dead and not yet replaced */
+int OldStaysDead = 0;	/* no -a: the old history is left marked dead */
 char *FileName = NULL;
 char NewFileName[PATH_MAX];
 char OldFileName[PATH_MAX];
@@ -396,6 +397,8 @@ DoExpire(int fd, int hsize, int rsize)
 				Fail(NewFileName, "Unable to rename new history");
 			}
 		    }
+		    if (!UseNewHistory)
+			OldStaysDead = 1;
 		    DeadFd = -1;	/* the old history is replaced, or a backup */
 		}
 		finished = 1;
@@ -551,7 +554,7 @@ DoExpire(int fd, int hsize, int rsize)
         printf("%u dropped as beyond max age\n", MaxAgeCount);
     }
 #ifdef USE_DEADMAGIC
-    if (!UseNewHistory && DeadFd >= 0)
+    if (OldStaysDead)
 	printf("Note: the old history stays marked dead (no -a): run dhisexpire -u %s or use -a\n", FileName);
 #endif
 }
