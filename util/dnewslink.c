@@ -3930,7 +3930,7 @@ doArtLog(const char *class, char *msgid, char *message, const char *stage, const
 	if (Logfd == NULL) {
 	    char logfname[PATH_MAX];
 	    sprintf(logfname, "%s/feedlog.%s", PatExpand(LogHomePat), HostName);
-	    Logfd = fopen(logfname, "a");
+	    Logfd = PrivateFOpen(logfname, "a", 0640);
 	    if (Logfd == NULL)
 	        return;
         }
