@@ -1,0 +1,1 @@
+- `dreaderd/dfa.c`: the last `-Wextra` fall-through warning (`MAX_HDR_CC` into `HDRCPY`) is annotated; no change in behaviour.
