@@ -21,7 +21,7 @@ name: ci-matrix
 on:
   pull_request:
   push:
-    branches: [main, gw-ci-matrix]   # gw-ci-matrix: fork iteration only; drop on merge
+    branches: [main]
   workflow_dispatch:
 
 permissions:
