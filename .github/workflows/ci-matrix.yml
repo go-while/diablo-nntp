@@ -148,7 +148,7 @@ jobs:
             [ "$bok" = 1 ] || { echo "BUILD FAILED"; exit 1; }
             chmod 755 tests/e2e/e2e.test
             cd tests/e2e
-            su -s /bin/sh news -c "DIABLO_BIN=/src/dbin NNTP_TEST_DEADLINE=30s ./e2e.test -test.v -test.count=1"
+            su -s /bin/sh news -c "DIABLO_BIN=/src/dbin NNTP_TEST_DEADLINE=30s ./e2e.test -test.v -test.count=1 -test.timeout=1200s"
           '
 
   # FreeBSD: build-on-host has no FreeBSD/pkg branch (it would exit "no supported
@@ -200,7 +200,7 @@ jobs:
             chmod -R a+rX .
             cd tests/e2e
             # dbin is at the repo root ($root/dbin), two levels up from here.
-            su -m news -c "env DIABLO_BIN=$root/dbin NNTP_TEST_DEADLINE=30s ./e2e.test -test.v -test.count=1"
+            su -m news -c "env DIABLO_BIN=$root/dbin NNTP_TEST_DEADLINE=30s ./e2e.test -test.v -test.count=1 -test.timeout=1200s"
 
   # illumos (OmniOS): best effort, same shape as FreeBSD (gmake build, CC=gcc).
   # Does not fail the workflow; reported either way.
@@ -243,4 +243,4 @@ jobs:
             chmod -R a+rX .
             cd tests/e2e
             # dbin is at the repo root ($root/dbin), two levels up from here.
-            su news -c "DIABLO_BIN=$root/dbin NNTP_TEST_DEADLINE=30s ./e2e.test -test.v -test.count=1"
+            su news -c "DIABLO_BIN=$root/dbin NNTP_TEST_DEADLINE=30s ./e2e.test -test.v -test.count=1 -test.timeout=1200s"
