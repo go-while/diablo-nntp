@@ -177,6 +177,11 @@ SetSpamFilterOpt(void)
 			return;
 		    }
 		    n = strtol(ptr, NULL, 0);
+		    if (n <= 0 || n > (1 << 24)) {
+			logit(LOG_ERR, "spam hash size option (%d) out of range\n", n);
+			free(oldopts);
+			return;
+		    }
 		    if ((n ^ (n - 1)) != (n << 1) - 1) {
 			logit(LOG_ERR, "spam hash size option (%d) not a power of 2\n",
 							n);
@@ -604,10 +609,31 @@ ClearSpamFilterEntry(int which, int entry)
 	default:
 		return;
     }
-    if (entry < 0)
+    if (f->HashAry == NULL)
+	return;
+    if (entry < 0) {
+#if USE_SPAM_RW_MAP
 	bzero(f->HashAry, f->Hsize * sizeof(Filter));
-    else
+#else
+	lseek(f->Fd, 0, 0);
+	{
+	    Filter zero = { { 0 } };
+	    int i;
+	    for (i = 0; i < f->Hsize; ++i)
+		write(f->Fd, &zero, sizeof(Filter));
+	}
+#endif
+    } else {
+#if USE_SPAM_RW_MAP
 	bzero(&f->HashAry[entry], sizeof(Filter));
+#else
+	lseek(f->Fd, (off_t)entry * sizeof(Filter), 0);
+	{
+	    Filter zero = { { 0 } };
+	    write(f->Fd, &zero, sizeof(Filter));
+	}
+#endif
+    }
 }
 
 void
