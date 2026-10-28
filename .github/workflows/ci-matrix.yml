@@ -1,0 +1,232 @@
+name: ci-matrix
+
+# Public breadth matrix: build Diablo and run the tests/e2e suite across as many
+# targets as GitHub-hosted runners allow, so the results are publicly verifiable
+# (our private VM matrix covers ~20 distros, but nobody outside can check those).
+#
+#   hosted      - native build+test on GitHub runners (incl. arm64 and a
+#                 libcanlock-less build so TestCancelLockWithoutLibcanlock runs)
+#   build-test-binary - compiles the pure-Go e2e test binary once, CGO off, for
+#                 linux/freebsd/illumos amd64, so no container or VM needs Go
+#   containers  - Linux distro containers via `docker run` on an ubuntu host,
+#                 mirroring the VM runner (build as root, test as the news user)
+#   freebsd / illumos - BSD/illumos via vmactions VMs (best effort)
+#
+# Scoped to the gw-ci-matrix branch and manual dispatch while it is iterated on
+# our fork; widen `on:` when it moves to the default branch.
+
+on:
+  push:
+    branches: [gw-ci-matrix]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-matrix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Native build + test on GitHub-hosted runners, as in e2e.yml, plus arm64 and
+  # a second ubuntu-24.04 build with libcanlock off (E2E_NO_CANLOCK=1) so that
+  # TestCancelLockWithoutLibcanlock runs instead of skipping.
+  hosted:
+    name: hosted (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: ubuntu-24.04,            os: ubuntu-24.04,     no_canlock: "0" }
+          - { name: ubuntu-22.04,            os: ubuntu-22.04,     no_canlock: "0" }
+          - { name: ubuntu-24.04-arm,        os: ubuntu-24.04-arm, no_canlock: "0" }
+          - { name: ubuntu-24.04-no-canlock, os: ubuntu-24.04,     no_canlock: "1" }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: tests/e2e/go.mod
+          cache-dependency-path: tests/e2e/go.sum
+
+      # Installs build packages, creates the news user, builds with RADIUS off
+      # (Linux has no BSD libradius). E2E_NO_CANLOCK=1 builds Cancel-Lock out.
+      - name: Build
+        run: sudo E2E_FAKE_SENDMAIL=1 E2E_NO_CANLOCK=${{ matrix.no_canlock }} tests/e2e/ci/build-on-host
+
+      - name: Build log
+        if: always()
+        run: cat build.log
+
+      # As the runner user, not root: diablo's switch to news fails and it keeps
+      # running as the runner, which owns the test sites in the temp directory.
+      - name: Test
+        working-directory: tests/e2e
+        env:
+          DIABLO_BIN: ${{ github.workspace }}/dbin
+          NNTP_TEST_DEADLINE: 30s
+        run: go test -v -count=1 ./...
+
+  # Compile the e2e test binary once, with CGO disabled so it is portable (runs
+  # on glibc and musl alike), for every OS the VM/container jobs need. The test
+  # binary only execs the C binaries via DIABLO_BIN, so it is pure Go and cross
+  # compiles cleanly.
+  build-test-binary:
+    name: build e2e test binary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: tests/e2e/go.mod
+          cache-dependency-path: tests/e2e/go.sum
+
+      - name: Compile (linux, freebsd, illumos; amd64; CGO off)
+        working-directory: tests/e2e
+        run: |
+          set -eux
+          for os in linux freebsd illumos; do
+            CGO_ENABLED=0 GOOS="$os" GOARCH=amd64 go test -c -o "e2e.test.$os" ./...
+          done
+          ls -l e2e.test.*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-binaries
+          path: tests/e2e/e2e.test.*
+          retention-days: 7
+          if-no-files-found: error
+
+  # Linux distro containers, mirroring the private VM matrix. Run via `docker
+  # run` on the ubuntu host (not the job `container:` key): checkout and artifact
+  # download stay on the host, so minimal images (alpine, archlinux) need no git
+  # or node. Inside the container we build as root with build-on-host (it already
+  # drives apt/dnf/zypper/apk/pacman) and run the tests as the news user, exactly
+  # as the VM runner (one-host.sh) does.
+  containers:
+    name: container (${{ matrix.name }})
+    needs: build-test-binary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: debian-13,        image: "debian:13" }
+          - { name: ubuntu-26.04,     image: "ubuntu:26.04" }
+          - { name: alpine-3.24,      image: "alpine:3.24" }
+          - { name: fedora,           image: "fedora:latest" }
+          - { name: almalinux-10,     image: "almalinux:10" }
+          - { name: rockylinux-9,     image: "rockylinux:9" }
+          - { name: opensuse-leap-16, image: "opensuse/leap:16.0" }
+          - { name: archlinux,        image: "archlinux:latest" }
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: e2e-test-binaries
+          path: tests/e2e
+
+      - name: Build and test in ${{ matrix.image }}
+        run: |
+          set -eu
+          cp tests/e2e/e2e.test.linux tests/e2e/e2e.test
+          chmod 755 tests/e2e/e2e.test
+          docker run --rm -e E2E_FAKE_SENDMAIL=1 -v "$PWD":/src -w /src "${{ matrix.image }}" sh -ec '
+            if tests/e2e/ci/build-on-host; then bok=1; else bok=0; fi
+            echo "=== build.log (last 40 lines) ==="
+            tail -40 build.log 2>/dev/null || true
+            [ "$bok" = 1 ] || { echo "BUILD FAILED"; exit 1; }
+            chmod 755 tests/e2e/e2e.test
+            cd tests/e2e
+            su -s /bin/sh news -c "DIABLO_BIN=/src/dbin NNTP_TEST_DEADLINE=30s ./e2e.test -test.v -test.count=1"
+          '
+
+  # FreeBSD: build-on-host has no FreeBSD/pkg branch (it would exit "no supported
+  # package manager"), so this job does not call it; it installs gmake via pkg
+  # and builds with gmake directly (the Makefile supports FreeBSD: CC=clang from
+  # base). RADIUS/libcanlock/BerkeleyDB are built out to keep deps to gmake only;
+  # this proves the FreeBSD build, the e2e suite, and TestInitRcdFreeBSD (the
+  # rc.d script, which runs only where /etc/rc.subr exists). See the PR notes for
+  # what build-on-host would need to own the FreeBSD path too.
+  freebsd:
+    name: freebsd
+    needs: build-test-binary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: e2e-test-binaries
+          path: tests/e2e
+
+      - name: Build and test on FreeBSD
+        uses: vmactions/freebsd-vm@v1
+        with:
+          release: "14.2"
+          usesh: true
+          prepare: |
+            pkg install -y gmake
+          run: |
+            set -e
+            cp tests/e2e/e2e.test.freebsd tests/e2e/e2e.test
+            chmod 755 tests/e2e/e2e.test
+            # No libradius/libcanlock/db dependency: build those features out.
+            sed -i '' 's/^#define[[:space:]]*RADIUS_ENABLED/#undef RADIUS_ENABLED/' lib/vendor.h
+            sed -i '' 's/^#define[[:space:]]*CANLOCK_ENABLED/#undef CANLOCK_ENABLED/' lib/vendor.h
+            sed -i '' -e 's/^#define[[:space:]]*DB_ENABLED/#undef DB_ENABLED/' \
+                      -e 's/^#define[[:space:]]*REJECT_DB.*/#undef REJECT_DB/' lib/vendor.h
+            gmake -k -j"$(sysctl -n hw.ncpu)" > build.log 2>&1 || { tail -40 build.log; exit 1; }
+            echo "=== build.log (last 20 lines) ==="; tail -20 build.log
+            ls dbin
+            pw groupadd news 2>/dev/null || true
+            pw useradd news -g news -d /var/tmp -s /bin/sh 2>/dev/null || true
+            chmod -R a+rX .
+            cd tests/e2e
+            su -m news -c "env DIABLO_BIN=$(pwd)/../dbin NNTP_TEST_DEADLINE=30s ./e2e.test -test.v -test.count=1"
+
+  # illumos (OmniOS): best effort, same shape as FreeBSD (gmake build, CC=gcc).
+  # Does not fail the workflow; reported either way.
+  illumos:
+    name: illumos
+    needs: build-test-binary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: e2e-test-binaries
+          path: tests/e2e
+
+      - name: Build and test on OmniOS
+        uses: vmactions/omnios-vm@v1
+        with:
+          prepare: |
+            pkg install -q developer/gcc13 developer/build/gnu-make || \
+              pkg install developer/gcc13 developer/build/gnu-make || true
+          run: |
+            set -e
+            cp tests/e2e/e2e.test.illumos tests/e2e/e2e.test
+            chmod 755 tests/e2e/e2e.test
+            sed -i 's/^#define[[:space:]]*RADIUS_ENABLED/#undef RADIUS_ENABLED/' lib/vendor.h
+            sed -i 's/^#define[[:space:]]*CANLOCK_ENABLED/#undef CANLOCK_ENABLED/' lib/vendor.h
+            sed -i -e 's/^#define[[:space:]]*DB_ENABLED/#undef DB_ENABLED/' \
+                   -e 's/^#define[[:space:]]*REJECT_DB.*/#undef REJECT_DB/' lib/vendor.h
+            gmake -k -j"$(getconf NPROCESSORS_ONLN)" CC=gcc > build.log 2>&1 || { tail -40 build.log; exit 1; }
+            echo "=== build.log (last 20 lines) ==="; tail -20 build.log
+            ls dbin
+            groupadd news 2>/dev/null || true
+            useradd -g news -d /var/tmp -s /bin/sh news 2>/dev/null || true
+            chmod -R a+rX .
+            cd tests/e2e
+            su news -c "DIABLO_BIN=$(pwd)/../dbin NNTP_TEST_DEADLINE=30s ./e2e.test -test.v -test.count=1"
