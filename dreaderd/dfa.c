@@ -133,6 +133,7 @@ NewDFA(Connection *conn, int lf, int offset, int size)
               fclose(sreq->sr_Cache) ;
               sreq->sr_Cache = NULL ;
           }
+          /* fall through */
       default :
           el->dfa_InHdr = 0 ;
     }
@@ -364,6 +365,7 @@ NNCopyLocalArticle(Connection *conn, int rs)
                           DFADataWrite(sreq, dfa->dfa_Buffer+ptr, i-ptr+1) ;
                           ptr = i ;
                       }
+                      /* fall through */
                   default :
                       dfa->dfa_LF = 0 ;
               }
@@ -374,6 +376,7 @@ NNCopyLocalArticle(Connection *conn, int rs)
                   switch (dfa->dfa_Buffer[i]) {
                       case '\n' :
                           dfa->dfa_InHdr = INBODY ;
+                          /* fall through */
                       case '\t' :
                           ptr = i + 1 ;
                           break ;
@@ -396,6 +399,7 @@ NNCopyLocalArticle(Connection *conn, int rs)
                   break ;
               }
               dfa->dfa_LF = 0 ;
+              /* fall through */
           case MAX_HDR_CC : /* stop checking, just copy line */
               dfa->dfa_InHdr = HDRCPY ;
           case HDRCPY : /* header, no more check on this line */
