@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	testkit "github.com/go-while/nntp-testkit"
 )
 
 // ctlSite writes a site (not started) and a diablo-ctl.conf with extra lines, and returns the
@@ -405,5 +407,97 @@ func TestInitRcdFreeBSD(t *testing.T) {
 	}
 	if out, code := run("onestop"); code != 0 || listening(s.Addr) {
 		t.Errorf("onestop: exit %d, listening %v\n%s", code, listening(s.Addr), out)
+	}
+}
+
+// admScript runs samples/adm/name in the site (DIABLO_BIN, the site's config) and returns its
+// output and exit status, or skips the test when the script is not there.
+func admScript(t *testing.T, s *Site, name string, args ...string) (string, int) {
+	t.Helper()
+	p := filepath.Join(s.Bin, "..", "samples", "adm", name)
+	if _, err := os.Stat(p); err != nil {
+		t.Skipf("no samples/adm/%s", name)
+	}
+	cmd := exec.Command("/bin/sh", append([]string{p}, args...)...)
+	cmd.Dir = t.TempDir()
+	cmd.Env = append(append(os.Environ(), s.Env...), "DIABLO_BIN="+s.Bin)
+	out, err := cmd.CombinedOutput()
+	code := 0
+	if ee, ok := err.(*exec.ExitError); ok {
+		code = ee.ExitCode()
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	return string(out), code
+}
+
+// TestAdmDumphist: dumphist keeps the newest copy of the history as dhistory.snp and the one
+// before as dhistory.old.
+func TestAdmDumphist(t *testing.T) {
+	s := NewSite(t, SiteOptions{NoStart: true})
+	hist := filepath.Join(s.Dir, "dhistory")
+	s.WriteFile(t, "dhistory", "first")
+	if out, code := admScript(t, s, "dumphist"); code != 0 {
+		t.Fatalf("dumphist: exit %d\n%s", code, out)
+	}
+	if b, _ := os.ReadFile(hist + ".snp"); string(b) != "first" {
+		t.Fatalf("dhistory.snp: %q, want the history", b)
+	}
+	s.WriteFile(t, "dhistory", "second")
+	if out, code := admScript(t, s, "dumphist"); code != 0 {
+		t.Fatalf("second dumphist: exit %d\n%s", code, out)
+	}
+	snp, _ := os.ReadFile(hist + ".snp")
+	old, _ := os.ReadFile(hist + ".old")
+	if string(snp) != "second" || string(old) != "first" {
+		t.Errorf("dhistory.snp %q, dhistory.old %q; want second and first", snp, old)
+	}
+	if left, _ := filepath.Glob(hist + ".tmp.*"); len(left) != 0 {
+		t.Errorf("temporary files left: %v", left)
+	}
+	os.Remove(hist)
+	if out, code := admScript(t, s, "dumphist"); code == 0 {
+		t.Errorf("dumphist without a history file: exit 0\n%s", out)
+	}
+}
+
+// TestAdmHistbackup: histbackup asks a running diablo for the snapshot (path_dumphist), does
+// nothing without one, and says so when path_dumphist is not set.
+func TestAdmHistbackup(t *testing.T) {
+	s := NewSite(t, SiteOptions{NoStart: true})
+	out, code := admScript(t, s, "histbackup")
+	if code != 0 || !strings.Contains(out, "diablo is not running") {
+		t.Errorf("histbackup without diablo: exit %d\n%s", code, out)
+	}
+	dump := filepath.Join(s.Bin, "..", "samples", "adm", "dumphist")
+	s2 := NewSite(t, SiteOptions{Config: map[string]string{"path_dumphist": dump}})
+	s2.WriteFile(t, "dhistory", "a history") // diablo makes its own file with the first article
+	if out, code := admScript(t, s2, "histbackup"); code != 0 {
+		t.Fatalf("histbackup with path_dumphist: exit %d\n%s", code, out)
+	}
+	waitFor(t, testkit.Deadline(), "dhistory.snp", func() bool {
+		_, err := os.Stat(filepath.Join(s2.Dir, "dhistory.snp"))
+		return err == nil
+	})
+	s3 := NewSite(t, SiteOptions{})
+	out, code = admScript(t, s3, "histbackup")
+	if code != 1 || !strings.Contains(out, "path_dumphist") {
+		t.Errorf("histbackup without path_dumphist: exit %d, want 1 and a hint\n%s", code, out)
+	}
+}
+
+// TestAdmActsync: usage, and nothing to do on a host that is one of the active file servers.
+func TestAdmActsync(t *testing.T) {
+	s := NewSite(t, SiteOptions{NoStart: true})
+	if out, code := admScript(t, s, "actsync"); code != 2 || !strings.Contains(out, "usage:") {
+		t.Errorf("actsync without a server: exit %d\n%s", code, out)
+	}
+	host, err := os.Hostname()
+	if err != nil {
+		t.Skip(err)
+	}
+	out, code := admScript(t, s, "actsync", "master.example.invalid,"+host)
+	if code != 0 || !strings.Contains(out, "nothing to do") {
+		t.Errorf("actsync on one of the servers: exit %d\n%s", code, out)
 	}
 }
