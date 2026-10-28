@@ -130,13 +130,36 @@ if [ -z "${DIABLO_USER:-}" ]; then
     if [ "$(id -u)" -eq 0 ]; then DIABLO_USER=news; else DIABLO_USER=$(id -un); fi
 fi
 
-# Settings that are numbers: a wrong one must not turn a timeout into an
-# endless wait (a failed numeric test counts as "not yet").
-for v in DIABLO_STOP_WAIT DIABLO_START_WAIT DIABLO_ACTIVE_MAXAGE DIABLO_MAX_DOWNTIME; do
-    eval "val=\$$v"
-    case $val in
-	*[!0-9]*) say "$v must be a number (seconds for the waits, hours for DIABLO_ACTIVE_MAXAGE, minutes for DIABLO_MAX_DOWNTIME), not \"$val\""; exit 1 ;;
+# A wrong setting is an error for start, restart and check, which must not
+# run on a guess.  stop and status have to work whatever the file says (a typo
+# must not leave a daemon running that cannot be stopped): they warn and use
+# the default, or skip the entry.
+# badsetting <message> <variable> <default>
+badsetting() {
+    case $action in
+	start|restart|check) say "$1"; exit 1 ;;
     esac
+    say "warning: $1; using ${3:-the default}"
+    eval "$2=\$3"
+}
+
+# Settings that are numbers: a wrong one must not turn a timeout into an
+# endless wait (a failed numeric test counts as "not yet").  Leading zeros
+# are dropped (shell arithmetic reads 08 as a bad octal number).
+for spec in DIABLO_STOP_WAIT:30 DIABLO_START_WAIT:30 DIABLO_ACTIVE_MAXAGE: DIABLO_MAX_DOWNTIME: DIABLO_NOFILE:; do
+    v=${spec%%:*}
+    dflt=${spec#*:}
+    eval "val=\${$v:-}"
+    case $val in
+	'') continue ;;
+	*[!0-9]*)
+	    badsetting "$v must be a number (seconds for the waits, hours for DIABLO_ACTIVE_MAXAGE, minutes for DIABLO_MAX_DOWNTIME, descriptors for DIABLO_NOFILE), not \"$val\"" "$v" "$dflt"
+	    continue ;;
+    esac
+    zeros=${val%%[!0]*}
+    val=${val#"$zeros"}
+    [ -n "$val" ] || val=0
+    eval "$v=\$val"
 done
 
 if [ "$which" = all ]; then
@@ -144,12 +167,14 @@ if [ "$which" = all ]; then
 else
     daemons=$which
 fi
+known=""
 for d in $daemons; do
     case $d in
-	diablo|dreaderd) ;;
-	*) say "unknown daemon \"$d\" in DIABLO_DAEMONS (only diablo and dreaderd)"; exit 1 ;;
+	diablo|dreaderd) known="$known $d" ;;
+	*) badsetting "unknown daemon \"$d\" in DIABLO_DAEMONS (only diablo and dreaderd)" DIABLO_UNKNOWN_DAEMON "" ;;
     esac
 done
+daemons=$known
 
 # The status area for ps: "-s" plus DIABLO_PS_PAD spaces as one argument;
 # diablo and dreaderd overwrite it with their status (as rc.news does it).
@@ -157,7 +182,7 @@ done
 pspad=""
 case $DIABLO_PS_PAD in
     ''|0) ;;
-    *[!0-9]*) say "DIABLO_PS_PAD must be a number of spaces"; exit 1 ;;
+    *[!0-9]*) badsetting "DIABLO_PS_PAD must be a number of spaces, not \"$DIABLO_PS_PAD\"" DIABLO_PS_PAD 0; pspad="" ;;
     *) pspad="-s$(printf "%${DIABLO_PS_PAD}s" "")" ;;
 esac
 
@@ -259,16 +284,17 @@ ismount() {
 }
 
 # activefile <daemon>: the active file the daemon uses, if it needs one: for
-# diablo only when diablo.config turns "active" on (or names the file).
+# diablo only when diablo.config turns "active" on (or names the file); the
+# word and its value are case blind there, and dpath expands the path as
+# diablo does.
 activefile() {
     case $1 in
 	dreaderd) "$DIABLO_BIN/dpath" reader_dactive ;;
 	diablo)
 	    cfg=${DIABLO_CONFIG_PATH:-$home/diablo.config}
-	    v=$(awk '$1 == "active" { v = $2 } END { print v }' "$cfg" 2>/dev/null)
+	    v=$(awk 'tolower($1) == "active" { v = $2 } END { print v }' "$cfg" 2>/dev/null | tr 'A-Z' 'a-z')
 	    case $v in
-		on) "$DIABLO_BIN/dpath" server_dactive ;;
-		/*) echo "$v" ;;
+		on|/*) "$DIABLO_BIN/dpath" server_dactive ;;
 	    esac ;;
     esac
 }

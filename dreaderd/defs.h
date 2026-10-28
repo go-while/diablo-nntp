@@ -138,7 +138,7 @@ typedef struct Vserver {		/* Define a virtual server	*/
     char vs_Welcome[256];
     char vs_Comments[256];
     char vs_PostTrailer[256];
-    char vs_CanLockAdmin[CANLOCK_MAXSECRETS][CANLOCK_SECRETLEN];	/* [0] makes the locks */
+    char vs_CanLockAdmin[CANLOCK_MAXSECRETS][CANLOCK_SECRETLEN];	/* every one makes locks */
     char vs_CanLockUser[CANLOCK_MAXSECRETS][CANLOCK_SECRETLEN];
     int vs_NoCanLockSha1;		/* canlocksha1 no: sha256 only */
 } Vserver;

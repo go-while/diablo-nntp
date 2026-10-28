@@ -647,3 +647,102 @@ func TestAdmHistbackupDicmdFails(t *testing.T) {
 		t.Errorf("histbackup with a failing dicmd: %v\n%s", err, out)
 	}
 }
+
+// TestDiabloCtlStopWithBadSettings: a wrong setting must not keep diablo-ctl from stopping or
+// showing the state of a site (start, restart and check refuse, see TestDiabloCtlConfigErrors):
+// stop and status warn, use the default, and skip an unknown daemon.
+func TestDiabloCtlStopWithBadSettings(t *testing.T) {
+	for _, c := range []struct{ name, extra, want string }{
+		{"start wait", "DIABLO_START_WAIT=soon\n", "DIABLO_START_WAIT must be a number"},
+		{"stop wait", "DIABLO_STOP_WAIT=1x\n", "DIABLO_STOP_WAIT must be a number"},
+		{"open files", "DIABLO_NOFILE=abc\n", "DIABLO_NOFILE must be a number"},
+		{"unknown daemon", "DIABLO_DAEMONS='diablo foo'\n", "unknown daemon"},
+		{"status area", "DIABLO_PS_PAD=wide\n", "DIABLO_PS_PAD must be a number"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s, run := ctlSite(t, nil, c.extra)
+			out, code := run("start")
+			wantCtl(t, out, code, 1, "start with "+c.name)
+			if listening(s.Addr) {
+				t.Fatalf("start with a wrong %s started diablo", c.name)
+			}
+			out, code = run("status")
+			wantCtl(t, out, code, 3, "status with "+c.name) // diablo is not running
+			if !strings.Contains(out, "warning: "+c.want) {
+				t.Errorf("status: %q, want a warning with %q", out, c.want)
+			}
+			out, code = run("stop")
+			wantCtl(t, out, code, 0, "stop with "+c.name)
+		})
+	}
+	// and a running site is stopped although the file is wrong
+	s, run := ctlSite(t, nil, "")
+	out, code := run("start")
+	wantCtl(t, out, code, 0, "start")
+	if !listening(s.Addr) {
+		t.Fatalf("diablo does not listen after start\n%s", out)
+	}
+	s.WriteFile(t, "diablo-ctl.test.conf", mustRead(t, filepath.Join(s.Dir, "diablo-ctl.test.conf"))+"DIABLO_STOP_WAIT=forever\n")
+	out, code = run("stop")
+	wantCtl(t, out, code, 0, "stop with a wrong DIABLO_STOP_WAIT")
+	if listening(s.Addr) {
+		t.Errorf("diablo still listens after stop\n%s", out)
+	}
+}
+
+func mustRead(t *testing.T, p string) string {
+	t.Helper()
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+// TestDiabloCtlActiveFileDetails: DIABLO_ACTIVE_MAXAGE=08 is a decimal 8 (the shell reads 08 as a bad
+// octal number), and diablo.config says "Active ON" in any letter case, as the daemon accepts it.
+func TestDiabloCtlActiveFileDetails(t *testing.T) {
+	t.Run("leading zeros", func(t *testing.T) {
+		s, run := ctlSite(t, map[string]string{"active": "on"}, "DIABLO_ACTIVE_MAXAGE=08\n")
+		skipWithoutPreflight(t, run)
+		s.WriteFile(t, "dactive.kp", "")
+		out, code := run("check")
+		wantCtl(t, out, code, 0, "check with DIABLO_ACTIVE_MAXAGE=08")
+		old := time.Now().Add(-10 * time.Hour)
+		if err := os.Chtimes(filepath.Join(s.Dir, "dactive.kp"), old, old); err != nil {
+			t.Fatal(err)
+		}
+		out, code = run("check")
+		wantCtl(t, out, code, 1, "check with a 10 hour old active file and a limit of 08")
+		if !strings.Contains(out, "more than 8 hours old") {
+			t.Errorf("check: %q, want \"more than 8 hours old\"", out)
+		}
+	})
+	for _, c := range []struct {
+		name string
+		conf map[string]string
+		add  string // appended to diablo.config after the generated "active off"
+	}{
+		{"value in capitals", map[string]string{"active": "ON"}, ""},
+		{"directive in capitals", nil, "Active\tOn\n"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s, run := ctlSite(t, c.conf, "")
+			skipWithoutPreflight(t, run)
+			if c.add != "" {
+				f, err := os.OpenFile(filepath.Join(s.Dir, "diablo.config"), os.O_APPEND|os.O_WRONLY, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				f.WriteString(c.add)
+				f.Close()
+			}
+			os.Remove(filepath.Join(s.Dir, "dactive.kp"))
+			out, code := run("check")
+			wantCtl(t, out, code, 1, "check with "+c.name+" and no active file")
+			if !strings.Contains(out, "active file") || !strings.Contains(out, "not found") {
+				t.Errorf("check: %q", out)
+			}
+		})
+	}
+}
