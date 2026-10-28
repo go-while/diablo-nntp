@@ -52,7 +52,7 @@ On RPM-based systems, add `gcc` and `make` to the `dnf` line if they aren't inst
 
 These supply the zlib, Berkeley DB, and OpenSSL headers and libraries required by the tested Linux configuration. The Berkeley DB package (`libdb-devel`, `libdb5.3-dev`) is needed when `DB_ENABLED` is enabled in `lib/vendor.h` or `REJECT_DB` is enabled in `lib/vendor.h`. Other Linux distributions may use different package names.
 
-**Cancel-Lock (libcanlock):** `lib/vendor.h` defines `CANLOCK_ENABLED`, which needs libcanlock 3.3.0 or later (`libcanlock-dev` on Debian and Ubuntu, `libcanlock` on FreeBSD and SmartOS; the header must be `libcanlock-3/canlock.h`). On a system without the package, change that line to `#undef	CANLOCK_ENABLED`: the reader then cannot check Cancel-Keys, so only `readercanlock all` works, and the Cancel-Lock tests skip.
+**Cancel-Lock (libcanlock):** `lib/vendor.h` defines `CANLOCK_ENABLED`, which needs libcanlock 3.3.0 or later (`libcanlock-dev` on Debian and Ubuntu, `libcanlock` on FreeBSD and SmartOS; the header must be `libcanlock-3/canlock.h`). On a system without the package, change that line to `#undef	CANLOCK_ENABLED`: the reader then cannot check Cancel-Keys: the default `readercanlock require-auth` refuses every cancel and supersede (dreaderd logs a warning at start), `readercanlock all` executes them unchecked, and the Cancel-Lock tests skip.
 
 **RADIUS on Linux:** the default `lib/vendor.h` defines `RADIUS_ENABLED`, and Linux has no usable `radlib.h`, so the build fails until you turn it off. Change that line in `lib/vendor.h` to:
 

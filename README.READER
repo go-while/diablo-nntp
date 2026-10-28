@@ -454,7 +454,8 @@
     articles posted through INN with the same secrets stay cancellable.
     Checking needs no secret.  dreaderd doesn't add Cancel-Lock to local
     posts yet.  The build needs libcanlock 3.3.0 or later (CANLOCK_ENABLED in
-    lib/vendor.h, see INSTALL); without it only 'readercanlock all' works.
+    lib/vendor.h, see INSTALL); without it no key can be verified, so the
+    default refuses every cancel and 'readercanlock all' is needed.
 
 				    MONITORING
 

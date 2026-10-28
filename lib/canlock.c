@@ -6,8 +6,9 @@
  *	lock of the same scheme when base64(H(c-key)) == c-lock, RFC 8315
  *	section 3.5) are libcanlock's, the library INN uses; this file only
  *	finds the headers in an article and hands libcanlock the elements.
- *	Without CANLOCK_ENABLED (lib/vendor.h) nothing can be verified, and
- *	readercanlock is limited to 'all'.
+ *	Without CANLOCK_ENABLED (lib/vendor.h) nothing can be verified, so
+ *	CanLockVerify() never matches: a locked article is never cancelled
+ *	(the safe side) unless readercanlock is 'all'.
  *
  *	libcanlock-hp, which could find and split the header fields, runs a
  *	helper program for every call; that is too much for the reader's event
