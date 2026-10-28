@@ -746,3 +746,131 @@ func TestDiabloCtlActiveFileDetails(t *testing.T) {
 		})
 	}
 }
+
+// appendConfig adds lines to the site's diablo.config (after the generated "active off").
+func appendConfig(t *testing.T, s *Site, lines string) {
+	t.Helper()
+	f, err := os.OpenFile(filepath.Join(s.Dir, "diablo.config"), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(lines); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestDiabloCtlActiveFileReading: the "active" line is read as diablo reads it: a comment after the
+// value and a CR at the end of the line are not part of it, and a path names the file; and a dpath
+// that cannot say where the active file is makes check fail instead of skipping the check.
+func TestDiabloCtlActiveFileReading(t *testing.T) {
+	for _, c := range []struct{ name, add, want string }{
+		{"comment", "active\ton#note\n", "not found"},
+		{"comment with a space", "active on # the active file\n", "not found"},
+		{"CR LF", "active\ton\r\n", "not found"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s, run := ctlSite(t, nil, "")
+			skipWithoutPreflight(t, run)
+			appendConfig(t, s, c.add)
+			os.Remove(filepath.Join(s.Dir, "dactive.kp"))
+			out, code := run("check")
+			wantCtl(t, out, code, 1, "check with "+c.name)
+			if !strings.Contains(out, c.want) {
+				t.Errorf("check: %q, want %q", out, c.want)
+			}
+		})
+	}
+	t.Run("absolute path", func(t *testing.T) {
+		s, run := ctlSite(t, nil, "")
+		skipWithoutPreflight(t, run)
+		other := filepath.Join(s.Dir, "elsewhere.kp")
+		appendConfig(t, s, "active\t"+other+"\n")
+		out, code := run("check")
+		wantCtl(t, out, code, 1, "check with active naming a file that is not there")
+		if !strings.Contains(out, other) {
+			t.Errorf("check: %q does not name %s", out, other)
+		}
+		s.WriteFile(t, "elsewhere.kp", "")
+		out, code = run("check")
+		wantCtl(t, out, code, 0, "check with the named file there")
+	})
+	t.Run("dpath fails", func(t *testing.T) {
+		alt := fakeBin(t, &Site{Bin: bin(t)}, map[string]string{"dpath": "[ \"$1\" = server_dactive ] && exit 1\nexec '" + filepath.Join(bin(t), "dpath") + "' \"$@\"\n"})
+		_, run := ctlSite(t, map[string]string{"active": "on"}, "DIABLO_BIN='"+alt+"'\n")
+		skipWithoutPreflight(t, run)
+		out, code := run("check")
+		wantCtl(t, out, code, 1, "check with a dpath that cannot name the active file")
+		if !strings.Contains(out, "cannot find out the path of the active file") {
+			t.Errorf("check: %q", out)
+		}
+	})
+}
+
+// TestDiabloCtlNumbers: a number of 10 digits or more is refused (it wraps or aborts the shell
+// arithmetic, or makes a wait that never ends), DIABLO_PS_PAD takes part in the check and its zeros
+// do not leave a bare "-s" for the daemon, and restart refuses a wrong setting like start.
+func TestDiabloCtlNumbers(t *testing.T) {
+	t.Run("too many digits", func(t *testing.T) {
+		s, run := ctlSite(t, nil, "DIABLO_STOP_WAIT=99999999999999999999\n")
+		out, code := run("start")
+		wantCtl(t, out, code, 1, "start with a huge wait")
+		if !strings.Contains(out, "too large") || listening(s.Addr) {
+			t.Errorf("start: %q (listening %v), want \"too large\" and no daemon", out, listening(s.Addr))
+		}
+		out, code = run("stop")
+		wantCtl(t, out, code, 0, "stop with a huge wait")
+	})
+	t.Run("restart refuses", func(t *testing.T) {
+		s, run := ctlSite(t, nil, "DIABLO_START_WAIT=soon\n")
+		out, code := run("restart")
+		wantCtl(t, out, code, 1, "restart with a wrong wait")
+		if !strings.Contains(out, "DIABLO_START_WAIT must be a number") || listening(s.Addr) {
+			t.Errorf("restart: %q (listening %v)", out, listening(s.Addr))
+		}
+	})
+	t.Run("status area zeros", func(t *testing.T) {
+		s := NewSite(t, SiteOptions{NoStart: true})
+		args := filepath.Join(t.TempDir(), "args")
+		bin := fakeBin(t, s, map[string]string{"diablo": "for a; do echo \"$a\"; done > '" + args + "'\n"})
+		ctlp := ctlPath(t, s)
+		conf := filepath.Join(s.Dir, "diablo-ctl.test.conf")
+		s.WriteFile(t, "diablo-ctl.test.conf", "DIABLO_BIN='"+bin+"'\nDIABLO_DAEMONS='diablo'\n"+
+			"DIABLO_OPTS='-p x'\nDIABLO_PS_PAD=00\nDIABLO_PREFLIGHT=no\nDIABLO_START_WAIT=1\n")
+		ctl(t, s, ctlp, conf, "start")
+		got, err := os.ReadFile(args)
+		if err != nil {
+			t.Fatalf("the fake diablo was not started: %v", err)
+		}
+		if want := "-p\nx\nserver\n"; string(got) != want {
+			t.Errorf("arguments of diablo %q, want %q (no bare -s)", got, want)
+		}
+	})
+}
+
+// TestDiabloCtlNoKnownDaemon: when DIABLO_DAEMONS has no valid entry at all (a typo, "all"), stop
+// and status look at both daemons instead of doing nothing and reporting success.
+func TestDiabloCtlNoKnownDaemon(t *testing.T) {
+	s, run := ctlSite(t, nil, "")
+	out, code := run("start")
+	wantCtl(t, out, code, 0, "start")
+	if !listening(s.Addr) {
+		t.Fatalf("diablo does not listen after start\n%s", out)
+	}
+	s.WriteFile(t, "diablo-ctl.test.conf", mustRead(t, filepath.Join(s.Dir, "diablo-ctl.test.conf"))+"DIABLO_DAEMONS='all'\n")
+	out, code = run("status")
+	if code == 0 && !strings.Contains(out, "dreaderd") {
+		t.Errorf("status with no valid daemon in the list: exit 0 and no word on dreaderd\n%s", out)
+	}
+	if !strings.Contains(out, "no daemon left in DIABLO_DAEMONS") {
+		t.Errorf("status: %q, want a warning", out)
+	}
+	out, code = run("stop")
+	wantCtl(t, out, code, 0, "stop with no valid daemon in the list")
+	if listening(s.Addr) {
+		t.Errorf("diablo still listens: stop did nothing\n%s", out)
+	}
+	if out, code := run("start"); code != 1 || !strings.Contains(out, "unknown daemon") {
+		t.Errorf("start with no valid daemon: exit %d, %q", code, out)
+	}
+}

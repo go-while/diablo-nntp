@@ -146,7 +146,7 @@ badsetting() {
 # Settings that are numbers: a wrong one must not turn a timeout into an
 # endless wait (a failed numeric test counts as "not yet").  Leading zeros
 # are dropped (shell arithmetic reads 08 as a bad octal number).
-for spec in DIABLO_STOP_WAIT:30 DIABLO_START_WAIT:30 DIABLO_ACTIVE_MAXAGE: DIABLO_MAX_DOWNTIME: DIABLO_NOFILE:; do
+for spec in DIABLO_STOP_WAIT:30 DIABLO_START_WAIT:30 DIABLO_ACTIVE_MAXAGE: DIABLO_MAX_DOWNTIME: DIABLO_NOFILE: DIABLO_PS_PAD:0; do
     v=${spec%%:*}
     dflt=${spec#*:}
     eval "val=\${$v:-}"
@@ -159,6 +159,12 @@ for spec in DIABLO_STOP_WAIT:30 DIABLO_START_WAIT:30 DIABLO_ACTIVE_MAXAGE: DIABL
     zeros=${val%%[!0]*}
     val=${val#"$zeros"}
     [ -n "$val" ] || val=0
+    # no more than 9 digits: a longer number wraps or aborts the shell
+    # arithmetic (and a huge wait would never end)
+    if [ "${#val}" -gt 9 ]; then
+	badsetting "$v is too large (at most 9 digits), not \"$val\"" "$v" "$dflt"
+	continue
+    fi
     eval "$v=\$val"
 done
 
@@ -175,6 +181,13 @@ for d in $daemons; do
     esac
 done
 daemons=$known
+if [ -z "$daemons" ]; then
+    # Nothing valid is left (a typo, "all", "diablo,dreaderd"): start, restart
+    # and check have refused above.  stop and status then look at both daemons,
+    # so that a live one is stopped and status tells the truth.
+    daemons="diablo dreaderd"
+    say "warning: no daemon left in DIABLO_DAEMONS; using $daemons"
+fi
 
 # The status area for ps: "-s" plus DIABLO_PS_PAD spaces as one argument;
 # diablo and dreaderd overwrite it with their status (as rc.news does it).
@@ -182,7 +195,6 @@ daemons=$known
 pspad=""
 case $DIABLO_PS_PAD in
     ''|0) ;;
-    *[!0-9]*) badsetting "DIABLO_PS_PAD must be a number of spaces, not \"$DIABLO_PS_PAD\"" DIABLO_PS_PAD 0; pspad="" ;;
     *) pspad="-s$(printf "%${DIABLO_PS_PAD}s" "")" ;;
 esac
 
@@ -283,19 +295,28 @@ ismount() {
     [ "$(df -P "$p" 2>/dev/null | awk 'NR == 2 { print $NF }')" = "$p" ]
 }
 
-# activefile <daemon>: the active file the daemon uses, if it needs one: for
-# diablo only when diablo.config turns "active" on (or names the file); the
-# word and its value are case blind there, and dpath expands the path as
-# diablo does.
+# activeneeded <daemon>: the daemon uses an active file: dreaderd always, diablo
+# only when diablo.config turns "active" on (or names the file).  Like
+# diablo, the word and its value are case blind, a "#" starts a comment and
+# trailing white space (a CR) is not part of the value.
+activeneeded() {
+    case $1 in
+	dreaderd) return 0 ;;
+	diablo)
+	    cfg=${DIABLO_CONFIG_PATH:-$home/diablo.config}
+	    v=$(awk '{ sub(/#.*/, ""); sub(/[ \t\r]+$/, "") } tolower($1) == "active" { v = $2 } END { print v }' "$cfg" 2>/dev/null | tr 'A-Z' 'a-z')
+	    case $v in
+		on|/*) return 0 ;;
+	    esac ;;
+    esac
+    return 1
+}
+
+# activefile <daemon>: its path, as the daemon expands it (dpath).
 activefile() {
     case $1 in
 	dreaderd) "$DIABLO_BIN/dpath" reader_dactive ;;
-	diablo)
-	    cfg=${DIABLO_CONFIG_PATH:-$home/diablo.config}
-	    v=$(awk 'tolower($1) == "active" { v = $2 } END { print v }' "$cfg" 2>/dev/null | tr 'A-Z' 'a-z')
-	    case $v in
-		on|/*) "$DIABLO_BIN/dpath" server_dactive ;;
-	    esac ;;
+	diablo) "$DIABLO_BIN/dpath" server_dactive ;;
     esac
 }
 
@@ -319,9 +340,12 @@ preflight() {
 	    fi
 	fi
     fi
-    act=$(activefile "$d")
-    if [ -n "$act" ]; then
-	if [ ! -f "$act" ]; then
+    if activeneeded "$d"; then
+	act=$(activefile "$d" 2>/dev/null) || act=""
+	if [ -z "$act" ]; then
+	    say "$d: cannot find out the path of the active file (dpath failed); the active file could not be checked"
+	    bad=1
+	elif [ ! -f "$act" ]; then
 	    say "$d: active file $act not found (a site set up by hand: create it, see README.READER, or start once with -F)"
 	    bad=1
 	elif [ -n "$DIABLO_ACTIVE_MAXAGE" ] && older_than "$act" $((DIABLO_ACTIVE_MAXAGE * 60)); then
