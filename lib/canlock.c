@@ -25,6 +25,8 @@
 
 Prototype int CanLockFindHeader(const char *hdrs, int hlen, const char *name, char *buf, int bufLen);
 Prototype int CanLockVerify(const char *keys, const char *locks);
+Prototype int CanLockKey(const char *scheme, const char *secret, const char *uid, const char *mid, char *buf, int bufLen);
+Prototype int CanLockLock(const char *scheme, const char *secret, const char *uid, const char *mid, char *buf, int bufLen);
 Prototype const char *CanLockModeName(int mode);
 
 /*
@@ -173,6 +175,89 @@ CanLockVerify(const char *keys, const char *locks)
     free(l);
 #endif
     return(r);
+}
+
+#ifdef	CANLOCK_ENABLED
+/*
+ * schemeId() - libcanlock's number for a scheme name, or CL_INVALID.
+ */
+static cl_hash_version
+schemeId(const char *scheme)
+{
+    if (strcasecmp(scheme, "sha256") == 0)
+	return(CL_SHA256);
+    if (strcasecmp(scheme, "sha1") == 0)
+	return(CL_SHA1);
+    if (strcasecmp(scheme, "sha512") == 0)
+	return(CL_SHA512);
+    return(CL_INVALID);
+}
+
+/*
+ * makeElement() - the element "scheme:value" that libcanlock makes from a
+ * secret, a user-id ("" for none) and a Message-ID (RFC 8315 section 4),
+ * a Cancel-Lock one when lock is set, else a Cancel-Key one.  Copied to buf;
+ * returns its length, or -1 when it can't be made or doesn't fit.
+ */
+static int
+makeElement(int lock, const char *scheme, const char *secret, const char *uid, const char *mid, char *buf, int bufLen)
+{
+    cl_hash_version which = schemeId(scheme);
+    char data[MAXMSGIDLEN + 128];
+    int dataLen;
+    char *r;
+    int n;
+
+    if (which == CL_INVALID || *secret == 0 || strchr(uid, '<') || strchr(uid, '>'))
+	return(-1);
+    dataLen = snprintf(data, sizeof(data), "%s%s", uid, mid);
+    if (dataLen < 0 || dataLen >= (int)sizeof(data))
+	return(-1);
+    if (lock)
+	r = cl_get_lock(which, (const unsigned char *)secret, strlen(secret), (const unsigned char *)data, dataLen);
+    else
+	r = cl_get_key(which, (const unsigned char *)secret, strlen(secret), (const unsigned char *)data, dataLen);
+    if (r == NULL)
+	return(-1);
+    n = strlen(r);
+    if (n + 1 > bufLen) {
+	free(r);
+	return(-1);
+    }
+    memcpy(buf, r, n + 1);
+    free(r);
+    return(n);
+}
+#endif
+
+/*
+ * CanLockKey() - the Cancel-Key element ("sha256:..." for scheme "sha256",
+ * also "sha1" and "sha512") of a secret, a user-id ("" for the admin secret)
+ * and the Message-ID with its angle brackets, made by libcanlock
+ * (cl_get_key).  Returns the length written to buf, or -1 on failure; always
+ * -1 without CANLOCK_ENABLED.
+ */
+int
+CanLockKey(const char *scheme, const char *secret, const char *uid, const char *mid, char *buf, int bufLen)
+{
+#ifdef	CANLOCK_ENABLED
+    return(makeElement(0, scheme, secret, uid, mid, buf, bufLen));
+#else
+    return(-1);
+#endif
+}
+
+/*
+ * CanLockLock() - the Cancel-Lock element for the same input (cl_get_lock).
+ */
+int
+CanLockLock(const char *scheme, const char *secret, const char *uid, const char *mid, char *buf, int bufLen)
+{
+#ifdef	CANLOCK_ENABLED
+    return(makeElement(1, scheme, secret, uid, mid, buf, bufLen));
+#else
+    return(-1);
+#endif
 }
 
 /*
