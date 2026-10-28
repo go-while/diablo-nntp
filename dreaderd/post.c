@@ -129,7 +129,8 @@ HeaderCmp(const char *big, const char *little, char **errMsg)
 
 
 
-#define CANLOCK_HDRMAX	700	/* longest Cancel-Lock value of a poster that we add to */
+#define CANLOCK_HDRMAX	1024	/* longest Cancel-Lock or Cancel-Key value of a poster that we add to */
+#define CANLOCK_LISTMAX	(CANLOCK_HDRMAX + 2 * CANLOCK_MAXSECRETS * 2 * 2 * 64)
 
 /*
  * canLockTarget() - copy the Message-ID that the value of a "Control: cancel"
@@ -200,34 +201,39 @@ canLockAppend(char *out, int outLen, const char *scheme, const char *value)
 }
 
 /*
- * canLockLocks() - append the Cancel-Lock elements for a secret and a
- * user-id ("" for the admin secret) to out: sha256, and sha1 unless the
- * vserverdef has canlocksha1 no (deprecated by RFC 8315 section 6, kept for
- * older readers and servers that only know it).
+ * canLockLocks() - append the Cancel-Lock elements for each secret in
+ * secrets and a user-id ("" for the admin secrets) to out: sha256, and sha1
+ * unless the vserverdef has canlocksha1 no (deprecated by RFC 8315 section 6,
+ * kept for older readers and servers that only know it).  Like INN, every
+ * secret makes its locks, so articles stay cancellable while a secret is
+ * being replaced.
  */
 static void
-canLockLocks(char *out, int outLen, const Vserver *vs, const char *secret, const char *uid, const char *mid)
+canLockLocks(char *out, int outLen, const Vserver *vs, const char secrets[][CANLOCK_SECRETLEN], const char *uid, const char *mid)
 {
     static const char *schemes[] = { "sha256", "sha1" };
     int i;
+    int j;
 
-    for (i = 0; i < 2; ++i) {
-	char key[128];
-	char lock[128];
+    for (j = 0; j < CANLOCK_MAXSECRETS && secrets[j][0]; ++j) {
+	for (i = 0; i < 2; ++i) {
+	    char key[128];
+	    char lock[128];
 
-	if (i == 1 && vs->vs_NoCanLockSha1)
-	    break;
-	if (CanLockKey(schemes[i], secret, uid, mid, key, sizeof(key)) < 0 ||
-	    CanLockLock(schemes[i], key, lock, sizeof(lock)) < 0 ||
-	    !canLockAppend(out, outLen, schemes[i], lock))
-	    logit(LOG_ERR, "Cancel-Lock: cannot make a %s lock for %s", schemes[i], mid);
+	    if (i == 1 && vs->vs_NoCanLockSha1)
+		break;
+	    if (CanLockKey(schemes[i], secrets[j], uid, mid, key, sizeof(key)) < 0 ||
+		CanLockLock(schemes[i], key, lock, sizeof(lock)) < 0 ||
+		!canLockAppend(out, outLen, schemes[i], lock))
+		logit(LOG_ERR, "Cancel-Lock: cannot make a %s lock for %s", schemes[i], mid);
+	}
     }
 }
 
 /*
  * canLockKeys() - append the Cancel-Key elements for the target of a cancel
- * or supersede to out: one per user secret and scheme, so that articles
- * posted under a secret that was since replaced can still be withdrawn.
+ * or supersede to out: one per user secret and scheme, as INN's nnrpd adds
+ * them.
  */
 static void
 canLockKeys(char *out, int outLen, const Vserver *vs, const char *uid, const char *target)
@@ -247,6 +253,62 @@ canLockKeys(char *out, int outLen, const Vserver *vs, const char *uid, const cha
 		logit(LOG_ERR, "Cancel-Key: cannot make a %s key for %s", schemes[i], target);
 	}
     }
+}
+
+/*
+ * canLockCapture() - copy the value of the header called name that starts at
+ * hdr (l bytes with its folded lines) into buf, unfolded and without the
+ * white space around it.  Returns 1 on success, 0 when it doesn't fit.
+ */
+static int
+canLockCapture(const char *hdr, int l, const char *name, char *buf, int bufLen)
+{
+    char *v = buf;
+    int n;
+
+    if (CanLockFindHeader(hdr, l, name, buf, bufLen) != 1)
+	return(0);
+    n = strlen(v);
+    while (n > 0 && isspace((unsigned char)v[n - 1]))
+	v[--n] = 0;
+    while (isspace((unsigned char)*v))
+	++v;
+    memmove(buf, v, strlen(v) + 1);
+    return(1);
+}
+
+/*
+ * canLockEmit() - write a header called name with the elements in list,
+ * folded before 76 columns (RFC 5322) so that it stays a legal line however
+ * many elements there are.
+ */
+static void
+canLockEmit(MBufHead *mb, const char *name, const char *list)
+{
+    int col = strlen(name) + 1;
+    int first = 1;
+
+    MBPrintf(mb, "%s:", name);
+    while (*list) {
+	int n;
+
+	list += strspn(list, " ");
+	n = strcspn(list, " ");
+	if (n == 0)
+	    break;
+	if (!first && col + 1 + n > 76) {
+	    MBWrite(mb, "\r\n\t", 3);
+	    col = 8;
+	} else {
+	    MBWrite(mb, " ", 1);
+	    col += 1;
+	}
+	MBWrite(mb, list, n);
+	col += n;
+	list += n;
+	first = 0;
+    }
+    MBWrite(mb, "\r\n", 2);
 }
 
 /*
@@ -296,9 +358,11 @@ NNPostBuffer(Connection *conn)
     const Vserver *vs = conn->co_Auth.dr_VServerDef;
     char canTarget[MAXMSGIDLEN + 1];	/* what a cancel or supersede withdraws */
     char canLockIn[CANLOCK_HDRMAX];	/* the poster's own Cancel-Lock, to add to */
+    char canKeyIn[CANLOCK_HDRMAX];	/* and Cancel-Key */
     int haveCanLock = 0;
     int haveCanKey = 0;
-    int canLockMerge = 0;
+    int canLockMerge = 0;		/* the header was taken out: written again with ours */
+    int canKeyMerge = 0;
     char *errMsg = NULL;
     char *newsGrps = NULL, *newsGrps2 = NULL;
     char *base = MBNormalize(&conn->co_ArtBuf, &artLen);
@@ -516,25 +580,21 @@ NNPostBuffer(Connection *conn)
 		}
 	} else if (HeaderCmp(base, "Cancel-Lock", &errMsg) == 0) {
 	    /*
-	     * Only one is allowed (RFC 8315 section 2), so our locks go
-	     * into the poster's header when there is room for them.
+	     * Only one is allowed (RFC 8315 section 2), so our locks are
+	     * appended to the poster's, as INN does, when there is room.
 	     */
 	    if (haveCanLock++ == 0 &&
 		(vs->vs_CanLockAdmin[0][0] || vs->vs_CanLockUser[0][0]) &&
-		CanLockFindHeader(base, l, "Cancel-Lock", canLockIn, sizeof(canLockIn)) == 1) {
-		char *v = canLockIn;
-		int n = strlen(v);
-
-		while (n > 0 && isspace((unsigned char)v[n - 1]))
-		    v[--n] = 0;
-		while (isspace((unsigned char)*v))
-		    ++v;
-		memmove(canLockIn, v, strlen(v) + 1);
+		canLockCapture(base, l, "Cancel-Lock", canLockIn, sizeof(canLockIn))) {
 		canLockMerge = 1;
 		keep = 0;
 	    }
 	} else if (HeaderCmp(base, "Cancel-Key", &errMsg) == 0) {
-	    haveCanKey = 1;
+	    if (haveCanKey++ == 0 && vs->vs_CanLockUser[0][0] &&
+		canLockCapture(base, l, "Cancel-Key", canKeyIn, sizeof(canKeyIn))) {
+		canKeyMerge = 1;
+		keep = 0;
+	    }
 	} else if (HeaderCmp(base, "Supersedes", &errMsg) == 0) {
 	    canLockTarget(base + 11, l - 11, canTarget);
 #ifdef	POST_RESTRICTCANCEL
@@ -631,33 +691,34 @@ NNPostBuffer(Connection *conn)
 	    MBPrintf(&tmbuf, "Message-ID: %s\r\n", conn->co_IHaveMsgId);
 	}
 	/*
-	 * Add Cancel-Lock and Cancel-Key (RFC 8315).  The admin lock goes
-	 * in every article; the user lock only when the poster brought no
-	 * lock of their own and we know who they are.  For a poster's own
-	 * cancel or supersede we add the matching keys.
+	 * Add Cancel-Lock and Cancel-Key (RFC 8315), like INN's nnrpd: the
+	 * admin locks go in every article, the user locks when we know who
+	 * the poster is, both after those of the poster's own header.  For
+	 * the poster's own cancel or supersede we add the matching keys.
 	 */
 	if (vs->vs_CanLockAdmin[0][0] || vs->vs_CanLockUser[0][0]) {
 	    char uidBuf[sizeof(conn->co_Auth.dr_AuthUser) + 64];
 	    const char *uid = canLockUid(conn, uidBuf, sizeof(uidBuf));
-	    char locks[CANLOCK_HDRMAX + 512];
+	    char list[CANLOCK_LISTMAX];
 
-	    locks[0] = 0;
+	    list[0] = 0;
 	    if (canLockMerge)
-		snprintf(locks, sizeof(locks), "%s", canLockIn);
-	    if ((canLockMerge || !haveCanLock) && vs->vs_CanLockAdmin[0][0])
-		canLockLocks(locks, sizeof(locks), vs, vs->vs_CanLockAdmin[0], "", conn->co_IHaveMsgId);
-	    if (!haveCanLock && uid && vs->vs_CanLockUser[0][0])
-		canLockLocks(locks, sizeof(locks), vs, vs->vs_CanLockUser[0], uid, conn->co_IHaveMsgId);
-	    if (locks[0])
-		MBPrintf(&tmbuf, "Cancel-Lock: %s\r\n", locks);
-	    if (canTarget[0] && !haveCanKey && uid && vs->vs_CanLockUser[0][0]) {
-		char keys[CANLOCK_MAXSECRETS * 2 * 96];
-
-		keys[0] = 0;
-		canLockKeys(keys, sizeof(keys), vs, uid, canTarget);
-		if (keys[0])
-		    MBPrintf(&tmbuf, "Cancel-Key: %s\r\n", keys);
+		snprintf(list, sizeof(list), "%s", canLockIn);
+	    if (canLockMerge || !haveCanLock) {
+		canLockLocks(list, sizeof(list), vs, vs->vs_CanLockAdmin, "", conn->co_IHaveMsgId);
+		if (uid)
+		    canLockLocks(list, sizeof(list), vs, vs->vs_CanLockUser, uid, conn->co_IHaveMsgId);
 	    }
+	    if (list[0])
+		canLockEmit(&tmbuf, "Cancel-Lock", list);
+
+	    list[0] = 0;
+	    if (canKeyMerge)
+		snprintf(list, sizeof(list), "%s", canKeyIn);
+	    if (canTarget[0] && uid && (canKeyMerge || !haveCanKey))
+		canLockKeys(list, sizeof(list), vs, uid, canTarget);
+	    if (list[0])
+		canLockEmit(&tmbuf, "Cancel-Key", list);
 	}
 	/*
 	 * Add Distribution:

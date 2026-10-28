@@ -649,6 +649,10 @@ typedef struct OverExpire {
 #define	CANLOCK_AUTH		2	/* locked: valid key; unlocked: always */
 #define	CANLOCK_NONE		3	/* none */
 
+/* canlockadmin and canlockuser secrets of a vserverdef (dreader.access) */
+#define	CANLOCK_MAXSECRETS	4	/* lines of each kind */
+#define	CANLOCK_SECRETLEN	128	/* longest secret plus its NUL */
+
 #define	RTSTATS_NONE	1
 #define	RTSTATS_LABEL	2
 #define	RTSTATS_HOST	3

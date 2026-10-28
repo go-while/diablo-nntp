@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"crypto/sha256"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -152,6 +153,26 @@ func headerCount(head []string, name string) int {
 	return n
 }
 
+// unfolded returns the value of the first header field called name with its folded lines
+// joined by a space, or "".
+func unfolded(head []string, name string) string {
+	for i, h := range head {
+		k, v, ok := strings.Cut(h, ":")
+		if !ok || !strings.EqualFold(k, name) {
+			continue
+		}
+		v = strings.TrimSpace(v)
+		for _, c := range head[i+1:] {
+			if !strings.HasPrefix(c, " ") && !strings.HasPrefix(c, "\t") {
+				break
+			}
+			v += " " + strings.TrimSpace(c)
+		}
+		return v
+	}
+	return ""
+}
+
 // elements splits a Cancel-Lock or Cancel-Key value into its sorted elements.
 func elements(v string) []string {
 	e := strings.Fields(v)
@@ -223,7 +244,14 @@ func TestCanLockGenerate(t *testing.T) {
 		{"admin secret only", true, "    canlockadmin " + genAdminSecret + "\n", "", nil, func(mid string) []string {
 			return sorted(wantLocks(genAdminSecret, "", mid, true))
 		}},
-		{"rotated secrets: locks from the first only", true, vsBoth + "    canlockuser " + genOldSecret + "\n", "", nil, both},
+		{"rotated user secret: both make locks", true, vsBoth + "    canlockuser " + genOldSecret + "\n", "", nil, func(mid string) []string {
+			return sorted(wantLocks(genAdminSecret, "", mid, true), wantLocks(genUserSecret, "fred", mid, true),
+				wantLocks(genOldSecret, "fred", mid, true))
+		}},
+		{"two admin secrets", true, vsBoth + "    canlockadmin " + genOldSecret + "\n", "", nil, func(mid string) []string {
+			return sorted(wantLocks(genAdminSecret, "", mid, true), wantLocks(genOldSecret, "", mid, true),
+				wantLocks(genUserSecret, "fred", mid, true))
+		}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			g := newGenSite(t, c.auth, c.vs, c.rd, "")
@@ -232,8 +260,8 @@ func TestCanLockGenerate(t *testing.T) {
 			if n := headerCount(head, "Cancel-Lock"); n != 1 {
 				t.Fatalf("%d Cancel-Lock headers in %q, want 1", n, head)
 			}
-			if want := c.want(mid); !slices.Equal(elements(headerValue(head, "Cancel-Lock")), want) {
-				got := elements(headerValue(head, "Cancel-Lock"))
+			if want := c.want(mid); !slices.Equal(elements(unfolded(head, "Cancel-Lock")), want) {
+				got := elements(unfolded(head, "Cancel-Lock"))
 				t.Errorf("Cancel-Lock elements %q, want %q", got, want)
 			}
 		})
@@ -248,7 +276,7 @@ func TestCanLockGenerateOff(t *testing.T) {
 	mid := msgID(t)
 	mine := "sha256:" + canLock(sha256.New, canKey(sha256.New, "client-secret", "", mid))
 	head := g.post(t, g.poster(t), "Message-ID: "+mid, "Cancel-Lock: "+mine)
-	if got := headerValue(head, "Cancel-Lock"); got != mine || headerCount(head, "Cancel-Lock") != 1 {
+	if got := unfolded(head, "Cancel-Lock"); got != mine || headerCount(head, "Cancel-Lock") != 1 {
 		t.Errorf("Cancel-Lock %q (%d headers), want %q once", got, headerCount(head, "Cancel-Lock"), mine)
 	}
 	head = g.post(t, g.poster(t), "Message-ID: "+msgID(t))
@@ -261,8 +289,8 @@ func TestCanLockGenerateOff(t *testing.T) {
 	}
 }
 
-// TestCanLockGenerateOwnLock: a poster's own Cancel-Lock stays, one header only (RFC 8315
-// section 2), with the admin locks added after it and no user lock.
+// TestCanLockGenerateOwnLock: a poster's own Cancel-Lock stays the first element of the one
+// header (RFC 8315 section 2), with the admin and user locks appended, as INN does.
 func TestCanLockGenerateOwnLock(t *testing.T) {
 	g := newGenSite(t, true, vsBoth, "", "")
 	mid := msgID(t)
@@ -271,12 +299,54 @@ func TestCanLockGenerateOwnLock(t *testing.T) {
 	if n := headerCount(head, "Cancel-Lock"); n != 1 {
 		t.Fatalf("%d Cancel-Lock headers in %q, want 1", n, head)
 	}
-	want := sorted([]string{mine}, wantLocks(genAdminSecret, "", mid, true))
-	if got := elements(headerValue(head, "Cancel-Lock")); !slices.Equal(got, want) {
+	want := sorted([]string{mine}, wantLocks(genAdminSecret, "", mid, true), wantLocks(genUserSecret, "fred", mid, true))
+	if got := elements(unfolded(head, "Cancel-Lock")); !slices.Equal(got, want) {
 		t.Errorf("Cancel-Lock elements %q, want %q", got, want)
 	}
-	if first := strings.Fields(headerValue(head, "Cancel-Lock"))[0]; first != mine {
+	if first := strings.Fields(unfolded(head, "Cancel-Lock"))[0]; first != mine {
 		t.Errorf("the poster's own lock is not first: %q", first)
+	}
+}
+
+// TestCanLockGenerateFolded: with the most secrets the header is folded below 76 columns and
+// still carries every element, and a reader can answer it.
+func TestCanLockGenerateFolded(t *testing.T) {
+	var vs string
+	for i := 1; i <= 4; i++ {
+		vs += fmt.Sprintf("    canlockadmin e2e-admin-%d\n    canlockuser e2e-user-%d\n", i, i)
+	}
+	g := newGenSite(t, true, vs, "", "require-auth")
+	mid := msgID(t)
+	head := g.post(t, g.poster(t), "Message-ID: "+mid)
+	var want []string
+	for i := 1; i <= 4; i++ {
+		want = append(want, wantLocks(fmt.Sprintf("e2e-admin-%d", i), "", mid, true)...)
+		want = append(want, wantLocks(fmt.Sprintf("e2e-user-%d", i), "fred", mid, true)...)
+	}
+	slices.Sort(want)
+	if got := elements(unfolded(head, "Cancel-Lock")); !slices.Equal(got, want) {
+		t.Errorf("Cancel-Lock elements %d, want %d: %q", len(got), len(want), got)
+	}
+	folds := 0
+	for _, h := range head {
+		if len(h) > 78 {
+			t.Errorf("header line of %d bytes: %q", len(h), h)
+		}
+		if strings.HasPrefix(h, "\t") {
+			folds++
+		}
+	}
+	if folds == 0 {
+		t.Errorf("the Cancel-Lock header is not folded: %q", head)
+	}
+	r := g.Reader(t)
+	expect(t, r, 381, "AUTHINFO USER fred")
+	expect(t, r, 281, "AUTHINFO PASS fredspass")
+	feedAndSettle(t, g.Site, g.st, r, fromElsewhere(g.last()))
+	cancel := cancelArticle(t, mid, "e2e.test", "Cancel-Key: sha256:"+canKey(sha256.New, "e2e-admin-3", "", mid))
+	feedAndSettle(t, g.Site, g.st, r, cancel)
+	if present(t, r, 1) {
+		t.Error("the article with the folded lock is still there after an admin cancel with the key of its third secret")
 	}
 }
 
@@ -290,7 +360,7 @@ func TestCanLockGenerateServerID(t *testing.T) {
 		t.Fatalf("no Message-ID in %q", head)
 	}
 	want := sorted(wantLocks(genAdminSecret, "", mid, true), wantLocks(genUserSecret, "fred", mid, true))
-	if got := elements(headerValue(head, "Cancel-Lock")); !slices.Equal(got, want) {
+	if got := elements(unfolded(head, "Cancel-Lock")); !slices.Equal(got, want) {
 		t.Errorf("Cancel-Lock elements %q, want %q for %s", got, want, mid)
 	}
 }
@@ -311,17 +381,24 @@ func TestCanLockGenerateKeys(t *testing.T) {
 			if n := headerCount(head, "Cancel-Key"); n != 1 {
 				t.Fatalf("%d Cancel-Key headers in %q, want 1", n, head)
 			}
-			if got := elements(headerValue(head, "Cancel-Key")); !slices.Equal(got, want) {
+			if got := elements(unfolded(head, "Cancel-Key")); !slices.Equal(got, want) {
 				t.Errorf("Cancel-Key elements %q, want %q", got, want)
 			}
 		})
 	}
-	t.Run("poster's own key stays", func(t *testing.T) {
+	t.Run("poster's own key stays first, ours follow", func(t *testing.T) {
 		g := newGenSite(t, true, vsBoth, "", "")
 		mine := "sha256:" + canKey(sha256.New, "client-secret", "", target)
 		head := g.post(t, g.poster(t), "Message-ID: "+msgID(t), "Control: cancel "+target, "Cancel-Key: "+mine)
-		if got := headerValue(head, "Cancel-Key"); got != mine || headerCount(head, "Cancel-Key") != 1 {
-			t.Errorf("Cancel-Key %q (%d headers), want %q once", got, headerCount(head, "Cancel-Key"), mine)
+		if n := headerCount(head, "Cancel-Key"); n != 1 {
+			t.Fatalf("%d Cancel-Key headers in %q, want 1", n, head)
+		}
+		want := sorted([]string{mine}, wantKeys(genUserSecret, "fred", target, true))
+		if got := elements(unfolded(head, "Cancel-Key")); !slices.Equal(got, want) {
+			t.Errorf("Cancel-Key elements %q, want %q", got, want)
+		}
+		if first := strings.Fields(unfolded(head, "Cancel-Key"))[0]; first != mine {
+			t.Errorf("the poster's own key is not first: %q", first)
 		}
 	})
 	t.Run("anonymous poster gets no key", func(t *testing.T) {

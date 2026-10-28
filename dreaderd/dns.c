@@ -2695,6 +2695,16 @@ InstallAccessCache(void) {
 					sizeof(vserver.vs_HostName) - 1);
 		    if (!*vserver.vs_ClusterName)
 			strcpy(vserver.vs_ClusterName, vserver.vs_HostName);
+		    {
+			int i, j;
+
+			for (i = 0; i < CANLOCK_MAXSECRETS; ++i)
+			    for (j = 0; j < CANLOCK_MAXSECRETS; ++j)
+				if (vserver.vs_CanLockUser[i][0] &&
+				    strcmp(vserver.vs_CanLockUser[i], vserver.vs_CanLockAdmin[j]) == 0)
+				    logit(LOG_ERR, "dreader.access: vserverdef %s: a canlockuser secret is also a canlockadmin secret, they must differ",
+						vserver.vs_Name);
+		    }
 		    if (strcmp(vserver.vs_Name, "DEFAULT") == 0) {
 			long fpos;
 			fpos = ftell(vsf);

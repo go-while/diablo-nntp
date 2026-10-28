@@ -122,9 +122,6 @@ typedef struct ForkDesc {
 
 #define MAXVSINTERFACE	4
 
-#define CANLOCK_MAXSECRETS	4	/* canlockadmin / canlockuser lines per vserverdef */
-#define CANLOCK_SECRETLEN	128
-
 typedef struct Vserver {		/* Define a virtual server	*/
     char vs_Name[DEFNAMELEN];
     char vs_ClusterName[64];
