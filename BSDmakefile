@@ -8,6 +8,12 @@ CPPFLAGS += -I. -DVERS=\"${VERS}\" -DSUBREV=\"${SUBREV}\" -DDEBUG_ZALLOC -DDEBUG
 CFLAGS += -O2 -pipe -Wall -Wstrict-prototypes -fno-common -MMD -MP
 LDFLAGS += -Lobj
 LDLIBS += -lfilter -ldiablo -lm -lmd -lradius -lz -lcrypto
+CANLOCK_ENABLED != awk -v option=CANLOCK_ENABLED -f compat/detect-vendor-option.awk lib/vendor.h
+.if "${CANLOCK_ENABLED}" == "1"
+CPPFLAGS += -I/usr/local/include
+LDFLAGS += -L/usr/local/lib -Wl,-R,/usr/local/lib
+LDLIBS += -lcanlock
+.endif
 LIB_SRCS = lib/global.c lib/node.c lib/xopen.c lib/buffer.c lib/wildcmp.c lib/history.c lib/expire.c lib/newsfeed.c lib/parsedate.c lib/sigs.c lib/lock.c lib/alloc.c lib/subs.c lib/xmap.c lib/precommit.c lib/spamfilter.c lib/strerror.c lib/memcpy.c lib/zalloc.c lib/config.c lib/kpdb.c lib/active.c lib/msgid.c lib/hash.c lib/psstat.c lib/runprog.c lib/snprintf.c lib/fatal.c lib/log.c lib/logtime.c lib/iplist.c lib/dgp.c lib/pgp.c lib/hostauth.c lib/strsep.c lib/groupfind.c lib/spool.c lib/arttype.c lib/stats.c lib/dmd5.c lib/notify.c lib/wildmat.c lib/include.c lib/hashfeed.c lib/dgzip.c lib/canlock.c
 FILTER_SRCS = filter/diab-filter.c filter/diab-read.c filter/socket.c
 DR_SRCS = dreaderd/main.c dreaderd/thread.c dreaderd/reader.c dreaderd/dns.c dreaderd/mbuf.c dreaderd/subs.c dreaderd/list.c dreaderd/feed.c dreaderd/xover.c dreaderd/nntp.c dreaderd/misc.c dreaderd/post.c dreaderd/server.c dreaderd/group.c dreaderd/spool.c dreaderd/cache.c dreaderd/rtstatus.c dreaderd/control.c dreaderd/wildorcmp.c dreaderd/cancel.c dreaderd/post-addr-ck.c dreaderd/cleanfrom.c dreaderd/msg.c dreaderd/dfa.c dreaderd/filealloc.c dreaderd/crypto.c

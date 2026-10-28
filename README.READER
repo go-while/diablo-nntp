@@ -450,10 +450,11 @@
     withdrawn, and only with a matching key.  Set 'readercanlock all' for the
     old behaviour (every cancel executed).
 
-    The locks and keys are computed the same way as INN's (libcanlock), so
+    The locks and keys are computed by libcanlock, the library INN uses, so
     articles posted through INN with the same secrets stay cancellable.
     Checking needs no secret.  dreaderd doesn't add Cancel-Lock to local
-    posts yet.
+    posts yet.  The build needs libcanlock 3.3.0 or later (CANLOCK_ENABLED in
+    lib/vendor.h, see INSTALL); without it only 'readercanlock all' works.
 
 				    MONITORING
 
