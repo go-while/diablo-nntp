@@ -12,7 +12,7 @@ re-checked yet.
 Status values: **open**, **PR** (fix waiting for review, with its number), **fixed** (with
 the PR that fixed it), **decision** (needs the maintainer to decide), **won't fix**.
 
-Last updated 2026-10-28: D-110 to D-134 added from go-while's third review pass of `main` at `6a4b97d`. Before that, 2026-10-27: D-66 to D-109 added from the second review pass and the reviews of the fixes
+Last updated 2026-10-28: D-91, D-96, D-98 and D-131 to D-133 marked fixed (#146 to #149). D-110 to D-134 added from go-while's third review pass of `main` at `6a4b97d`. Before that, 2026-10-27: D-66 to D-109 added from the second review pass and the reviews of the fixes
 (D-77 is documented behaviour and only needs a note); the fixed ones are marked with their PR. Before that, D-53 to D-65 added from the review of `main` at `ca648d4`. Before that, 2026-10-26, after batch 1 (#30, #31, #37 to #44, #47 to #49) and the first part
 of batch 2 (#46, #50, #52, #62) were merged. Open: #35 (GnuPG pgpverify, held for a private
 advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
@@ -105,14 +105,14 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-88](#d-88-dnewslink--p-overwrites-leftover-lines-of-an-earlier-run) | Low | `dnewslink -p`: a later pipe run overwrites the leftover lines an earlier run wrote to the batch file | open |
 | [D-89](#d-89-ai_addrconfig-still-passed-for-listen-bind-and-connect-addresses) | Low | `dreaderd` listen, bind and connect and `dsyncgroups` still pass `AI_ADDRCONFIG` | open |
 | [D-90](#d-90-kpdb-sort-writes-the-offsets-one-record-at-a-time) | Low | `KPDBSort()` does one 8-byte write per record; on a full ZFS dataset a sort of 259 records took about 51 s | open |
-| [D-91](#d-91-takethis-without-an-argument-answers-439-instead-of-501) | Low | TAKETHIS without an argument answers 439 instead of 501 | open |
+| [D-91](#d-91-takethis-without-an-argument-answers-439-instead-of-501) | Low | TAKETHIS without an argument answers 439 instead of 501 | fixed (#146) |
 | [D-92](#d-92-header-only-feed-reports-unknownreject-for-laerrnobytes) | Low | Header-only feed reports UnknownReject for LAERR_NOBYTES | open |
 | [D-93](#d-93-kpdbgetfield-key-scan-is-not-bounded-by-the-record-length) | Low | KPDBGetField key scan is not bounded by the record length | open |
 | [D-94](#d-94-dcontrolctl-dnewsfeeds-and-dserverhosts-split-long-lines) | Low | dcontrol.ctl, dnewsfeeds and dserver.hosts split long lines | open |
 | [D-95](#d-95-maxinboundrate-value-is-read-past-its-end) | Low | MaxInboundRate value ending in ';' or in an hour number is read past its end | open |
-| [D-96](#d-96-spamfilter-s0-turns-the-filter-off-and-usespamrwmap-0-does-not-compile) | Low | spamfilter: s0 turns the filter off, and USE_SPAM_RW_MAP 0 does not compile | open |
+| [D-96](#d-96-spamfilter-s0-turns-the-filter-off-and-usespamrwmap-0-does-not-compile) | Low | spamfilter: s0 turns the filter off, and USE_SPAM_RW_MAP 0 does not compile | fixed (#147) |
 | [D-97](#d-97-diab-filter-writes-one-byte-past-its-reply-buffer-writeall-loops-on-a-zero-write) | Low | diab-filter writes one byte past its reply buffer; writeAll loops on a zero write | open |
-| [D-98](#d-98-ctype-calls-on-plain-char) | Low | ctype calls on plain char | open |
+| [D-98](#d-98-ctype-calls-on-plain-char) | Low | ctype calls on plain char | fixed (#148) |
 | [D-100](#d-100-cachefile-builds-the-path-without-bounds) | Low | cacheFile builds the path without bounds | open |
 | [D-101](#d-101-spool-server-replies-have-no-line-cap-other-small-items-in-dreaderdserverc) | Low | Spool server replies have no line cap; other small items in dreaderd/server.c | open |
 | [D-102](#d-102-readaccesscache-leaks-descriptors-when-a-cache-open-fails) | Low | ReadAccessCache leaks descriptors when a cache open fails | open |
@@ -144,9 +144,9 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-128](#d-128-dkp-parses-the-second-piece-of-a-long-input-line-as-a-new-record) | Low | dkp parses the second piece of a long input line as a new record | open |
 | [D-129](#d-129-dclient-is-ipv4-only-gethostbyname) | Low | dclient is IPv4-only (gethostbyname) | open |
 | [D-130](#d-130-newnews-and-newgroups-ignore-the-distributions-argument) | Low | NEWNEWS and NEWGROUPS ignore the distributions argument | open |
-| [D-131](#d-131-dclient-does-not-know-the-202-reply-of-list-extensions) | Low | dclient does not know the 202 reply of LIST EXTENSIONS | open |
-| [D-132](#d-132-config-dump-prints-the-bare-cr-option-under-the-nul-name) | Low | Config dump prints the bare-CR option under the NUL name | open |
-| [D-133](#d-133-list-moderators-adds-an-extra-cr-to-a-crlf-line) | Low | LIST MODERATORS adds an extra CR to a CRLF line | open |
+| [D-131](#d-131-dclient-does-not-know-the-202-reply-of-list-extensions) | Low | dclient does not know the 202 reply of LIST EXTENSIONS | fixed (#149) |
+| [D-132](#d-132-config-dump-prints-the-bare-cr-option-under-the-nul-name) | Low | Config dump prints the bare-CR option under the NUL name | fixed (#149) |
+| [D-133](#d-133-list-moderators-adds-an-extra-cr-to-a-crlf-line) | Low | LIST MODERATORS adds an extra CR to a CRLF line | fixed (#149) |
 | [D-134](#d-134-dkp-trim-mode-keeps-the-tail-of-a-long-deleted-line) | Low | dkp trim mode keeps the tail of a long deleted line | open |
 
 Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315), [F-02 configure script](#f-02-configure-script-for-the-build-options), [F-03 refeed a whole spool](#f-03-refeed-a-whole-spool-to-another-server).
