@@ -1,0 +1,46 @@
+#!/bin/sh
+#
+# DUMPHIST - snapshot the history file next to itself, for a history on a RAM
+# disk: dhistory.snp is the newest copy, dhistory.old the one before.
+#
+# diablo runs it for "dicmd dumphist" (see adm/histbackup), when diablo.config
+# says where it is:
+#
+#	path_dumphist	%s/adm/dumphist
+#
+# Restoring is by hand: copy dhistory.snp back to the history path before
+# starting diablo.  The copy is taken while diablo runs, so articles that were
+# accepted during the copy may be missing from it.
+
+set -u
+here=$(cd "$(dirname "$0")" && pwd)
+dbin=${DIABLO_BIN:-}
+if [ -z "$dbin" ]; then
+    for d in "$here/../dbin" "$here/../../dbin" /news/dbin; do
+	[ -x "$d/dpath" ] && { dbin=$(cd "$d" && pwd); break; }
+    done
+fi
+[ -n "$dbin" ] && [ -x "$dbin/dpath" ] || { echo "$0: no dpath found; set DIABLO_BIN" >&2; exit 1; }
+home=$("$dbin/dpath" home) || exit 1
+cd "$home" || exit 1
+
+if [ "${1:-}" != locked ]; then
+    # one at a time; a snapshot that is already being made is enough
+    exec "$dbin/plock" -t "$home/.dumphistlock" "$here/$(basename "$0")" locked
+fi
+
+history=$("$dbin/dpath" dhistory) || exit 1
+[ -f "$history" ] || { echo "$0: no history file $history" >&2; exit 1; }
+tmp="$history.tmp.$$"
+trap 'rm -f "$tmp"' EXIT
+trap 'exit 1' HUP INT TERM
+
+echo "$(date) - $0 BEGIN"
+cp -p "$history" "$tmp" || exit 1
+# Keep the last snapshot as .old by a second link to it, then rename the new
+# copy over .snp: whenever the script ends, .snp is a whole snapshot.
+if [ -f "$history.snp" ]; then
+    ln -f "$history.snp" "$history.old" 2>/dev/null || cp -p "$history.snp" "$history.old" || exit 1
+fi
+mv -f "$tmp" "$history.snp" || exit 1
+echo "$(date) - $0 END"

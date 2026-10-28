@@ -20,6 +20,14 @@ dreader.access and the other configuration files 0640 as the installer makes
 them.  If another account (monitoring, a log reader) needs a file, put it in
 the news group or relax that one file.
 
+Starting the daemons at boot: samples/init/ has a systemd unit, FreeBSD rc.d
+scripts, an SMF manifest for illumos/SmartOS and SysV init scripts; they only
+call adm/diablo-ctl, whose settings (diablo-ctl.conf) also switch on checks
+before a start: mounts, history, active file, unclean shutdown, dkp trim.  The
+checks are on by default and a start is refused when one fails, for example
+dreaderd without an active file on a new site: create it (README.READER) or
+start once with "diablo-ctl -F start".  See samples/init/README.
+
 Please read the README.READER and README.SERVER files if you haven't
 already.
 

@@ -1,0 +1,65 @@
+#!/bin/sh
+#
+# ACTSYNC - bring the local active file (dactive.kp) in line with an active
+# file server, with dsyncgroups: add the groups it has, change descriptions and
+# moderation status.  Run from cron on the machines that don't master the
+# active file (see crontab.sample), then diablo-ctl's DIABLO_ACTIVE_MAXAGE can
+# tell when the sync has stopped working.
+#
+#	actsync [-D] [-n] server[,server...]
+#
+# The first server of the list is asked.  The list may name this host
+# (uname -n): then this host masters the file and nothing is done.
+#
+#	-D	also delete the local groups that the server doesn't have
+#	-n	only show what would change (dsyncgroups -z)
+#
+# Run as the news user (the active file is theirs).
+
+set -u
+here=$(cd "$(dirname "$0")" && pwd)
+dbin=${DIABLO_BIN:-}
+if [ -z "$dbin" ]; then
+    for d in "$here/../dbin" "$here/../../dbin" /news/dbin; do
+	[ -x "$d/dpath" ] && { dbin=$(cd "$d" && pwd); break; }
+    done
+fi
+[ -n "$dbin" ] && [ -x "$dbin/dpath" ] || { echo "$0: no dpath found; set DIABLO_BIN" >&2; exit 1; }
+
+del=""
+dry=""
+while getopts Dn opt; do
+    case $opt in
+	D) del="-D" ;;
+	n) dry="-z" ;;
+	*) echo "usage: $0 [-D] [-n] server[,server...]" >&2; exit 2 ;;
+    esac
+done
+shift $((OPTIND - 1))
+[ $# -eq 1 ] && [ -n "$1" ] || { echo "usage: $0 [-D] [-n] server[,server...]" >&2; exit 2; }
+
+home=$("$dbin/dpath" home) || exit 1
+cd "$home" || exit 1
+
+first=""
+me=$(uname -n)
+oldifs=$IFS
+set -f
+IFS=,
+for srv in $1; do
+    [ -n "$first" ] || first=$srv
+    if [ "$srv" = "$me" ]; then
+	echo "$(date) $0: this host ($me) is one of the active file servers, nothing to do"
+	exit 0
+    fi
+done
+IFS=$oldifs
+set +f
+[ -n "$first" ] || { echo "usage: $0 [-D] [-n] server[,server...]" >&2; exit 2; }
+
+echo "$(date) - $0 BEGIN ($first)"
+# shellcheck disable=SC2086
+"$dbin/dsyncgroups" -h "$first" -a $del $dry
+status=$?
+echo "$(date) - $0 END (dsyncgroups exit status $status)"
+exit $status

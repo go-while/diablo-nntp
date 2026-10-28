@@ -296,6 +296,10 @@
 	    then normal to run because resizing .kp files past a page boundry
 	    is expensive.  This is not a problem under normal operation.
 
+	    adm/diablo-ctl (samples/init) does not start dreaderd while this
+	    file is missing, so create it before the first start or start
+	    once with "diablo-ctl -F start dreaderd" (samples/init/README).
+
 	    dreaderd automatically detects changes made to this file, but
 	    you may only make adjustments with KP database tools such
 	    as dkp.  You may edit the file manually only if dreaderd (and
