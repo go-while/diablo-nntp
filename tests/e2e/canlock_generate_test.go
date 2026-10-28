@@ -445,3 +445,75 @@ func TestCanLockGenerateRoundTrip(t *testing.T) {
 		t.Error("the article is still there after fred's cancel")
 	}
 }
+
+// postRefused posts hdrs and a one line body and expects the post to be refused with 441.
+func (g *genSite) postRefused(tb testing.TB, c *client.Conn, hdrs ...string) {
+	tb.Helper()
+	expect(tb, c, 340, "POST")
+	send(tb, c, wire(append(append([]string{
+		"From: E2E Poster <poster@example.invalid>",
+		"Newsgroups: e2e.test",
+		"Subject: lock test",
+	}, hdrs...), "", "body")))
+	status(tb, c, 441, "POST article")
+}
+
+// TestCanLockGenerateRefusesBadHeaders: a poster's own Cancel-Lock or Cancel-Key that we cannot
+// append to is refused, not passed on: a value of 1023 bytes or more, an element longer than
+// a real lock, or a second header would switch off our locks or leave two headers (RFC 8315
+// section 2 allows one). Main passed all of them on without our locks.
+func TestCanLockGenerateRefusesBadHeaders(t *testing.T) {
+	target := msgID(t)
+	long := "sha256:" + strings.Repeat("A", 1100)
+	oneBig := "sha256:" + strings.Repeat("B", 500)
+	ok := "sha256:" + canLock(sha256.New, canKey(sha256.New, "client-secret", "", target))
+	for _, c := range []struct {
+		name string
+		hdrs []string
+	}{
+		{"Cancel-Lock of 1100 bytes", []string{"Cancel-Lock: " + long}},
+		{"Cancel-Lock with one element of 500 bytes", []string{"Cancel-Lock: " + oneBig}},
+		{"two Cancel-Lock headers", []string{"Cancel-Lock: " + ok, "Cancel-Lock: " + ok}},
+		{"Cancel-Key of 1100 bytes", []string{"Control: cancel " + target, "Cancel-Key: " + long}},
+		{"two Cancel-Key headers", []string{"Control: cancel " + target, "Cancel-Key: " + ok, "Cancel-Key: " + ok}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			g := newGenSite(t, true, vsBoth, "", "")
+			g.postRefused(t, g.poster(t), append([]string{"Message-ID: " + msgID(t)}, c.hdrs...)...)
+			// the connection and the site are fine: a normal post still gets its lock
+			head := g.post(t, g.poster(t), "Message-ID: "+msgID(t))
+			if headerCount(head, "Cancel-Lock") != 1 {
+				t.Errorf("no Cancel-Lock on the next post: %q", head)
+			}
+		})
+	}
+	t.Run("not generating: passed on as before", func(t *testing.T) {
+		g := newGenSite(t, true, "", "", "")
+		head := g.post(t, g.poster(t), "Message-ID: "+msgID(t), "Cancel-Lock: "+ok, "Cancel-Lock: "+ok)
+		if n := headerCount(head, "Cancel-Lock"); n != 2 {
+			t.Errorf("%d Cancel-Lock headers, want the poster's 2 left alone: %q", n, head)
+		}
+	})
+}
+
+// TestCanLockGenerateFoldedTarget: a Control: cancel or Supersedes whose Message-ID is on a
+// folded continuation line (legal header folding) gets its Cancel-Key too.
+func TestCanLockGenerateFoldedTarget(t *testing.T) {
+	target := msgID(t)
+	want := sorted(wantKeys(genUserSecret, "fred", target, true))
+	for _, c := range []struct {
+		name string
+		hdrs []string
+	}{
+		{"cancel", []string{"Control: cancel", "\t" + target}},
+		{"supersede", []string{"Supersedes: ", " " + target}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			g := newGenSite(t, true, vsBoth, "", "")
+			head := g.post(t, g.poster(t), append([]string{"Message-ID: " + msgID(t)}, c.hdrs...)...)
+			if got := elements(unfolded(head, "Cancel-Key")); !slices.Equal(got, want) {
+				t.Errorf("Cancel-Key elements %q, want %q (head %q)", got, want, head)
+			}
+		})
+	}
+}

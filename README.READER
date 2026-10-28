@@ -453,8 +453,9 @@
     The locks and keys are computed by libcanlock, the library INN uses, so
     articles posted through INN with the same secrets stay cancellable.
     Checking needs no secret.  The build needs libcanlock 3.3.0 or later
-    (CANLOCK_ENABLED in lib/vendor.h, see INSTALL); without it only
-    'readercanlock all' works and no locks are made.
+    (CANLOCK_ENABLED in lib/vendor.h, see INSTALL); without it no key can be
+    verified, so the default refuses every cancel ('readercanlock all' executes
+    them unchecked), and no locks are made.
 
     Generating: with a 'canlockadmin' and/or 'canlockuser' secret in the
     vserverdef (samples/dreader.access), dreaderd adds a Cancel-Lock header
@@ -479,6 +480,10 @@
     no' in the vserverdef leaves it out.  The locks are appended to a
     Cancel-Lock the poster sent, and the keys to a Cancel-Key, so there is
     always one header of each; it is folded when it gets long.
+    A post with more than one Cancel-Lock (or Cancel-Key) header, one of
+    1023 bytes or more, or with an element over 400 bytes, is refused with
+    441, as it cannot be appended to and passing it on would leave the
+    article without our locks.
 
     The secrets must be random, differ from each other (user secrets from
     admin secrets) and be at least 32 characters long.  To replace a secret,

@@ -90,10 +90,21 @@ func cancelArticle(tb testing.TB, target, group string, hdrs ...string) []string
 func canLockSite(tb testing.TB, mode string) (*Site, *fakeserver.Store) {
 	tb.Helper()
 	skipWithoutCanLock(tb)
+	return canLockSiteAny(tb, mode)
+}
+
+// canLockSiteAny is canLockSite for any build; mode "" leaves readercanlock out of diablo.config
+// (the default).
+func canLockSiteAny(tb testing.TB, mode string) (*Site, *fakeserver.Store) {
+	tb.Helper()
 	st, spool := spoolStore(tb)
+	cfg := map[string]string{}
+	if mode != "" {
+		cfg["readercanlock"] = mode
+	}
 	s := NewReaderSite(tb, ReaderOptions{
 		Spool:   spool,
-		Config:  map[string]string{"readercanlock": mode},
+		Config:  cfg,
 		Files:   map[string]string{"dcontrol.ctl": "cancel:*:*:doit,break\n"},
 		NoStart: true,
 	})
@@ -243,5 +254,62 @@ func TestCancelLockTrackonlyRefused(t *testing.T) {
 	out, err := s.TryRun("dreaderd", "-d", "-p", PathHost, "-h", PathHost, "-P", "[127.0.0.1]:"+port)
 	if err == nil || !strings.Contains(out, "trackonly") {
 		t.Errorf("dreaderd with trackonly and the default readercanlock: err %v, output %q; want it to refuse", err, out)
+	}
+}
+
+// skipWithCanLock skips the test when dreaderd is built with libcanlock: the tests that use it
+// check what a build without the library does.
+func skipWithCanLock(tb testing.TB) {
+	tb.Helper()
+	b, err := os.ReadFile(filepath.Join(bin(tb), "dreaderd"))
+	if err != nil || !bytes.Contains(b, []byte("readercanlock")) {
+		tb.Skip("dreaderd has no readercanlock (Cancel-Lock support)")
+	}
+	if bytes.Contains(b, []byte("cl_verify_multi")) {
+		tb.Skip("dreaderd is built with libcanlock")
+	}
+}
+
+// TestCancelLockWithoutLibcanlock: in a build without libcanlock no Cancel-Key can be verified,
+// and the safe modes stay safe: the default (require-auth), require-auth and none execute no
+// cancel (not even one with a matching key), auth withdraws only an article without a
+// Cancel-Lock, and all executes everything, as before readercanlock existed. Every mode is
+// accepted in diablo.config.
+func TestCancelLockWithoutLibcanlock(t *testing.T) {
+	skipWithCanLock(t)
+	sha256Lock := func(mid string) string {
+		return "sha256:" + canLock(sha256.New, canKey(sha256.New, adminSecret, "", mid))
+	}
+	sha256Key := func(mid string) string { return "sha256:" + canKey(sha256.New, adminSecret, "", mid) }
+	for _, c := range []struct {
+		name, mode string
+		locked     bool
+		removed    bool
+	}{
+		{"default/locked/matching key", "", true, false},
+		{"default/unlocked", "", false, false},
+		{"require-auth/locked/matching key", "require-auth", true, false},
+		{"auth/locked/matching key", "auth", true, false},
+		{"auth/unlocked", "auth", false, true},
+		{"none/unlocked", "none", false, false},
+		{"all/locked/matching key", "all", true, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s, st := canLockSiteAny(t, c.mode)
+			r := s.Reader(t)
+			target := msgID(t)
+			art := newArticle(target, "e2e.test", "target", "body")
+			if c.locked {
+				art = withHeaders(art, "Cancel-Lock: "+sha256Lock(target))
+			}
+			feedAndSettle(t, s, st, r, art)
+			if !present(t, r, 1) {
+				t.Fatalf("target is not article 1 of e2e.test")
+			}
+			feedAndSettle(t, s, st, r, cancelArticle(t, target, "e2e.test", "Cancel-Key: "+sha256Key(target)))
+			if got := !present(t, r, 1); got != c.removed {
+				t.Errorf("target cancelled: %v, want %v (readercanlock %q)", got, c.removed, c.mode)
+			}
+		})
 	}
 }

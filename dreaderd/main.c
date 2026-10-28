@@ -461,6 +461,22 @@ main(int ac, char **av)
     openlog("dreaderd", (DebugOpt ? LOG_PERROR : 0) | LOG_NDELAY | LOG_PID,
             LOG_NEWS);
 
+#ifndef	CANLOCK_ENABLED
+    /*
+     * Without libcanlock no Cancel-Key can be verified: say what the mode
+     * then does, so that a build without the library is not a surprise.
+     */
+    if (DOpts.ReaderCanLock == CANLOCK_REQUIRE_AUTH ||
+				DOpts.ReaderCanLock == CANLOCK_AUTH) {
+	logit(LOG_WARNING, "readercanlock %s: this build has no libcanlock "
+	    "(CANLOCK_ENABLED), so no Cancel-Key can be verified and %s",
+	    CanLockModeName(DOpts.ReaderCanLock),
+	    (DOpts.ReaderCanLock == CANLOCK_AUTH) ?
+		"only articles without a Cancel-Lock can be cancelled" :
+		"no cancel or supersede is executed");
+    }
+#endif
+
     /*
      * bind to our socket prior to changing uid/gid
      */

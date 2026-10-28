@@ -130,6 +130,7 @@ HeaderCmp(const char *big, const char *little, char **errMsg)
 
 
 #define CANLOCK_HDRMAX	1024	/* longest Cancel-Lock or Cancel-Key value of a poster that we add to */
+#define CANLOCK_ELEMMAX	400	/* longest element in it: keeps a header line below 998 bytes */
 #define CANLOCK_LISTMAX	(CANLOCK_HDRMAX + 2 * CANLOCK_MAXSECRETS * 2 * 2 * 64)
 
 /*
@@ -144,7 +145,7 @@ canLockTarget(const char *v, int n, char *buf)
     int len;
 
     buf[0] = 0;
-    while (n > 0 && (*v == ' ' || *v == '\t')) {
+    while (n > 0 && (*v == ' ' || *v == '\t' || *v == '\r' || *v == '\n')) {
 	++v;
 	--n;
     }
@@ -257,7 +258,9 @@ canLockKeys(char *out, int outLen, const Vserver *vs, const char *uid, const cha
 /*
  * canLockCapture() - copy the value of the header called name that starts at
  * hdr (l bytes with its folded lines) into buf, unfolded and without the
- * white space around it.  Returns 1 on success, 0 when it doesn't fit.
+ * white space around it.  Returns 1 on success, 0 when it doesn't fit or an
+ * element is longer than CANLOCK_ELEMMAX (a real lock or key is 100 bytes or
+ * less).
  */
 static int
 canLockCapture(const char *hdr, int l, const char *name, char *buf, int bufLen)
@@ -273,6 +276,12 @@ canLockCapture(const char *hdr, int l, const char *name, char *buf, int bufLen)
     while (isspace((unsigned char)*v))
 	++v;
     memmove(buf, v, strlen(v) + 1);
+    for (v = buf; *v; v += n) {
+	v += strspn(v, " ");
+	n = strcspn(v, " ");
+	if (n > CANLOCK_ELEMMAX)
+	    return(0);
+    }
     return(1);
 }
 
@@ -580,19 +589,37 @@ NNPostBuffer(Connection *conn)
 	} else if (HeaderCmp(base, "Cancel-Lock", &errMsg) == 0) {
 	    /*
 	     * Only one is allowed (RFC 8315 section 2), so our locks are
-	     * appended to the poster's, as INN does, when there is room.
+	     * appended to the poster's, as INN does.  When we add locks, a
+	     * second header, or one we can't append to (too long), is
+	     * refused: passing it on would let the poster switch our locks
+	     * off, or leave two headers.
 	     */
-	    if (haveCanLock++ == 0 &&
-		(vs->vs_CanLockAdmin[0][0] || vs->vs_CanLockUser[0][0]) &&
-		canLockCapture(base, l, "Cancel-Lock", canLockIn, sizeof(canLockIn))) {
-		canLockMerge = 1;
-		keep = 0;
+	    if (vs->vs_CanLockAdmin[0][0] || vs->vs_CanLockUser[0][0]) {
+		if (haveCanLock++ > 0) {
+		    if (errMsg == NULL)
+			errMsg = "441 More than one Cancel-Lock header\r\n";
+		} else if (canLockCapture(base, l, "Cancel-Lock", canLockIn, sizeof(canLockIn))) {
+		    canLockMerge = 1;
+		    keep = 0;
+		} else if (errMsg == NULL) {
+		    errMsg = "441 Cancel-Lock header too long\r\n";
+		}
+	    } else {
+		++haveCanLock;
 	    }
 	} else if (HeaderCmp(base, "Cancel-Key", &errMsg) == 0) {
-	    if (haveCanKey++ == 0 && vs->vs_CanLockUser[0][0] &&
-		canLockCapture(base, l, "Cancel-Key", canKeyIn, sizeof(canKeyIn))) {
-		canKeyMerge = 1;
-		keep = 0;
+	    if (vs->vs_CanLockUser[0][0]) {
+		if (haveCanKey++ > 0) {
+		    if (errMsg == NULL)
+			errMsg = "441 More than one Cancel-Key header\r\n";
+		} else if (canLockCapture(base, l, "Cancel-Key", canKeyIn, sizeof(canKeyIn))) {
+		    canKeyMerge = 1;
+		    keep = 0;
+		} else if (errMsg == NULL) {
+		    errMsg = "441 Cancel-Key header too long\r\n";
+		}
+	    } else {
+		++haveCanKey;
 	    }
 	} else if (HeaderCmp(base, "Supersedes", &errMsg) == 0) {
 	    canLockTarget(base + 11, l - 11, canTarget);
