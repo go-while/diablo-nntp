@@ -10,12 +10,16 @@ import (
 	"crypto/sha1"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/go-while/nntp-testkit/client"
 )
 
 // skipWithoutDcanlock skips the test when DIABLO_BIN has no dcanlock.
@@ -105,6 +109,18 @@ func TestDcanlock(t *testing.T) {
 		out, _ := dcanlock(t, s, "", "key", mid)
 		if want := []string{"sha256:" + canKey(sha256.New, genAdminSecret, "", mid)}; !slices.Equal(elements(out), want) {
 			t.Errorf("elements %q, want %q", elements(out), want)
+		}
+	})
+
+	t.Run("secret from standard input, canlocksha1 of -A", func(t *testing.T) {
+		acc := filepath.Join(t.TempDir(), "dreader.access")
+		if err := os.WriteFile(acc, []byte(genAccess(true, vsNoSh, "")), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		out, code := dcanlock(t, s, "stdin-secret\n", "-S", "-A", acc, "key", mid)
+		want := []string{"sha256:" + canKey(sha256.New, "stdin-secret", "", mid)}
+		if code != 0 || !slices.Equal(elements(out), want) {
+			t.Errorf("exit %d, elements %q, want %q (sha1 left out by canlocksha1 no)", code, elements(out), want)
 		}
 	})
 
@@ -233,6 +249,11 @@ func TestDcanlockWithdraw(t *testing.T) {
 // splitCancel splits the article dcanlock cancel writes into its header lines and its body.
 func splitCancel(t *testing.T, out string) (head []string, body string) {
 	t.Helper()
+	// dcanlock writes CR LF line ends, as they go over NNTP; every line must have both
+	if strings.Count(out, "\n") != strings.Count(out, "\r\n") {
+		t.Errorf("the cancel article has line ends without CR: %q", out)
+	}
+	out = strings.ReplaceAll(out, "\r\n", "\n")
 	h, b, ok := strings.Cut(out, "\n\n")
 	if !ok {
 		t.Fatalf("no blank line between the headers and the body: %q", out)
@@ -375,6 +396,111 @@ func TestDcanlockCancelNewsgroups(t *testing.T) {
 	if out, code := run("<missing@example>"); code != 2 || !strings.Contains(out, "give them with -n") {
 		t.Errorf("a missing article: exit %d, output %q", code, out)
 	}
+
+	// a Newsgroups list that does not fit is an error, not a cut list that names other groups
+	var groups []string
+	for i := 0; len(strings.Join(groups, ",")) < 1200; i++ {
+		groups = append(groups, fmt.Sprintf("e2e.group%03d", i))
+	}
+	long := "#!/bin/sh\nprintf 'Newsgroups: " + strings.Join(groups, ",") + "\\r\\n\\r\\n'\n"
+	if err := os.WriteFile(filepath.Join(dir, "dreadart"), []byte(long), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if out, code := run("<found@example>"); code != 2 || !strings.Contains(out, "give them with -n") {
+		t.Errorf("a Newsgroups list of %d bytes: exit %d, output %q", len(strings.Join(groups, ",")), code, out)
+	}
+}
+
+// TestDcanlockCancelDreadartPath: started by name (found through PATH), dcanlock uses the dreadart
+// of the directory it was found in, not the first dreadart on PATH.
+func TestDcanlockCancelDreadartPath(t *testing.T) {
+	s := dcanlockSite(t, vsBoth)
+	mine, other := t.TempDir(), t.TempDir()
+	src, err := os.ReadFile(filepath.Join(s.Bin, "dcanlock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mine, "dcanlock"), src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fake := func(groups string) []byte {
+		return []byte("#!/bin/sh\nprintf 'Newsgroups: " + groups + "\\r\\n\\r\\n'\n")
+	}
+	if err := os.WriteFile(filepath.Join(mine, "dreadart"), fake("e2e.mine"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(other, "dreadart"), fake("e2e.other"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(filepath.Join(mine, "dcanlock"), "cancel", "<x@example>")
+	cmd.Args[0] = "dcanlock" // as the shell passes it when it found the program through PATH
+	cmd.Dir = s.Dir
+	for _, e := range append(os.Environ(), s.Env...) {
+		if !strings.HasPrefix(e, "PATH=") {
+			cmd.Env = append(cmd.Env, e)
+		}
+	}
+	// the other dreadart comes first on PATH, but dcanlock is only in mine
+	cmd.Env = append(cmd.Env, "PATH="+other+":"+mine+":/usr/bin:/bin")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("dcanlock cancel: %v\n%s", err, out)
+	}
+	head, _ := splitCancel(t, string(out))
+	if got := headerValue(head, "Newsgroups"); got != "e2e.mine" {
+		t.Errorf("Newsgroups %q: not the dreadart next to dcanlock (want e2e.mine)", got)
+	}
+}
+
+// postRaw posts raw (an article as a program wrote it, lines ending in CR LF) the way a client
+// that only appends the terminating dot would, and returns the headers the outgoing server got.
+func (g *genSite) postRaw(tb testing.TB, c *client.Conn, raw string) []string {
+	tb.Helper()
+	g.mu.Lock()
+	n := len(g.arts)
+	g.mu.Unlock()
+	expect(tb, c, 340, "POST")
+	send(tb, c, raw+".\r\n")
+	status(tb, c, 240, "POST article")
+	waitFor(tb, 15*time.Second, "the outgoing server to receive the post", func() bool {
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		return len(g.arts) > n
+	})
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	head, _ := splitArticle(g.arts[n])
+	return head
+}
+
+// TestDcanlockCancelPost: the output of dcanlock cancel is an article that dreaderd takes as it
+// is (LF-only lines made the whole article one header and got 441), and the cancel that the
+// reader then sends out withdraws the article.
+func TestDcanlockCancelPost(t *testing.T) {
+	skipWithoutDcanlock(t)
+	g := newGenSite(t, true, vsBoth, "    controlpost yes\n    approve yes\n", "require-auth")
+	mid := msgID(t)
+	g.post(t, g.poster(t), "Message-ID: "+mid)
+	r := g.Reader(t)
+	expect(t, r, 381, "AUTHINFO USER fred")
+	expect(t, r, 281, "AUTHINFO PASS fredspass")
+	feedAndSettle(t, g.Site, g.st, r, fromElsewhere(g.last()))
+	if !present(t, r, 1) {
+		t.Fatal("the posted article is not article 1 of e2e.test")
+	}
+	out, code := dcanlock(t, g.Site, "", "-f", "admin@example.invalid", "-n", "e2e.test", "cancel", mid)
+	if code != 0 {
+		t.Fatalf("dcanlock cancel: exit %d: %s", code, out)
+	}
+	head := g.postRaw(t, g.poster(t), out+"\r\n")
+	if got := headerValue(head, "Control"); got != "cancel "+mid {
+		t.Fatalf("Control %q in the posted cancel: %q", got, head)
+	}
+	cancel := fromElsewhere(append(slices.Clone(head), "", "Admin cancel."))
+	feedAndSettle(t, g.Site, g.st, r, cancel)
+	if present(t, r, 1) {
+		t.Error("the article is still there after the cancel that dcanlock wrote and dreaderd posted")
+	}
 }
 
 // TestDcanlockCancelWithdraw: the whole use case with the whole article: an article posted
@@ -396,7 +522,7 @@ func TestDcanlockCancelWithdraw(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("dcanlock cancel: exit %d: %s", code, out)
 	}
-	feedAndSettle(t, g.Site, g.st, r, strings.Split(strings.TrimRight(out, "\n"), "\n"))
+	feedAndSettle(t, g.Site, g.st, r, strings.Split(strings.ReplaceAll(strings.TrimRight(out, "\r\n"), "\r\n", "\n"), "\n"))
 	if present(t, r, 1) {
 		t.Error("the article is still there after the cancel article of dcanlock")
 	}

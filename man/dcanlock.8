@@ -114,7 +114,10 @@ dreaderd with a client that sends a file (the reader's access definition
 needs
 .B approve yes
 if the Approved header is kept, and the user must be allowed to post control
-messages), or feed it to the news server like any other article.
+messages), or feed it to the news server like any other article.  The lines
+end in CR LF, as they go over NNTP (a client that dot-stuffs and sends the
+terminating dot needs nothing else); the body is one line that does not start
+with a dot.
 .PP
 .B verify
 needs no secret: it exits with status 0 and prints
@@ -166,6 +169,13 @@ secret, or as the
 .B canlockuser
 secret with
 .BR \-u .
+Both schemes are made unless
+.B \-t
+says otherwise; with
+.B \-A
+the
+.B canlocksha1
+line of the vserverdef in that file is honoured too.
 .PP
 Options of
 .B cancel
@@ -175,7 +185,9 @@ only (the letters are those of gencancel):
 The Newsgroups of the cancel: a comma separated list.  By default those of
 the article, read with
 .BR dreadart (8)
-from the spool; on a reader machine without a spool, give them.
+from the spool (the one in the directory of this program); on a reader machine
+without a spool, give them.  If the article's list does not fit the
+program stops with an error and the groups must be given.
 .TP
 .B \-f from
 The From; the default is

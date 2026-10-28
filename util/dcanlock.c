@@ -109,9 +109,10 @@ addSecret(char secrets[][CANLOCK_SECRETLEN], const char *opt, const char *val)
  * readAccess() - collect the canlockadmin, canlockuser and canlocksha1 lines
  * of the first vserverdef called vsName in the dreader.access file at path,
  * read the way dreaderd reads it.  Returns 1 when the vserverdef was found.
+ * A file that cannot be opened is an error, unless optional is set.
  */
 static int
-readAccess(const char *path, const char *vsName, Secrets *sec)
+readAccess(const char *path, const char *vsName, Secrets *sec, int optional)
 {
     FILE *fp;
     char buf[1024];
@@ -119,6 +120,8 @@ readAccess(const char *path, const char *vsName, Secrets *sec)
     int found = 0;
 
     if ((fp = fopen(path, "r")) == NULL) {
+	if (optional)
+	    return(0);
 	fprintf(stderr, "dcanlock: cannot open %s: %s\n", path, strerror(errno));
 	exit(2);
     }
@@ -280,6 +283,41 @@ groupsOk(const char *s)
 }
 
 /*
+ * sameDirProgram() - dcanlock was started by name, so the shell found it in
+ * the first PATH directory that has it: put the path of program in that
+ * directory into path.  Returns 0 when there is none.  (A dreadart from
+ * another PATH directory is not the one that belongs to this dcanlock.)
+ */
+static int
+sameDirProgram(const char *self, const char *program, char *path, int pathLen)
+{
+    const char *p = getenv("PATH");
+
+    if (p == NULL)
+	return(0);
+    while (*p) {
+	int n = strcspn(p, ":");
+	char cand[PATH_MAX];
+	struct stat st;
+
+	snprintf(cand, sizeof(cand), "%.*s%s%s", n, p, n ? "/" : "", self);
+	if (n == 0)
+	    snprintf(cand, sizeof(cand), "./%s", self);
+	if (stat(cand, &st) == 0 && S_ISREG(st.st_mode) && access(cand, X_OK) == 0) {
+	    if (n == 0)
+		snprintf(path, pathLen, "./%s", program);
+	    else
+		snprintf(path, pathLen, "%.*s/%s", n, p, program);
+	    return(1);
+	}
+	p += n;
+	if (*p == ':')
+	    ++p;
+    }
+    return(0);
+}
+
+/*
  * articleGroups() - the Newsgroups header of the article mid in the spool,
  * read with dreadart (which sits next to this program), into buf.  Returns
  * 1 on success.  No shell: mid is passed as an argument.
@@ -297,10 +335,11 @@ articleGroups(const char *progname, const char *mid, char *buf, int bufLen)
     pid_t pid;
     char *p;
 
-    if (slash)
+    if (slash) {
 	snprintf(path, sizeof(path), "%.*s/dreadart", (int)(slash - progname), progname);
-    else
-	snprintf(path, sizeof(path), "dreadart");
+    } else if (!sameDirProgram(progname, "dreadart", path, sizeof(path))) {
+	return(0);
+    }
     if (pipe(fds) < 0)
 	return(0);
     if ((pid = fork()) < 0) {
@@ -316,7 +355,7 @@ articleGroups(const char *progname, const char *mid, char *buf, int bufLen)
 	    dup2(nul, 2);
 	close(fds[0]);
 	close(fds[1]);
-	execlp(path, "dreadart", "-h", mid, (char *)NULL);
+	execl(path, "dreadart", "-h", mid, (char *)NULL);
 	_exit(127);
     }
     close(fds[1]);
@@ -341,8 +380,11 @@ articleGroups(const char *progname, const char *mid, char *buf, int bufLen)
 
 	    for (;;) {			/* the value, with its folded lines */
 		for (; i < len; ++i) {
-		    if (!isspace((unsigned char)p[i]) && o + 1 < bufLen)
-			buf[o++] = p[i];
+		    if (isspace((unsigned char)p[i]))
+			continue;
+		    if (o + 1 >= bufLen)
+			return(0);	/* a cut list would name other groups */
+		    buf[o++] = p[i];
 		}
 		if (e && (e[1] == ' ' || e[1] == '\t')) {
 		    p = e + 1;
@@ -502,12 +544,24 @@ main(int ac, char **av)
 	    return(2);
 	}
 	addSecret(user ? sec.user : sec.admin, user ? "canlockuser" : "canlockadmin", line);
+	/*
+	 * Only the secret comes from standard input.  With -A the vserverdef
+	 * of that file still says whether sha1 locks are made (canlocksha1);
+	 * without it nothing is read, as the machine may have no diablo.config.
+	 */
+	if (accessFile != NULL) {
+	    Secrets fromFile;
+
+	    memset(&fromFile, 0, sizeof(fromFile));
+	    if (readAccess(accessFile, vsName, &fromFile, 1))
+		sec.noSha1 = fromFile.noSha1;
+	}
     } else {
 	if (accessFile == NULL) {
 	    loadConfig(ac, av);		/* for the path of dreader.access */
 	    accessFile = PatLibExpand(DReaderAccessPat);
 	}
-	if (!readAccess(accessFile, vsName, &sec)) {
+	if (!readAccess(accessFile, vsName, &sec, 0)) {
 	    fprintf(stderr, "dcanlock: no vserverdef %s in %s\n", vsName, accessFile);
 	    return(2);
 	}
@@ -583,6 +637,10 @@ main(int ac, char **av)
 	    snprintf(subj, sizeof(subj), "cmsg cancel %.*s", MAXMSGIDLEN, mid);
 	    subject = subj;
 	}
+	if (strpbrk(body, "\r\n") != NULL || body[0] == '.') {
+	    fprintf(stderr, "dcanlock: the body must be one line that does not start with '.'\n");
+	    return(2);
+	}
 	if (!plainText(subject) || !plainText(charset)) {
 	    fprintf(stderr, "dcanlock: the subject and the charset must be plain ASCII (MIME-encode the subject yourself)\n");
 	    return(2);
@@ -602,23 +660,23 @@ main(int ac, char **av)
 	    strftime(date, sizeof(date), "%a, %d %b %Y %H:%M:%S %z", tm);
 	}
 
-	printf("From: %s\n", from);
-	printf("Newsgroups: %s\n", newsgroups);
-	printf("Subject: %s\n", subject);
-	printf("Date: %s\n", date);
+	printf("From: %s\r\n", from);
+	printf("Newsgroups: %s\r\n", newsgroups);
+	printf("Subject: %s\r\n", subject);
+	printf("Date: %s\r\n", date);
 	if (!noMid) {
 	    messageId(newMid, sizeof(newMid), host);
-	    printf("Message-ID: %s\n", newMid);
+	    printf("Message-ID: %s\r\n", newMid);
 	}
 	if (!noApproved)
-	    printf("Approved: %s\n", from);
-	printf("Control: cancel %s\n", mid);
+	    printf("Approved: %s\r\n", from);
+	printf("Control: cancel %s\r\n", mid);
 	if (!noKey)
-	    printf("Cancel-Key: %s\n", out);
-	printf("MIME-Version: 1.0\n");
-	printf("Content-Type: text/plain; charset=%s\n", charset);
-	printf("Content-Transfer-Encoding: 8bit\n");
-	printf("\n%s\n", body);
+	    printf("Cancel-Key: %s\r\n", out);
+	printf("MIME-Version: 1.0\r\n");
+	printf("Content-Type: text/plain; charset=%s\r\n", charset);
+	printf("Content-Transfer-Encoding: 8bit\r\n");
+	printf("\r\n%s\r\n", body);
     }
     return(0);
 }
