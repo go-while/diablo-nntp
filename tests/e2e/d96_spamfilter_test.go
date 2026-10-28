@@ -26,5 +26,9 @@ func TestSpamfilterClearNullHashAry(t *testing.T) {
 	var ee *exec.ExitError
 	if errors.As(err, &ee) && ee.ExitCode() < 0 {
 		t.Errorf("dspaminfo -B -c -1 was killed by signal (%v) when spam.body.cache is inaccessible", err)
+	} else if err != nil {
+		// Not killed by a signal, but also not a clean exit (non-zero status, or the
+		// program could not be run at all).
+		t.Errorf("dspaminfo -B -c -1 did not exit 0 when spam.body.cache is inaccessible: %v", err)
 	}
 }
