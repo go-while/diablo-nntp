@@ -94,7 +94,7 @@ jobs:
           done
           ls -l e2e.test.*
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: e2e-test-binaries
           path: tests/e2e/e2e.test.*
@@ -127,7 +127,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: e2e-test-binaries
           path: tests/e2e
@@ -137,7 +137,11 @@ jobs:
           set -eu
           cp tests/e2e/e2e.test.linux tests/e2e/e2e.test
           chmod 755 tests/e2e/e2e.test
-          docker run --rm -e E2E_FAKE_SENDMAIL=1 -v "$PWD":/src -w /src "${{ matrix.image }}" sh -ec '
+          # --init runs a tiny init (tini) as PID 1 to reap the daemons' orphaned
+          # children; without it, a killed dreaderd/diablo lingers as a zombie that
+          # still answers kill -0, so diablo-ctl's stop never sees it exit (the VM
+          # runner relies on the OS init for the same reaping).
+          docker run --rm --init -e E2E_FAKE_SENDMAIL=1 -v "$PWD":/src -w /src "${{ matrix.image }}" sh -ec '
             if tests/e2e/ci/build-on-host; then bok=1; else bok=0; fi
             echo "=== build.log (last 40 lines) ==="
             tail -40 build.log 2>/dev/null || true
@@ -162,7 +166,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: e2e-test-binaries
           path: tests/e2e
@@ -174,6 +178,10 @@ jobs:
           usesh: true
           prepare: |
             pkg install -y gmake
+            # The e2e tests bind client sockets to several 127.0.0.x source
+            # addresses (PeerIP 127.0.0.2 and .3/.4/.9/.10); unlike Linux, FreeBSD
+            # has only 127.0.0.1 on lo0 by default, so add the rest as aliases.
+            for ip in 2 3 4 9 10; do ifconfig lo0 alias 127.0.0.$ip netmask 0xffffffff; done
           run: |
             set -e
             root=$(pwd)
@@ -205,7 +213,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: e2e-test-binaries
           path: tests/e2e
@@ -216,6 +224,8 @@ jobs:
           prepare: |
             pkg install -q developer/gcc13 developer/build/gnu-make || \
               pkg install developer/gcc13 developer/build/gnu-make || true
+            # Same 127.0.0.x client source addresses as the FreeBSD job needs.
+            for ip in 2 3 4 9 10; do ifconfig lo0 addif 127.0.0.$ip up 2>/dev/null || true; done
           run: |
             set -e
             root=$(pwd)
