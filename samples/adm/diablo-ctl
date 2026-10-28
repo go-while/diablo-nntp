@@ -20,9 +20,21 @@
 # workers by their working directory (this site's path_dqueue).  A diablo
 # too old to write diablo.pid is stopped through its control socket only.
 #
-# "check" runs the checks that start runs first (see diablo-ctl.conf: mounts,
-# history, active file, unclean shutdown) and starts nothing; -F skips them
-# on start.
+# CHECKS BEFORE A START.  "start" (and restart) first runs these checks, which
+# are ON unless DIABLO_PREFLIGHT="no" is set in diablo-ctl.conf, and does not
+# start a daemon (exit status 1, every reason printed) when one fails:
+#	- a mount point listed in DIABLO_MOUNTS is not mounted;
+#	- the active file the daemon uses (dreaderd: always; diablo: only when
+#	  diablo.config has "active" on) does not exist, or is older than
+#	  DIABLO_ACTIVE_MAXAGE hours when that is set;
+#	- unclean shutdown: the pid file is left, no process is running, and the
+#	  activity log has not changed for DIABLO_MAX_DOWNTIME minutes (off
+#	  unless that is set);
+#	- the history file is missing and DIABLO_REQUIRE_HISTORY="yes" (by
+#	  default a missing history is only noted: diablo makes a new one).
+# A new site has no active file yet: create it (README.READER: dsyncgroups) or
+# start once with -F.  "check" runs the checks and starts nothing.  -F skips
+# them for this start.  See diablo-ctl.conf and samples/init/README.
 #
 # Exit status: 0 ok, 1 failure (check: a check failed), 2 usage, 3 status: a
 # requested daemon is not running.
@@ -251,7 +263,7 @@ preflight() {
     act=$(activefile "$d")
     if [ -n "$act" ]; then
 	if [ ! -f "$act" ]; then
-	    say "$d: active file $act not found"
+	    say "$d: active file $act not found (a new site: create it, see README.READER, or start once with -F)"
 	    bad=1
 	elif [ -n "$DIABLO_ACTIVE_MAXAGE" ] && older_than "$act" $((DIABLO_ACTIVE_MAXAGE * 60)); then
 	    say "$d: active file $act is more than $DIABLO_ACTIVE_MAXAGE hours old"
@@ -299,7 +311,7 @@ start_one() {
 	return 0
     fi
     if [ "$force" != yes ] && [ "$DIABLO_PREFLIGHT" = yes ]; then
-	preflight "$d" || { say "$d not started: a check failed (-F skips the checks)"; return 1; }
+	preflight "$d" || { say "$d not started: a check failed (diablo-ctl -F start skips the checks once, DIABLO_PREFLIGHT=no in diablo-ctl.conf turns them off; see samples/init/README)"; return 1; }
     fi
     dkptrim "$d"
     [ -n "${DIABLO_NOFILE:-}" ] && ulimit -n "$DIABLO_NOFILE"

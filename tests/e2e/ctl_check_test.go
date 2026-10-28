@@ -76,6 +76,10 @@ func TestDiabloCtlChecks(t *testing.T) {
 		if !strings.Contains(out, "a check failed") || listening(s.Addr) {
 			t.Errorf("start: %q (listening %v), want a refusal", out, listening(s.Addr))
 		}
+		// the refusal says how to get past it
+		if !strings.Contains(out, "-F start") || !strings.Contains(out, "DIABLO_PREFLIGHT=no") {
+			t.Errorf("start: %q does not name -F and DIABLO_PREFLIGHT", out)
+		}
 		out, code = run("-F", "start")
 		wantCtl(t, out, code, 0, "start -F")
 		if !listening(s.Addr) {
@@ -136,6 +140,9 @@ func TestDiabloCtlChecks(t *testing.T) {
 		wantCtl(t, out, code, 1, "check with active on and no active file")
 		if !strings.Contains(out, "active file") || !strings.Contains(out, "not found") {
 			t.Errorf("check: %q", out)
+		}
+		if !strings.Contains(out, "a new site") || !strings.Contains(out, "-F") {
+			t.Errorf("check: %q does not say what to do on a new site", out)
 		}
 		s.WriteFile(t, "dactive.kp", "")
 		out, code = run("check")
