@@ -158,25 +158,21 @@ validMsgId(const char *mid)
 }
 
 /*
- * put() - append " scheme:value" to the list in out.
+ * put() - append the element "scheme:value" to the list in out.
  */
 static void
-put(char *out, int outLen, const char *scheme, const char *value)
+put(char *out, int outLen, const char *element)
 {
     int n = strlen(out);
-    int sl = strlen(scheme);
-    int vl = strlen(value);
+    int el = strlen(element);
 
-    if (n + (n ? 1 : 0) + sl + 1 + vl + 1 > outLen) {
+    if (n + (n ? 1 : 0) + el + 1 > outLen) {
 	fprintf(stderr, "dcanlock: too many elements\n");
 	exit(2);
     }
     if (n)
 	out[n++] = ' ';
-    memcpy(out + n, scheme, sl);
-    n += sl;
-    out[n++] = ':';
-    memcpy(out + n, value, vl + 1);
+    memcpy(out + n, element, el + 1);
 }
 
 int
@@ -288,16 +284,19 @@ main(int ac, char **av)
 	    out[0] = 0;
 	    for (j = 0; j < CANLOCK_MAXSECRETS && secrets[j][0]; ++j) {
 		for (s = 0; s < nSchemes; ++s) {
-		    char key[160];
-		    char lock[160];
+		    char element[192];
+		    int len;
 
-		    if (CanLockKey(schemes[s], secrets[j], uid, av[i], key, sizeof(key)) < 0 ||
-			CanLockLock(schemes[s], key, lock, sizeof(lock)) < 0) {
+		    if (strcmp(cmd, "key") == 0)
+			len = CanLockKey(schemes[s], secrets[j], uid, av[i], element, sizeof(element));
+		    else
+			len = CanLockLock(schemes[s], secrets[j], uid, av[i], element, sizeof(element));
+		    if (len < 0) {
 			fprintf(stderr, "dcanlock: cannot make the %s %s for %s\n",
 				schemes[s], cmd, av[i]);
 			return(2);
 		    }
-		    put(out, sizeof(out), schemes[s], strcmp(cmd, "key") == 0 ? key : lock);
+		    put(out, sizeof(out), element);
 		}
 	    }
 	    printf("%s\n", out);
