@@ -152,14 +152,14 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-136](#d-136-rot-accepts-an-invalid-retention-count-and-still-rotates-the-current-file) | Low | rot accepts an invalid retention count and still rotates the current file | open |
 | [D-137](#d-137-biweeklyatrim-does-not-return-a-failed-active-file-trim) | Low | biweekly.atrim does not return a failed active-file trim | open |
 | [D-138](#d-138-daily-rotation-writes-its-completion-message-into-dailylog0) | Low | Daily rotation writes its completion message into daily.log.0 | open |
-| [D-139](#d-139-auto-loaded-diablo-ctlconf-can-mix-two-installations-paths) | Low | Auto-loaded diablo-ctl.conf can mix two installations' paths | open |
-| [D-140](#d-140-unknown-diablo_daemons-entries-reuse-command-state-or-abort-the-wrapper) | Low | Unknown DIABLO_DAEMONS entries reuse command state or abort the wrapper | open |
-| [D-141](#d-141-nonnumeric-diablo-ctl-wait-settings-disable-the-timeout) | Low | Nonnumeric diablo-ctl wait settings disable the timeout | open |
+| [D-139](#d-139-auto-loaded-diablo-ctlconf-can-mix-two-installations-paths) | Low | Auto-loaded diablo-ctl.conf can mix two installations' paths | PR (#145) |
+| [D-140](#d-140-unknown-diablo_daemons-entries-reuse-command-state-or-abort-the-wrapper) | Low | Unknown DIABLO_DAEMONS entries reuse command state or abort the wrapper | PR (#145) |
+| [D-141](#d-141-nonnumeric-diablo-ctl-wait-settings-disable-the-timeout) | Low | Nonnumeric diablo-ctl wait settings disable the timeout | PR (#145) |
 | [D-142](#d-142-reinstall-resets-existing-operational-directory-modes-and-owners) | Low | Reinstall resets existing operational directory modes and owners | open |
 | [D-143](#d-143-direct-installation-from-an-unbuilt-checkout-can-succeed-without-binaries) | Low | Direct installation from an unbuilt checkout can succeed without binaries | open |
 | [D-144](#d-144-installer-pipelines-hide-failed-source-tree-scans) | Low | Installer pipelines hide failed source-tree scans | open |
 | [D-145](#d-145-build-on-host-requires-the-optional-pretty_name-field) | Low | build-on-host requires the optional PRETTY_NAME field | open |
-| [D-146](#d-146-daemon-option-strings-undergo-pathname-expansion) | Low | Daemon option strings undergo pathname expansion | open |
+| [D-146](#d-146-daemon-option-strings-undergo-pathname-expansion) | Low | Daemon option strings undergo pathname expansion | PR (#145) |
 | [D-147](#d-147-over-and-hdr-do-not-reject-an-invalid-converted-range-bound) | Low | OVER and HDR do not reject an invalid converted range bound | open |
 | [D-148](#d-148-listgroup-accepts-a-failed-article-number-conversion) | Low | LISTGROUP accepts a failed article-number conversion | open |
 | [D-149](#d-149-newnews-clears-the-previously-selected-group) | Low | NEWNEWS clears the previously selected group | open |
