@@ -402,6 +402,7 @@ NNCopyLocalArticle(Connection *conn, int rs)
               /* fall through */
           case MAX_HDR_CC : /* stop checking, just copy line */
               dfa->dfa_InHdr = HDRCPY ;
+              /* fall through */
           case HDRCPY : /* header, no more check on this line */
               /* Fast read, halt on end of buffer/line */
               while ( (dfa->dfa_Buffer[i] != '\n') && (dfa->dfa_Buffer[i] != '\r') && !dfa->dfa_LF && (i+1<rs))
