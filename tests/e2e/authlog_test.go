@@ -57,11 +57,20 @@ access 127.0.0.1 userjoe
 	lc.ReadStatus()
 	expect(t, lc, 205, "QUIT")
 
+	// AUTHINFO USER keeps logging the user name, but any extra token after it
+	// is masked: the parser uses only the first token as the user name, so a
+	// secret placed after it is ignored by auth yet still logged verbatim
+	// unless MaskAuthInfo masks the tail.
+	const extra = "Extra-tok-not-logged"
+	ec := s.Reader(t)
+	expect(t, ec, 381, "AUTHINFO USER joe %s", extra)
+	expect(t, ec, 205, "QUIT")
+
 	logged := s.ReadFile(t, "log/general.log")
 	if n := strings.Count(logged, "authinfo pass **unlogged**"); n < len(logins) {
 		t.Errorf("general.log has %d masked AUTHINFO PASS lines, want %d (logcmd not working?)", n, len(logins))
 	}
-	for _, secret := range []string{pass, sasl, lead} {
+	for _, secret := range []string{pass, sasl, lead, extra} {
 		if strings.Contains(logged, secret) {
 			for _, line := range strings.Split(logged, "\n") {
 				if strings.Contains(line, secret) {

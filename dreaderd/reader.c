@@ -96,6 +96,11 @@ void LogCmd(Connection *conn, char dir, char *msg)
  *		    or tabs are skipped first, so " authinfo pass x" is masked
  *		    too: the parser rejects such a line, but it is logged
  *		    before parsing, so its password must not leak either.
+ *		    AUTHINFO USER keeps logging "authinfo user <name>" (the
+ *		    user name is not secret), but any further token after the
+ *		    user name is masked: the parser uses only the first token
+ *		    as the user name, so a secret placed after it is ignored
+ *		    by auth yet still logged, and must not leak.
  */
 
 static char *
@@ -111,8 +116,18 @@ MaskAuthInfo(char *line)
     while (*p == ' ' || *p == '\t')
 	++p;
     if (strncasecmp(p, "user", 4) == 0 &&
-	(p[4] == 0 || p[4] == ' ' || p[4] == '\t'))
+	(p[4] == 0 || p[4] == ' ' || p[4] == '\t')) {
+	p += 4;
+	while (*p == ' ' || *p == '\t')		/* skip to the user name */
+	    ++p;
+	while (*p && *p != ' ' && *p != '\t')	/* skip past the user name */
+	    ++p;
+	while (*p == ' ' || *p == '\t')		/* skip to any extra token */
+	    ++p;
+	if (*p != 0)				/* extra tokens present */
+	    return("authinfo user **unlogged**");
 	return(line);
+    }
     if (strncasecmp(p, "pass", 4) == 0 &&
 	(p[4] == 0 || p[4] == ' ' || p[4] == '\t'))
 	return("authinfo pass **unlogged**");
