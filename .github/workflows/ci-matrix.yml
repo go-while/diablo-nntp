@@ -171,12 +171,18 @@ jobs:
         env:
           RUN_CONTAINER_NAME: ci-${{ github.run_id }}-${{ matrix.name }}
         run: |
-          docker rm -f "$RUN_CONTAINER_NAME" 2>/dev/null || true
-          d="${TMPDIR:-/tmp}/$RUN_CONTAINER_NAME"
-          [ -d "$d" ] || exit 0
+          name="$RUN_CONTAINER_NAME"
+          # Same name rules as run-container; never rm a path from an unchecked name.
+          case "$name" in
+            *[!A-Za-z0-9_.-]*|[!A-Za-z0-9]*|*..*) echo "skip cleanup: bad name '$name'"; exit 0 ;;
+          esac
+          docker rm -f "$name" 2>/dev/null || true
+          d="${TMPDIR:-/tmp}/diablo-ci/$name"
+          # Only our own marked scratch, directly under the fixed root.
+          [ "$(dirname "$d")" = "${TMPDIR:-/tmp}/diablo-ci" ] && [ -d "$d" ] && [ -f "$d/.diablo-ci" ] || exit 0
           docker run --rm --network none --entrypoint /bin/sh \
-            --mount "type=bind,src=$d,dst=/c" "${{ matrix.image }}" -ec 'rm -rf /c/src' 2>/dev/null || true
-          rm -rf "$d" 2>/dev/null || true
+            --mount "type=bind,src=$d,dst=/c" "${{ matrix.image }}" -ec 'rm -rf /c/src /c/cid /c/.diablo-ci' 2>/dev/null || true
+          rmdir "$d" 2>/dev/null || true
 
   # FreeBSD: build-on-host has no FreeBSD/pkg branch (it would exit "no supported
   # package manager"), so this job does not call it; it installs gmake via pkg

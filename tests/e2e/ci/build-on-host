@@ -70,7 +70,9 @@ elif command -v zypper >/dev/null; then
     [ -z "$need" ] || zypper -n -q install $need >/dev/null
     if wantdb; then zypper -n -q install libdb-4_8-devel >/dev/null 2>&1 || true; enddb; fi
 elif command -v pacman >/dev/null; then
-    have() { pacman -Q "$1"; }
+    # base-devel is a group, not a package: -Q never finds it, so check the
+    # group with -Qg (else -Syu would run on every call). -Q covers real packages.
+    have() { pacman -Qg "$1" >/dev/null 2>&1 || pacman -Q "$1" >/dev/null 2>&1; }
     need=$(missing base-devel openssl zlib procps-ng); report
     nodb=; if wantdb; then nodb=1; fi
     if [ -n "$need" ] || [ -n "$nodb" ]; then

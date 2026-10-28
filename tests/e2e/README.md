@@ -174,11 +174,13 @@ containers, FreeBSD and illumos).
 
 ### One distro container, locally
 
-`ci/run-container` runs the suite in a single Linux distro container exactly as
-the `containers` jobs of `ci-matrix.yml` do, so a local reproduction cannot drift
-from CI. It needs Docker and rsync on an amd64 Linux host (not a live news
-server). Build the pure-Go test binary first, from the same revision, then pass
-the image, a clean tree and that binary:
+`ci/run-container` runs the suite in a single Linux distro container with the
+same commands the `containers` jobs of `ci-matrix.yml` use — the workflow calls
+this very script, so the invocation does not drift from CI (the image contents,
+distro packages and host kernel can still differ from a given CI run). It needs
+Docker and rsync on an amd64 Linux host (not a live news server). Build the
+pure-Go test binary first, from the same revision, then pass the image, a clean
+tree and that binary:
 
 ```sh
 (cd tests/e2e && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -c -o /tmp/e2e.test.linux ./...)
