@@ -40,9 +40,22 @@ LDLIBS += -lfilter -ldiablo -lm -lz -lcrypto
 # misparse the original inline expressions, even for `make clean`.
 RADIUS_ENABLED := $(shell awk -v option=RADIUS_ENABLED -f compat/detect-vendor-option.awk lib/vendor.h)
 DB_ENABLED := $(shell awk -v option=DB_ENABLED -f compat/detect-vendor-option.awk lib/vendor.h)
+CANLOCK_ENABLED := $(shell awk -v option=CANLOCK_ENABLED -f compat/detect-vendor-option.awk lib/vendor.h)
 REJECT_DB_ENABLED := $(shell awk -v option=REJECT_DB -f compat/detect-vendor-option.awk lib/vendor.h)
 # Either DB authentication or the rejection database uses dbopen().
 DB185_REQUIRED := $(if $(filter 1,$(DB_ENABLED) $(REJECT_DB_ENABLED)),1,)
+
+# libcanlock: in the system directories on Debian and Ubuntu, under a package
+# prefix on FreeBSD (/usr/local) and SmartOS (/opt/local, /opt/ooce).
+ifeq ($(CANLOCK_ENABLED),1)
+LDLIBS += -lcanlock
+CANLOCK_PREFIX := $(firstword $(foreach dir, /usr/local /opt/local /opt/ooce, \
+    $(if $(wildcard $(dir)/include/libcanlock-3/canlock.h),$(dir))))
+ifneq ($(CANLOCK_PREFIX),)
+CPPFLAGS += -I$(CANLOCK_PREFIX)/include
+LDFLAGS += -L$(CANLOCK_PREFIX)/lib -Wl,-R,$(CANLOCK_PREFIX)/lib
+endif
+endif
 
 # Platform-specific settings
 

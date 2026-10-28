@@ -2,18 +2,26 @@
  * LIB/CANLOCK.C	- Cancel-Lock and Cancel-Key (RFC 8315)
  *
  *	A Cancel-Lock header lists "scheme:c-lock" elements, a Cancel-Key
- *	header "scheme:c-key" elements.  A key matches a lock of the same
- *	scheme when base64(H(c-key)) == c-lock, where c-key is the base64
- *	string itself (RFC 8315 section 3).  Schemes: sha256 (mandatory),
- *	sha512, and sha1 (deprecated, still accepted when verifying).
+ *	header "scheme:c-key" elements.  The computations (a key matches a
+ *	lock of the same scheme when base64(H(c-key)) == c-lock, RFC 8315
+ *	section 3.5) are libcanlock's, the library INN uses; this file only
+ *	finds the headers in an article and hands libcanlock the elements.
+ *	Without CANLOCK_ENABLED (lib/vendor.h) nothing can be verified, so
+ *	CanLockVerify() never matches: a locked article is never cancelled
+ *	(the safe side) unless readercanlock is 'all'.
  *
- *	Verification needs no secret; generating locks and keys (for local
- *	posts) is not done here yet.
+ *	libcanlock-hp, which could find and split the header fields, runs a
+ *	helper program for every call; that is too much for the reader's event
+ *	loop, so the small text handling here stays ours.
  */
 
 #include "defs.h"
-#include <openssl/evp.h>
-#include <openssl/crypto.h>
+#ifdef	CANLOCK_ENABLED
+#include <libcanlock-3/canlock.h>
+#if CL_API_MAJOR < 3 || (CL_API_MAJOR == 3 && CL_API_MINOR < 3)
+#error "libcanlock 3.3.0 or later is needed (cl_verify_multi); or #undef CANLOCK_ENABLED in lib/vendor.h"
+#endif
+#endif
 
 Prototype int CanLockFindHeader(const char *hdrs, int hlen, const char *name, char *buf, int bufLen);
 Prototype int CanLockVerify(const char *keys, const char *locks);
@@ -73,6 +81,7 @@ CanLockFindHeader(const char *hdrs, int hlen, const char *name, char *buf, int b
     return(0);
 }
 
+#ifdef	CANLOCK_ENABLED
 /*
  * nextElement() - the next "scheme:value" element of a Cancel-Lock or
  * Cancel-Key value, skipping white space and (nested) comments.  Returns a
@@ -117,68 +126,53 @@ nextElement(const char **pp, int *len)
 }
 
 /*
- * schemeDigest() - the digest for a scheme name (case-insensitive), or NULL
- * for an unknown scheme.
+ * normalize() - the elements of a Cancel-Lock or Cancel-Key value in the form
+ * libcanlock wants: separated by single spaces, white space and comments
+ * gone.  Returns a malloc'ed string (never longer than value), or NULL.
  */
-static const EVP_MD *
-schemeDigest(const char *scheme, int len)
+static char *
+normalize(const char *value)
 {
-    if (len == 6 && strncasecmp(scheme, "sha256", 6) == 0)
-	return(EVP_sha256());
-    if (len == 6 && strncasecmp(scheme, "sha512", 6) == 0)
-	return(EVP_sha512());
-    if (len == 4 && strncasecmp(scheme, "sha1", 4) == 0)
-	return(EVP_sha1());
-    return(NULL);
+    char *out = malloc(strlen(value) + 1);
+    const char *p = value;
+    const char *e;
+    int len;
+    int n = 0;
+
+    if (out == NULL)
+	return(NULL);
+    while ((e = nextElement(&p, &len)) != NULL) {
+	if (n)
+	    out[n++] = ' ';
+	memcpy(out + n, e, len);
+	n += len;
+    }
+    out[n] = 0;
+    return(out);
 }
+
+#endif
 
 /*
  * CanLockVerify() - 1 when one element of the Cancel-Key value keys
- * matches an element of the same scheme in the Cancel-Lock value locks,
- * else 0.  Unknown schemes and malformed elements never match.
+ * matches an element of the same scheme in the Cancel-Lock value locks
+ * (cl_verify_multi(), RFC 8315 section 3.5), else 0.  Unknown schemes and
+ * malformed elements never match.  Always 0 without CANLOCK_ENABLED.
  */
 int
 CanLockVerify(const char *keys, const char *locks)
 {
-    const char *kp = keys;
-    const char *k;
-    int klen;
+    int r = 0;
+#ifdef	CANLOCK_ENABLED
+    char *k = normalize(keys);
+    char *l = normalize(locks);
 
-    while ((k = nextElement(&kp, &klen)) != NULL) {
-	const char *colon = memchr(k, ':', klen);
-	const EVP_MD *md;
-	unsigned char hash[EVP_MAX_MD_SIZE];
-	unsigned int hashLen = 0;
-	char b64[2 * EVP_MAX_MD_SIZE + 4];
-	int b64Len;
-	const char *lp = locks;
-	const char *l;
-	int llen;
-	int slen;
-
-	if (colon == NULL || colon == k || colon == k + klen - 1)
-	    continue;
-	slen = colon - k;
-	if ((md = schemeDigest(k, slen)) == NULL)
-	    continue;
-	/* the lock is the hash of the key's base64 string itself */
-	if (EVP_Digest(colon + 1, k + klen - colon - 1, hash, &hashLen, md, NULL) != 1)
-	    continue;
-	b64Len = EVP_EncodeBlock((unsigned char *)b64, hash, hashLen);
-
-	while ((l = nextElement(&lp, &llen)) != NULL) {
-	    const char *lcolon = memchr(l, ':', llen);
-	    int vlen;
-
-	    if (lcolon == NULL || lcolon - l != slen ||
-		strncasecmp(l, k, slen) != 0)
-		continue;
-	    vlen = l + llen - lcolon - 1;
-	    if (vlen == b64Len && CRYPTO_memcmp(lcolon + 1, b64, b64Len) == 0)
-		return(1);
-	}
-    }
-    return(0);
+    if (k && l)
+	r = (cl_verify_multi(NULL, k, l) == 0);
+    free(k);
+    free(l);
+#endif
+    return(r);
 }
 
 /*
