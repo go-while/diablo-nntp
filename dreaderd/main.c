@@ -261,7 +261,7 @@ main(int ac, char **av)
 	    break;
 	case 'B':
 	    {
-		BindList *bl = calloc(sizeof(BindList), 1);
+		BindList *bl = calloc(1, sizeof(BindList));
 
 		bl->bl_Port = NULL;
 		bl->bl_Host = NULL;
@@ -319,7 +319,7 @@ main(int ac, char **av)
 	    break;
 	case 'P':
 	    {
-		BindList *bl = calloc(sizeof(BindList), 1);
+		BindList *bl = calloc(1, sizeof(BindList));
 
 		bl->bl_Port = NULL;
 		bl->bl_Host = NULL;
@@ -410,7 +410,7 @@ main(int ac, char **av)
     ValidateTcpBufferSize(&TxBufSize);
 
     if (BindBase == NULL) {
-	BindList *bl = calloc(sizeof(BindList), 1);
+	BindList *bl = calloc(1, sizeof(BindList));
 
 	bl->bl_Next = BindBase;
 	BindBase = bl;

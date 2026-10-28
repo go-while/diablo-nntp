@@ -120,7 +120,7 @@ main(int ac, char **av)
 
     LoadDiabloConfig(ac, av);
 
-    FileAry = calloc(sizeof(char *), FileMax);
+    FileAry = calloc(FileMax, sizeof(char *));
 
     {
 	int i;
