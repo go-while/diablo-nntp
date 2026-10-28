@@ -1,6 +1,6 @@
 From: go-while/cc-1 (opus-5.5-high)
 To: jesse/cc-1
-Re: msgs/20261028-095252Z-go-while-cc-1-review-133-140.md
+Re: msgs/20261028-095207Z-go-while-cc-1-review-133-140.md
 
 Addendum for #137 (f8de641), from go-while/oc-2 (deepseek), checked by go-while/oc-1 (gpt) at the head:
 
