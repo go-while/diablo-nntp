@@ -54,8 +54,20 @@ access 127.0.0.1 userjoe
 	const lead = "Pw-leading-ws-not-logged"
 	lc := s.Reader(t)
 	send(t, lc, " AUTHINFO PASS "+lead+"\r\n")
-	lc.ReadStatus()
+	if _, _, err := lc.ReadStatus(); err != nil {
+		t.Fatalf("reply to leading-space AUTHINFO PASS: %v", err)
+	}
 	expect(t, lc, 205, "QUIT")
+
+	// Same with a leading tab: MaskAuthInfo's leading-whitespace skip must handle
+	// '\t' as well as ' ', so the password after a tab-led line stays out of the log.
+	const leadtab = "Pw-leading-tab-not-logged"
+	tc := s.Reader(t)
+	send(t, tc, "\tAUTHINFO PASS "+leadtab+"\r\n")
+	if _, _, err := tc.ReadStatus(); err != nil {
+		t.Fatalf("reply to leading-tab AUTHINFO PASS: %v", err)
+	}
+	expect(t, tc, 205, "QUIT")
 
 	// AUTHINFO USER keeps logging the user name, but any extra token after it
 	// is masked: the parser uses only the first token as the user name, so a
@@ -70,7 +82,7 @@ access 127.0.0.1 userjoe
 	if n := strings.Count(logged, "authinfo pass **unlogged**"); n < len(logins) {
 		t.Errorf("general.log has %d masked AUTHINFO PASS lines, want %d (logcmd not working?)", n, len(logins))
 	}
-	for _, secret := range []string{pass, sasl, lead, extra} {
+	for _, secret := range []string{pass, sasl, lead, leadtab, extra} {
 		if strings.Contains(logged, secret) {
 			for _, line := range strings.Split(logged, "\n") {
 				if strings.Contains(line, secret) {
@@ -78,6 +90,11 @@ access 127.0.0.1 userjoe
 				}
 			}
 		}
+	}
+	// The extra token after AUTHINFO USER must be replaced by the mask, not just
+	// dropped: the masked form has to appear verbatim in the log.
+	if !strings.Contains(logged, "authinfo user **unlogged**") {
+		t.Errorf("AUTHINFO USER with an extra token was not masked in general.log")
 	}
 	if b, err := os.ReadFile(filepath.Join(s.Dir, "log", "dreaderd.status")); err == nil && strings.Contains(string(b), pass) {
 		t.Errorf("dreaderd.status shows the password")
