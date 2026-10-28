@@ -445,7 +445,7 @@ ValidGroupName(const char *name)
 	r = -1;
     } else {
 	for (; *name; ++name) {
-	    if (*name == ' ' || ! isprint((int)*name)) {
+	    if (*name == ' ' || !isprint((unsigned char)*name)) {
 		r = -1;
 	    }
 	    if (*name >= 'a' && *name <= 'z')
@@ -502,7 +502,7 @@ SanitizeDescString(char *name)
     for (; *name; ++name) {
 	if (*name == '\t')
 	    *name = ' ';
-	if (!iscntrl((int)*name))  
+	if (!iscntrl((unsigned char)*name))
 	    continue;
 	*name = '?';
     }
@@ -628,12 +628,12 @@ btimetol(char *p)
     long res = 0;
 
     while (*p) {
-	while (*p && !(int)isdigit(*p))
+	while (*p && !isdigit((unsigned char)*p))
 	    p++;
 	if (*p == '\0')
 	    break;
 	n = strtol(p, &p, 0);
-	while (*p && (int)isdigit(*p))
+	while (*p && isdigit((unsigned char)*p))
 	    p++;
 	if (*p == '\0') {
 	    res += n;
