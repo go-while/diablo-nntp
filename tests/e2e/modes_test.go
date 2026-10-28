@@ -1,7 +1,7 @@
 package e2e
 
 // File modes: what the daemons create that holds private data is not readable by other users,
-// whatever the umask, and the install script keeps the log and run directories to the news user
+// even with umask 0, and the install script keeps the log and run directories to the news user
 // and group.
 
 import (

@@ -2557,7 +2557,7 @@ InstallAccessCache(void) {
     /*
      * The cache files hold what dreader.access holds, among it the AUTHINFO
      * passwords, cryptpw and the Cancel-Lock secrets: only the news user may
-     * read them, whatever the umask.
+     * read them, even with a lax umask.
      */
     snprintf(vsnewbuf, sizeof(vsnewbuf), "%s.new",
 				PatDbExpand(DRVserverCachePat));

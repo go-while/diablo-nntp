@@ -10,9 +10,13 @@ needed on Linux.
 Files that hold private data are created for the news user and group only:
 the reader's cache files (cache.*, which copy the passwords and secrets of
 dreader.access) are 0600, logs and dreaderd.status 0640, and the log and run
-directories are 0750.  Keep dreader.access and the other configuration files
-0640 as the installer makes them.  If another account (monitoring, a log
-reader) needs a file, put it in the news group or relax that one file.
+directories are 0750.  These are the modes of new files: the umask of the
+process can only make them stricter (umask 077 makes the logs 0600), and a
+file that already exists, such as a log from an earlier run, keeps its mode
+(the 0750 directory covers it; chmod it if you want it narrower).  Keep
+dreader.access and the other configuration files 0640 as the installer makes
+them.  If another account (monitoring, a log reader) needs a file, put it in
+the news group or relax that one file.
 
 Please read the README.READER and README.SERVER files if you haven't
 already.

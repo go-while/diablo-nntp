@@ -52,8 +52,11 @@ xfopen(const char *modes, const char *ctl, ...)
 
 /*
  * PrivateFOpen() - fopen() for a file that is created here: modes is "a" or
- * "w+" and perms the mode of a file that doesn't exist yet, whatever the
- * umask (an existing file keeps its mode, which the admin may have set).
+ * "w+" and perms the mode of a file that doesn't exist yet.  The umask can
+ * only take bits away (open(2) masks perms with it): a umask of 0 or 022
+ * doesn't make the file wider than perms, a stricter one makes it narrower
+ * (umask 077 turns 0640 into 0600).  An existing file keeps its mode, which
+ * the admin may have set.
  * For "w+" the file is first removed, so that a file left from an earlier
  * run, or a link in its place, can't keep another mode or reach elsewhere.
  */
