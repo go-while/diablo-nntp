@@ -12,7 +12,7 @@ re-checked yet.
 Status values: **open**, **PR** (fix waiting for review, with its number), **fixed** (with
 the PR that fixed it), **decision** (needs the maintainer to decide), **won't fix**.
 
-Last updated 2026-10-28: D-135 to D-162 added from go-while's batch of `main` at `0401451`, and a note on D-94. Before that, D-110 to D-134 added from go-while's third review pass of `main` at `6a4b97d`. Before that, 2026-10-27: D-66 to D-109 added from the second review pass and the reviews of the fixes
+Last updated 2026-10-28: F-01 marked done, F-04 (NoCeM) and F-05 (init scripts, done) added, D-163 (file modes, fixed in #139) added; D-135 to D-162 added from go-while's batch of `main` at `0401451`, and a note on D-94. Before that, D-110 to D-134 added from go-while's third review pass of `main` at `6a4b97d`. Before that, 2026-10-27: D-66 to D-109 added from the second review pass and the reviews of the fixes
 (D-77 is documented behaviour and only needs a note); the fixed ones are marked with their PR. Before that, D-53 to D-65 added from the review of `main` at `ca648d4`. Before that, 2026-10-26, after batch 1 (#30, #31, #37 to #44, #47 to #49) and the first part
 of batch 2 (#46, #50, #52, #62) were merged. Open: #35 (GnuPG pgpverify, held for a private
 advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
@@ -176,8 +176,9 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-160](#d-160-access-cache-loading-treats-a-valid-descriptor-zero-as-an-open-failure) | Low | Access-cache loading treats a valid descriptor zero as an open failure | open |
 | [D-161](#d-161-several-readerdef-numeric-settings-silently-accept-malformed-values) | Low | Several readerdef numeric settings silently accept malformed values | open |
 | [D-162](#d-162-dserverhosts-numeric-options-lack-complete-conversion-validation) | Low | dserver.hosts numeric options lack complete conversion validation | open |
+| [D-163](#d-163-cache-and-state-files-were-created-with-the-process-umask) | Medium | Cache and state files were created with the process umask | fixed (#139) |
 
-Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315), [F-02 configure script](#f-02-configure-script-for-the-build-options), [F-03 refeed a whole spool](#f-03-refeed-a-whole-spool-to-another-server).
+Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315), [F-02 configure script](#f-02-configure-script-for-the-build-options), [F-03 refeed a whole spool](#f-03-refeed-a-whole-spool-to-another-server), [F-04 NoCeM notices](#f-04-nocem-notices), [F-05 init scripts](#f-05-init-scripts-and-adm-script-replacements).
 
 ## Details
 
@@ -985,16 +986,19 @@ build the offsets in memory and write them in one or a few large writes.
 ### D-162 dserver.hosts numeric options lack complete conversion validation
 `dreaderd/server.c:158-197`, `:210-215`, `:242-255`, `:276-283`: numeric port/priority/timer flags and cache settings are parsed with strtol or strtod without conversion-error or overflow checks. For example cachemin=abc becomes 0 and cachemax=12junk accepts 12; invalid values can silently change the intended configuration. Low, admin-input correctness. Validate each option's numeric grammar and bounds; the flag string intentionally combines letters and numbers, so its parser must retain that syntax. txbufsize and rxbufsize already call ValidateTcpBufferSize, unlike the plain cache-size/time assignments. Found by go-while's reviewers, each checked by a second reviewer in the code at main 0401451, not run.
 
+### D-163 Cache and state files were created with the process umask
+dreaderd's cache files (`dreaderd/dns.c`; they copy what `dreader.access` holds: the AUTHINFO passwords, `cryptpw` and the Cancel-Lock secrets), `.accesslock`, the logs (`lib/log.c`, dnewslink's feedlog, the control logs) and `dreaderd.status` were created with `fopen()` and the process umask, 0644 under the usual 022, and `install-portable.sh` made the log and run directories 0755. A local user who could reach the directory could read the passwords (verified: `cache.authdef` held a test password at mode 0644). Fixed in #139: the cache files and `.accesslock` are created 0600, logs and status 0640, the log and run directories 0750, whatever a lax umask says (a stricter one narrows them further; existing files keep their mode). These modes have always been like this in the public source tarballs, so this is ordinary hardening, disclosed as it is. Found while adding the Cancel-Lock secrets (F-01) to the same files.
+
 ## Feature requests
 
 ### F-01 Cancel-Lock (RFC 8315)
 Generate `Cancel-Lock` for local posts in dreaderd and verify `Cancel-Key` before executing a
 cancel or supersede. The maintainer's main reason not to replace INN with diablo plus
-dreaderd yet.
+dreaderd yet. **Status: done** (#19, #136, #137, #138), modelled on INN.
 
-**Verification: done in #19.** `CtlCancel` (`dreaderd/control.c`) checks the Cancel-Key of a
-cancel or supersede against the target's Cancel-Lock (`lib/canlock.c`; sha256, sha512 and
-sha1). `readercanlock` in diablo.config:
+**Verification: done in #19, on libcanlock since #137.** `CtlCancel` (`dreaderd/control.c`) checks
+the Cancel-Key of a cancel or supersede against the target's Cancel-Lock (`lib/canlock.c`; sha256,
+sha512 and sha1). `readercanlock` in diablo.config (the values of INN's `docancels`):
 
 - `require-auth` (default): executed only when the target has a Cancel-Lock and the Cancel-Key
   matches it; a target without a lock is not cancelled.
@@ -1002,14 +1006,29 @@ sha1). `readercanlock` in diablo.config:
 - `none`: no cancel or supersede is executed.
 - `all`: no checks (the behaviour before #19).
 
-A cancel that arrives before its target is dropped unless the mode is `all`. Trackonly mode
-is refused with a Cancel-Lock check enabled. Tests: `TestCanLockVectors`, `TestCancelLock*`.
+The locks and keys are computed and checked by libcanlock 3.3.0 or later, the library INN uses
+(nothing is re-implemented), behind the optional `CANLOCK_ENABLED` switch in `lib/vendor.h`. A
+build without the library keeps the default `require-auth`, so nothing locked is cancelled (dreaderd
+warns at start), and accepts every mode. Trackonly mode is refused with a Cancel-Lock check (except
+`all` and `none`). Tests: `TestCanLockVectors`, `TestCancelLock*`.
 Upgrades: a reader that relied on unchecked cancels must set `readercanlock all`.
 
-**Generation: open.** Adding `Cancel-Lock` (and `Cancel-Key` on a poster's own cancels) in
-`NNPostBuffer` (`dreaderd/post.c`) with OpenSSL HMAC, byte-identical to INN's locks; then a
-key tool. Waiting for the decision on sha1 (INN still generates it next to sha256) and on
-secret storage.
+**Generation: done in #136.** A `canlockadmin` and/or `canlockuser` secret in the vserverdef (up to
+4 of each, every one makes locks, which lets a secret be replaced while old articles stay
+cancellable) adds a `Cancel-Lock` (sha256 and sha1; `canlocksha1 no` leaves sha1 out) to posts,
+appended to the poster's own header as INN's nnrpd does; `addcanlockuser` (readerdef) says whether
+the user lock is made for the AUTHINFO user, the address or nobody. The poster's own cancel or
+supersede gets the matching `Cancel-Key`. A Cancel-Lock or Cancel-Key of the poster that cannot be
+appended to (1023 bytes or more, a second header) is refused with 441.
+
+**dcanlock: done in #138.** `dcanlock key|lock|verify|cancel`: keys and locks from the secrets of
+`dreader.access`, and a whole cancel article (like INN's `gencancel`) for the administrator who
+withdraws any article that came from the site; the output is POSTed as it is.
+
+**Early cancels: not done, by decision.** A cancel that arrives before its article is dropped under
+the checking modes, as in INN; keeping pending Cancel-Key operations and their interplay with the
+history file is more work than it is worth. Delayed feeds against spam are meant for NoCeM notices
+(F-04), not for authenticated cancels.
 
 ### F-02 configure script for the build options
 Every option in `lib/vendor.h` (RADIUS, CDB, zlib, DB and so on) is meant to be chosen by the admin
@@ -1049,3 +1068,26 @@ run because the spool there was full): `didump -x` does **not** leave out expire
 all 4775 records, 1843 of them still on the spool), so entries whose file is gone have to be
 skipped, and `file=` is an absolute path, so the spool directory has to be stripped to get the
 `D.xxxxxxxx/B.xxxx` form. Raised by the maintainer.
+
+### F-04 NoCeM notices
+INN can act on NoCeM notices (signed notices from third parties that list the Message-IDs of
+spam and other unwanted articles to hide), and such notices are still issued today. Diablo has
+nothing for them. A first design would have to settle: where a notice is applied (hide the
+articles from the readers' overview, HEAD, BODY and ARTICLE, or stop the feeder from taking
+them, or cancel them), whom to trust (the issuers' PGP keys, checked with the existing
+`pgpverify`), where the notices come from (a newsgroup the reader or feeder already gets, or a
+feed of its own), and how to give a notice time to arrive before the spam is delivered (a delayed
+feed). Status: open, not started. Requested by the maintainer on 2026-10-28.
+
+### F-05 Init scripts and adm script replacements
+The xs4all-diablo-patches collection has init scripts and replacements for the adm scripts.
+That repository carries no license, so nothing was copied; the same was built on go-while's
+`diablo-ctl` instead. **Status: done in #140** (with #139's file modes for the installer):
+`samples/init/` has a systemd unit, FreeBSD rc.d scripts, an illumos/SmartOS SMF manifest and
+SysV scripts, all only calling `adm/diablo-ctl`; `diablo-ctl` got `check` and checks before a start
+(mounts, an active file that exists and is not stale, an unclean-shutdown guard, an optional demand
+for the history file; a missing history is still created by diablo), `-F`, and an optional `dkp`
+trim and sort at start; `adm/actsync`, `adm/dumphist` and `adm/histbackup` are new (the dexpireover
+and rewriteover jobs were already `daily.reader` and `weekly.reader`). Tried for real on systemd,
+SMF and FreeBSD rc.d. Follow-ups: #145.
+
