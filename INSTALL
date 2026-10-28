@@ -7,6 +7,12 @@ lib/vendor.h enables RADIUS by default: install the RADIUS library
 (radlib.h; libradius on SmartOS) or #undef RADIUS_ENABLED, which is
 needed on Linux.
 
+Starting the daemons at boot: samples/init/ has a systemd unit, FreeBSD rc.d
+scripts, an SMF manifest for illumos/SmartOS and SysV init scripts; they only
+call adm/diablo-ctl, whose settings (diablo-ctl.conf) also switch on checks
+before a start: mounts, history, active file, unclean shutdown, dkp trim.
+See samples/init/README.
+
 Please read the README.READER and README.SERVER files if you haven't
 already.
 

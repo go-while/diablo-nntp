@@ -1,0 +1,52 @@
+#!/bin/sh
+#
+# PROVIDE: diablo
+# REQUIRE: NETWORKING SERVERS LOGIN
+# KEYWORD: shutdown
+#
+# Diablo NNTP feeder, started through diablo-ctl.  See samples/init/README.
+# Add to /etc/rc.conf (sysrc diablo_enable=YES):
+#
+# diablo_enable (bool):	Set to YES to enable diablo.  Default NO.
+# diablo_ctl (path):	diablo-ctl.  Default /news/adm/diablo-ctl.
+# diablo_flags (str):	Options of diablo-ctl, for example "-f /news/diablo-ctl.conf".
+
+. /etc/rc.subr
+
+name="diablo"
+rcvar="diablo_enable"
+desc="Diablo NNTP feeder"
+
+load_rc_config $name
+
+: ${diablo_enable:="NO"}
+: ${diablo_ctl:="/news/adm/diablo-ctl"}
+: ${diablo_flags:=""}
+
+extra_commands="check"
+start_cmd="diablo_start"
+stop_cmd="diablo_stop"
+status_cmd="diablo_status"
+check_cmd="diablo_check"
+
+diablo_start()
+{
+	${diablo_ctl} ${diablo_flags} start diablo
+}
+
+diablo_stop()
+{
+	${diablo_ctl} ${diablo_flags} stop diablo
+}
+
+diablo_status()
+{
+	${diablo_ctl} ${diablo_flags} status diablo
+}
+
+diablo_check()
+{
+	${diablo_ctl} ${diablo_flags} check diablo
+}
+
+run_rc_command "$1"

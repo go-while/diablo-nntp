@@ -25,3 +25,12 @@
 # daily, rewrite the overview data weekly.
 #45 2 * * *	/news/adm/daily.reader >> /news/log/daily.log 2>&1
 #30 3 * * 0	/news/adm/weekly.reader >> /news/log/daily.log 2>&1
+#
+# Machines that take their active file from an active file server: sync it
+# hourly (actsync), and let diablo-ctl.conf's DIABLO_ACTIVE_MAXAGE notice when
+# that stops working.
+#20 * * * *	/news/adm/actsync active.example.com >> /news/log/daily.log 2>&1
+#
+# A history on a RAM disk: snapshot it hourly (path_dumphist in diablo.config
+# must be "%s/adm/dumphist", see adm/dumphist).
+#10 * * * *	/news/adm/histbackup >> /news/log/daily.log 2>&1

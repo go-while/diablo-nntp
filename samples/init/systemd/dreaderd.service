@@ -1,0 +1,23 @@
+# dreaderd.service - the Diablo reader.  See samples/init/README.
+# Paths assume the install prefix /news and its diablo.config; for another
+# prefix add -C <prefix>/diablo.config to both diablo-ctl lines.
+[Unit]
+Description=Diablo NNTP reader
+Documentation=man:dreaderd(8)
+# a feeder on the same machine starts first (and stops last)
+After=network.target local-fs.target remote-fs.target time-sync.target diablo.service
+RequiresMountsFor=/news
+
+[Service]
+Type=forking
+# dreaderd writes its pid file in path_log
+PIDFile=/news/log/dreaderd.pid
+ExecStart=/news/adm/diablo-ctl start dreaderd
+ExecStop=/news/adm/diablo-ctl stop dreaderd
+TimeoutStartSec=90
+TimeoutStopSec=120
+LimitNOFILE=16384
+LimitCORE=infinity
+
+[Install]
+WantedBy=multi-user.target

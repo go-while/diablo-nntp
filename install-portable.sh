@@ -48,6 +48,7 @@ copy_file() {
 if [ "$mode" != uninstall ]; then
     make_dir "$root"
     for dir in dbin samples samples/adm samples/feeder samples/feeder+reader samples/reader \
+        samples/init samples/init/systemd samples/init/freebsd samples/init/smf samples/init/sysv \
         adm dqueue spool spool/news spool/group spool/cache man man/man5 man/man8 run log; do
         make_dir "$root/$dir"
     done
