@@ -12,6 +12,7 @@
 
 Prototype int xopen(int modes, int perms, const char *ctl, ...);
 Prototype FILE *xfopen(const char *modes, const char *ctl, ...);
+Prototype FILE *PrivateFOpen(const char *path, const char *modes, int perms);
 Prototype int xfprintf(FILE *fo, const char *ctl, ...);
 Prototype void ddprintf(const char *ctl, ...);
 Prototype void vddprintf(const char *ctl, va_list va);
@@ -47,6 +48,37 @@ xfopen(const char *modes, const char *ctl, ...)
     vsnprintf(path, sizeof(path), ctl, va);
     va_end(va);
     return(fopen(path, modes));
+}
+
+/*
+ * PrivateFOpen() - fopen() for a file that is created here: modes is "a" or
+ * "w+" and perms the mode of a file that doesn't exist yet.  The umask can
+ * only take bits away (open(2) masks perms with it): a umask of 0 or 022
+ * doesn't make the file wider than perms, a stricter one makes it narrower
+ * (umask 077 turns 0640 into 0600).  An existing file keeps its mode, which
+ * the admin may have set.
+ * For "w+" the file is first removed, so that a file left from an earlier
+ * run, or a link in its place, can't keep another mode or reach elsewhere.
+ */
+FILE *
+PrivateFOpen(const char *path, const char *modes, int perms)
+{
+    int fd;
+    FILE *fp;
+
+    if (modes[0] == 'w') {
+	unlink(path);
+	fd = open(path, O_RDWR|O_CREAT|O_EXCL, perms);
+    } else {
+	fd = open(path, O_WRONLY|O_APPEND|O_CREAT, perms);
+    }
+    if (fd < 0)
+	return(NULL);
+    if ((fp = fdopen(fd, modes)) == NULL) {
+	close(fd);
+	return(NULL);
+    }
+    return(fp);
 }
 
 int

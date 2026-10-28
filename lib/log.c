@@ -112,7 +112,7 @@ openLog(LogInfo *LI)
 	    if (!LI->Fd || !LI->LastInode || (LI->LastInode != st.st_ino)) {
 		/* Need to reopen the log file */
 		CloseLog(LI, 1);
-		LI->Fd = fopen(Fname, "a");
+		LI->Fd = PrivateFOpen(Fname, "a", 0640);
 		if (LI->Fd == NULL) {
 		    fprintf(stderr, "Unable to open log file: %s\n", Fname);
 		    /* Do not log this failure through the log we cannot open. */

@@ -33,7 +33,7 @@ set_owner() {
 }
 make_dir() {
     [ -d "$1" ] || mkdir -p "$1"
-    chmod 755 "$1"
+    chmod "${2:-755}" "$1"
     set_owner "$1"
 }
 copy_file() {
@@ -49,8 +49,12 @@ if [ "$mode" != uninstall ]; then
     make_dir "$root"
     for dir in dbin samples samples/adm samples/feeder samples/feeder+reader samples/reader \
         samples/init samples/init/systemd samples/init/freebsd samples/init/smf samples/init/sysv \
-        adm dqueue spool spool/news spool/group spool/cache man man/man5 man/man8 run log; do
+        adm dqueue spool spool/news spool/group spool/cache man man/man5 man/man8; do
         make_dir "$root/$dir"
+    done
+    # Logs and run files name clients and users: news user and group only.
+    for dir in run log; do
+        make_dir "$root/$dir" 750
     done
     for dir in dqueue spool spool/news spool/group spool/cache; do
         echo "NOTE: $root/$dir may require a dedicated mount point" >&2
