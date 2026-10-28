@@ -3,6 +3,8 @@ name: ci-matrix
 # Public breadth matrix: build Diablo and run the tests/e2e suite across as many
 # targets as GitHub-hosted runners allow, so the results are publicly verifiable
 # (our private VM matrix covers ~20 distros, but nobody outside can check those).
+# This is the whole e2e workflow: the two ubuntu jobs of the former e2e.yml are
+# folded in as the first two hosted targets, so nothing runs twice.
 #
 #   hosted      - native build+test on GitHub runners (incl. arm64 and a
 #                 libcanlock-less build so TestCancelLockWithoutLibcanlock runs)
@@ -12,12 +14,14 @@ name: ci-matrix
 #                 mirroring the VM runner (build as root, test as the news user)
 #   freebsd / illumos - BSD/illumos via vmactions VMs (best effort)
 #
-# Scoped to the gw-ci-matrix branch and manual dispatch while it is iterated on
-# our fork; widen `on:` when it moves to the default branch.
+# Actions are pinned to a full commit SHA (the tag is in the comment) so a moved
+# tag cannot change what runs. checkout uses persist-credentials: false so the
+# token is never written into .git.
 
 on:
+  pull_request:
   push:
-    branches: [gw-ci-matrix]
+    branches: [main, gw-ci-matrix]   # gw-ci-matrix: fork iteration only; drop on merge
   workflow_dispatch:
 
 permissions:
@@ -28,9 +32,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Native build + test on GitHub-hosted runners, as in e2e.yml, plus arm64 and
-  # a second ubuntu-24.04 build with libcanlock off (E2E_NO_CANLOCK=1) so that
-  # TestCancelLockWithoutLibcanlock runs instead of skipping.
+  # Native build + test on GitHub-hosted runners (the two ubuntu jobs folded in
+  # from the former e2e.yml), plus arm64 and a second ubuntu-24.04 build with
+  # libcanlock off (E2E_NO_CANLOCK=1) so TestCancelLockWithoutLibcanlock runs
+  # instead of skipping.
   hosted:
     name: hosted (${{ matrix.name }})
     strategy:
@@ -44,9 +49,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: tests/e2e/go.mod
           cache-dependency-path: tests/e2e/go.sum
@@ -78,9 +85,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: tests/e2e/go.mod
           cache-dependency-path: tests/e2e/go.sum
@@ -94,7 +103,7 @@ jobs:
           done
           ls -l e2e.test.*
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-test-binaries
           path: tests/e2e/e2e.test.*
@@ -125,9 +134,11 @@ jobs:
           - { name: opensuse-leap-16, image: "opensuse/leap:16.0" }
           - { name: archlinux,        image: "archlinux:latest" }
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: e2e-test-binaries
           path: tests/e2e
@@ -137,11 +148,17 @@ jobs:
           set -eu
           cp tests/e2e/e2e.test.linux tests/e2e/e2e.test
           chmod 755 tests/e2e/e2e.test
+          # Mount a clean copy of the tree, never the checkout itself: these are
+          # third-party distro images running a build script as root, and the
+          # checkout's .git can carry credentials. rsync drops .git; the copy
+          # still has the downloaded test binary under tests/e2e.
+          src=$(mktemp -d)
+          rsync -a --exclude=.git ./ "$src"/
           # --init runs a tiny init (tini) as PID 1 to reap the daemons' orphaned
-          # children; without it, a killed dreaderd/diablo lingers as a zombie that
+          # children; without it a killed dreaderd/diablo lingers as a zombie that
           # still answers kill -0, so diablo-ctl's stop never sees it exit (the VM
           # runner relies on the OS init for the same reaping).
-          docker run --rm --init -e E2E_FAKE_SENDMAIL=1 -v "$PWD":/src -w /src "${{ matrix.image }}" sh -ec '
+          docker run --rm --init -e E2E_FAKE_SENDMAIL=1 -v "$src":/src -w /src "${{ matrix.image }}" sh -ec '
             if tests/e2e/ci/build-on-host; then bok=1; else bok=0; fi
             echo "=== build.log (last 40 lines) ==="
             tail -40 build.log 2>/dev/null || true
@@ -164,15 +181,17 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: e2e-test-binaries
           path: tests/e2e
 
       - name: Build and test on FreeBSD
-        uses: vmactions/freebsd-vm@v1
+        uses: vmactions/freebsd-vm@c46abacb49f09938ca4e1702d15d836285d694cc # v1.5.9
         with:
           release: "14.2"
           usesh: true
@@ -211,15 +230,17 @@ jobs:
     timeout-minutes: 40
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: e2e-test-binaries
           path: tests/e2e
 
       - name: Build and test on OmniOS
-        uses: vmactions/omnios-vm@v1
+        uses: vmactions/omnios-vm@9576f0b6d15e7696548409baa533bc0a339caf42 # v1.3.7
         with:
           prepare: |
             pkg install -q developer/gcc13 developer/build/gnu-make || \

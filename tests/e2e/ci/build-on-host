@@ -93,6 +93,9 @@ elif command -v apk >/dev/null; then
 elif command -v emerge >/dev/null; then
     # A stage3 has the compiler, OpenSSL and zlib.
     need=; report
+    # procps (pgrep) for diablo-ctl, like the other package managers above.
+    ls -d /var/db/pkg/sys-process/procps-* >/dev/null 2>&1 || \
+        emerge --quiet --noreplace --getbinpkg sys-process/procps >/dev/null 2>&1 || true
     if wantdb && ! ls -d /var/db/pkg/sys-libs/db-[0-9]* >/dev/null 2>&1; then
         emerge --quiet --noreplace --getbinpkg sys-libs/db >/dev/null 2>&1 || true
         enddb
@@ -146,14 +149,19 @@ else
 fi
 
 # E2E_FAKE_SENDMAIL=1: install ci/fake-sendmail as /usr/sbin/sendmail for the
-# moderation tests, but only where no sendmail exists (never on a machine that
-# sends real mail).
+# moderation tests, where no sendmail exists or the only one is busybox's applet
+# (Alpine symlinks /usr/sbin/sendmail to busybox, which cannot deliver the test
+# mail); never replace a real MTA on a machine that sends real mail.
 if [ "${E2E_FAKE_SENDMAIL:-}" = 1 ]; then
-    if [ -e /usr/sbin/sendmail ]; then
-        echo "fake sendmail: not installed, /usr/sbin/sendmail exists"
+    sm=/usr/sbin/sendmail
+    is_busybox=0
+    if [ -L "$sm" ] && readlink -f "$sm" 2>/dev/null | grep -q busybox; then is_busybox=1; fi
+    if [ ! -e "$sm" ] || [ "$is_busybox" = 1 ]; then
+        install -m 755 "$(dirname "$0")/fake-sendmail" "$sm"
+        [ "$is_busybox" = 1 ] && echo "fake sendmail: installed as $sm (replaced busybox applet)" \
+                             || echo "fake sendmail: installed as $sm"
     else
-        install -m 755 "$(dirname "$0")/fake-sendmail" /usr/sbin/sendmail
-        echo "fake sendmail: installed as /usr/sbin/sendmail"
+        echo "fake sendmail: not installed, $sm exists"
     fi
 fi
 
