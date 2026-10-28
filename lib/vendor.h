@@ -85,6 +85,17 @@
 #define	RADIUS_ENABLED
 
 /*
+ * Enable Cancel-Lock (RFC 8315): dreaderd checks the Cancel-Key of a cancel
+ * or supersede against the Cancel-Lock of the article (diablo.config
+ * readercanlock), and can add locks to local posts.  Needs libcanlock 3.3.0
+ * or later (package libcanlock-dev, libcanlock; header libcanlock-3/canlock.h),
+ * the library INN uses.  Without it only 'readercanlock all' (no checks)
+ * works.
+ */
+
+#define	CANLOCK_ENABLED
+
+/*
  * Enable CDB authentication. Needs the CDB libraries installed.
  * Available from: http://cr.yp.to/cdb.html
  *

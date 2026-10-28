@@ -65,6 +65,10 @@ func skipWithoutCanLock(tb testing.TB) {
 	if err != nil || !bytes.Contains(b, []byte("readercanlock")) {
 		tb.Skip("dreaderd has no readercanlock (Cancel-Lock support)")
 	}
+	// the symbol name is in dreaderd only when it is built with CANLOCK_ENABLED (libcanlock)
+	if !bytes.Contains(b, []byte("cl_verify_multi")) {
+		tb.Skip("dreaderd is built without libcanlock (CANLOCK_ENABLED)")
+	}
 }
 
 // withHeaders inserts header lines before the blank line of an article.

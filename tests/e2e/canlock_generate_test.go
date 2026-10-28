@@ -36,6 +36,10 @@ func skipWithoutCanLockGenerate(tb testing.TB) {
 	if err != nil || !bytes.Contains(b, []byte("canlockadmin")) {
 		tb.Skip("dreaderd does not generate Cancel-Lock (canlockadmin)")
 	}
+	// the symbol name is in dreaderd only when it is built with CANLOCK_ENABLED (libcanlock)
+	if !bytes.Contains(b, []byte("cl_get_key")) {
+		tb.Skip("dreaderd is built without libcanlock (CANLOCK_ENABLED)")
+	}
 }
 
 // genAccess is a dreader.access that lets 127.0.0.1 post, as fred (auth) or anonymously, and

@@ -2509,6 +2509,11 @@ addCanLockSecret(char secrets[][CANLOCK_SECRETLEN], const char *opt, const char 
     int len = strlen(val);
     int i;
 
+#ifndef	CANLOCK_ENABLED
+    logit(LOG_ERR, "dreader.access: %s in line %d ignored: this build has no libcanlock (CANLOCK_ENABLED)",
+				opt, linecount);
+    return;
+#endif
     while (len > 0 && isspace((unsigned char)val[len - 1]))
 	--len;
     if (len == 0)
