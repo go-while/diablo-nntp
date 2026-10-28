@@ -176,6 +176,7 @@ jobs:
             pkg install -y gmake
           run: |
             set -e
+            root=$(pwd)
             cp tests/e2e/e2e.test.freebsd tests/e2e/e2e.test
             chmod 755 tests/e2e/e2e.test
             # No libradius/libcanlock/db dependency: build those features out.
@@ -190,7 +191,8 @@ jobs:
             pw useradd news -g news -d /var/tmp -s /bin/sh 2>/dev/null || true
             chmod -R a+rX .
             cd tests/e2e
-            su -m news -c "env DIABLO_BIN=$(pwd)/../dbin NNTP_TEST_DEADLINE=30s ./e2e.test -test.v -test.count=1"
+            # dbin is at the repo root ($root/dbin), two levels up from here.
+            su -m news -c "env DIABLO_BIN=$root/dbin NNTP_TEST_DEADLINE=30s ./e2e.test -test.v -test.count=1"
 
   # illumos (OmniOS): best effort, same shape as FreeBSD (gmake build, CC=gcc).
   # Does not fail the workflow; reported either way.
@@ -216,6 +218,7 @@ jobs:
               pkg install developer/gcc13 developer/build/gnu-make || true
           run: |
             set -e
+            root=$(pwd)
             cp tests/e2e/e2e.test.illumos tests/e2e/e2e.test
             chmod 755 tests/e2e/e2e.test
             sed -i 's/^#define[[:space:]]*RADIUS_ENABLED/#undef RADIUS_ENABLED/' lib/vendor.h
@@ -229,4 +232,5 @@ jobs:
             useradd -g news -d /var/tmp -s /bin/sh news 2>/dev/null || true
             chmod -R a+rX .
             cd tests/e2e
-            su news -c "DIABLO_BIN=$(pwd)/../dbin NNTP_TEST_DEADLINE=30s ./e2e.test -test.v -test.count=1"
+            # dbin is at the repo root ($root/dbin), two levels up from here.
+            su news -c "DIABLO_BIN=$root/dbin NNTP_TEST_DEADLINE=30s ./e2e.test -test.v -test.count=1"

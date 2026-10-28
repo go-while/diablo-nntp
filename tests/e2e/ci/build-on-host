@@ -42,9 +42,15 @@ report() {
     if [ -n "$need" ]; then echo "build-on-host: installing: $need"
     else echo "build-on-host: all packages present"; fi
 }
+# Besides the compiler and headers, the e2e run itself needs a few runtime tools
+# that minimal container images leave out: procps (pgrep, which diablo-ctl uses
+# to find a site's dnewslink and its children), util-linux on the dnf distros
+# (su, to drop to the news user while the tests run), and linux-headers on
+# Alpine/musl (lib/config.h includes <linux/version.h>).  They are no-ops on a
+# full install, where these are already present.
 if command -v apt-get >/dev/null; then
     have() { dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q 'ok installed'; }
-    need=$(missing build-essential libssl-dev zlib1g-dev); report
+    need=$(missing build-essential libssl-dev zlib1g-dev procps); report
     nodb=; if wantdb && ! have libdb5.3-dev; then nodb=1; fi
     if [ -n "$need" ] || [ -n "$nodb" ]; then
         export DEBIAN_FRONTEND=noninteractive
@@ -55,17 +61,17 @@ if command -v apt-get >/dev/null; then
     fi
 elif command -v dnf >/dev/null; then
     have() { rpm -q --whatprovides "$1"; }
-    need=$(missing gcc make findutils openssl-devel zlib-devel shadow-utils); report
+    need=$(missing gcc make findutils openssl-devel zlib-devel shadow-utils procps-ng util-linux); report
     [ -z "$need" ] || dnf -q -y install $need >/dev/null
     if wantdb; then dnf -q -y install libdb-devel >/dev/null 2>&1 || true; enddb; fi
 elif command -v zypper >/dev/null; then
     have() { rpm -q --whatprovides "$1"; }
-    need=$(missing gcc make findutils libopenssl-devel zlib-devel shadow); report
+    need=$(missing gcc make findutils libopenssl-devel zlib-devel shadow procps); report
     [ -z "$need" ] || zypper -n -q install $need >/dev/null
     if wantdb; then zypper -n -q install libdb-4_8-devel >/dev/null 2>&1 || true; enddb; fi
 elif command -v pacman >/dev/null; then
     have() { pacman -Q "$1"; }
-    need=$(missing base-devel openssl zlib); report
+    need=$(missing base-devel openssl zlib procps-ng); report
     nodb=; if wantdb; then nodb=1; fi
     if [ -n "$need" ] || [ -n "$nodb" ]; then
         # pacman 7 sandboxes downloads with Landlock, which containers may lack.
@@ -81,7 +87,7 @@ elif command -v pacman >/dev/null; then
     fi
 elif command -v apk >/dev/null; then
     have() { apk info -e "$1"; }
-    need=$(missing build-base openssl-dev zlib-dev); report
+    need=$(missing build-base openssl-dev zlib-dev linux-headers procps); report
     [ -z "$need" ] || apk add -q $need
     if wantdb; then apk add -q db-dev 2>/dev/null || true; enddb; fi
 elif command -v emerge >/dev/null; then
