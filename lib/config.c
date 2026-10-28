@@ -116,11 +116,7 @@ initDOpts(void)
     DOpts.ReaderCacheMode = 1;
     DOpts.ReaderCacheHashSize = 4096;
     DOpts.ReaderXOverMode = 1;
-#ifdef	CANLOCK_ENABLED
     DOpts.ReaderCanLock = CANLOCK_REQUIRE_AUTH;	/* as INN's docancels */
-#else
-    DOpts.ReaderCanLock = CANLOCK_ALL;		/* nothing can be checked */
-#endif
     DOpts.ReaderAutoAddToActive = 0;
     DOpts.FeederAutoAddToActive = 0;
     DOpts.ReaderDetailLog = 1;
@@ -668,12 +664,6 @@ SetCommand(FILE *fo, char *cmd, char *opt, int *cmdErr)
 		    DOpts.ReaderCanLock = CANLOCK_ALL;
 		else
 		    optErr = 1;
-#ifndef	CANLOCK_ENABLED
-		if (!optErr && DOpts.ReaderCanLock != CANLOCK_ALL) {
-		    fprintf(stderr, "readercanlock %s needs a build with CANLOCK_ENABLED (libcanlock); only 'all' works in this build\n", opt);
-		    optErr = 1;
-		}
-#endif
 	    }
 	} else if (strcasecmp(cmd, "feederrtstats") == 0) {
 	    if (opt) {

@@ -89,8 +89,10 @@
  * or supersede against the Cancel-Lock of the article (diablo.config
  * readercanlock), and can add locks to local posts.  Needs libcanlock 3.3.0
  * or later (package libcanlock-dev, libcanlock; header libcanlock-3/canlock.h),
- * the library INN uses.  Without it only 'readercanlock all' (no checks)
- * works.
+ * the library INN uses.  Without it no Cancel-Key can be verified: the
+ * default 'readercanlock require-auth' then refuses every cancel and
+ * supersede (dreaderd says so in the log at start), and 'readercanlock all'
+ * brings back the unchecked behaviour.
  */
 
 #define	CANLOCK_ENABLED
