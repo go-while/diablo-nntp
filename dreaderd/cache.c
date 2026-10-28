@@ -405,7 +405,7 @@ DumpArticleFromCache(Connection *conn, const char *map, int size, int grpIter, a
 
 	*line = '\0';
 	buf = (char *)&map[b];
-	ch = tolower(*buf);
+	ch = tolower((unsigned char)*buf);
 
 	/*
 	 * eol: end of this header line without its CR/LF.  Every scan
@@ -422,11 +422,11 @@ DumpArticleFromCache(Connection *conn, const char *map, int size, int grpIter, a
 	    char *ptr;
 
 	    ptr = (char *)buf + 5;
-	    while (ptr < eol && isspace((int)*ptr))
+	    while (ptr < eol && isspace((unsigned char)*ptr))
 		ptr++;
-	    while (ptr < eol && !isspace((int)*ptr))
+	    while (ptr < eol && !isspace((unsigned char)*ptr))
 		ptr++;
-	    while (ptr < eol && isspace((int)*ptr))
+	    while (ptr < eol && isspace((unsigned char)*ptr))
 		ptr++;
 	    /* ptr should point to first group name */
 	    if (ptr < eol) {
@@ -451,7 +451,7 @@ DumpArticleFromCache(Connection *conn, const char *map, int size, int grpIter, a
 	    int vsl = strlen(vserver);
 
 	    ptr = (char *)buf + 5;
-	    while (ptr < eol && isspace((int)*ptr))
+	    while (ptr < eol && isspace((unsigned char)*ptr))
 		ptr++;
 	    if (ptr < eol && (eol - ptr <= vsl ||
 				strncmp(vserver, ptr, vsl) ||
