@@ -1493,19 +1493,18 @@ LDAPAuthenticate(char *user, char *pass, char *conf)
 #else
     /* Read the password and compare it */
     bv_val = ldap_get_values(ld, mptr, ldappassattr);
-    if (ldap_count_values(bv_val) == 0) {
+    if (bv_val == NULL || ldap_count_values(bv_val) == 0) {
 	/* No password value returned - fail auth attempt */
 	logit(LOG_INFO, "LDAP auth failed: %s\n", user);
 	r = NULL;
-	ldap_value_free(bv_val);
-    }
-
-    if (strcmp(bv_val[0], pass) == 0) {
+    } else if (strcmp(bv_val[0], pass) == 0) {
 	strcpy(result, "100 Success");
 	r = result;
     } else {
 	r = NULL;
     }
+    if (bv_val != NULL)
+	ldap_value_free(bv_val);
 #endif
     return(r);
 }
