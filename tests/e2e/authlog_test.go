@@ -48,11 +48,20 @@ access 127.0.0.1 userjoe
 	expect(t, c, 501, "AUTHINFO  SASL PLAIN %s", sasl)
 	expect(t, c, 205, "QUIT")
 
+	// A command with leading whitespace is rejected by the parser (so it never
+	// authenticates), but LogCmd/StatusUpdate run before parsing, so its
+	// password reaches the log unless MaskAuthInfo skips leading spaces/tabs.
+	const lead = "Pw-leading-ws-not-logged"
+	lc := s.Reader(t)
+	send(t, lc, " AUTHINFO PASS "+lead+"\r\n")
+	lc.ReadStatus()
+	expect(t, lc, 205, "QUIT")
+
 	logged := s.ReadFile(t, "log/general.log")
 	if n := strings.Count(logged, "authinfo pass **unlogged**"); n < len(logins) {
 		t.Errorf("general.log has %d masked AUTHINFO PASS lines, want %d (logcmd not working?)", n, len(logins))
 	}
-	for _, secret := range []string{pass, sasl} {
+	for _, secret := range []string{pass, sasl, lead} {
 		if strings.Contains(logged, secret) {
 			for _, line := range strings.Split(logged, "\n") {
 				if strings.Contains(line, secret) {

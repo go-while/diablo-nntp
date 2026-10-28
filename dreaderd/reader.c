@@ -92,7 +92,10 @@ void LogCmd(Connection *conn, char dir, char *msg)
  *		    SASL/GENERIC which carry credentials too) is replaced
  *		    by a fixed text.  The words are recognised the way the
  *		    command parser splits them, case insensitive and
- *		    separated by any run of spaces and tabs.
+ *		    separated by any run of spaces and tabs.  Leading spaces
+ *		    or tabs are skipped first, so " authinfo pass x" is masked
+ *		    too: the parser rejects such a line, but it is logged
+ *		    before parsing, so its password must not leak either.
  */
 
 static char *
@@ -100,6 +103,8 @@ MaskAuthInfo(char *line)
 {
     char *p = line;
 
+    while (*p == ' ' || *p == '\t')
+	++p;
     if (strncasecmp(p, "authinfo", 8) != 0 || (p[8] != ' ' && p[8] != '\t'))
 	return(line);
     p += 8;
