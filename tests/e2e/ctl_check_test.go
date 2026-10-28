@@ -141,8 +141,8 @@ func TestDiabloCtlChecks(t *testing.T) {
 		if !strings.Contains(out, "active file") || !strings.Contains(out, "not found") {
 			t.Errorf("check: %q", out)
 		}
-		if !strings.Contains(out, "a new site") || !strings.Contains(out, "-F") {
-			t.Errorf("check: %q does not say what to do on a new site", out)
+		if !strings.Contains(out, "create it") || !strings.Contains(out, "-F") {
+			t.Errorf("check: %q does not say what to do about a missing active file", out)
 		}
 		s.WriteFile(t, "dactive.kp", "")
 		out, code = run("check")
@@ -519,5 +519,131 @@ func TestAdmActsync(t *testing.T) {
 	out, code := admScript(t, s, "actsync", "master.example.invalid,"+host)
 	if code != 0 || !strings.Contains(out, "nothing to do") {
 		t.Errorf("actsync on one of the servers: exit %d\n%s", code, out)
+	}
+}
+
+// fakeBin returns a directory that has a symlink for every program of the site's dbin, except
+// the ones in repl, which are written as the shell scripts given.
+func fakeBin(t *testing.T, s *Site, repl map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	ents, err := os.ReadDir(s.Bin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range ents {
+		if _, ok := repl[e.Name()]; ok {
+			continue
+		}
+		if err := os.Symlink(filepath.Join(s.Bin, e.Name()), filepath.Join(dir, e.Name())); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, body := range repl {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"+body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+// TestDiabloCtlConfigErrors (D-140, D-141): a wrong DIABLO_DAEMONS entry or a non-numeric wait or
+// age is refused up front, instead of aborting half way or turning a timeout into an endless wait.
+func TestDiabloCtlConfigErrors(t *testing.T) {
+	for _, c := range []struct{ name, extra, want string }{
+		{"unknown daemon", "DIABLO_DAEMONS='diablo foo'\n", "unknown daemon"},
+		{"start wait", "DIABLO_START_WAIT=soon\n", "DIABLO_START_WAIT must be a number"},
+		{"stop wait", "DIABLO_STOP_WAIT=1x\n", "DIABLO_STOP_WAIT must be a number"},
+		{"active age", "DIABLO_ACTIVE_MAXAGE=-1\n", "DIABLO_ACTIVE_MAXAGE must be a number"},
+		{"downtime", "DIABLO_MAX_DOWNTIME='1 2'\n", "DIABLO_MAX_DOWNTIME must be a number"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s, run := ctlSite(t, nil, c.extra)
+			out, code := run("start")
+			wantCtl(t, out, code, 1, "start with "+c.name)
+			if !strings.Contains(out, c.want) || listening(s.Addr) {
+				t.Errorf("start: %q (listening %v), want %q and no daemon", out, listening(s.Addr), c.want)
+			}
+		})
+	}
+}
+
+// TestDiabloCtlOptionsNotGlobbed (D-146): the option strings are split into words but a "*" in one is
+// not expanded to the file names of path_home, where diablo-ctl starts the daemon.
+func TestDiabloCtlOptionsNotGlobbed(t *testing.T) {
+	s := NewSite(t, SiteOptions{NoStart: true})
+	args := filepath.Join(t.TempDir(), "args")
+	bin := fakeBin(t, s, map[string]string{"diablo": "for a; do echo \"$a\"; done > '" + args + "'\n"})
+	for _, n := range []string{"aaa", "bbb"} { // what an expanded "*" would become
+		s.WriteFile(t, n, "")
+	}
+	ctlp := ctlPath(t, s)
+	conf := filepath.Join(s.Dir, "diablo-ctl.test.conf")
+	s.WriteFile(t, "diablo-ctl.test.conf", "DIABLO_BIN='"+bin+"'\nDIABLO_DAEMONS='diablo'\n"+
+		"DIABLO_OPTS='-p * -x'\nDIABLO_PS_PAD=0\nDIABLO_PREFLIGHT=no\nDIABLO_START_WAIT=1\n")
+	ctl(t, s, ctlp, conf, "start") // the fake diablo does not stay: this ends with "did not start"
+	got, err := os.ReadFile(args)
+	if err != nil {
+		t.Fatalf("the fake diablo was not started: %v", err)
+	}
+	if want := "-p\n*\n-x\nserver\n"; string(got) != want {
+		t.Errorf("arguments of diablo %q, want %q", got, want)
+	}
+}
+
+// TestDiabloCtlHomeConfBin (D-139): a <path_home>/diablo-ctl.conf that is loaded by itself and names
+// other binaries makes the site's paths come from those binaries, not a mix; and binaries that
+// are not there are an error.
+func TestDiabloCtlHomeConfBin(t *testing.T) {
+	s := NewSite(t, SiteOptions{NoStart: true})
+	ctlp := ctlPath(t, s)
+	run := func() (string, int) {
+		cmd := exec.Command("/bin/sh", ctlp, "-C", filepath.Join(s.Dir, "diablo.config"), "status", "diablo")
+		cmd.Dir = t.TempDir()
+		for _, e := range os.Environ() {
+			if !strings.HasPrefix(e, "DIABLO_BIN=") {
+				cmd.Env = append(cmd.Env, e)
+			}
+		}
+		out, err := cmd.CombinedOutput()
+		code := 0
+		if ee, ok := err.(*exec.ExitError); ok {
+			code = ee.ExitCode()
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		return string(out), code
+	}
+	calls := filepath.Join(t.TempDir(), "calls")
+	alt := fakeBin(t, s, map[string]string{"dpath": "echo \"$@\" >> '" + calls + "'\nexec '" + filepath.Join(s.Bin, "dpath") + "' \"$@\"\n"})
+	s.WriteFile(t, "diablo-ctl.conf", "DIABLO_BIN='"+alt+"'\n")
+	if out, code := run(); code != 3 {
+		t.Fatalf("status of a stopped diablo: exit %d, want 3\n%s", code, out)
+	}
+	b, _ := os.ReadFile(calls)
+	if !strings.Contains(string(b), "home") || !strings.Contains(string(b), "log") {
+		t.Errorf("the paths were not asked of the binaries that diablo-ctl.conf names; their dpath got %q", b)
+	}
+	s.WriteFile(t, "diablo-ctl.conf", "DIABLO_BIN='"+filepath.Join(t.TempDir(), "nothing")+"'\n")
+	if out, code := run(); code != 1 || !strings.Contains(out, "no diablo binaries") {
+		t.Errorf("DIABLO_BIN without binaries: exit %d, want 1 and a message\n%s", code, out)
+	}
+}
+
+// TestAdmHistbackupDicmdFails: when dicmd itself fails, histbackup fails too (cron sees it).
+func TestAdmHistbackupDicmdFails(t *testing.T) {
+	s := NewSite(t, SiteOptions{NoStart: true})
+	p := filepath.Join(s.Bin, "..", "samples", "adm", "histbackup")
+	if _, err := os.Stat(p); err != nil {
+		t.Skip("no samples/adm/histbackup")
+	}
+	bin := fakeBin(t, s, map[string]string{"dicmd": "case $1 in status) exit 0;; *) echo 'dicmd: broken'; exit 1;; esac\n"})
+	cmd := exec.Command("/bin/sh", p)
+	cmd.Dir = t.TempDir()
+	cmd.Env = append(append(os.Environ(), s.Env...), "DIABLO_BIN="+bin)
+	out, err := cmd.CombinedOutput()
+	ee, ok := err.(*exec.ExitError)
+	if !ok || ee.ExitCode() != 1 || !strings.Contains(string(out), "dicmd dumphist failed") {
+		t.Errorf("histbackup with a failing dicmd: %v\n%s", err, out)
 	}
 }

@@ -12,6 +12,8 @@
 ##  group are created when missing (diablo switches to them at startup).
 ##  With E2E_FAKE_SENDMAIL=1 the moderation tests' fake sendmail is installed
 ##  as /usr/sbin/sendmail where no sendmail exists (see ci/fake-sendmail).
+##  With E2E_NO_CANLOCK=1 Cancel-Lock (CANLOCK_ENABLED) is built out even if
+##  libcanlock is installed, to test the build without it.
 
 set -eu
 
@@ -107,8 +109,10 @@ fi
 
 sed -i 's/^#define[[:space:]]*RADIUS_ENABLED/#undef RADIUS_ENABLED/' lib/vendor.h
 # Cancel-Lock needs libcanlock (3.3.0 or later). Install it where the distribution has it;
-# without it the feature is built out and the Cancel-Lock tests skip.
-if [ ! -e /usr/include/libcanlock-3/canlock.h ] && [ ! -e /usr/local/include/libcanlock-3/canlock.h ]; then
+# without it the feature is built out and the Cancel-Lock tests skip.  With
+# E2E_NO_CANLOCK=1 the feature is built out on purpose, so that the tests of the build
+# without libcanlock (TestCancelLockWithoutLibcanlock) run: CI does one build of each.
+if [ "${E2E_NO_CANLOCK:-}" != 1 ] && [ ! -e /usr/include/libcanlock-3/canlock.h ] && [ ! -e /usr/local/include/libcanlock-3/canlock.h ]; then
     if command -v apt-get >/dev/null; then apt-get -qq install -y libcanlock-dev >/dev/null 2>&1 || true
     elif command -v dnf >/dev/null; then dnf -q -y install libcanlock-devel >/dev/null 2>&1 || true
     elif command -v zypper >/dev/null; then zypper -n -q install libcanlock-devel >/dev/null 2>&1 || true
@@ -117,7 +121,10 @@ if [ ! -e /usr/include/libcanlock-3/canlock.h ] && [ ! -e /usr/local/include/lib
     elif command -v emerge >/dev/null; then emerge --quiet --noreplace --getbinpkg dev-libs/libcanlock >/dev/null 2>&1 || true
     fi
 fi
-if [ -e /usr/include/libcanlock-3/canlock.h ] || [ -e /usr/local/include/libcanlock-3/canlock.h ]; then
+if [ "${E2E_NO_CANLOCK:-}" = 1 ]; then
+    sed -i 's/^#define[[:space:]]*CANLOCK_ENABLED/#undef CANLOCK_ENABLED/' lib/vendor.h
+    echo "libcanlock: off (E2E_NO_CANLOCK=1)"
+elif [ -e /usr/include/libcanlock-3/canlock.h ] || [ -e /usr/local/include/libcanlock-3/canlock.h ]; then
     echo "libcanlock: on"
 else
     sed -i 's/^#define[[:space:]]*CANLOCK_ENABLED/#undef CANLOCK_ENABLED/' lib/vendor.h
