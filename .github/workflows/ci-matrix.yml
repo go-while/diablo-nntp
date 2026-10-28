@@ -121,12 +121,16 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-  # Linux distro containers, mirroring the private VM matrix. Run via `docker
-  # run` on the ubuntu host (not the job `container:` key): checkout and artifact
-  # download stay on the host, so minimal images (alpine, archlinux) need no git
-  # or node. Inside the container we build as root with build-on-host (it already
-  # drives apt/dnf/zypper/apk/pacman) and run the tests as the news user, exactly
-  # as the VM runner (one-host.sh) does.
+  # Linux distro containers, mirroring the private VM matrix. Each runs via the
+  # shared tests/e2e/ci/run-container on the ubuntu host (not the job `container:`
+  # key): checkout and artifact download stay on the host, so minimal images
+  # (alpine, archlinux) need no git or node. The script mounts a clean copy of the
+  # tree (no .git), builds as root with build-on-host, and runs the tests as the
+  # news user -- the same script a developer runs locally, so CI cannot drift.
+  #
+  # Image tags are compatibility lanes; fedora is pinned to its release and
+  # archlinux is the deliberately-rolling lane. The script logs each image's
+  # digest, the kernel and the fd limits.
   containers:
     name: container (${{ matrix.name }})
     needs: build-test-binary
@@ -136,14 +140,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: debian-13,        image: "debian:13" }
-          - { name: ubuntu-26.04,     image: "ubuntu:26.04" }
-          - { name: alpine-3.24,      image: "alpine:3.24" }
-          - { name: fedora,           image: "fedora:latest" }
-          - { name: almalinux-10,     image: "almalinux:10" }
-          - { name: rockylinux-9,     image: "rockylinux:9" }
-          - { name: opensuse-leap-16, image: "opensuse/leap:16.0" }
-          - { name: archlinux,        image: "archlinux:latest" }
+          - { name: debian-13,         image: "debian:13" }
+          - { name: ubuntu-26.04,      image: "ubuntu:26.04" }
+          - { name: alpine-3.24,       image: "alpine:3.24" }
+          - { name: fedora-44,         image: "fedora:44" }
+          - { name: almalinux-10,      image: "almalinux:10" }
+          - { name: rockylinux-9,      image: "rockylinux:9" }
+          - { name: opensuse-leap-16,  image: "opensuse/leap:16.0" }
+          - { name: archlinux-rolling, image: "archlinux:latest" }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -155,39 +159,24 @@ jobs:
           path: tests/e2e
 
       - name: Build and test in ${{ matrix.image }}
+        env:
+          RUN_CONTAINER_NAME: ci-${{ github.run_id }}-${{ matrix.name }}
+        run: tests/e2e/ci/run-container "${{ matrix.image }}" "$PWD" "$PWD/tests/e2e/e2e.test.linux"
+
+      # Belt-and-suspenders for a SIGKILL the script's trap cannot catch: remove
+      # the named container and its root-owned scratch (deleted via a throwaway
+      # container, since the runner user does not own those files).
+      - name: Clean up container and scratch
+        if: always()
+        env:
+          RUN_CONTAINER_NAME: ci-${{ github.run_id }}-${{ matrix.name }}
         run: |
-          set -eu
-          cp tests/e2e/e2e.test.linux tests/e2e/e2e.test
-          chmod 755 tests/e2e/e2e.test
-          # Mount a clean copy of the tree, never the checkout itself: these are
-          # third-party distro images running a build script as root, and the
-          # checkout's .git can carry credentials. rsync drops .git; the copy
-          # still has the downloaded test binary under tests/e2e.
-          src=$(mktemp -d)
-          rsync -a --exclude=.git ./ "$src"/
-          # --init runs a tiny init (tini) as PID 1 to reap the daemons' orphaned
-          # children; without it a killed dreaderd/diablo lingers as a zombie that
-          # still answers kill -0, so diablo-ctl's stop never sees it exit (the VM
-          # runner relies on the OS init for the same reaping).
-          # --add-host: diablo reverse-resolves the peer before the greeting
-          # (lib/hostauth.c, NI_NAMEREQD). Without a local entry, the PTR for each
-          # 127.0.0.x client waits out the container resolver (~5 s each), which
-          # pushes the 400-round SIGHUP test past the 20 min timeout. The names are
-          # arbitrary (peers are matched by IP); these entries only keep the lookup
-          # local and instant.
-          docker run --rm --init \
-            --add-host peer.e2e.test:127.0.0.2 --add-host peer3.e2e.test:127.0.0.3 \
-            --add-host peer4.e2e.test:127.0.0.4 --add-host peer9.e2e.test:127.0.0.9 \
-            --add-host peer10.e2e.test:127.0.0.10 \
-            -e E2E_FAKE_SENDMAIL=1 -v "$src":/src -w /src "${{ matrix.image }}" sh -ec '
-            if tests/e2e/ci/build-on-host; then bok=1; else bok=0; fi
-            echo "=== build.log (last 40 lines) ==="
-            tail -40 build.log 2>/dev/null || true
-            [ "$bok" = 1 ] || { echo "BUILD FAILED"; exit 1; }
-            chmod 755 tests/e2e/e2e.test
-            cd tests/e2e
-            su -s /bin/sh news -c "DIABLO_BIN=/src/dbin NNTP_TEST_DEADLINE=30s ./e2e.test -test.v -test.count=1 -test.timeout=1200s"
-          '
+          docker rm -f "$RUN_CONTAINER_NAME" 2>/dev/null || true
+          d="${TMPDIR:-/tmp}/$RUN_CONTAINER_NAME"
+          [ -d "$d" ] || exit 0
+          docker run --rm --network none --entrypoint /bin/sh \
+            --mount "type=bind,src=$d,dst=/c" "${{ matrix.image }}" -ec 'rm -rf /c/src' 2>/dev/null || true
+          rm -rf "$d" 2>/dev/null || true
 
   # FreeBSD: build-on-host has no FreeBSD/pkg branch (it would exit "no supported
   # package manager"), so this job does not call it; it installs gmake via pkg

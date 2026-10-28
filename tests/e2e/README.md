@@ -168,7 +168,28 @@ address first:
 `news` user, turns RADIUS off and builds; run it as root from the top of a
 throwaway copy of the source tree. The test binary can be built elsewhere
 with `CGO_ENABLED=0 go test -c` and copied to a machine without Go.
-`.github/workflows/e2e.yml` does the same on GitHub's Ubuntu runners.
+`.github/workflows/ci-matrix.yml` does the same across a broad matrix on
+GitHub's runners (Ubuntu x64 and arm64, a libcanlock-less build, eight distro
+containers, FreeBSD and illumos).
+
+### One distro container, locally
+
+`ci/run-container` runs the suite in a single Linux distro container exactly as
+the `containers` jobs of `ci-matrix.yml` do, so a local reproduction cannot drift
+from CI. It needs Docker and rsync on an amd64 Linux host (not a live news
+server). Build the pure-Go test binary first, from the same revision, then pass
+the image, a clean tree and that binary:
+
+```sh
+(cd tests/e2e && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -c -o /tmp/e2e.test.linux ./...)
+tests/e2e/ci/run-container alpine:3.24 . /tmp/e2e.test.linux
+```
+
+It mounts a clean copy of the tree (never your `.git`), builds as root with
+`build-on-host`, runs the tests as `news` with `--init` and the loopback peer
+host entries, and removes its own container and root-owned copy on exit or
+interrupt. Pass an `image@sha256:...` digest to pin the exact base a CI run
+logged; a floating tag on your machine need not match a fresh CI pull.
 
 ## Writing a test
 

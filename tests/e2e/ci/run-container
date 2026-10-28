@@ -1,0 +1,90 @@
+#!/bin/sh
+# Run the Diablo e2e suite in one Linux distro container. The ci-matrix workflow
+# and a developer's machine both call this, so CI and local runs cannot drift.
+#
+#   tests/e2e/ci/run-container IMAGE SOURCE_TREE LINUX_TEST_BINARY
+#
+#   IMAGE              a linux/amd64 image tag or tag@sha256 digest
+#   SOURCE_TREE        a clean checkout/worktree (untracked non-.git files are
+#                      copied too, so use a clean one)
+#   LINUX_TEST_BINARY  the pure-Go e2e test binary, built from the SAME revision:
+#       (cd SOURCE_TREE/tests/e2e && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+#            go test -c -o /somewhere/e2e.test.linux ./...)
+#
+# Run on linux/amd64 (the CI job's platform), never on a live news server. It
+# builds only inside a throwaway copy, installs packages only in the container,
+# and removes its own copy and container on exit, ordinary errors and INT/TERM.
+# A SIGKILL cannot run the trap, so CI adds an always() step that sweeps by the
+# stable name/path below; pass a digest (IMAGE@sha256:...) to pin the base.
+#
+# Env: RUN_CONTAINER_NAME gives the container a stable name and scratch path so a
+# CI always() step can sweep them; unset, a private mktemp dir is used (local).
+set -eu
+
+[ "$#" -eq 3 ] || { echo "usage: $0 IMAGE SOURCE_TREE LINUX_TEST_BINARY" >&2; exit 2; }
+image=$1
+tree=$(cd "$2" && pwd)
+binary=$3
+test -f "$binary"
+
+name=${RUN_CONTAINER_NAME:-}
+nameopt=
+if [ -n "$name" ]; then
+    tmp=${TMPDIR:-/tmp}/$name
+    rm -rf "$tmp" 2>/dev/null || true
+    mkdir -p "$tmp"
+    nameopt="--name $name"
+else
+    tmp=$(mktemp -d)
+fi
+cid="$tmp/cid"
+src="$tmp/src"
+mkdir -p "$src"
+
+cleanup() {
+    status=$?
+    trap - EXIT HUP INT TERM
+    if [ -s "$cid" ]; then docker rm -f "$(cat "$cid")" >/dev/null 2>&1 || true; fi
+    [ -z "$name" ] || docker rm -f "$name" >/dev/null 2>&1 || true
+    # Builds leave root-owned files; delete ONLY our own scratch, through the
+    # container's own isolation, never with host-wide sudo/rm.
+    if [ -d "$src" ] && ! docker run --rm --network none --entrypoint /bin/sh \
+        --mount "type=bind,src=$tmp,dst=/cleanup" "$image" -ec 'rm -rf /cleanup/src'; then
+        echo "run-container: cleanup failed; own scratch retained at $tmp" >&2
+        [ "$status" -ne 0 ] || status=1
+    else
+        rm -f "$cid" 2>/dev/null || true
+        rmdir "$tmp" 2>/dev/null || true
+    fi
+    exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' HUP TERM
+
+rsync -a --exclude=.git "$tree"/ "$src"/
+cp "$binary" "$src/tests/e2e/e2e.test"
+chmod 755 "$src/tests/e2e/e2e.test"
+# A developer tree may carry a restrictive umask; the copy is public source, so
+# let the container's news user read and traverse it.
+chmod -R a+rX "$src"
+
+# Provenance for the log: resolve and pin the image, then record its digest. The
+# kernel, fd limit and compiler/feature versions are logged from inside (below).
+docker pull "$image" >/dev/null 2>&1 || true
+docker image inspect --format 'run-container: image {{.Id}} {{json .RepoDigests}}' "$image" 2>/dev/null || true
+
+docker run --rm --init --cidfile "$cid" $nameopt \
+    --add-host peer.e2e.test:127.0.0.2 --add-host peer3.e2e.test:127.0.0.3 \
+    --add-host peer4.e2e.test:127.0.0.4 --add-host peer9.e2e.test:127.0.0.9 \
+    --add-host peer10.e2e.test:127.0.0.10 \
+    -e E2E_FAKE_SENDMAIL=1 --mount "type=bind,src=$src,dst=/src" -w /src "$image" sh -ec '
+      echo "=== container: $(uname -srm); nofile soft=$(ulimit -Sn) hard=$(ulimit -Hn) ==="
+      if tests/e2e/ci/build-on-host; then bok=1; else bok=0; fi
+      echo "=== build.log (last 40 lines) ==="
+      tail -40 build.log 2>/dev/null || true
+      [ "$bok" = 1 ] || { echo "BUILD FAILED"; exit 1; }
+      chmod 755 tests/e2e/e2e.test
+      cd tests/e2e
+      su -s /bin/sh news -c "DIABLO_BIN=/src/dbin NNTP_TEST_DEADLINE=30s ./e2e.test -test.v -test.count=1 -test.timeout=1200s"
+    '

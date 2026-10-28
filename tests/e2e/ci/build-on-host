@@ -77,11 +77,13 @@ elif command -v pacman >/dev/null; then
         # pacman 7 sandboxes downloads with Landlock, which containers may lack.
         nosandbox=
         pacman --help --sync 2>/dev/null | grep -q -- --disable-sandbox && nosandbox=--disable-sandbox
-        [ -z "$need" ] || pacman -Sy --noconfirm --needed --quiet $nosandbox $need >/dev/null
+        # Arch is rolling and does not support partial upgrades: refresh and
+        # upgrade the whole system once (-Syu), then install with -S. An older
+        # cached/pinned base otherwise breaks on mismatched shared libraries.
+        pacman -Syu --noconfirm --quiet $nosandbox >/dev/null
+        [ -z "$need" ] || pacman -S --noconfirm --needed --quiet $nosandbox $need >/dev/null
         if [ -n "$nodb" ]; then
-            # refresh the sync databases if the line above did not
-            sync=-S; [ -n "$need" ] || sync=-Sy
-            pacman $sync --noconfirm --needed --quiet $nosandbox db >/dev/null 2>&1 || true
+            pacman -S --noconfirm --needed --quiet $nosandbox db >/dev/null 2>&1 || true
             enddb
         fi
     fi
