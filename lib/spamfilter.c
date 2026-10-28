@@ -554,8 +554,13 @@ spamFilterTable(time_t t, FilterInfo *fi, hash_t mhv, md5hash_t *hv, int lines)
 #if USE_SPAM_RW_MAP
 	    *f = copy;
 #else
-	    lseek(fd, off, 0);		/* seek & lock	*/
-	    write(fd, &copy, sizeof(Filter));
+	    /*
+	     * NB: with USE_SPAM_RW_MAP == 0 openFilterFile() maps the
+	     * file PROT_READ only, so this write through fi->Fd is not
+	     * visible via the HashAry map until a remap.
+	     */
+	    lseek(fi->Fd, off, 0);	/* seek & lock	*/
+	    write(fi->Fd, &copy, sizeof(Filter));
 #endif
 	}
     } else if (f->f_HitCount + dhits < FilterLock) {
@@ -574,8 +579,12 @@ spamFilterTable(time_t t, FilterInfo *fi, hash_t mhv, md5hash_t *hv, int lines)
 #if USE_SPAM_RW_MAP
 	*f = copy;
 #else
-	lseek(fd, off, 0);		/* seek & lock	*/
-	write(fd, &copy, sizeof(Filter));
+	/*
+	 * NB: PROT_READ-only map when USE_SPAM_RW_MAP == 0 (see above);
+	 * this write through fi->Fd is not visible via HashAry until a remap.
+	 */
+	lseek(fi->Fd, off, 0);		/* seek & lock	*/
+	write(fi->Fd, &copy, sizeof(Filter));
 #endif
     } else {
 	logit(LOG_INFO, "SpamFilter, slot %d in use: dt=%d, %d + %d\n",
