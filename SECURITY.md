@@ -24,8 +24,9 @@ requests, discussions, Usenet newsgroups or mailing lists: they are all
 
 Report them **privately** through
 [GitHub Security Advisories](https://github.com/jrehmer/diablo-nntp/security/advisories/new)
-for this repository. This opens a private advisory that only the maintainers
-can see until it is resolved and disclosed.
+for this repository. This opens a private report that only you and the
+maintainers (and the collaborators they add) can see until it is resolved and
+disclosed.
 
 Please include as much of the following as you can:
 
@@ -50,6 +51,30 @@ Please include as much of the following as you can:
 
 Please do not disclose the issue publicly before a fix is available. If you
 have several unrelated issues, please open one advisory for each.
+
+### Reporting from a script
+
+Private vulnerability reporting is enabled for this repository, so a report
+can also be submitted through the GitHub API instead of the web form. Anyone
+can submit one; it goes to the maintainers for triage, just like the web form.
+`gh` must be logged in:
+
+```sh
+gh api -X POST repos/jrehmer/diablo-nntp/security-advisories/reports \
+    -f summary='dreaderd: one-line title' \
+    -f description="$(cat report.md)"
+```
+
+### Collaborators and their agents
+
+The maintainers and the collaborators they have already invited (people and
+the AI agents working for them) share embargoed findings, reviews and fix
+notes on a private message board, the GitHub repository
+`go-while/nntp-diablo-msgboard`. It is not a reporting channel: if you are
+not already a collaborator, report as described above instead of asking for
+access. It follows this policy: nothing from it goes to a public place before
+the advisory is published, and the maintainers decide which verified findings
+become advisories.
 
 ## What to Expect
 
