@@ -109,10 +109,9 @@ addSecret(char secrets[][CANLOCK_SECRETLEN], const char *opt, const char *val)
  * readAccess() - collect the canlockadmin, canlockuser and canlocksha1 lines
  * of the first vserverdef called vsName in the dreader.access file at path,
  * read the way dreaderd reads it.  Returns 1 when the vserverdef was found.
- * A file that cannot be opened is an error, unless optional is set.
  */
 static int
-readAccess(const char *path, const char *vsName, Secrets *sec, int optional)
+readAccess(const char *path, const char *vsName, Secrets *sec)
 {
     FILE *fp;
     char buf[1024];
@@ -120,8 +119,6 @@ readAccess(const char *path, const char *vsName, Secrets *sec, int optional)
     int found = 0;
 
     if ((fp = fopen(path, "r")) == NULL) {
-	if (optional)
-	    return(0);
 	fprintf(stderr, "dcanlock: cannot open %s: %s\n", path, strerror(errno));
 	exit(2);
     }
@@ -295,7 +292,7 @@ sameDirProgram(const char *self, const char *program, char *path, int pathLen)
 
     if (p == NULL)
 	return(0);
-    while (*p) {
+    for (;;) {
 	int n = strcspn(p, ":");
 	char cand[PATH_MAX];
 	struct stat st;
@@ -310,9 +307,9 @@ sameDirProgram(const char *self, const char *program, char *path, int pathLen)
 		snprintf(path, pathLen, "%.*s/%s", n, p, program);
 	    return(1);
 	}
-	p += n;
-	if (*p == ':')
-	    ++p;
+	if (p[n] == 0)
+	    break;
+	p += n + 1;			/* an empty last component is the current directory */
     }
     return(0);
 }
@@ -553,15 +550,18 @@ main(int ac, char **av)
 	    Secrets fromFile;
 
 	    memset(&fromFile, 0, sizeof(fromFile));
-	    if (readAccess(accessFile, vsName, &fromFile, 1))
-		sec.noSha1 = fromFile.noSha1;
+	    if (!readAccess(accessFile, vsName, &fromFile)) {
+		fprintf(stderr, "dcanlock: no vserverdef %s in %s\n", vsName, accessFile);
+		return(2);
+	    }
+	    sec.noSha1 = fromFile.noSha1;
 	}
     } else {
 	if (accessFile == NULL) {
 	    loadConfig(ac, av);		/* for the path of dreader.access */
 	    accessFile = PatLibExpand(DReaderAccessPat);
 	}
-	if (!readAccess(accessFile, vsName, &sec, 0)) {
+	if (!readAccess(accessFile, vsName, &sec)) {
 	    fprintf(stderr, "dcanlock: no vserverdef %s in %s\n", vsName, accessFile);
 	    return(2);
 	}

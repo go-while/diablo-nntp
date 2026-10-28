@@ -358,6 +358,39 @@ func validMsgIDText(id string) bool {
 	return len(id) > 2 && id[0] == '<' && id[len(id)-1] == '>' && !strings.ContainsAny(id[1:len(id)-1], "<> \t\r\n")
 }
 
+// TestDcanlockCancelBody: the body is one line that does not start with a dot, so that the
+// article can be sent as it is (a dot-stuffing client does the rest).
+func TestDcanlockCancelBody(t *testing.T) {
+	s := dcanlockSite(t, vsBoth)
+	for _, body := range []string{".dot first", "two\nlines", "cr\rhere"} {
+		out, code := dcanlock(t, s, "", "-n", "e2e.test", "-b", body, "cancel", msgID(t))
+		if code != 2 || !strings.Contains(out, "one line") {
+			t.Errorf("body %q: exit %d, output %q, want 2 and a message", body, code, out)
+		}
+	}
+	if out, code := dcanlock(t, s, "", "-n", "e2e.test", "-b", "a . in the middle", "cancel", msgID(t)); code != 0 {
+		t.Errorf("an ordinary body: exit %d: %s", code, out)
+	}
+}
+
+// TestDcanlockStdinSecretBadAccess: -S with an explicit -A that cannot be read, or has no such
+// vserverdef, fails as it does without -S; it must not quietly make sha1 locks the admin
+// switched off with canlocksha1 no.
+func TestDcanlockStdinSecretBadAccess(t *testing.T) {
+	s := dcanlockSite(t, vsBoth)
+	mid := msgID(t)
+	if out, code := dcanlock(t, s, "stdin-secret\n", "-S", "-A", filepath.Join(t.TempDir(), "missing"), "key", mid); code != 2 || !strings.Contains(out, "cannot open") {
+		t.Errorf("-S with a missing -A file: exit %d, output %q", code, out)
+	}
+	acc := filepath.Join(t.TempDir(), "dreader.access")
+	if err := os.WriteFile(acc, []byte(genAccess(true, vsBoth, "")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, code := dcanlock(t, s, "stdin-secret\n", "-S", "-A", acc, "-v", "NoSuchVserver", "key", mid); code != 2 || !strings.Contains(out, "no vserverdef") {
+		t.Errorf("-S with an unknown vserverdef: exit %d, output %q", code, out)
+	}
+}
+
 // TestDcanlockCancelNewsgroups: without -n the Newsgroups come from dreadart, which sits next to
 // dcanlock; a copy of dcanlock next to a stand-in dreadart shows how its output is read.
 func TestDcanlockCancelNewsgroups(t *testing.T) {
@@ -432,23 +465,30 @@ func TestDcanlockCancelDreadartPath(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(other, "dreadart"), fake("e2e.other"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(filepath.Join(mine, "dcanlock"), "cancel", "<x@example>")
-	cmd.Args[0] = "dcanlock" // as the shell passes it when it found the program through PATH
-	cmd.Dir = s.Dir
-	for _, e := range append(os.Environ(), s.Env...) {
-		if !strings.HasPrefix(e, "PATH=") {
-			cmd.Env = append(cmd.Env, e)
+	run := func(dir, path string) string {
+		cmd := exec.Command(filepath.Join(mine, "dcanlock"), "cancel", "<x@example>")
+		cmd.Args[0] = "dcanlock" // as the shell passes it when it found the program through PATH
+		cmd.Dir = dir
+		for _, e := range append(os.Environ(), s.Env...) {
+			if !strings.HasPrefix(e, "PATH=") {
+				cmd.Env = append(cmd.Env, e)
+			}
 		}
+		cmd.Env = append(cmd.Env, "PATH="+path)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("dcanlock cancel (PATH %s): %v\n%s", path, err, out)
+		}
+		head, _ := splitCancel(t, string(out))
+		return headerValue(head, "Newsgroups")
 	}
 	// the other dreadart comes first on PATH, but dcanlock is only in mine
-	cmd.Env = append(cmd.Env, "PATH="+other+":"+mine+":/usr/bin:/bin")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("dcanlock cancel: %v\n%s", err, out)
-	}
-	head, _ := splitCancel(t, string(out))
-	if got := headerValue(head, "Newsgroups"); got != "e2e.mine" {
+	if got := run(s.Dir, other+":"+mine+":/usr/bin:/bin"); got != "e2e.mine" {
 		t.Errorf("Newsgroups %q: not the dreadart next to dcanlock (want e2e.mine)", got)
+	}
+	// an empty last component of PATH is the current directory, where dcanlock is
+	if got := run(mine, other+":"); got != "e2e.mine" {
+		t.Errorf("PATH with an empty last component: Newsgroups %q, want e2e.mine", got)
 	}
 }
 

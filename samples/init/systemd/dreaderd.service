@@ -17,9 +17,9 @@ ExecStop=/news/adm/diablo-ctl stop dreaderd
 TimeoutStartSec=90
 TimeoutStopSec=120
 LimitNOFILE=16384
-# Core dumps hold the AUTHINFO and Cancel-Lock secrets of dreader.access: keep
-# them off (the usual default) unless you are debugging a crash:
-#LimitCORE=infinity
+# Core dumps hold the AUTHINFO and Cancel-Lock secrets of dreader.access: no
+# core files.  Raise this (LimitCORE=infinity) only to debug a crash.
+LimitCORE=0
 
 [Install]
 WantedBy=multi-user.target

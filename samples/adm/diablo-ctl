@@ -25,16 +25,19 @@
 # start a daemon (exit status 1, every reason printed) when one fails:
 #	- a mount point listed in DIABLO_MOUNTS is not mounted;
 #	- the active file the daemon uses (dreaderd: always; diablo: only when
-#	  diablo.config has "active" on) does not exist, or is older than
+#	  diablo.config has "active" on or names the file) does not exist, or is older than
 #	  DIABLO_ACTIVE_MAXAGE hours when that is set;
 #	- unclean shutdown: the pid file is left, no process is running, and the
 #	  activity log has not changed for DIABLO_MAX_DOWNTIME minutes (off
 #	  unless that is set);
 #	- the history file is missing and DIABLO_REQUIRE_HISTORY="yes" (by
-#	  default a missing history is only noted: diablo makes a new one).
-# A new site has no active file yet: create it (README.READER: dsyncgroups) or
-# start once with -F.  "check" runs the checks and starts nothing.  -F skips
-# them for this start.  See diablo-ctl.conf and samples/init/README.
+#	  default that is not a failure, diablo makes a new one; a note is
+#	  printed only when a snapshot, dhistory.snp or .old, is there).
+# install-portable.sh creates an empty active file; at a site set up by hand it
+# may be missing: create it (README.READER: dsyncgroups) or start once with
+# "diablo-ctl -F start dreaderd".  "check" runs the checks and starts nothing.
+# -F skips them for this start.  Each daemon is checked and started on its own.
+# See diablo-ctl.conf and samples/init/README.
 #
 # Exit status: 0 ok, 1 failure (check: a check failed), 2 usage, 3 status: a
 # requested daemon is not running.
@@ -89,12 +92,27 @@ if [ -z "${DIABLO_BIN:-}" ]; then
 fi
 [ -n "${DIABLO_BIN:-}" ] && [ -x "$DIABLO_BIN/dpath" ] || { say "no diablo binaries found; set DIABLO_BIN"; exit 1; }
 
-home=$("$DIABLO_BIN/dpath" home) || { say "dpath cannot read diablo.config"; exit 1; }
-logdir=$("$DIABLO_BIN/dpath" log) || { say "dpath cannot read diablo.config"; exit 1; }
-dqueue=$(cd "$("$DIABLO_BIN/dpath" dqueue 2>/dev/null)" 2>/dev/null && pwd -P) || dqueue=""
+# The paths of the site, from the binaries' own view of diablo.config.
+derive() {
+    home=$("$DIABLO_BIN/dpath" home) || { say "dpath cannot read diablo.config"; exit 1; }
+    logdir=$("$DIABLO_BIN/dpath" log) || { say "dpath cannot read diablo.config"; exit 1; }
+    dqueue=$(cd "$("$DIABLO_BIN/dpath" dqueue 2>/dev/null)" 2>/dev/null && pwd -P) || dqueue=""
+}
+derive
 if [ -z "$conf" ] && [ -r "$home/diablo-ctl.conf" ]; then
+    oldbin=$DIABLO_BIN
     . "$home/diablo-ctl.conf"
+    # It may name other binaries: then the paths come from those, not from
+    # a mix of the two installations.
+    if [ "$DIABLO_BIN" != "$oldbin" ]; then
+	[ -x "$DIABLO_BIN/dpath" ] || { say "no diablo binaries in DIABLO_BIN=$DIABLO_BIN (set in $home/diablo-ctl.conf)"; exit 1; }
+	derive
+    fi
 fi
+
+# The option strings and lists below are split into words and must stay
+# literal: no pathname expansion (a "*" in an option is not a file name).
+set -f
 
 DIABLO_DAEMONS=${DIABLO_DAEMONS:-diablo}
 DIABLO_OPTS=${DIABLO_OPTS:-}
@@ -112,11 +130,26 @@ if [ -z "${DIABLO_USER:-}" ]; then
     if [ "$(id -u)" -eq 0 ]; then DIABLO_USER=news; else DIABLO_USER=$(id -un); fi
 fi
 
+# Settings that are numbers: a wrong one must not turn a timeout into an
+# endless wait (a failed numeric test counts as "not yet").
+for v in DIABLO_STOP_WAIT DIABLO_START_WAIT DIABLO_ACTIVE_MAXAGE DIABLO_MAX_DOWNTIME; do
+    eval "val=\$$v"
+    case $val in
+	*[!0-9]*) say "$v must be a number (seconds for the waits, hours for DIABLO_ACTIVE_MAXAGE, minutes for DIABLO_MAX_DOWNTIME), not \"$val\""; exit 1 ;;
+    esac
+done
+
 if [ "$which" = all ]; then
     daemons=$DIABLO_DAEMONS
 else
     daemons=$which
 fi
+for d in $daemons; do
+    case $d in
+	diablo|dreaderd) ;;
+	*) say "unknown daemon \"$d\" in DIABLO_DAEMONS (only diablo and dreaderd)"; exit 1 ;;
+    esac
+done
 
 # The status area for ps: "-s" plus DIABLO_PS_PAD spaces as one argument;
 # diablo and dreaderd overwrite it with their status (as rc.news does it).
@@ -263,7 +296,7 @@ preflight() {
     act=$(activefile "$d")
     if [ -n "$act" ]; then
 	if [ ! -f "$act" ]; then
-	    say "$d: active file $act not found (a new site: create it, see README.READER, or start once with -F)"
+	    say "$d: active file $act not found (a site set up by hand: create it, see README.READER, or start once with -F)"
 	    bad=1
 	elif [ -n "$DIABLO_ACTIVE_MAXAGE" ] && older_than "$act" $((DIABLO_ACTIVE_MAXAGE * 60)); then
 	    say "$d: active file $act is more than $DIABLO_ACTIVE_MAXAGE hours old"

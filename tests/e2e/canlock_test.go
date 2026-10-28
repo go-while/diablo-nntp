@@ -56,6 +56,16 @@ func TestCanLockVectors(t *testing.T) {
 	}
 }
 
+// skipWithoutCanLockMode skips the test unless the dreaderd in DIABLO_BIN knows readercanlock
+// (any build, with or without libcanlock).
+func skipWithoutCanLockMode(tb testing.TB) {
+	tb.Helper()
+	b, err := os.ReadFile(filepath.Join(bin(tb), "dreaderd"))
+	if err != nil || !bytes.Contains(b, []byte("readercanlock")) {
+		tb.Skip("dreaderd has no readercanlock (Cancel-Lock support)")
+	}
+}
+
 // skipWithoutCanLock skips the test unless the dreaderd in DIABLO_BIN knows readercanlock.
 // It must run before a site with readercanlock in diablo.config is written: without
 // Cancel-Lock support, dgrpctl and dreaderd reject the unknown directive.
@@ -255,6 +265,22 @@ func TestCancelLockTrackonlyRefused(t *testing.T) {
 	if err == nil || !strings.Contains(out, "trackonly") {
 		t.Errorf("dreaderd with trackonly and the default readercanlock: err %v, output %q; want it to refuse", err, out)
 	}
+}
+
+// TestCancelLockTrackonlyNone: readercanlock none refuses every cancel before it needs a header,
+// so readerxover trackonly, which stores none, is allowed with it (as with all).
+func TestCancelLockTrackonlyNone(t *testing.T) {
+	skipWithoutCanLockMode(t)
+	_, spool := spoolStore(t)
+	s := NewReaderSite(t, ReaderOptions{
+		Spool:   spool,
+		Config:  map[string]string{"readerxover": "trackonly", "readercanlock": "none"},
+		NoStart: true,
+	})
+	_, port, _ := strings.Cut(s.Addr, ":")
+	startReader(t, s, "[127.0.0.1]:"+port)
+	r := s.Reader(t)
+	expect(t, r, 205, "QUIT")
 }
 
 // skipWithCanLock skips the test when dreaderd is built with libcanlock: the tests that use it
