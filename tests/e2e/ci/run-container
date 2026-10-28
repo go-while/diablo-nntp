@@ -92,7 +92,14 @@ imageid=$(docker image inspect --format '{{.Id}}' "$image" 2>/dev/null) \
 echo "run-container: image $image -> $imageid"
 docker image inspect --format 'run-container: repo digests {{json .RepoDigests}}' "$image" 2>/dev/null || true
 
-# Create the scratch. Reclaim only our own marked leftover; refuse a foreign dir.
+# Create the scratch. A symlink here could redirect the mount/rm outside the
+# root, so refuse one outright; reclaim only our own marked leftover directory;
+# refuse any other foreign path.
+if [ -L "$tmp" ]; then
+    echo "run-container: $tmp is a symlink; refusing" >&2
+    tmp=''   # do not let cleanup follow it
+    exit 1
+fi
 if [ -e "$tmp" ]; then
     if [ -f "$marker" ]; then
         docker run --rm --network none --entrypoint /bin/sh \
@@ -118,13 +125,14 @@ chmod 755 "$src/tests/e2e/e2e.test"
 # let the container's news user read and traverse it.
 chmod -R a+rX "$src"
 
-nameopt=
-[ -z "$name" ] || nameopt="--name $name"
+# Optional --name as properly quoted arguments (no unquoted word splitting).
+set --
+[ -z "$name" ] || set -- --name "$name"
 
 # Run docker in the background and wait: a SIGTERM/INT then reaches the trap at
 # once (cleanup kills the container via the cidfile), instead of being deferred
 # until a foreground docker returns.
-docker run --rm --init --cidfile "$cid" $nameopt \
+docker run --rm --init --cidfile "$cid" "$@" \
     --add-host peer.e2e.test:127.0.0.2 --add-host peer3.e2e.test:127.0.0.3 \
     --add-host peer4.e2e.test:127.0.0.4 --add-host peer9.e2e.test:127.0.0.9 \
     --add-host peer10.e2e.test:127.0.0.10 \

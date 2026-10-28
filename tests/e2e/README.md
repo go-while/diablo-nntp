@@ -178,7 +178,8 @@ containers, FreeBSD and illumos).
 same commands the `containers` jobs of `ci-matrix.yml` use — the workflow calls
 this very script, so the invocation does not drift from CI (the image contents,
 distro packages and host kernel can still differ from a given CI run). It needs
-Docker and rsync on an amd64 Linux host (not a live news server). Build the
+Docker and rsync both installed on an amd64 Linux host (rsync is a prerequisite,
+as on the CI runner; not a live news server). Build the
 pure-Go test binary first, from the same revision, then pass the image, a clean
 tree and that binary:
 
