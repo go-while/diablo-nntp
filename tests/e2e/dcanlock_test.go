@@ -31,7 +31,8 @@ func dcanlockSite(tb testing.TB, vs string) *Site {
 	tb.Helper()
 	skipWithoutDcanlock(tb)
 	_, spool := spoolStore(tb)
-	return NewReaderSite(tb, ReaderOptions{Spool: spool, Access: genAccess(true, vs, ""), NoStart: true})
+	return NewReaderSite(tb, ReaderOptions{Spool: spool, Access: genAccess(true, vs, ""), NoStart: true,
+		Config: map[string]string{"newsadmin": "admin@example.invalid", "readerhostname": "news.example.invalid"}})
 }
 
 // dcanlock runs dcanlock with stdin and returns its output and exit status.
@@ -72,7 +73,7 @@ func TestDcanlock(t *testing.T) {
 			sorted(wantLocks(genAdminSecret, "", mid, true), wantLocks(genOldSecret, "", mid, true))},
 		{"user keys", []string{"-u", "fred", "key", mid}, sorted(wantKeys(genUserSecret, "fred", mid, true))},
 		{"user locks", []string{"-u", "fred", "lock", mid}, sorted(wantLocks(genUserSecret, "fred", mid, true))},
-		{"sha1 only", []string{"-s", "sha1", "key", mid},
+		{"sha1 only", []string{"-t", "sha1", "key", mid},
 			sorted([]string{"sha1:" + canKey(sha1.New, genAdminSecret, "", mid), "sha1:" + canKey(sha1.New, genOldSecret, "", mid)})},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -191,7 +192,7 @@ func TestDcanlockErrors(t *testing.T) {
 		{"Message-ID with a space", []string{"key", "<a b@example>"}, "not a Message-ID"},
 		{"no user secret", []string{"-u", "fred", "key", "<a@example>"}, "no canlockuser secret"},
 		{"no such vserverdef", []string{"-v", "nosuch", "key", "<a@example>"}, "no vserverdef nosuch"},
-		{"bad scheme", []string{"-s", "md5", "key", "<a@example>"}, "sha256, sha1 or sha512"},
+		{"bad scheme", []string{"-t", "md5", "key", "<a@example>"}, "sha256, sha1 or sha512"},
 		{"no Message-ID", []string{"key"}, "Usage"},
 		{"unknown command", []string{"frobnicate"}, "Usage"},
 	} {
@@ -226,5 +227,177 @@ func TestDcanlockWithdraw(t *testing.T) {
 	feedAndSettle(t, g.Site, g.st, r, cancelArticle(t, mid, "e2e.test", "Cancel-Key: "+key))
 	if present(t, r, 1) {
 		t.Error("the article is still there after the admin cancel")
+	}
+}
+
+// splitCancel splits the article dcanlock cancel writes into its header lines and its body.
+func splitCancel(t *testing.T, out string) (head []string, body string) {
+	t.Helper()
+	h, b, ok := strings.Cut(out, "\n\n")
+	if !ok {
+		t.Fatalf("no blank line between the headers and the body: %q", out)
+	}
+	return strings.Split(h, "\n"), b
+}
+
+// TestDcanlockCancel: the whole cancel article, with its options.
+func TestDcanlockCancel(t *testing.T) {
+	s := dcanlockSite(t, vsBoth+"    canlockadmin "+genOldSecret+"\n")
+	mid := msgID(t)
+	out, code := dcanlock(t, s, "", "-n", "e2e.test,e2e.other", "cancel", mid)
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, out)
+	}
+	head, body := splitCancel(t, out)
+	for name, want := range map[string]string{
+		"From":                      "admin@example.invalid",
+		"Newsgroups":                "e2e.test,e2e.other",
+		"Subject":                   "cmsg cancel " + mid,
+		"Approved":                  "admin@example.invalid",
+		"Control":                   "cancel " + mid,
+		"MIME-Version":              "1.0",
+		"Content-Type":              "text/plain; charset=ISO-8859-1",
+		"Content-Transfer-Encoding": "8bit",
+	} {
+		if got := headerValue(head, name); got != want {
+			t.Errorf("%s: %q, want %q", name, got, want)
+		}
+	}
+	if want := sorted(wantKeys(genAdminSecret, "", mid, true), wantKeys(genOldSecret, "", mid, true)); !slices.Equal(elements(headerValue(head, "Cancel-Key")), want) {
+		t.Errorf("Cancel-Key %q, want %q", headerValue(head, "Cancel-Key"), want)
+	}
+	if id := headerValue(head, "Message-ID"); !strings.HasPrefix(id, "<cancel.") || !strings.HasSuffix(id, "@news.example.invalid>") || !validMsgIDText(id) {
+		t.Errorf("Message-ID %q", id)
+	}
+	if d := headerValue(head, "Date"); !strings.Contains(d, ",") || len(d) < 25 {
+		t.Errorf("Date %q", d)
+	}
+	if body != "Admin cancel." { // the helper trims the last newline
+		t.Errorf("body %q", body)
+	}
+
+	// two cancels get different Message-IDs
+	out2, _ := dcanlock(t, s, "", "-n", "e2e.test", "cancel", mid)
+	head2, _ := splitCancel(t, out2)
+	if headerValue(head2, "Message-ID") == headerValue(head, "Message-ID") {
+		t.Error("two cancels have the same Message-ID")
+	}
+
+	t.Run("options", func(t *testing.T) {
+		out, code := dcanlock(t, s, "", "-n", "e2e.test", "-f", "Boss <boss@example.invalid>", "-s", "Withdrawn",
+			"-b", "Spam.", "-c", "UTF-8", "-d", "-m", "-a", "cancel", mid)
+		if code != 0 {
+			t.Fatalf("exit %d: %s", code, out)
+		}
+		head, body := splitCancel(t, out)
+		if headerValue(head, "From") != "Boss <boss@example.invalid>" || headerValue(head, "Subject") != "Withdrawn" ||
+			headerValue(head, "Content-Type") != "text/plain; charset=UTF-8" || body != "Spam." {
+			t.Errorf("headers %q body %q", head, body)
+		}
+		if !strings.HasSuffix(headerValue(head, "Date"), "+0000") {
+			t.Errorf("Date %q is not UTC", headerValue(head, "Date"))
+		}
+		for _, no := range []string{"Message-ID", "Approved"} {
+			if headerCount(head, no) != 0 {
+				t.Errorf("%s present with the option that leaves it out", no)
+			}
+		}
+	})
+
+	t.Run("no key, no secret needed", func(t *testing.T) {
+		out, code := dcanlock(t, s, "", "-L", "-n", "e2e.test", "-A", "/nonexistent", "cancel", mid)
+		head, _ := splitCancel(t, out)
+		if code != 0 || headerCount(head, "Cancel-Key") != 0 {
+			t.Errorf("exit %d, Cancel-Key count %d", code, headerCount(head, "Cancel-Key"))
+		}
+	})
+
+	t.Run("refusals", func(t *testing.T) {
+		for _, c := range []struct {
+			name string
+			args []string
+			want string
+		}{
+			{"no Newsgroups and no article", []string{"cancel", mid}, "give them with -n"},
+			{"bad Newsgroups", []string{"-n", "a b", "cancel", mid}, "bad Newsgroups"},
+			{"non-ASCII subject", []string{"-n", "e2e.test", "-s", "caf\xe9", "cancel", mid}, "plain ASCII"},
+			{"two Message-IDs", []string{"-n", "e2e.test", "cancel", mid, mid}, "Usage"},
+			{"not a Message-ID", []string{"-n", "e2e.test", "cancel", "nonsense"}, "not a Message-ID"},
+		} {
+			out, code := dcanlock(t, s, "", c.args...)
+			if code != 2 || !strings.Contains(out, c.want) {
+				t.Errorf("%s: exit %d, output %q; want 2 and %q", c.name, code, out, c.want)
+			}
+		}
+	})
+}
+
+// validMsgIDText: a Message-ID with its brackets and nothing odd inside.
+func validMsgIDText(id string) bool {
+	return len(id) > 2 && id[0] == '<' && id[len(id)-1] == '>' && !strings.ContainsAny(id[1:len(id)-1], "<> \t\r\n")
+}
+
+// TestDcanlockCancelNewsgroups: without -n the Newsgroups come from dreadart, which sits next to
+// dcanlock; a copy of dcanlock next to a stand-in dreadart shows how its output is read.
+func TestDcanlockCancelNewsgroups(t *testing.T) {
+	s := dcanlockSite(t, vsBoth)
+	dir := t.TempDir()
+	src, err := os.ReadFile(filepath.Join(s.Bin, "dcanlock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "dcanlock"), src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fake := "#!/bin/sh\n[ \"$1\" = -h ] || exit 3\ncase \"$2\" in *missing*) exit 1;; esac\n" +
+		"printf 'Path: x\\r\\nNewsgroups: e2e.test,\\r\\n e2e.other\\r\\nSubject: s\\r\\n\\r\\n'\n"
+	if err := os.WriteFile(filepath.Join(dir, "dreadart"), []byte(fake), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run := func(mid string) (string, int) {
+		cmd := exec.Command(filepath.Join(dir, "dcanlock"), "cancel", mid)
+		cmd.Dir = s.Dir
+		cmd.Env = append(os.Environ(), s.Env...)
+		var out bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &out, &out
+		err := cmd.Run()
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			return out.String(), ee.ExitCode()
+		}
+		return out.String(), 0
+	}
+	out, code := run("<found@example>")
+	head, _ := splitCancel(t, out)
+	if code != 0 || headerValue(head, "Newsgroups") != "e2e.test,e2e.other" {
+		t.Errorf("exit %d, Newsgroups %q", code, headerValue(head, "Newsgroups"))
+	}
+	if out, code := run("<missing@example>"); code != 2 || !strings.Contains(out, "give them with -n") {
+		t.Errorf("a missing article: exit %d, output %q", code, out)
+	}
+}
+
+// TestDcanlockCancelWithdraw: the whole use case with the whole article: an article posted
+// through dreaderd is withdrawn by the cancel article dcanlock wrote, fed to a reader in
+// require-auth mode.
+func TestDcanlockCancelWithdraw(t *testing.T) {
+	skipWithoutDcanlock(t)
+	g := newGenSite(t, true, vsBoth, "", "require-auth")
+	mid := msgID(t)
+	g.post(t, g.poster(t), "Message-ID: "+mid)
+	r := g.Reader(t)
+	expect(t, r, 381, "AUTHINFO USER fred")
+	expect(t, r, 281, "AUTHINFO PASS fredspass")
+	feedAndSettle(t, g.Site, g.st, r, fromElsewhere(g.last()))
+	if !present(t, r, 1) {
+		t.Fatal("the posted article is not article 1 of e2e.test")
+	}
+	out, code := dcanlock(t, g.Site, "", "-f", "admin@example.invalid", "-n", "e2e.test", "cancel", mid)
+	if code != 0 {
+		t.Fatalf("dcanlock cancel: exit %d: %s", code, out)
+	}
+	feedAndSettle(t, g.Site, g.st, r, strings.Split(strings.TrimRight(out, "\n"), "\n"))
+	if present(t, r, 1) {
+		t.Error("the article is still there after the cancel article of dcanlock")
 	}
 }

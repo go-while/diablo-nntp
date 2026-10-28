@@ -1,13 +1,13 @@
 .TH DCANLOCK 8 "2026-10-28"
 .SH NAME
-dcanlock \- Diablo program to make and check Cancel-Keys and Cancel-Locks
+dcanlock \- Diablo program to make and check Cancel-Keys and Cancel-Locks, and to write cancel articles
 .SH SYNOPSIS
 .B dcanlock
 [
 .B \-C
 .I diablo.config
 ] [
-.B \-a
+.B \-A
 .I dreader.access
 ] [
 .B \-v
@@ -16,7 +16,7 @@ dcanlock \- Diablo program to make and check Cancel-Keys and Cancel-Locks
 .B \-u
 .I user
 ] [
-.B \-s
+.B \-t
 .I scheme
 ] [
 .B \-S
@@ -26,6 +26,34 @@ dcanlock \- Diablo program to make and check Cancel-Keys and Cancel-Locks
 .B lock
 .I message-id
 \&...
+.br
+.B dcanlock
+[ options ] [
+.B \-n
+.I newsgroups
+] [
+.B \-f
+.I from
+] [
+.B \-s
+.I subject
+] [
+.B \-b
+.I body
+] [
+.B \-c
+.I charset
+] [
+.B \-d
+] [
+.B \-m
+] [
+.B \-a
+] [
+.B \-L
+]
+.B cancel
+.I message-id
 .br
 .B dcanlock
 .B verify
@@ -46,16 +74,22 @@ secrets, and checks before it executes a cancel or a Supersedes (the
 .B readercanlock
 option of
 .IR diablo.config ).
-The secrets are the ones dreaderd uses; the keys and locks are the same as
-those INN makes with its
+The keys and locks are made by libcanlock, the library INN uses with its
 .B canlockadmin
 and
 .B canlockuser
-secrets (libcanlock), so
+secrets, so
 .B dcanlock key
 does what INN's
 .B "gencancel \-k"
-does.
+does and
+.B dcanlock cancel
+what
+.B gencancel
+does.  It is built only when
+.B CANLOCK_ENABLED
+is defined in
+.IR lib/vendor.h .
 .PP
 .B key
 prints, for each Message-ID (with its angle brackets, one line for each),
@@ -70,6 +104,18 @@ dreaderd, whoever posted it.  dreaderd never adds the admin key itself.
 prints the value of the Cancel-Lock header such an article carries, to check
 what a post should have got.
 .PP
+.B cancel
+writes a whole cancel article for the Message-ID to standard output: From,
+Newsgroups, Subject, Date, a new Message-ID, Approved, the
+.B Control: cancel
+header, the Cancel-Key made from the admin secrets, and a short body.  It
+is meant to withdraw any article that came from this site.  Post it through
+dreaderd with a client that sends a file (the reader's access definition
+needs
+.B approve yes
+if the Approved header is kept, and the user must be allowed to post control
+messages), or feed it to the news server like any other article.
+.PP
 .B verify
 needs no secret: it exits with status 0 and prints
 .I match
@@ -83,7 +129,7 @@ Options:
 .B \-C diablo.config
 The configuration file, as for the other programs.
 .TP
-.B \-a dreader.access
+.B \-A dreader.access
 The file to read the secrets from; by default the one of
 .IR diablo.config .
 .TP
@@ -99,7 +145,7 @@ instead of the
 .B canlockadmin
 secrets.
 .TP
-.B \-s scheme
+.B \-t scheme
 Make only
 .IR sha256 ,
 .I sha1
@@ -114,22 +160,65 @@ Read the secret from the first line of standard input and not from
 for a machine that has neither the file nor a
 .IR diablo.config .
 The secret is read from standard input, never from the command line, so it
-doesn't show in the process list.  The secret is used as the
+doesn't show in the process list.  It is used as the
 .B canlockadmin
 secret, or as the
 .B canlockuser
 secret with
 .BR \-u .
+.PP
+Options of
+.B cancel
+only (the letters are those of gencancel):
+.TP
+.B \-n newsgroups
+The Newsgroups of the cancel: a comma separated list.  By default those of
+the article, read with
+.BR dreadart (8)
+from the spool; on a reader machine without a spool, give them.
+.TP
+.B \-f from
+The From; the default is
+.B newsadmin
+of
+.IR diablo.config .
+Plain ASCII only.
+.TP
+.B \-s subject
+The Subject; the default is "cmsg cancel <message-id>".  Plain ASCII only:
+MIME-encode anything else yourself.
+.TP
+.B \-b body
+The text of the body; the default is "Admin cancel.".
+.TP
+.B \-c charset
+The charset of the body; the default is ISO-8859-1.
+.TP
+.B \-d
+Write the Date in UTC and not in local time.
+.TP
+.B \-m
+Leave out the Message-ID; the server makes one.
+.TP
+.B \-a
+Leave out the Approved header, which repeats the From.
+.TP
+.B \-L
+Leave out the Cancel-Key header; no secret is needed then.
 
 .SH EXAMPLE
 Withdraw the article <1234@example.invalid>, which was posted through
-dreaderd, by hand:
+dreaderd, from the news server's machine:
 .PP
 .nf
-key=`dcanlock key '<1234@example.invalid>'`
-(post a cancel article with the headers
- Control: cancel <1234@example.invalid>
- Cancel-Key: $key)
+dcanlock \-f admin@example.invalid \-a cancel '<1234@example.invalid>' > cancel.txt
+(then post cancel.txt)
+.fi
+.PP
+Only the key, to put in by hand:
+.PP
+.nf
+dcanlock key '<1234@example.invalid>'
 .fi
 
 .SH FILES
@@ -141,9 +230,11 @@ too.
 
 .SH "EXIT STATUS"
 0 on success (for verify: a match), 1 for verify when nothing matches, 2 for
-a usage error or when a secret, the vserverdef or the file is missing.
+a usage error or when a secret, the vserverdef, the Newsgroups or the file
+is missing.
 
 .SH "SEE ALSO"
 dcancel(8),
+dreadart(8),
 dreaderd(8),
 diablo-files(5)
