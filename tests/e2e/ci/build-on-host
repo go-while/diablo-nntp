@@ -109,7 +109,8 @@ fi
 
 sed -i 's/^#define[[:space:]]*RADIUS_ENABLED/#undef RADIUS_ENABLED/' lib/vendor.h
 # Cancel-Lock needs libcanlock (3.3.0 or later). Install it where the distribution has it;
-# without it the feature is built out and the Cancel-Lock tests skip.  With
+# without it the feature is built out and the Cancel-Lock tests skip (Arch has no
+# package for it in its official repositories, so it always falls back there).  With
 # E2E_NO_CANLOCK=1 the feature is built out on purpose, so that the tests of the build
 # without libcanlock (TestCancelLockWithoutLibcanlock) run: CI does one build of each.
 if [ "${E2E_NO_CANLOCK:-}" != 1 ] && [ ! -e /usr/include/libcanlock-3/canlock.h ] && [ ! -e /usr/local/include/libcanlock-3/canlock.h ]; then
@@ -117,8 +118,7 @@ if [ "${E2E_NO_CANLOCK:-}" != 1 ] && [ ! -e /usr/include/libcanlock-3/canlock.h 
     elif command -v dnf >/dev/null; then dnf -q -y install libcanlock-devel >/dev/null 2>&1 || true
     elif command -v zypper >/dev/null; then zypper -n -q install libcanlock-devel >/dev/null 2>&1 || true
     elif command -v apk >/dev/null; then apk add -q libcanlock-dev >/dev/null 2>&1 || true
-    elif command -v pacman >/dev/null; then pacman -S --noconfirm --needed --quiet libcanlock >/dev/null 2>&1 || true
-    elif command -v emerge >/dev/null; then emerge --quiet --noreplace --getbinpkg dev-libs/libcanlock >/dev/null 2>&1 || true
+    elif command -v emerge >/dev/null; then emerge --quiet --noreplace --getbinpkg net-libs/canlock >/dev/null 2>&1 || true
     fi
 fi
 if [ "${E2E_NO_CANLOCK:-}" = 1 ]; then
@@ -128,7 +128,7 @@ elif [ -e /usr/include/libcanlock-3/canlock.h ] || [ -e /usr/local/include/libca
     echo "libcanlock: on"
 else
     sed -i 's/^#define[[:space:]]*CANLOCK_ENABLED/#undef CANLOCK_ENABLED/' lib/vendor.h
-    echo "build-on-host: WARNING: libcanlock is missing: CANLOCK_ENABLED is turned off, so the Cancel-Lock tests skip and this build refuses every cancel (install libcanlock-dev to test the feature)"
+    echo "build-on-host: WARNING: libcanlock is missing: CANLOCK_ENABLED is turned off, so the Cancel-Lock tests skip and, with the default readercanlock require-auth, this build refuses every cancel (install libcanlock-dev to test the feature)"
     echo "libcanlock: off (no libcanlock-3/canlock.h)"
 fi
 if [ -e /usr/include/db_185.h ]; then

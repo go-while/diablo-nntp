@@ -445,11 +445,13 @@ main(int ac, char **av)
 
     /*
      * Cancel-Lock checks need the target's headers from the overview data,
-     * which 'readerxover trackonly' doesn't store.
+     * which 'readerxover trackonly' doesn't store.  Mode 'none' refuses every
+     * cancel before it needs a header, and 'all' checks nothing.
      */
-    if (DOpts.ReaderXOverMode == 2 && DOpts.ReaderCanLock != CANLOCK_ALL) {
+    if (DOpts.ReaderXOverMode == 2 && DOpts.ReaderCanLock != CANLOCK_ALL &&
+				DOpts.ReaderCanLock != CANLOCK_NONE) {
 	fprintf(stderr, "dreaderd: readercanlock %s needs article headers, "
-	    "but readerxover is trackonly; set readercanlock all\n",
+	    "but readerxover is trackonly; set readercanlock all or none\n",
 	    CanLockModeName(DOpts.ReaderCanLock));
 	exit(1);
     }
