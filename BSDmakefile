@@ -18,6 +18,9 @@ LIB_SRCS = lib/global.c lib/node.c lib/xopen.c lib/buffer.c lib/wildcmp.c lib/hi
 FILTER_SRCS = filter/diab-filter.c filter/diab-read.c filter/socket.c
 DR_SRCS = dreaderd/main.c dreaderd/thread.c dreaderd/reader.c dreaderd/dns.c dreaderd/mbuf.c dreaderd/subs.c dreaderd/list.c dreaderd/feed.c dreaderd/xover.c dreaderd/nntp.c dreaderd/misc.c dreaderd/post.c dreaderd/server.c dreaderd/group.c dreaderd/spool.c dreaderd/cache.c dreaderd/rtstatus.c dreaderd/control.c dreaderd/wildorcmp.c dreaderd/cancel.c dreaderd/post-addr-ck.c dreaderd/cleanfrom.c dreaderd/msg.c dreaderd/dfa.c dreaderd/filealloc.c dreaderd/crypto.c
 UTIL_PROGS = dicmd drcmd didump dilookup dexpire didate diconvhist diload doutq dspaminfo dspoolout diloadfromspool dreadart dkp pgpverify dsyncgroups dexpireover dreadover dpath dprimehostcache dstart dclient dfeedinfo dlockhistory dfeedtest doverctl drequeue dhisbench dhisexpire dhisctl dexpirecache dcancel dexpirescoring diablo dnewslink dgrpctl
+.if "${CANLOCK_ENABLED}" == "1"
+UTIL_PROGS += dcanlock
+.endif
 SUP_PROGS = plock showlocks
 LIB_OBJS = ${LIB_SRCS:S,lib/,obj/lib_,g:S,.c,.o,g}
 FILTER_OBJS = ${FILTER_SRCS:S,filter/,obj/filter_,g:S,.c,.o,g}

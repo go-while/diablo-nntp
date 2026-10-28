@@ -465,7 +465,8 @@
 	- for each canlockadmin secret the admin locks, made from the secret
 	  and the Message-ID.  Whoever holds a secret can withdraw any local
 	  article by posting a cancel (or Supersedes) with the key, which
-	  'dcanlock key' prints; dreaderd never adds an admin key.
+	  'dcanlock key' prints, or 'dcanlock cancel' writes as a whole
+	  cancel article; dreaderd never adds an admin key.
 	- for each canlockuser secret the user locks, made from the secret, the
 	  user and the Message-ID, for a poster that AUTHINFO identified (readerdef
 	  'addcanlockuser': username, the default, ip or none).  When the same
