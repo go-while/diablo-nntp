@@ -157,9 +157,25 @@ if [ "${E2E_FAKE_SENDMAIL:-}" = 1 ]; then
     is_busybox=0
     if [ -L "$sm" ] && readlink -f "$sm" 2>/dev/null | grep -q busybox; then is_busybox=1; fi
     if [ ! -e "$sm" ] || [ "$is_busybox" = 1 ]; then
-        install -m 755 "$(dirname "$0")/fake-sendmail" "$sm"
-        [ "$is_busybox" = 1 ] && echo "fake sendmail: installed as $sm (replaced busybox applet)" \
-                             || echo "fake sendmail: installed as $sm"
+        # A busybox sendmail is a symlink to /bin/busybox, and busybox `install`
+        # follows the destination symlink and overwrites its TARGET -- a plain
+        # install would clobber /bin/busybox and break the system (GNU install
+        # replaces the link itself, but Alpine has no GNU coreutils). Remove the
+        # symlink first: that unlinks the link, never busybox, and install then
+        # writes a fresh regular file where no symlink is followed.
+        if [ "$is_busybox" = 1 ] && ! rm -f "$sm"; then
+            echo "build-on-host: could not remove the $sm symlink; fake sendmail not installed" >&2
+            exit 1
+        fi
+        if ! install -m 755 "$(dirname "$0")/fake-sendmail" "$sm"; then
+            echo "build-on-host: could not install fake sendmail at $sm" >&2
+            exit 1
+        fi
+        instpath=$(command -v install 2>/dev/null || echo install)
+        instpath=$(readlink -f "$instpath" 2>/dev/null || echo "$instpath")
+        bbmsg=""
+        [ "$is_busybox" = 1 ] && bbmsg=" (replaced busybox applet)"
+        echo "fake sendmail: installed as $sm$bbmsg (install: $instpath)"
     else
         echo "fake sendmail: not installed, $sm exists"
     fi
