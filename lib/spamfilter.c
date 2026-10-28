@@ -177,6 +177,11 @@ SetSpamFilterOpt(void)
 			return;
 		    }
 		    n = strtol(ptr, NULL, 0);
+		    if (n <= 0 || n > (1 << 24)) {
+			logit(LOG_ERR, "spam hash size option (%d) out of range\n", n);
+			free(oldopts);
+			return;
+		    }
 		    if ((n ^ (n - 1)) != (n << 1) - 1) {
 			logit(LOG_ERR, "spam hash size option (%d) not a power of 2\n",
 							n);
@@ -549,8 +554,13 @@ spamFilterTable(time_t t, FilterInfo *fi, hash_t mhv, md5hash_t *hv, int lines)
 #if USE_SPAM_RW_MAP
 	    *f = copy;
 #else
-	    lseek(fd, off, 0);		/* seek & lock	*/
-	    write(fd, &copy, sizeof(Filter));
+	    /*
+	     * NB: with USE_SPAM_RW_MAP == 0 openFilterFile() maps the
+	     * file PROT_READ only, so this write through fi->Fd is not
+	     * visible via the HashAry map until a remap.
+	     */
+	    lseek(fi->Fd, off, 0);	/* seek & lock	*/
+	    write(fi->Fd, &copy, sizeof(Filter));
 #endif
 	}
     } else if (f->f_HitCount + dhits < FilterLock) {
@@ -569,8 +579,12 @@ spamFilterTable(time_t t, FilterInfo *fi, hash_t mhv, md5hash_t *hv, int lines)
 #if USE_SPAM_RW_MAP
 	*f = copy;
 #else
-	lseek(fd, off, 0);		/* seek & lock	*/
-	write(fd, &copy, sizeof(Filter));
+	/*
+	 * NB: PROT_READ-only map when USE_SPAM_RW_MAP == 0 (see above);
+	 * this write through fi->Fd is not visible via HashAry until a remap.
+	 */
+	lseek(fi->Fd, off, 0);		/* seek & lock	*/
+	write(fi->Fd, &copy, sizeof(Filter));
 #endif
     } else {
 	logit(LOG_INFO, "SpamFilter, slot %d in use: dt=%d, %d + %d\n",
@@ -604,10 +618,31 @@ ClearSpamFilterEntry(int which, int entry)
 	default:
 		return;
     }
-    if (entry < 0)
+    if (f->HashAry == NULL)
+	return;
+    if (entry < 0) {
+#if USE_SPAM_RW_MAP
 	bzero(f->HashAry, f->Hsize * sizeof(Filter));
-    else
+#else
+	lseek(f->Fd, 0, 0);
+	{
+	    Filter zero = { { 0 } };
+	    int i;
+	    for (i = 0; i < f->Hsize; ++i)
+		write(f->Fd, &zero, sizeof(Filter));
+	}
+#endif
+    } else {
+#if USE_SPAM_RW_MAP
 	bzero(&f->HashAry[entry], sizeof(Filter));
+#else
+	lseek(f->Fd, (off_t)entry * sizeof(Filter), 0);
+	{
+	    Filter zero = { { 0 } };
+	    write(f->Fd, &zero, sizeof(Filter));
+	}
+#endif
+    }
 }
 
 void
