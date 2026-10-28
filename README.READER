@@ -479,6 +479,10 @@
     no' in the vserverdef leaves it out.  The locks are appended to a
     Cancel-Lock the poster sent, and the keys to a Cancel-Key, so there is
     always one header of each; it is folded when it gets long.
+    A post with more than one Cancel-Lock (or Cancel-Key) header, one of
+    1023 bytes or more, or with an element over 400 bytes, is refused with
+    441, as it cannot be appended to and passing it on would leave the
+    article without our locks.
 
     The secrets must be random, differ from each other (user secrets from
     admin secrets) and be at least 32 characters long.  To replace a secret,
