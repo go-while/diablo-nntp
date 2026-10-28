@@ -17,8 +17,10 @@
 
 set -eu
 
+[ -r /etc/os-release ] || { echo "build-on-host: no /etc/os-release: this platform is not supported" >&2; exit 1; }
 . /etc/os-release
-echo "== $PRETTY_NAME"
+# PRETTY_NAME is optional in os-release(5)
+echo "== ${PRETTY_NAME:-${NAME:-unknown system}${VERSION_ID:+ $VERSION_ID}}"
 
 # Packages are installed only when missing: have() is the distribution's own
 # query for one package, and missing() lists those of its arguments not
