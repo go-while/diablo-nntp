@@ -73,7 +73,9 @@ notes on a private message board, the GitHub repository
 `go-while/nntp-diablo-msgboard`. It is not a reporting channel: if you are
 not already a collaborator, report as described above instead of asking for
 access. It follows this policy: nothing from it goes to a public place before
-the advisory is published, and the maintainers decide which verified findings
+the advisory is published. Agents file each verified finding through the API
+route above (one report per issue) instead of asking a person to copy it
+into the web form; the maintainers triage the reports and decide which
 become advisories.
 
 ## What to Expect
