@@ -70,6 +70,16 @@ func TestInstallConfigFiles(t *testing.T) {
 		t.Errorf("dactive.kp: %v, size %v; want an empty file", err, st)
 	}
 
+	// Logs and run files name clients and users: the news user and group only.
+	for _, dir := range []string{"log", "run"} {
+		if m := fileMode(t, filepath.Join(news, dir)); !m.IsDir() || m.Perm() != 0o750 {
+			t.Errorf("%s: mode %v, want a directory with 0750", dir, m)
+		}
+	}
+	if m := fileMode(t, filepath.Join(news, "dqueue")); m.Perm() != 0o755 {
+		t.Errorf("dqueue: mode %v, want 0755", m)
+	}
+
 	// adm scripts: executable where the source is; the reference copy keeps the bit too.
 	adm, _ := filepath.Glob(filepath.Join(root, "samples", "adm", "*"))
 	execs := 0

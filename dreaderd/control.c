@@ -471,9 +471,9 @@ ParseControl(Connection *conn, const char *cmd, const char *from, const char *ne
 		}
 
 		if (logFile[0] == '/')
-		    fd = xopen(O_RDWR|O_CREAT, 0644, "%s", logFile);
+		    fd = xopen(O_RDWR|O_CREAT, 0640, "%s", logFile);
 		else
-		    fd = xopen(O_RDWR|O_CREAT, 0644, "%s/%s", PatExpand(LogHomePat), logFile);
+		    fd = xopen(O_RDWR|O_CREAT, 0640, "%s/%s", PatExpand(LogHomePat), logFile);
 
 		if (DebugOpt)
 		    printf("creating log file %s fd = %d\n", logFile, fd);

@@ -2554,6 +2554,11 @@ InstallAccessCache(void) {
     Access_LastSize = st.st_size;
     Access_LastIno = st.st_ino;
 
+    /*
+     * The cache files hold what dreader.access holds, among it the AUTHINFO
+     * passwords, cryptpw and the Cancel-Lock secrets: only the news user may
+     * read them, whatever the umask.
+     */
     snprintf(vsnewbuf, sizeof(vsnewbuf), "%s.new",
 				PatDbExpand(DRVserverCachePat));
     snprintf(grnewbuf, sizeof(grnewbuf), "%s.new",
@@ -2565,25 +2570,25 @@ InstallAccessCache(void) {
     snprintf(ranewbuf, sizeof(ranewbuf), "%s.new",
 				PatDbExpand(DRAccessCachePat));
 
-    if ((vsf = fopen(vsnewbuf, "w+")) == NULL) {
+    if ((vsf = PrivateFOpen(vsnewbuf, "w+", 0600)) == NULL) {
 	logit(LOG_CRIT, "Unable to create %s (%s)", vsnewbuf, strerror(errno));
 	fclose(fp);
 	return;
     }
-    if ((grf = fopen(grnewbuf, "w+")) == NULL) {
+    if ((grf = PrivateFOpen(grnewbuf, "w+", 0600)) == NULL) {
 	logit(LOG_CRIT, "Unable to create %s (%s)", grnewbuf, strerror(errno));
 	fclose(fp);
 	fclose(vsf);
 	return;
     }
-    if ((auf = fopen(aunewbuf , "w+")) == NULL) {
+    if ((auf = PrivateFOpen(aunewbuf, "w+", 0600)) == NULL) {
 	logit(LOG_CRIT, "Unable to create %s (%s)", aunewbuf, strerror(errno));
 	fclose(fp);
 	fclose(vsf);
 	fclose(grf);
 	return;
     }
-    if ((rdf = fopen(rdnewbuf, "w+")) == NULL) {
+    if ((rdf = PrivateFOpen(rdnewbuf, "w+", 0600)) == NULL) {
 	logit(LOG_CRIT, "Unable to create %s (%s)", rdnewbuf, strerror(errno));
 	fclose(fp);
 	fclose(vsf);
@@ -2592,7 +2597,7 @@ InstallAccessCache(void) {
 	return;
     }
 
-    if ((raf = fopen(ranewbuf, "w+")) == NULL) {
+    if ((raf = PrivateFOpen(ranewbuf, "w+", 0600)) == NULL) {
 	logit(LOG_CRIT, "Unable to create %s (%s)", ranewbuf, strerror(errno));
 	fclose(fp);
 	fclose(vsf);
@@ -3258,7 +3263,7 @@ InstallAccessCache(void) {
      * cater for possible race conditions.
      */
 
-    if ((tfp = open(PatDbExpand(DRAccessLockPat), O_RDWR|O_CREAT, 0644)) <= 0) {
+    if ((tfp = open(PatDbExpand(DRAccessLockPat), O_RDWR|O_CREAT, 0600)) <= 0) {
 	logit(LOG_CRIT, "Cannot create access lock %s",
 		PatDbExpand(DRAccessLockPat));
 	Access_LastUpdate = 0;

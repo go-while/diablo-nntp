@@ -7,6 +7,13 @@ lib/vendor.h enables RADIUS by default: install the RADIUS library
 (radlib.h; libradius on SmartOS) or #undef RADIUS_ENABLED, which is
 needed on Linux.
 
+Files that hold private data are created for the news user and group only:
+the reader's cache files (cache.*, which copy the passwords and secrets of
+dreader.access) are 0600, logs and dreaderd.status 0640, and the log and run
+directories are 0750.  Keep dreader.access and the other configuration files
+0640 as the installer makes them.  If another account (monitoring, a log
+reader) needs a file, put it in the news group or relax that one file.
+
 Please read the README.READER and README.SERVER files if you haven't
 already.
 

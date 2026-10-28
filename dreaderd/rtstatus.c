@@ -86,7 +86,9 @@ RTStatusOpen(const char *fileName, int slotBase, int numSlots)
 	close(RTSFd);
 	RTSFd = open(fileName, O_RDWR, 0644);
     } else {
-	RTSFd = open(fileName, O_RDWR|O_CREAT|O_TRUNC, 0644);
+	RTSFd = open(fileName, O_RDWR|O_CREAT|O_TRUNC, 0640);
+	if (RTSFd >= 0)
+	    (void)fchmod(RTSFd, 0640);	/* it names clients and users */
     }
 
     RTSlotBase = slotBase;
