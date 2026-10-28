@@ -751,7 +751,7 @@ build the offsets in memory and write them in one or a few large writes.
 `dreaderd/cache.c:87-118`: with a very long `path_db` and `readercachedirs` the path is built without a length check. Config. From reading, not run (deep review of main 76578ae by go-while's reviewers).
 
 ### D-101 Spool server replies have no line cap; other small items in dreaderd/server.c
-`dreaderd/server.c`: spool replies have no line-length cap; the `ctl[1]` test on a one-character reply (`:821`); a `dserver.hosts` mtime in the future is never read again (`:81-123`). From reading, not run (deep review of main 76578ae by go-while's reviewers).
+`dreaderd/server.c`: spool replies have no line-length cap; the `ctl[1]` test on a one-character reply (`:821`); a `dserver.hosts` mtime in the future is never read again (`:81-123`). Found by go-while's reviewers from reading. The `ctl[1]` read is confirmed with AddressSanitizer on a Debian build: `NNFinishSReq(conn, "", 0)` (the `COM_STAT` case in `dreaderd/spool.c`) makes it read one byte past the empty string (global-buffer-overflow, reached by every STAT answered from the spool server). A normal build shows nothing, but an ASan build of dreaderd exits there, so e2e runs against one fail until it is fixed.
 
 ### D-102 ReadAccessCache leaks descriptors when a cache open fails
 `dreaderd/dns.c:3335-3373`: one failed open of the five cache files leaves the others open, and every retry leaks more. From reading, not run (deep review of main 76578ae by go-while's reviewers).
