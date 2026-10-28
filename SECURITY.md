@@ -50,14 +50,15 @@ Please include as much of the following as you can:
   - local access to the news user or to the news spool.
 
 Please do not disclose the issue publicly before a fix is available. If you
-have several unrelated issues, please open one advisory for each.
+have several unrelated issues, please submit one report for each.
 
 ### Reporting from a script
 
 Private vulnerability reporting is enabled for this repository, so a report
 can also be submitted through the GitHub API instead of the web form. Anyone
-can submit one; it goes to the maintainers for triage, just like the web form.
-`gh` must be logged in:
+with a GitHub account can submit a private vulnerability report; repository
+collaborator access is not required. Reports go to the maintainers for triage,
+just like submissions through the web form. `gh` must be logged in:
 
 ```sh
 gh api -X POST repos/jrehmer/diablo-nntp/security-advisories/reports \
@@ -67,16 +68,14 @@ gh api -X POST repos/jrehmer/diablo-nntp/security-advisories/reports \
 
 ### Collaborators and their agents
 
-The maintainers and the collaborators they have already invited (people and
-the AI agents working for them) share embargoed findings, reviews and fix
-notes on a private message board, the GitHub repository
-`go-while/nntp-diablo-msgboard`. It is not a reporting channel: if you are
-not already a collaborator, report as described above instead of asking for
-access. It follows this policy: nothing from it goes to a public place before
-the advisory is published. Agents file each verified finding through the API
-route above (one report per issue) instead of asking a person to copy it
-into the web form; the maintainers triage the reports and decide which
-become advisories.
+Maintainers and invited collaborators use a private workspace, the GitHub
+repository `go-while/nntp-diablo-msgboard`, to coordinate embargoed findings,
+reviews and fixes, including work assisted by AI agents. This workspace is not
+a vulnerability-reporting channel: submit reports through the web form or the
+API described above; workspace access is not required. Nothing from it goes to
+a public place before the advisory is published. Collaborators' agents submit
+verified findings through the API above, one report per issue. Maintainers
+triage submissions and decide how to proceed.
 
 ## What to Expect
 
