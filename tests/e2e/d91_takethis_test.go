@@ -6,8 +6,11 @@ import (
 )
 
 // TestFeederTakethisNoArg: TAKETHIS without a message-id must return 501 and drain
-// the article body so the session stays usable. Fails on main: the server reads msgid
-// via MsgId(NULL,NULL)="<>" and calls LoadArticle with that id, corrupting the stream.
+// the article body so the session stays usable. On main, TAKETHIS with no argument
+// passes an empty/bad msgid ("<>") through to LoadArticle and returns 439 (not the
+// correct 501); the article body is drained either way. The fix responds 501
+// immediately and drains via LoadArticle(noWrite=1). Cross-platform: the wrong
+// status code shows on all platforms.
 func TestFeederTakethisNoArg(t *testing.T) {
 	id := msgID(t)
 	art := newArticle(id, "e2e.test", "d91 no-arg takethis", "body line")
