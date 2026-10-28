@@ -129,3 +129,57 @@ func TestDhisbenchNeedsScratchHistory(t *testing.T) {
 		t.Errorf("dhisbench -f: %q", out)
 	}
 }
+
+// TestDclientListExtensions: dclient reads the whole 202 reply of LIST EXTENSIONS up to the
+// dot line. Before, 202 was not known as multi-line and the lines after it were lost.
+func TestDclientListExtensions(t *testing.T) {
+	dclient := filepath.Join(bin(t), "dclient")
+	if _, err := os.Stat(dclient); err != nil {
+		t.Skipf("no dclient in %s", bin(t))
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				c.Write([]byte("200 fake server ready\r\n"))
+				r := bufio.NewReader(c)
+				for {
+					line, err := r.ReadString('\n')
+					if err != nil {
+						return
+					}
+					switch strings.ToUpper(strings.Fields(line + " x")[0]) {
+					case "LIST":
+						c.Write([]byte("202 Extensions supported:\r\nHDR\r\nOVER\r\n.\r\n"))
+					case "QUIT":
+						c.Write([]byte("205 bye\r\n"))
+						return
+					default:
+						c.Write([]byte("500 what?\r\n"))
+					}
+				}
+			}(c)
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, dclient, "-p", strconv.Itoa(ln.Addr().(*net.TCPAddr).Port), "127.0.0.1", "LIST EXTENSIONS")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("dclient LIST EXTENSIONS: %v\n%s", err, out)
+	}
+	for _, want := range []string{"202 ", "HDR", "OVER"} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("dclient LIST EXTENSIONS: no %q in %q", want, out)
+		}
+	}
+}

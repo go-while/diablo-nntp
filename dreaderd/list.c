@@ -522,6 +522,8 @@ NNTPListModerators(Connection *conn, char **pptr)
 		continue;
 	    if (buf[l-1] == '\n')
 		buf[--l] = 0;
+	    if (l > 0 && buf[l-1] == '\r')
+		buf[--l] = 0;
 	    if (buf[0] == '.')
 		MBWrite(&conn->co_TMBuf, ".", 1);
 	    MBWrite(&conn->co_TMBuf, buf, l);
