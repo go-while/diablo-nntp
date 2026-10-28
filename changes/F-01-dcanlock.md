@@ -1,0 +1,1 @@
+- dcanlock: a new program that prints the Cancel-Key (like INN's `gencancel -k`) and Cancel-Lock for a Message-ID from the `canlockadmin` / `canlockuser` secrets of a vserverdef, and checks a key against a lock (F-01).

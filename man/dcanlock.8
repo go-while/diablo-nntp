@@ -1,0 +1,149 @@
+.TH DCANLOCK 8 "2026-10-28"
+.SH NAME
+dcanlock \- Diablo program to make and check Cancel-Keys and Cancel-Locks
+.SH SYNOPSIS
+.B dcanlock
+[
+.B \-C
+.I diablo.config
+] [
+.B \-a
+.I dreader.access
+] [
+.B \-v
+.I vserver
+] [
+.B \-u
+.I user
+] [
+.B \-s
+.I scheme
+] [
+.B \-S
+]
+.B key
+|
+.B lock
+.I message-id
+\&...
+.br
+.B dcanlock
+.B verify
+.I cancel-keys
+.I cancel-locks
+
+.SH DESCRIPTION
+.IR dcanlock
+works with the Cancel-Lock and Cancel-Key headers of RFC 8315, which
+.BR dreaderd (8)
+adds to the articles posted through it when the vserverdef in
+.I dreader.access
+has
+.B canlockadmin
+or
+.B canlockuser
+secrets, and checks before it executes a cancel or a Supersedes (the
+.B readercanlock
+option of
+.IR diablo.config ).
+The secrets are the ones dreaderd uses; the keys and locks are the same as
+those INN makes with its
+.B canlockadmin
+and
+.B canlockuser
+secrets (libcanlock), so
+.B dcanlock key
+does what INN's
+.B "gencancel \-k"
+does.
+.PP
+.B key
+prints, for each Message-ID (with its angle brackets, one line for each),
+the value of a Cancel-Key header: one
+.IR scheme : key
+element for each secret and scheme.  Put it into the Cancel-Key header of a
+cancel control message (or of an article with a Supersedes header) and post
+it: with the admin secrets this withdraws any article posted through
+dreaderd, whoever posted it.  dreaderd never adds the admin key itself.
+.PP
+.B lock
+prints the value of the Cancel-Lock header such an article carries, to check
+what a post should have got.
+.PP
+.B verify
+needs no secret: it exits with status 0 and prints
+.I match
+when one element of the first value is a key for an element of the second
+value (the same scheme, base64 of the hash of the key), else it prints
+.I "no match"
+and exits with status 1.
+.PP
+Options:
+.TP
+.B \-C diablo.config
+The configuration file, as for the other programs.
+.TP
+.B \-a dreader.access
+The file to read the secrets from; by default the one of
+.IR diablo.config .
+.TP
+.B \-v vserver
+The vserverdef the secrets are in; the default is
+.IR DEFAULT .
+.TP
+.B \-u user
+Use the
+.B canlockuser
+secrets and this user, as dreaderd makes them for an identified poster,
+instead of the
+.B canlockadmin
+secrets.
+.TP
+.B \-s scheme
+Make only
+.IR sha256 ,
+.I sha1
+or
+.I sha512
+elements.  By default sha256 and sha1 are made, unless the vserverdef says
+.B "canlocksha1 no" .
+.TP
+.B \-S
+Read the secret from the first line of standard input and not from
+.IR dreader.access ,
+for a machine that has neither the file nor a
+.IR diablo.config .
+The secret is read from standard input, never from the command line, so it
+doesn't show in the process list.  The secret is used as the
+.B canlockadmin
+secret, or as the
+.B canlockuser
+secret with
+.BR \-u .
+
+.SH EXAMPLE
+Withdraw the article <1234@example.invalid>, which was posted through
+dreaderd, by hand:
+.PP
+.nf
+key=`dcanlock key '<1234@example.invalid>'`
+(post a cancel article with the headers
+ Control: cancel <1234@example.invalid>
+ Cancel-Key: $key)
+.fi
+
+.SH FILES
+.I dreader.access
+holds the secrets in clear: only root and news may read it, and so
+.B dcanlock
+must be run by one of them.  The access cache in the db directory has them
+too.
+
+.SH "EXIT STATUS"
+0 on success (for verify: a match), 1 for verify when nothing matches, 2 for
+a usage error or when a secret, the vserverdef or the file is missing.
+
+.SH "SEE ALSO"
+dcancel(8),
+dreaderd(8),
+diablo-files(5)
