@@ -1084,6 +1084,7 @@ main(int ac, char **av)
 				LockFeedRegion(HostStats, XLOCK_UN, FSTATS_OUT);
 			    }
 			}
+			/* fall through - a defer that cannot be kept counts as rejected */
 		    case T_REJECTED:
 			++connectCount;
 			++Stats->SentStats.RejectedCnt;
@@ -2519,11 +2520,12 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 		break;
 	    }
 	    /*
-	     * fall through.  Consider a resend-later response to a check,
-	     * which is really a completely illegal response, to be the same
-	     * as OK_STRMCHECK if we are already processing the defers
-	     * and let the 'takethis' statemachine deal with it.
+	     * Consider a resend-later response to a check, which is really a
+	     * completely illegal response, to be the same as OK_STRMCHECK if we
+	     * are already processing the defers and let the 'takethis'
+	     * statemachine deal with it.
 	     */
+	    /* fall through */
 	case OK_STRMCHECK:
 	    if ((s = LocateStream(ptr, STATE_CHECK)) != NULL) {
 		int r;

@@ -312,6 +312,7 @@ AllocateSpools(time_t t)
 	switch (ms->ms_AllocationStrategy) {
 	    case SPOOL_ALLOC_NONE:
 		ms->ms_AllocationStrategy = SPOOL_ALLOC_SEQ;
+		/* fall through - none means sequential */
 	    case SPOOL_ALLOC_SEQ:
 		/*
 		 * Allocate spools in a sequential fashion
