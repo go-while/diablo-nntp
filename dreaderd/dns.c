@@ -37,6 +37,7 @@
 Prototype void DnsTask(int fd, const char *id);
 Prototype void InstallAccessCache(void);
 Prototype int ReadAccessCache(void);
+Prototype int ProxyFromOk(const ReaderDef *rd, const struct sockaddr_storage *peer);
 Prototype void UpdateAuthDetails(ForkDesc *desc);
 Prototype void SetAuthDetails(DnsRes *dres, char *which);
 Prototype void PrintAuthDetails(DnsRes *dres);
@@ -2910,6 +2911,58 @@ CreateAccessCache(const char *path)
     return(f);
 }
 
+/*
+ * ProxyFromOk() - may this peer send a proxied address (useproxied/haproxy)?
+ * A readerdef without proxyfrom entries accepts any peer that matched its
+ * access line; with entries, the peer must be inside one of them.
+ */
+int
+ProxyFromOk(const ReaderDef *rd, const struct sockaddr_storage *peer)
+{
+    unsigned char a[16];
+    int family;
+    int i;
+
+    if (rd == NULL || rd->rd_NProxyFrom <= 0)
+	return(1);
+    memset(a, 0, sizeof(a));
+    if (peer->ss_family == AF_INET) {
+	memcpy(a, &((const struct sockaddr_in *)peer)->sin_addr, 4);
+	family = AF_INET;
+    } else if (peer->ss_family == AF_INET6) {
+	const unsigned char *p6 = (const unsigned char *)&((const struct sockaddr_in6 *)peer)->sin6_addr;
+	static const unsigned char v4m[12] = { 0,0,0,0,0,0,0,0,0,0,0xff,0xff };
+
+	if (memcmp(p6, v4m, 12) == 0) {	/* IPv4-mapped */
+	    memcpy(a, p6 + 12, 4);
+	    family = AF_INET;
+	} else {
+	    memcpy(a, p6, 16);
+	    family = AF_INET6;
+	}
+    } else {
+	return(0);
+    }
+    for (i = 0; i < rd->rd_NProxyFrom && i < MAXPROXYFROM; ++i) {
+	const ProxyFrom *pf = &rd->rd_ProxyFrom[i];
+	int bits = pf->pf_Bits;
+	int full;
+
+	if (pf->pf_Family != family)
+	    continue;
+	full = bits / 8;
+	if (memcmp(a, pf->pf_Addr, full) != 0)
+	    continue;
+	if (bits % 8) {
+	    unsigned char mask = (unsigned char)(0xff << (8 - bits % 8));
+	    if ((a[full] & mask) != (pf->pf_Addr[full] & mask))
+		continue;
+	}
+	return(1);
+    }
+    return(0);
+}
+
 void
 InstallAccessCache(void) {
     struct stat st;
@@ -3129,6 +3182,9 @@ InstallAccessCache(void) {
 		    bzero(&authdef, sizeof(authdef));
 		    break;
 		case OPT_READERGRP:
+		    if ((readerdef.rd_UseProxied || readerdef.rd_HaProxy) &&
+			readerdef.rd_NProxyFrom == 0)
+			logit(LOG_NOTICE, "readerdef %s: useproxied/haproxy without proxyfrom trusts the client address sent by any client that matches its access line", readerdef.rd_Name);
 		    if (strcmp(readerdef.rd_Name, "DEFAULT") == 0) {
 			long fpos;
 			fpos = ftell(rdf);
@@ -3391,6 +3447,39 @@ InstallAccessCache(void) {
 		        readerdef.rd_UseProxied = 1;
 		    else
 		        readerdef.rd_UseProxied = 0;
+		    continue;
+		}
+		if (*val && strcmp(opt, "proxyfrom") == 0) {
+		    /* trusted proxy: address or address/bits; repeat for several */
+		    if (readerdef.rd_NProxyFrom < MAXPROXYFROM) {
+			ProxyFrom *pf = &readerdef.rd_ProxyFrom[readerdef.rd_NProxyFrom];
+			char abuf[64];
+			char *sl;
+
+			snprintf(abuf, sizeof(abuf), "%s", val);
+			bzero(pf, sizeof(*pf));
+			if ((sl = strchr(abuf, '/')) != NULL)
+			    *sl++ = 0;
+			if (inet_pton(AF_INET, abuf, pf->pf_Addr) == 1) {
+			    pf->pf_Family = AF_INET;
+			    pf->pf_Bits = sl ? atoi(sl) : 32;
+			    if (pf->pf_Bits < 0 || pf->pf_Bits > 32)
+				pf->pf_Bits = 32;
+			    ++readerdef.rd_NProxyFrom;
+			} else if (inet_pton(AF_INET6, abuf, pf->pf_Addr) == 1) {
+			    pf->pf_Family = AF_INET6;
+			    pf->pf_Bits = sl ? atoi(sl) : 128;
+			    if (pf->pf_Bits < 0 || pf->pf_Bits > 128)
+				pf->pf_Bits = 128;
+			    ++readerdef.rd_NProxyFrom;
+			} else {
+			    logit(LOG_ERR, "readerdef %s: bad proxyfrom address %s",
+						readerdef.rd_Name, val);
+			}
+		    } else {
+			logit(LOG_ERR, "readerdef %s: too many proxyfrom entries",
+						readerdef.rd_Name);
+		    }
 		    continue;
 		}
 		if (*val && strcmp(opt, "haproxy") == 0) {

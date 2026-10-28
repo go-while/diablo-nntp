@@ -1184,6 +1184,18 @@ NNCommand2(Connection *conn)
         LogCmd(conn, '<', "authinfo pass **unlogged**");
     }
 
+    if ((conn->co_Auth.dr_Flags & (DF_HAPROXY|DF_USEPROXIED)) &&
+	!ProxyFromOk(conn->co_Auth.dr_ReaderDef, &conn->co_Auth.dr_Addr)) {
+      /* the peer is not one of the readerdef's proxyfrom addresses */
+      MBLogPrintf(conn,
+          &conn->co_TMBuf,
+          "400 %s: Proxy authentication failure.\r\n",
+          conn->co_Auth.dr_VServerDef->vs_HostName
+      );
+      NNTerminate(conn);
+      return;
+    }
+
 #ifdef INET6
     /*
      *  HAProxy PROXY protocol.
