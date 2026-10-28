@@ -58,6 +58,17 @@ jobs:
           go-version-file: tests/e2e/go.mod
           cache-dependency-path: tests/e2e/go.sum
 
+      # diablo reverse-resolves the peer before the greeting (lib/hostauth.c,
+      # NI_NAMEREQD); map the loopback test clients in /etc/hosts so that PTR
+      # lookup stays local. The hosted resolver answers quickly today, but this
+      # keeps it off that luck. Names are arbitrary; peers are matched by IP.
+      - name: Map loopback peer names
+        run: |
+          printf '%s\n' \
+            '127.0.0.2 peer.e2e.test' '127.0.0.3 peer3.e2e.test' \
+            '127.0.0.4 peer4.e2e.test' '127.0.0.9 peer9.e2e.test' \
+            '127.0.0.10 peer10.e2e.test' | sudo tee -a /etc/hosts >/dev/null
+
       # Installs build packages, creates the news user, builds with RADIUS off
       # (Linux has no BSD libradius). E2E_NO_CANLOCK=1 builds Cancel-Lock out.
       - name: Build
@@ -158,7 +169,17 @@ jobs:
           # children; without it a killed dreaderd/diablo lingers as a zombie that
           # still answers kill -0, so diablo-ctl's stop never sees it exit (the VM
           # runner relies on the OS init for the same reaping).
-          docker run --rm --init -e E2E_FAKE_SENDMAIL=1 -v "$src":/src -w /src "${{ matrix.image }}" sh -ec '
+          # --add-host: diablo reverse-resolves the peer before the greeting
+          # (lib/hostauth.c, NI_NAMEREQD). Without a local entry, the PTR for each
+          # 127.0.0.x client waits out the container resolver (~5 s each), which
+          # pushes the 400-round SIGHUP test past the 20 min timeout. The names are
+          # arbitrary (peers are matched by IP); these entries only keep the lookup
+          # local and instant.
+          docker run --rm --init \
+            --add-host peer.e2e.test:127.0.0.2 --add-host peer3.e2e.test:127.0.0.3 \
+            --add-host peer4.e2e.test:127.0.0.4 --add-host peer9.e2e.test:127.0.0.9 \
+            --add-host peer10.e2e.test:127.0.0.10 \
+            -e E2E_FAKE_SENDMAIL=1 -v "$src":/src -w /src "${{ matrix.image }}" sh -ec '
             if tests/e2e/ci/build-on-host; then bok=1; else bok=0; fi
             echo "=== build.log (last 40 lines) ==="
             tail -40 build.log 2>/dev/null || true
@@ -201,6 +222,11 @@ jobs:
             # addresses (PeerIP 127.0.0.2 and .3/.4/.9/.10); unlike Linux, FreeBSD
             # has only 127.0.0.1 on lo0 by default, so add the rest as aliases.
             for ip in 2 3 4 9 10; do ifconfig lo0 alias 127.0.0.$ip netmask 0xffffffff; done
+            # diablo reverse-resolves the peer; map these names in /etc/hosts so
+            # the PTR lookup stays local (names arbitrary; peers matched by IP).
+            printf '%s\n' '127.0.0.2 peer.e2e.test' '127.0.0.3 peer3.e2e.test' \
+              '127.0.0.4 peer4.e2e.test' '127.0.0.9 peer9.e2e.test' \
+              '127.0.0.10 peer10.e2e.test' >> /etc/hosts
           run: |
             set -e
             root=$(pwd)
@@ -247,6 +273,10 @@ jobs:
               pkg install developer/gcc13 developer/build/gnu-make || true
             # Same 127.0.0.x client source addresses as the FreeBSD job needs.
             for ip in 2 3 4 9 10; do ifconfig lo0 addif 127.0.0.$ip up 2>/dev/null || true; done
+            # Local names so diablo's reverse PTR lookup of the peer stays local.
+            printf '%s\n' '127.0.0.2 peer.e2e.test' '127.0.0.3 peer3.e2e.test' \
+              '127.0.0.4 peer4.e2e.test' '127.0.0.9 peer9.e2e.test' \
+              '127.0.0.10 peer10.e2e.test' >> /etc/hosts
           run: |
             set -e
             root=$(pwd)
