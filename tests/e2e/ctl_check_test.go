@@ -455,6 +455,16 @@ func TestAdmDumphist(t *testing.T) {
 	if left, _ := filepath.Glob(hist + ".tmp.*"); len(left) != 0 {
 		t.Errorf("temporary files left: %v", left)
 	}
+	// .old is the snapshot before, not a link to the newest one: a third run moves both on
+	s.WriteFile(t, "dhistory", "third")
+	if out, code := admScript(t, s, "dumphist"); code != 0 {
+		t.Fatalf("third dumphist: exit %d\n%s", code, out)
+	}
+	snp, _ = os.ReadFile(hist + ".snp")
+	old, _ = os.ReadFile(hist + ".old")
+	if string(snp) != "third" || string(old) != "second" {
+		t.Errorf("dhistory.snp %q, dhistory.old %q; want third and second", snp, old)
+	}
 	os.Remove(hist)
 	if out, code := admScript(t, s, "dumphist"); code == 0 {
 		t.Errorf("dumphist without a history file: exit 0\n%s", out)
@@ -495,6 +505,9 @@ func TestAdmActsync(t *testing.T) {
 	host, err := os.Hostname()
 	if err != nil {
 		t.Skip(err)
+	}
+	if out, code := admScript(t, s, "actsync", ","); code != 2 || !strings.Contains(out, "usage:") {
+		t.Errorf("actsync with an empty server list: exit %d\n%s", code, out)
 	}
 	out, code := admScript(t, s, "actsync", "master.example.invalid,"+host)
 	if code != 0 || !strings.Contains(out, "nothing to do") {

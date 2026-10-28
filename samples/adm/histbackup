@@ -19,7 +19,13 @@ cd "$home" || exit 1
 
 echo "$(date) - $0 BEGIN"
 if "$dbin/dicmd" status >/dev/null 2>&1; then
-    reply=$("$dbin/dicmd" dumphist 2>&1)
+    # diablo runs the program of path_dumphist and logs it when that fails (to
+    # syslog); the only answer here is "No dumphist program configured".
+    if reply=$("$dbin/dicmd" dumphist 2>&1); then :; else
+	echo "$reply"
+	echo "$0: dicmd dumphist failed" >&2
+	exit 1
+    fi
     echo "$reply"
     case $reply in
 	*"No dumphist program"*) echo "$0: set path_dumphist in diablo.config" >&2; exit 1 ;;

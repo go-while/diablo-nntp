@@ -9,7 +9,7 @@
 #	actsync [-D] [-n] server[,server...]
 #
 # The first server of the list is asked.  The list may name this host
-# (hostname): then this host masters the file and nothing is done.
+# (uname -n): then this host masters the file and nothing is done.
 #
 #	-D	also delete the local groups that the server doesn't have
 #	-n	only show what would change (dsyncgroups -z)
@@ -42,14 +42,20 @@ home=$("$dbin/dpath" home) || exit 1
 cd "$home" || exit 1
 
 first=""
-me=$(hostname)
-for srv in $(echo "$1" | tr , ' '); do
+me=$(uname -n)
+oldifs=$IFS
+set -f
+IFS=,
+for srv in $1; do
     [ -n "$first" ] || first=$srv
     if [ "$srv" = "$me" ]; then
 	echo "$(date) $0: this host ($me) is one of the active file servers, nothing to do"
 	exit 0
     fi
 done
+IFS=$oldifs
+set +f
+[ -n "$first" ] || { echo "usage: $0 [-D] [-n] server[,server...]" >&2; exit 2; }
 
 echo "$(date) - $0 BEGIN ($first)"
 # shellcheck disable=SC2086

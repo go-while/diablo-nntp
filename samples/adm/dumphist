@@ -32,11 +32,15 @@ fi
 history=$("$dbin/dpath" dhistory) || exit 1
 [ -f "$history" ] || { echo "$0: no history file $history" >&2; exit 1; }
 tmp="$history.tmp.$$"
-trap 'rm -f "$tmp"' EXIT HUP INT TERM
+trap 'rm -f "$tmp"' EXIT
+trap 'exit 1' HUP INT TERM
 
 echo "$(date) - $0 BEGIN"
 cp -p "$history" "$tmp" || exit 1
-rm -f "$history.old"
-[ -f "$history.snp" ] && mv -f "$history.snp" "$history.old"
+# Keep the last snapshot as .old by a second link to it, then rename the new
+# copy over .snp: whenever the script ends, .snp is a whole snapshot.
+if [ -f "$history.snp" ]; then
+    ln -f "$history.snp" "$history.old" 2>/dev/null || cp -p "$history.snp" "$history.old" || exit 1
+fi
 mv -f "$tmp" "$history.snp" || exit 1
 echo "$(date) - $0 END"
