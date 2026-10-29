@@ -1064,7 +1064,7 @@ getFirstArtAge(Group *group, int fd, OverHead *oh)
      */
 
     n = (st.st_size - oh->oh_HeadSize) / sizeof(OverArt);
-    if (n <= 0) {
+    if (oh->oh_MaxArts <= 0 || n < oh->oh_MaxArts) {
 	fprintf(stderr, "Over file of group %s has no article slots (damaged header?) - skipped\n", group->gr_GroupName);
 	return(-1);
     }
@@ -1213,7 +1213,7 @@ ExpireByDays(Group *group, int fd, OverHead *oh, int expireSecs)
      */
 
     n = (st.st_size - oh->oh_HeadSize) / sizeof(OverArt);
-    if (n <= 0) {
+    if (oh->oh_MaxArts <= 0 || n < oh->oh_MaxArts) {
 	fprintf(stderr, "Over file of group %s has no article slots (damaged header?) - skipped\n", group->gr_GroupName);
 	return;
     }
@@ -1333,7 +1333,7 @@ ExpireBySpool(Group *group, int fd, OverHead *oh)
      */
 
     n = (st.st_size - oh->oh_HeadSize) / sizeof(OverArt);
-    if (n <= 0) {
+    if (oh->oh_MaxArts <= 0 || n < oh->oh_MaxArts) {
 	fprintf(stderr, "Over file of group %s has no article slots (damaged header?) - skipped\n", group->gr_GroupName);
 	return;
     }
@@ -1453,7 +1453,7 @@ ExpireFromFile(Group *group, int fd, OverHead *oh, int expireSecs)
      */
 
     n = (st.st_size - oh->oh_HeadSize) / sizeof(OverArt);
-    if (n <= 0) {
+    if (oh->oh_MaxArts <= 0 || n < oh->oh_MaxArts) {
 	fprintf(stderr, "Over file of group %s has no article slots (damaged header?) - skipped\n", group->gr_GroupName);
 	return;
     }
@@ -1598,7 +1598,7 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
      * Calculate number of overview records
      */
     n = (st.st_size - oh->oh_HeadSize) / sizeof(OverArt);
-    if (n <= 0) {
+    if (oh->oh_MaxArts <= 0 || n < oh->oh_MaxArts) {
 	fprintf(stderr, "Over file of group %s has no article slots (damaged header?) - skipped\n", group->gr_GroupName);
 	return;
     }
@@ -2122,6 +2122,15 @@ ResizeGroup(Group *group, int fd, OverHead *oh, int newSize, int OldDataEntries,
 				oldSize, newSize, group->gr_GroupName);
         }
         return;
+    }
+
+    /* a header that promises more records than the file holds, or none */
+    if (oldSize <= 0 ||
+		(st.st_size - oh->oh_HeadSize) / (long long)sizeof(OverArt) < oldSize) {
+	hflock(fd, 4, XLOCK_UN);
+	++NoResizedGroups;
+	fprintf(stderr, "Over file of group %s has no article slots (damaged header?) - skipped\n", group->gr_GroupName);
+	return;
     }
 
     /*
