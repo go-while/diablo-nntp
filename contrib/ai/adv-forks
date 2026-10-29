@@ -1,0 +1,76 @@
+#!/bin/sh
+# adv-forks: which branches of a repository's security-advisory private forks
+# are present in a local clone.
+#
+# Usage: adv-forks [-f] [-b PATTERN] OWNER/REPO [GITDIR]
+#
+#   OWNER/REPO   the repository whose advisories are listed
+#   GITDIR       local clone to compare with (default: .)
+#   -b PATTERN   only fork branches matching this grep -E pattern
+#                (default: ^(main|master|sec-|ghsa) )
+#   -f           fetch branches whose commit is missing locally, into
+#                refs/remotes/adv/<ghsa-id>/<branch>
+#
+# Lists every advisory that is not closed (draft, triage, published) with its
+# state and severity, then each fork branch matching the pattern: commit and
+# "local" or "MISSING". An advisory you can see but whose fork you cannot read
+# shows "no access" (a pending fork invitation has to be accepted first).
+#
+# Needs gh (authenticated as someone who can see the advisories), jq and git.
+# The output names advisories that may be embargoed: keep it private.
+
+fetch=0
+pattern='^(main|master|sec-|ghsa)'
+while getopts fb: o; do
+	case $o in
+	f) fetch=1 ;;
+	b) pattern=$OPTARG ;;
+	*) echo "usage: adv-forks [-f] [-b PATTERN] OWNER/REPO [GITDIR]" >&2; exit 2 ;;
+	esac
+done
+shift $((OPTIND - 1))
+if [ $# -lt 1 ] || [ $# -gt 2 ]; then
+	echo "usage: adv-forks [-f] [-b PATTERN] OWNER/REPO [GITDIR]" >&2
+	exit 2
+fi
+repo=$1
+gitdir=${2:-.}
+git -C "$gitdir" rev-parse --git-dir >/dev/null 2>&1 || { echo "adv-forks: $gitdir is not a git checkout" >&2; exit 2; }
+
+list=$(gh api --paginate "repos/$repo/security-advisories?per_page=100" \
+	--jq '.[] | select(.state != "closed") | "\(.ghsa_id) \(.state) \(.severity // "-") \(.private_fork.full_name // "-")"') || exit 1
+if [ -z "$list" ]; then
+	echo "no open advisories visible"
+	exit 0
+fi
+
+echo "$list" | while read -r id state sev fork; do
+	echo "$id $state $sev"
+	if [ "$fork" = "-" ]; then
+		echo "    no private fork"
+		continue
+	fi
+	url="https://github.com/$fork.git"
+	refs=$(git -C "$gitdir" ls-remote --heads "$url" 2>/dev/null)
+	if [ -z "$refs" ]; then
+		echo "    $fork: no access"
+		continue
+	fi
+	echo "$refs" | while read -r sha ref; do
+		b=${ref#refs/heads/}
+		echo "$b" | grep -Eq "$pattern" || continue
+		short=$(printf '%.7s' "$sha")
+		if git -C "$gitdir" cat-file -e "$sha^{commit}" 2>/dev/null; then
+			echo "    $b $short local"
+		elif [ $fetch -eq 1 ]; then
+			lid=$(echo "$id" | tr 'A-Z' 'a-z')
+			if git -C "$gitdir" fetch -q "$url" "$ref:refs/remotes/adv/$lid/$b"; then
+				echo "    $b $short fetched to adv/$lid/$b"
+			else
+				echo "    $b $short MISSING (fetch failed)"
+			fi
+		else
+			echo "    $b $short MISSING"
+		fi
+	done
+done

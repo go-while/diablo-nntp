@@ -1,0 +1,1 @@
+- contrib/ai: four small sh helpers for AI-assisted maintenance (suite-summary, pr-status, board-new, adv-forks) and a note on splitting work between scripts, a cheaper sub-agent and the main model.

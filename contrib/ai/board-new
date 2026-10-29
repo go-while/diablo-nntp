@@ -1,0 +1,77 @@
+#!/bin/sh
+# board-new: list the messages added to a git-branch message board since the
+# last run.
+#
+# Usage: board-new [-n] [-p PATH] [-s STATEFILE] [-c COUNT] DIR
+#
+#   DIR        a clone or worktree of the board (one file per message)
+#   -p PATH    directory of the message files inside DIR (default: msgs)
+#   -s FILE    where the last seen commit is kept
+#              (default: DIR/.git-board-new-<PATH with / as _>, outside the
+#              tracked files; use -s when DIR is a linked worktree you share)
+#   -n         do not pull first (default: git pull --rebase -q)
+#   -c COUNT   on the first run, how many of the newest messages to show
+#              (default 5)
+#
+# For each new message it prints the file name and its From:, To: and Re:
+# header lines. The state file is updated to the current HEAD afterwards.
+# A message file is expected to start with "From:", "To:" and "Re:" lines;
+# other files are listed by name only.
+
+pull=1
+path=msgs
+state=
+count=5
+while getopts np:s:c: o; do
+	case $o in
+	n) pull=0 ;;
+	p) path=$OPTARG ;;
+	s) state=$OPTARG ;;
+	c) count=$OPTARG ;;
+	*) echo "usage: board-new [-n] [-p PATH] [-s STATEFILE] [-c COUNT] DIR" >&2; exit 2 ;;
+	esac
+done
+shift $((OPTIND - 1))
+if [ $# -ne 1 ]; then
+	echo "usage: board-new [-n] [-p PATH] [-s STATEFILE] [-c COUNT] DIR" >&2
+	exit 2
+fi
+dir=$1
+git -C "$dir" rev-parse --git-dir >/dev/null 2>&1 || { echo "board-new: $dir is not a git checkout" >&2; exit 2; }
+
+if [ -z "$state" ]; then
+	gitdir=$(git -C "$dir" rev-parse --absolute-git-dir) || exit 2
+	state="$gitdir/board-new-$(printf '%s' "$path" | tr '/' '_')"
+fi
+
+if [ $pull -eq 1 ]; then
+	git -C "$dir" pull --rebase -q || { echo "board-new: pull failed" >&2; exit 1; }
+fi
+head=$(git -C "$dir" rev-parse HEAD) || exit 1
+
+show() {
+	f=$1
+	printf '%s\n' "$f"
+	if [ -r "$dir/$f" ]; then
+		head -n 6 "$dir/$f" | grep -E '^(From|To|Re):' | sed 's/^/    /'
+	fi
+}
+
+last=
+[ -r "$state" ] && last=$(cat "$state")
+if [ -n "$last" ] && git -C "$dir" cat-file -e "$last^{commit}" 2>/dev/null; then
+	files=$(git -C "$dir" log --reverse --diff-filter=A --name-only --format= "$last..$head" -- "$path")
+	if [ -z "$files" ]; then
+		echo "no new messages"
+	fi
+else
+	echo "(first run: the $count newest messages)"
+	# newest by file name (boards name messages by time), not by directory
+	files=$(git -C "$dir" ls-files -- "$path" |
+		awk -F/ '{ print $NF "\t" $0 }' | sort | tail -n "$count" | cut -f2)
+fi
+for f in $files; do
+	show "$f"
+done
+
+printf '%s\n' "$head" > "$state"

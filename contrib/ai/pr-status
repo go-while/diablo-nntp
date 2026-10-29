@@ -1,0 +1,39 @@
+#!/bin/sh
+# pr-status: one line per open pull request of a GitHub repository.
+#
+# Usage: pr-status [-a] OWNER/REPO
+#
+#   -a   all states (open, merged, closed), the 20 most recently updated
+#
+# For each PR: number, state, head commit, mergeable, check results
+# (success/failure/pending counts) and the names of failing checks, then the
+# title. Needs gh (authenticated) and jq.
+
+state=open
+limit=50
+while getopts a o; do
+	case $o in
+	a) state=all; limit=20 ;;
+	*) echo "usage: pr-status [-a] OWNER/REPO" >&2; exit 2 ;;
+	esac
+done
+shift $((OPTIND - 1))
+if [ $# -ne 1 ]; then
+	echo "usage: pr-status [-a] OWNER/REPO" >&2
+	exit 2
+fi
+
+gh pr list -R "$1" --state "$state" --limit "$limit" \
+	--json number,state,headRefOid,mergeable,title,statusCheckRollup |
+jq -r '
+	.[] |
+	([.statusCheckRollup[]? | (.conclusion // .state // .status // "")]) as $c |
+	([$c[] | select(. == "SUCCESS" or . == "NEUTRAL" or . == "SKIPPED")] | length) as $ok |
+	([$c[] | select(. == "FAILURE" or . == "ERROR" or . == "CANCELLED" or . == "TIMED_OUT" or . == "ACTION_REQUIRED")] | length) as $bad |
+	(($c | length) - $ok - $bad) as $wait |
+	([.statusCheckRollup[]? | select((.conclusion // .state // "") as $s |
+		$s == "FAILURE" or $s == "ERROR" or $s == "CANCELLED" or $s == "TIMED_OUT" or $s == "ACTION_REQUIRED")
+		| (.name // .context)] | join(", ")) as $failed |
+	"#\(.number) \(.state) \(.headRefOid[0:7]) \(.mergeable) | checks \($ok) ok, \($bad) failed, \($wait) pending" +
+	(if $failed != "" then " (\($failed))" else "" end) +
+	" | \(.title)"'

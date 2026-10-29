@@ -1,0 +1,56 @@
+#!/bin/sh
+# suite-summary: one line per e2e suite log.
+#
+# Usage: suite-summary LOG...
+#
+# A log is the output of tests/e2e/ci/build-on-host plus `go test -v` (the
+# "### build" / "### test" sections). For each log it prints the system, the
+# build result and warning/error counts, the top-level PASS/FAIL/SKIP counts,
+# the test exit status, and the names of failing tests. Subtests are not
+# counted. Lines saying "panic:" or "LEFTOVER" are counted too.
+#
+# Exit status: 0 if every log has a good build, no failing test and exit 0;
+# 1 otherwise; 2 on a usage error.
+
+if [ $# -eq 0 ]; then
+	echo "usage: suite-summary LOG..." >&2
+	exit 2
+fi
+
+rc=0
+for log in "$@"; do
+	if [ ! -r "$log" ]; then
+		echo "$log: cannot read" >&2
+		rc=1
+		continue
+	fi
+	line=$(awk -v name="$log" '
+		/^== /                 { if (os == "") os = substr($0, 4) }
+		/^warnings: /          { warn = $2 }
+		/^errors: /            { err = $2 }
+		/^build: /             { build = $2 }
+		/^--- PASS: /          { pass++ }
+		/^--- SKIP: /          { skip++ }
+		/^--- FAIL: /          { fail++; failed = failed " " $3 }
+		/panic:/               { panic++ }
+		/LEFTOVER/             { left++ }
+		/^tests exit: /        { texit = $3 }
+		END {
+			if (os == "") os = "?"
+			if (build == "") build = "?"
+			if (texit == "") texit = "?"
+			printf "%s: %s | build %s, %s warnings, %s errors | %d pass, %d fail, %d skip | exit %s",
+				name, os, build, (warn == "" ? "?" : warn), (err == "" ? "?" : err),
+				pass, fail, skip, texit
+			if (panic) printf " | %d panic", panic
+			if (left) printf " | %d leftover", left
+			if (fail) printf " | failed:%s", failed
+			printf "\n"
+			bad = (build != "ok" || fail > 0 || texit != "0" || panic > 0 || (err != "" && err != "0"))
+			exit bad
+		}' "$log")
+	st=$?
+	echo "$line"
+	[ $st -ne 0 ] && rc=1
+done
+exit $rc
