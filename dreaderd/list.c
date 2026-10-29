@@ -576,6 +576,7 @@ NNTPListGroup(Connection *conn, char **pptr)
 	char *p;
 	artno_t lo = strtoll(range, &p, 10);
 	artno_t hi = lo;
+	int openEnd = 0;
 
 	if (p == range || lo < 0) {
 	    MBLogPrintf(conn, &conn->co_TMBuf, "501 Bad range %s\r\n", range);
@@ -586,7 +587,7 @@ NNTPListGroup(Connection *conn, char **pptr)
 	    char *q = p + 1;
 
 	    if (*q == 0) {
-		hi = -1;		/* n-: to the end */
+		openEnd = 1;		/* n-: to the end */
 		p = q;
 	    } else {
 		hi = strtoll(q, &p, 10);
@@ -600,13 +601,18 @@ NNTPListGroup(Connection *conn, char **pptr)
 	    return;
 	}
 	lo = artno_input(conn->co_ArtBeg, conn->co_ArtEnd, lo, conn->co_Numbering);
+	if (!openEnd)
+	    hi = artno_input(conn->co_ArtBeg, conn->co_ArtEnd, hi, conn->co_Numbering);
+	if (lo < 0 || (!openEnd && hi < 0)) {
+	    /* a number above the RFC 3977 limit is no bound */
+	    MBLogPrintf(conn, &conn->co_TMBuf, "501 Bad range %s\r\n", range);
+	    NNCommand(conn);
+	    return;
+	}
 	if (lo > beg)
 	    beg = lo;
-	if (hi >= 0) {
-	    hi = artno_input(conn->co_ArtBeg, conn->co_ArtEnd, hi, conn->co_Numbering);
-	    if (hi < end)
-		end = hi;
-	}
+	if (!openEnd && hi < end)
+	    end = hi;
     }
 
     {
