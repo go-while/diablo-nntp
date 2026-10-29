@@ -2603,6 +2603,7 @@ InstallAccessCache(void) {
     GroupList *groupptr = NULL;
     AccessDef accessdef;
     int copt = OPT_NONE;
+    int parseError = 0;	/* bad file content, as opposed to a transient failure */
     char vsnewbuf[PATH_MAX];
     char grnewbuf[PATH_MAX];
     char aunewbuf[PATH_MAX];
@@ -2819,7 +2820,7 @@ InstallAccessCache(void) {
 	}
 	if (!*val) {
 	    logit(LOG_ERR, "dreader.access: Missing value/label for %s in line %d", opt, linecount);
-	    Access_LastUpdate = 0;
+	    parseError = 1;
 	    continue;
 	}
 	/* Handle the definition options */
@@ -3089,27 +3090,27 @@ InstallAccessCache(void) {
 		}
 		if (*val && strcmp(opt, "maxconn") == 0) {
 		    if (readerdefNumber(opt, val, linecount, &readerdef.rd_MaxConnTotal) < 0)
-			Access_LastUpdate = 0;
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "maxconnperhost") == 0) {
 		    if (readerdefNumber(opt, val, linecount, &readerdef.rd_MaxConnPerHost) < 0)
-			Access_LastUpdate = 0;
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "maxconnperuser") == 0) {
 		    if (readerdefNumber(opt, val, linecount, &readerdef.rd_MaxConnPerUser) < 0)
-			Access_LastUpdate = 0;
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "maxconnpergroup") == 0) {
 		    if (readerdefNumber(opt, val, linecount, &readerdef.rd_MaxConnPerGroup) < 0)
-			Access_LastUpdate = 0;
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "maxconnpervs") == 0) {
 		    if (readerdefNumber(opt, val, linecount, &readerdef.rd_MaxConnPerVs) < 0)
-			Access_LastUpdate = 0;
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "ratelimit") == 0) {
@@ -3118,7 +3119,7 @@ InstallAccessCache(void) {
 		}
 		if (*val && strcmp(opt, "ratelimittax") == 0) {
 		    if (readerdefNumber(opt, val, linecount, &readerdef.rd_RateLimitTax) < 0)
-			Access_LastUpdate = 0;
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "ratelimitrange") == 0) {
@@ -3140,19 +3141,19 @@ InstallAccessCache(void) {
 		}
 		if (*val && strcmp(opt, "bytelimit") == 0) {
 		    if (readerdefNumber(opt, val, linecount, &readerdef.rd_ByteLimit) < 0)
-			Access_LastUpdate = 0;
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "pathcomponents") == 0) {
 		    if (readerdefNumber(opt, val, linecount, &readerdef.rd_PathComponents) < 0)
-			Access_LastUpdate = 0;
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "idletimeout") == 0) {
 		    int num;
 
 		    if (readerdefNumber(opt, val, linecount, &num) < 0)
-			Access_LastUpdate = 0;
+			parseError = 1;
 		    else
 			readerdef.rd_IdleTimeout = num;
 		    continue;
@@ -3161,7 +3162,7 @@ InstallAccessCache(void) {
 		    int num;
 
 		    if (readerdefNumber(opt, val, linecount, &num) < 0)
-			Access_LastUpdate = 0;
+			parseError = 1;
 		    else
 			readerdef.rd_SessionTimeout = num;
 		    continue;
@@ -3380,7 +3381,7 @@ InstallAccessCache(void) {
 	    continue;
 	}
 	logit(LOG_ERR, "dreader.access: Invalid access definition : %s in line %d\n", opt, linecount);
-	Access_LastUpdate = 0;
+	parseError = 1;
     }
     fclose(fp);
     fclose(vsf);
@@ -3388,7 +3389,12 @@ InstallAccessCache(void) {
     fclose(auf);
     fclose(rdf);
     fclose(raf);
-    if (Access_LastUpdate == 0) {
+    if (parseError) {
+	/*
+	 * Bad content.  Keep the refused file's mtime/size/ino (set above) so
+	 * the unchanged check skips it silently until it is edited; a changed
+	 * file is parsed again.  Transient failures below still retry.
+	 */
 	logit(LOG_ERR, "Errors in dreader.access file - not updating");
 	return;
     }
