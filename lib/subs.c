@@ -894,7 +894,10 @@ MoveFile(char *from, char *to)
 	unlink(to);
 	return(-1);
     }
-    unlink(from);
+    if (unlink(from) != 0) {
+	printf("ERROR: Unable to remove input file: %s\n", from);
+	return(-1);
+    }
     return(0);
 }
 

@@ -5,11 +5,14 @@ package e2e
 
 import (
 	"encoding/xml"
+	"errors"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -31,11 +34,20 @@ func ctlSite(t *testing.T, config map[string]string, extra string) (*Site, func(
 	return s, func(args ...string) (string, int) { return ctl(t, s, ctlp, conf, args...) }
 }
 
-// skipWithoutPreflight skips the test for a diablo-ctl that has no check action.
-func skipWithoutPreflight(t *testing.T, run func(args ...string) (string, int)) {
+// skipWithoutPreflight skips the test for an old diablo-ctl, one from before the checks: its
+// source has no DIABLO_PREFLIGHT. A diablo-ctl with the checks that has lost its check action
+// fails the test.
+func skipWithoutPreflight(t *testing.T, s *Site, run func(args ...string) (string, int)) {
 	t.Helper()
+	b, err := os.ReadFile(ctlPath(t, s))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "DIABLO_PREFLIGHT") {
+		t.Skip("diablo-ctl is older than the checks (no DIABLO_PREFLIGHT)")
+	}
 	if out, code := run("check"); code == 2 || strings.Contains(out, "usage:") {
-		t.Skip("diablo-ctl has no check action")
+		t.Fatalf("diablo-ctl has DIABLO_PREFLIGHT but no check action: exit %d\n%s", code, out)
 	}
 }
 
@@ -51,8 +63,8 @@ func listening(addr string) bool {
 // TestDiabloCtlChecks: every check, with check and with start.
 func TestDiabloCtlChecks(t *testing.T) {
 	t.Run("nothing to complain about", func(t *testing.T) {
-		_, run := ctlSite(t, nil, "")
-		skipWithoutPreflight(t, run)
+		s, run := ctlSite(t, nil, "")
+		skipWithoutPreflight(t, s, run)
 		out, code := run("check")
 		wantCtl(t, out, code, 0, "check")
 		if !strings.Contains(out, "checks passed") {
@@ -62,7 +74,7 @@ func TestDiabloCtlChecks(t *testing.T) {
 
 	t.Run("mounts", func(t *testing.T) {
 		s, run := ctlSite(t, nil, "")
-		skipWithoutPreflight(t, run)
+		skipWithoutPreflight(t, s, run)
 		conf := filepath.Join(s.Dir, "diablo-ctl.test.conf")
 		b, _ := os.ReadFile(conf)
 		os.WriteFile(conf, append(b, []byte("DIABLO_MOUNTS='"+filepath.Join(s.Dir, "no-such-mount")+"'\n")...), 0o644)
@@ -89,7 +101,7 @@ func TestDiabloCtlChecks(t *testing.T) {
 
 	t.Run("preflight off", func(t *testing.T) {
 		s, run := ctlSite(t, nil, "DIABLO_PREFLIGHT=no\nDIABLO_MOUNTS='/no/such/mount'\n")
-		skipWithoutPreflight(t, run)
+		skipWithoutPreflight(t, s, run)
 		if out, code := run("start"); code != 0 || !listening(s.Addr) {
 			t.Errorf("start with DIABLO_PREFLIGHT=no: exit %d\n%s", code, out)
 		}
@@ -98,7 +110,7 @@ func TestDiabloCtlChecks(t *testing.T) {
 	t.Run("history", func(t *testing.T) {
 		// a missing history is diablo's to create: no failure, only a note when a snapshot exists
 		s, run := ctlSite(t, nil, "")
-		skipWithoutPreflight(t, run)
+		skipWithoutPreflight(t, s, run)
 		os.Remove(filepath.Join(s.Dir, "dhistory"))
 		out, code := run("check")
 		wantCtl(t, out, code, 0, "check without a history file")
@@ -120,7 +132,7 @@ func TestDiabloCtlChecks(t *testing.T) {
 
 	t.Run("history required", func(t *testing.T) {
 		s, run := ctlSite(t, nil, "DIABLO_REQUIRE_HISTORY=yes\n")
-		skipWithoutPreflight(t, run)
+		skipWithoutPreflight(t, s, run)
 		os.Remove(filepath.Join(s.Dir, "dhistory"))
 		out, code := run("check")
 		wantCtl(t, out, code, 1, "check with DIABLO_REQUIRE_HISTORY and no history")
@@ -134,7 +146,7 @@ func TestDiabloCtlChecks(t *testing.T) {
 
 	t.Run("active file", func(t *testing.T) {
 		s, run := ctlSite(t, map[string]string{"active": "on"}, "DIABLO_ACTIVE_MAXAGE=1\n")
-		skipWithoutPreflight(t, run)
+		skipWithoutPreflight(t, s, run)
 		os.Remove(filepath.Join(s.Dir, "dactive.kp"))
 		out, code := run("check")
 		wantCtl(t, out, code, 1, "check with active on and no active file")
@@ -160,7 +172,7 @@ func TestDiabloCtlChecks(t *testing.T) {
 
 	t.Run("active off", func(t *testing.T) {
 		s, run := ctlSite(t, nil, "")
-		skipWithoutPreflight(t, run)
+		skipWithoutPreflight(t, s, run)
 		os.Remove(filepath.Join(s.Dir, "dactive.kp"))
 		out, code := run("check")
 		wantCtl(t, out, code, 0, "check with active off and no active file")
@@ -168,7 +180,7 @@ func TestDiabloCtlChecks(t *testing.T) {
 
 	t.Run("unclean shutdown", func(t *testing.T) {
 		s, run := ctlSite(t, nil, "DIABLO_MAX_DOWNTIME=60\n")
-		skipWithoutPreflight(t, run)
+		skipWithoutPreflight(t, s, run)
 		if err := os.MkdirAll(filepath.Join(s.Dir, "log"), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -227,7 +239,7 @@ func TestDiabloCtlStopRemovesPid(t *testing.T) {
 // daemon of the site runs.
 func TestDiabloCtlDkpTrim(t *testing.T) {
 	s, run := ctlSite(t, nil, "DIABLO_DKP_TRIM=yes\n")
-	skipWithoutPreflight(t, run)
+	skipWithoutPreflight(t, s, run)
 	file := filepath.Join(s.Dir, "dactive.kp")
 	s.Run(t, "dkp", "-w", file, "keep.this", "S==y")
 	s.Run(t, "dkp", "-w", file, "drop.this", "S==y")
@@ -478,6 +490,103 @@ func TestAdmDumphist(t *testing.T) {
 	}
 }
 
+// TestAdmDumphistInterrupted: a dumphist that is interrupted while it copies the history leaves
+// dhistory.snp and dhistory.old as they were, and no temporary file. The copy is made slow by a
+// cp on PATH that writes the start of the history and then waits. The test signals the script
+// and then stops that cp, so the script gets the signal while it waits for its copy.
+func TestAdmDumphistInterrupted(t *testing.T) {
+	for _, sig := range []syscall.Signal{syscall.SIGINT, syscall.SIGTERM} {
+		t.Run(sig.String(), func(t *testing.T) {
+			s := NewSite(t, SiteOptions{NoStart: true})
+			hist := filepath.Join(s.Dir, "dhistory")
+			s.WriteFile(t, "dhistory", "first")
+			if out, code := admScript(t, s, "dumphist"); code != 0 {
+				t.Fatalf("dumphist: exit %d\n%s", code, out)
+			}
+			s.WriteFile(t, "dhistory", "second")
+			if out, code := admScript(t, s, "dumphist"); code != 0 {
+				t.Fatalf("second dumphist: exit %d\n%s", code, out)
+			}
+
+			s.WriteFile(t, "dhistory", "third")
+			bin := t.TempDir()
+			ready := filepath.Join(bin, "ready")
+			realCp, err := exec.LookPath("cp")
+			if err != nil {
+				t.Fatal(err)
+			}
+			// the slow cp writes the pids of the script (its parent) and of itself, which then
+			// becomes sleep
+			slowCp := "#!/bin/sh\n" +
+				"case \"$2\" in *dhistory) head -c 3 \"$2\" > \"$3\"; echo $PPID $$ > '" + ready + "'; exec sleep 60;; esac\n" +
+				"exec '" + realCp + "' \"$@\"\n"
+			if err := os.WriteFile(filepath.Join(bin, "cp"), []byte(slowCp), 0o755); err != nil {
+				t.Fatal(err)
+			}
+
+			p := filepath.Join(s.Bin, "..", "samples", "adm", "dumphist")
+			cmd := exec.Command("/bin/sh", p)
+			cmd.Dir = t.TempDir()
+			cmd.Env = append(append(os.Environ(), s.Env...), "DIABLO_BIN="+s.Bin, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			go func() { done <- cmd.Wait() }()
+			var cpPid int
+			t.Cleanup(func() {
+				if cpPid > 0 {
+					_ = syscall.Kill(cpPid, syscall.SIGKILL)
+				}
+			})
+
+			var shPid int
+			deadline := time.Now().Add(testkit.Deadline())
+			for {
+				if b, err := os.ReadFile(ready); err == nil {
+					if f := strings.Fields(string(b)); len(f) == 2 {
+						shPid, _ = strconv.Atoi(f[0])
+						cpPid, _ = strconv.Atoi(f[1])
+						break
+					}
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("dumphist did not reach the copy")
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+			if err := syscall.Kill(shPid, sig); err != nil {
+				t.Fatal(err)
+			}
+			if err := syscall.Kill(cpPid, syscall.SIGKILL); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case err := <-done:
+				var ee *exec.ExitError
+				if err != nil && !errors.As(err, &ee) {
+					t.Fatal(err)
+				}
+				if err == nil {
+					t.Errorf("interrupted dumphist: exit 0")
+				}
+			case <-time.After(testkit.Deadline()):
+				t.Fatal("dumphist did not end after the signal")
+			}
+
+			if b, _ := os.ReadFile(hist + ".snp"); string(b) != "second" {
+				t.Errorf("dhistory.snp %q after an interrupted copy, want the previous snapshot \"second\"", b)
+			}
+			if b, _ := os.ReadFile(hist + ".old"); string(b) != "first" {
+				t.Errorf("dhistory.old %q after an interrupted copy, want \"first\"", b)
+			}
+			if left, _ := filepath.Glob(hist + ".tmp.*"); len(left) != 0 {
+				t.Errorf("temporary files left: %v", left)
+			}
+		})
+	}
+}
+
 // TestAdmHistbackup: histbackup asks a running diablo for the snapshot (path_dumphist), does
 // nothing without one, and says so when path_dumphist is not set.
 func TestAdmHistbackup(t *testing.T) {
@@ -704,7 +813,7 @@ func mustRead(t *testing.T, p string) string {
 func TestDiabloCtlActiveFileDetails(t *testing.T) {
 	t.Run("leading zeros", func(t *testing.T) {
 		s, run := ctlSite(t, map[string]string{"active": "on"}, "DIABLO_ACTIVE_MAXAGE=08\n")
-		skipWithoutPreflight(t, run)
+		skipWithoutPreflight(t, s, run)
 		s.WriteFile(t, "dactive.kp", "")
 		out, code := run("check")
 		wantCtl(t, out, code, 0, "check with DIABLO_ACTIVE_MAXAGE=08")
@@ -728,7 +837,7 @@ func TestDiabloCtlActiveFileDetails(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			s, run := ctlSite(t, c.conf, "")
-			skipWithoutPreflight(t, run)
+			skipWithoutPreflight(t, s, run)
 			if c.add != "" {
 				f, err := os.OpenFile(filepath.Join(s.Dir, "diablo.config"), os.O_APPEND|os.O_WRONLY, 0)
 				if err != nil {
@@ -771,7 +880,7 @@ func TestDiabloCtlActiveFileReading(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			s, run := ctlSite(t, nil, "")
-			skipWithoutPreflight(t, run)
+			skipWithoutPreflight(t, s, run)
 			appendConfig(t, s, c.add)
 			os.Remove(filepath.Join(s.Dir, "dactive.kp"))
 			out, code := run("check")
@@ -783,7 +892,7 @@ func TestDiabloCtlActiveFileReading(t *testing.T) {
 	}
 	t.Run("absolute path", func(t *testing.T) {
 		s, run := ctlSite(t, nil, "")
-		skipWithoutPreflight(t, run)
+		skipWithoutPreflight(t, s, run)
 		other := filepath.Join(s.Dir, "elsewhere.kp")
 		appendConfig(t, s, "active\t"+other+"\n")
 		out, code := run("check")
@@ -797,8 +906,8 @@ func TestDiabloCtlActiveFileReading(t *testing.T) {
 	})
 	t.Run("dpath fails", func(t *testing.T) {
 		alt := fakeBin(t, &Site{Bin: bin(t)}, map[string]string{"dpath": "[ \"$1\" = server_dactive ] && exit 1\nexec '" + filepath.Join(bin(t), "dpath") + "' \"$@\"\n"})
-		_, run := ctlSite(t, map[string]string{"active": "on"}, "DIABLO_BIN='"+alt+"'\n")
-		skipWithoutPreflight(t, run)
+		s, run := ctlSite(t, map[string]string{"active": "on"}, "DIABLO_BIN='"+alt+"'\n")
+		skipWithoutPreflight(t, s, run)
 		out, code := run("check")
 		wantCtl(t, out, code, 1, "check with a dpath that cannot name the active file")
 		if !strings.Contains(out, "cannot find out the path of the active file") {
