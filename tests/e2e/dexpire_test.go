@@ -96,3 +96,38 @@ func TestDexpireKeepsNewestDir(t *testing.T) {
 	expect(t, p, 223, "STAT %s", next)
 	expect(t, p, 205, "QUIT")
 }
+
+// TestDexpireKeepsHistoryOfUnremovedDir (D-157): a spool directory that dexpire cannot enter is
+// not removed, and its history entries must not be marked expired: the articles are still
+// there. dexpire marked every directory it had tried as removed, and the history update then
+// expired the records of files that were still on disk.
+func TestDexpireKeepsHistoryOfUnremovedDir(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can enter any directory")
+	}
+	s := NewSite(t, SiteOptions{SpoolCtl: "spool 00\n    minfree 1m\n    keeptime 1\nend\nmetaspool trad\n    spool 00\nend\nexpire * trad\n"})
+	id := s.Inject(t, "e2e.test", 1)[0]
+	dirs, _ := filepath.Glob(filepath.Join(s.Dir, "spool", "news", "D.*"))
+	if len(dirs) != 1 {
+		t.Fatalf("spool directories: %q, want one", dirs)
+	}
+	time.Sleep(2 * time.Second)
+	newerSpoolDir(t, s)
+	if err := os.Chmod(dirs[0], 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dirs[0], 0o755) })
+	out := s.Run(t, "dexpire", "-a", "-v")
+	if err := os.Chmod(dirs[0], 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dirs[0]); err != nil {
+		t.Fatalf("the directory that could not be entered is gone: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "was not removed") {
+		t.Errorf("dexpire did not say that it kept the directory:\n%s", out)
+	}
+	p := s.Peer(t)
+	expect(t, p, 223, "STAT %s", id) // the history still has the article
+	expect(t, p, 205, "QUIT")
+}
