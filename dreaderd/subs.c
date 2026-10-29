@@ -180,6 +180,10 @@ SetTimeRestrict(TimeRestrict *tr, const char *yymmdd, const char *hhmmss, const 
      * yymmdd   = 2 digit year that conforms to NNTP spec
      *
      * All digits, no more and no less; month, day and time must exist.
+     * Seconds go to 60 (leap second, RFC 3977 7.3.2); mktime() carries it.
+     * The two digit year keeps the old +/-50 years window around today (270101
+     * is 2027), which is not RFC 3977's "past century" rule (a compatibility
+     * exception).
      */
     {
 	static const char mdays[12] = { 31,29,31,30,31,30,31,31,30,31,30,31 };
@@ -220,7 +224,7 @@ SetTimeRestrict(TimeRestrict *tr, const char *yymmdd, const char *hhmmss, const 
 	    return(-1);
 	if (tmv.tm_mon < 1 || tmv.tm_mon > 12 || tmv.tm_mday < 1 ||
 	    tmv.tm_mday > mdays[tmv.tm_mon - 1] ||
-	    tmv.tm_hour > 23 || tmv.tm_min > 59 || tmv.tm_sec > 59)
+	    tmv.tm_hour > 23 || tmv.tm_min > 59 || tmv.tm_sec > 60)
 	    return(-1);
 	--tmv.tm_mon;
 	if (!ycent) {

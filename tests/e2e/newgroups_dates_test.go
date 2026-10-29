@@ -22,7 +22,7 @@ func newgroupsList(t *testing.T, s *Site, want int, args string) []string {
 }
 
 // TestNewgroupsDates: invalid months, days and times are 501 (they were rolled over into the
-// next month or year); yyyymmdd works for any year (19990101 was 501); the groups made just
+// next month or year), and so is second 61 (60 is a leap second and valid); yyyymmdd works for any year (19990101 was 501); the groups made just
 // now show for an old date and not for a future one (before 2038: NEWGROUPS compares 32 bit).
 func TestNewgroupsDates(t *testing.T) {
 	_, spool := spoolStore(t)
@@ -31,7 +31,7 @@ func TestNewgroupsDates(t *testing.T) {
 	for _, a := range []string{
 		"991301 000000", "20001301 000000", "20000001 000000", "20000132 000000",
 		"20000140 000000", "20000431 000000", "20010229 000000", "19000229 000000",
-		"20000101 240000", "20000101 006000", "20000101 000060",
+		"20000101 240000", "20000101 006000", "20000101 000061", "20000101 000099",
 		"20000101 0000", "20000101 00000000", "20000101 00:00:00", "2000010 000000",
 		"20000101x 000000", "0 000000", "200001011 000000", "20000101",
 		"00000101 000000", "18991231 000000",
@@ -43,6 +43,7 @@ func TestNewgroupsDates(t *testing.T) {
 		"000101 000000", "20000101 000000", "20000101 000000 GMT", "20000229 235959 GMT",
 		"19990101 000000", "19991231 235959 GMT", "20240229 120000", "1000101 000000",
 		"20000101 000000 gmt", "20000101 000000 Gmt",
+		"20161231 235960 GMT", "20161231 235960", "20000101 000060", // leap second (7.3.2: 00-60)
 	} {
 		t.Run("old "+a, func(t *testing.T) {
 			got := newgroupsList(t, s, 231, a)
@@ -78,5 +79,51 @@ func TestNewgroupsGMTAnyCase(t *testing.T) {
 	// without GMT the same wall clock is local time (UTC+14): 13 hours back, the groups show
 	if got := newgroupsList(t, s, 231, ahead); !strings.Contains(strings.Join(got, "\n"), "e2e.test") {
 		t.Errorf("NEWGROUPS %s: %q, want the group e2e.test (local time)", ahead, got)
+	}
+}
+
+// newnewsReply sends NEWNEWS with args and returns the reply code; a 230 is followed by the
+// dot-terminated list, which is read to the end.
+func newnewsReply(t *testing.T, s *Site, args string) int {
+	t.Helper()
+	c := s.Reader(t)
+	defer expect(t, c, 205, "QUIT")
+	code, _ := c.Cmd("NEWNEWS %s", args)
+	if code == 230 {
+		c.ReadDotLines()
+	}
+	return code
+}
+
+// TestNewnewsDates: NEWNEWS shares the date parser with NEWGROUPS. With allownewnews yes in the readerdef a
+// valid date (also second 60, a leap second) is 230 and an invalid one is 501; with the
+// default (off) the command is 500 whatever the date, so the 230 cases cannot pass by accident.
+func TestNewnewsDates(t *testing.T) {
+	_, spool := spoolStore(t)
+	on := NewReaderSite(t, ReaderOptions{Spool: spool, Access: strings.Replace(DefaultReaderAccess,
+		"    post yes\n", "    post yes\n    allownewnews yes\n", 1)})
+	for _, a := range []string{
+		"20000101 000000", "20000101 000000 GMT", "20161231 235960 GMT", "20161231 235960",
+	} {
+		t.Run("ok "+a, func(t *testing.T) {
+			if got := newnewsReply(t, on, "e2e.test "+a); got != 230 {
+				t.Errorf("NEWNEWS e2e.test %s: %d, want 230", a, got)
+			}
+		})
+	}
+	for _, a := range []string{
+		"20000101 000061 GMT", "20001301 000000", "20010229 000000", "20000101 240000",
+		"20000101 0000", "20000101",
+	} {
+		t.Run("bad "+a, func(t *testing.T) {
+			if got := newnewsReply(t, on, "e2e.test "+a); got != 501 {
+				t.Errorf("NEWNEWS e2e.test %s: %d, want 501", a, got)
+			}
+		})
+	}
+
+	off := NewReaderSite(t, ReaderOptions{Spool: spool})
+	if got := newnewsReply(t, off, "e2e.test 20000101 000000"); got != 500 {
+		t.Errorf("NEWNEWS with allownewnews off: %d, want 500 (control)", got)
 	}
 }
