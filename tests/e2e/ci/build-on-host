@@ -204,8 +204,19 @@ else  # FreeBSD / illumos (OmniOS): pkg, gmake, portable vendor.h editing
 MAKE=gmake; MAKEARGS=
 
 # In-place sed differs across systems (BSD sed wants `-i ''`, illumos /usr/bin/sed
-# has no -i at all), so edit lib/vendor.h through a temp file, which any sed does.
-vedit() { sed "$@" lib/vendor.h > lib/vendor.h.new && mv lib/vendor.h.new lib/vendor.h; }
+# has no -i at all), so edit lib/vendor.h through a fresh temp file, which any sed
+# does. mktemp makes a new unique regular file beside it, so the `>` redirect never
+# follows a pre-existing symlink at the temp path; the temp file is removed on
+# failure. (mktemp is in the FreeBSD and illumos base systems.)
+vedit() {
+    t=$(mktemp lib/vendor.h.XXXXXX) || return 1
+    if sed "$@" lib/vendor.h > "$t"; then
+        mv "$t" lib/vendor.h
+    else
+        rm -f "$t"
+        return 1
+    fi
+}
 
 case "$os" in
 FreeBSD)
@@ -214,13 +225,12 @@ FreeBSD)
     export ASSUME_ALWAYS_YES=yes
     # gmake is what the build needs beyond the base compiler, OpenSSL and zlib.
     pkg install -y gmake >/dev/null 2>&1 || pkg install -y gmake
-    # Cancel-Lock is intentionally left off on FreeBSD: a build with libcanlock
-    # made TestReaderDNSQueueLimit fail every time -- the reader's login/auth
-    # worker stalled (0 of 40 logins succeeded, the rest timed out, with
-    # "recvmsg(): Bad size read from RecvMsg" logged), where the libcanlock-less
-    # build passes. The base ships no libcanlock header, so not installing one
-    # leaves the check below to build the feature out (matching the known-good
-    # gmake-only job). The canlock-on failure is a follow-up to chase separately.
+    # Cancel-Lock is left off here to match the known-good gmake-only baseline and
+    # keep this change focused. libcanlock from pkg does work on FreeBSD (installing
+    # it builds dreaderd with Cancel-Lock and its tests pass), so it can be enabled
+    # later; not installing it leaves the check below to build the feature out (the
+    # base ships no libcanlock header). TestReaderDNSQueueLimit is timing-flaky on
+    # the FreeBSD CI VM regardless of Cancel-Lock -- a separate item.
     pw groupadd news 2>/dev/null || true
     pw useradd news -g news -d /var/tmp -s /bin/sh 2>/dev/null || true
     ;;
