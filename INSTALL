@@ -3,10 +3,10 @@
 Diablo builds with GNU Make (Linux, illumos/SmartOS/OmniOS, optionally
 FreeBSD) or with FreeBSD's own make.  XMake is no longer needed.
 README.md lists the build requirements and the packages to install.
-lib/vendor.h enables RADIUS by default: install the RADIUS library
-(radlib.h; libradius on SmartOS) or #undef RADIUS_ENABLED, which is
-needed on Linux.
-It also enables CANLOCK_ENABLED (Cancel-Lock, RFC 8315): install libcanlock
+RADIUS is off by default in lib/vendor.h.  To use it, install the
+RADIUS library (radlib.h; libradius on SmartOS) and #define
+RADIUS_ENABLED there; Linux has no BSD libradius.
+lib/vendor.h enables CANLOCK_ENABLED (Cancel-Lock, RFC 8315): install libcanlock
 3.3.0 or later (libcanlock-dev, libcanlock) or #undef CANLOCK_ENABLED.
 
 Files that hold private data are created for the news user and group only:

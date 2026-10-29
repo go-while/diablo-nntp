@@ -7,9 +7,9 @@
 ##
 ##  Linux (apt, dnf, zypper, pacman, apk or emerge), FreeBSD and illumos
 ##  (OmniOS) with pkg are supported; the package manager is chosen from the
-##  system.  This copy's lib/vendor.h is changed: RADIUS is turned off (Linux
-##  and illumos have no BSD libradius, and FreeBSD's base libradius is not
-##  wired up here), and DB_ENABLED and REJECT_DB are turned off when the
+##  system.  This copy's lib/vendor.h is changed: RADIUS stays off (off by default
+##  since D-16; Linux and illumos have no BSD libradius, and FreeBSD's base
+##  libradius is not wired up here), and DB_ENABLED and REJECT_DB are turned off when the
 ##  system has no Berkeley DB 1.85 API (db_185.h; several distributions
 ##  dropped Berkeley DB, and the BSD/illumos base systems do not ship it).
 ##  The binaries end up in dbin/.  The news user and group are created when

@@ -79,10 +79,12 @@
 #define	POST_CRYPTXTRACE
 
 /*
- * Enable RADIUS authentication.  Works on FreeBSD or similar libradius.
+ * Enable RADIUS authentication.  Works on FreeBSD or similar libradius
+ * (radlib.h; libradius on SmartOS).  Off by default: Linux has no BSD
+ * libradius.  To use it, change the #undef below to #define.
  */
 
-#define	RADIUS_ENABLED
+#undef	RADIUS_ENABLED
 
 /*
  * Enable Cancel-Lock (RFC 8315): dreaderd checks the Cancel-Key of a cancel
