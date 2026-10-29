@@ -31,10 +31,34 @@ fi
 set_owner() {
     if [ -z "$destdir" ]; then chown "$owner" "$1" && chgrp "$group" "$1"; fi
 }
+# make_dir <dir> [mode]: a directory the installer manages (programs, samples,
+# manual pages): created if missing, and always set to mode and owner.
 make_dir() {
     [ -d "$1" ] || mkdir -p "$1"
     chmod "${2:-755}" "$1"
     set_owner "$1"
+}
+# make_data_dir <dir> [mode]: an operational directory (spool, queue, the home
+# directory, logs): created with mode and owner when it is missing, and left
+# as the admin has it when it exists (a mount point, a mode or owner chosen
+# for it).  The one exception is the private mode 750 (log, run): an existing
+# directory is only closed to others (o-rwx), never opened, never given a new
+# owner.
+make_data_dir() {
+    if [ ! -d "$1" ]; then
+	mkdir -p "$1"
+	chmod "${2:-755}" "$1"
+	set_owner "$1"
+    elif [ "${2:-755}" = 750 ]; then
+	chmod o-rwx "$1"
+    fi
+}
+# scan <find arguments>: print the paths find lists.  Called in a command
+# substitution (never as the left side of a pipe), so that a find that fails
+# stops the installer instead of being hidden by the loop that reads its output.
+scan() {
+    scan_out=$(find "$@" -print) || { echo "install-portable.sh: find $* failed" >&2; exit 1; }
+    [ -z "$scan_out" ] || printf '%s\n' "$scan_out"
 }
 copy_file() {
     src=$1 dst=$2 mode_bits=$3
@@ -46,15 +70,25 @@ copy_file() {
 }
 
 if [ "$mode" != uninstall ]; then
-    make_dir "$root"
+    # The programs must have been built (make): an empty dbin/ is no install.
+    built=""
+    for src in dbin/*; do
+        [ -f "$src" ] && { built=1; break; }
+    done
+    [ -n "$built" ] || { echo "No programs in dbin/: build first (make), then install" >&2; exit 1; }
+    make_data_dir "$root"
     for dir in dbin samples samples/adm samples/feeder samples/feeder+reader samples/reader \
         samples/init samples/init/systemd samples/init/freebsd samples/init/smf samples/init/sysv \
-        adm dqueue spool spool/news spool/group spool/cache man man/man5 man/man8; do
+        adm man man/man5 man/man8; do
         make_dir "$root/$dir"
+    done
+    # Operational directories: made when missing, never reset (see make_data_dir).
+    for dir in dqueue spool spool/news spool/group spool/cache; do
+        make_data_dir "$root/$dir"
     done
     # Logs and run files name clients and users: news user and group only.
     for dir in run log; do
-        make_dir "$root/$dir" 750
+        make_data_dir "$root/$dir" 750
     done
     for dir in dqueue spool spool/news spool/group spool/cache; do
         echo "NOTE: $root/$dir may require a dedicated mount point" >&2
@@ -83,14 +117,20 @@ if [ "$mode" != uninstall ]; then
         copy_file "$src" "$root/$src" 755
     done
     # Reference copies, read-only; scripts keep their execute bit.
-    find samples -type f -print | while IFS= read -r src; do
+    files=$(scan samples -type f)
+    printf '%s\n' "$files" | while IFS= read -r src; do
+        [ -n "$src" ] || continue
         if [ -x "$src" ]; then copy_file "$src" "$root/$src" 555; else copy_file "$src" "$root/$src" 444; fi
     done
-    find samples -type l -print | while IFS= read -r src; do
+    links=$(scan samples -type l)
+    printf '%s\n' "$links" | while IFS= read -r src; do
+        [ -n "$src" ] || continue
         dst="$root/$src"
         [ -e "$dst" ] || [ -L "$dst" ] || ln -s "$(readlink "$src")" "$dst"
     done
-    find man -type f -print | while IFS= read -r src; do
+    files=$(scan man -type f)
+    printf '%s\n' "$files" | while IFS= read -r src; do
+        [ -n "$src" ] || continue
         case "$src" in
             *.5) dst="$root/man/man5/${src##*/}" ;;
             *.8) dst="$root/man/man8/${src##*/}" ;;
@@ -148,11 +188,15 @@ else
         rm -f "$dst.new"
     done
     # Preserve locally modified samples and manual pages.
-    find samples -type f -print | while IFS= read -r src; do
+    files=$(scan samples -type f)
+    printf '%s\n' "$files" | while IFS= read -r src; do
+        [ -n "$src" ] || continue
         dst="$root/$src"
         if [ -f "$dst" ] && cmp -s "$src" "$dst"; then rm -f "$dst"; fi
     done
-    find man -type f -print | while IFS= read -r src; do
+    files=$(scan man -type f)
+    printf '%s\n' "$files" | while IFS= read -r src; do
+        [ -n "$src" ] || continue
         case "$src" in
             *.5) dst="$root/man/man5/${src##*/}" ;;
             *.8) dst="$root/man/man8/${src##*/}" ;;
