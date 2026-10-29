@@ -1015,7 +1015,7 @@ ParseIntRange(const char *str, int base, long min, long max, int *out)
  * and *tooLong is set, so the caller can skip a long comment or report the
  * line instead of parsing its tail as a line of its own.  A line that just
  * fits (its newline is the next character), or whose dropped rest is only
- * white space and a comment, is not too long.
+ * white space and a comment (a # after white space), is not too long.
  */
 char *
 ConfigGets(char *buf, int size, FILE *fi, int *tooLong)
@@ -1026,14 +1026,17 @@ ConfigGets(char *buf, int size, FILE *fi, int *tooLong)
     if (strchr(buf, '\n') == NULL) {
 	int c = getc(fi);
 	int comment = 0;
+	/* a # starts a comment after white space, not inside a word */
+	int prevSpace = isspace((unsigned char)buf[strlen(buf) - 1]);
 
 	for (; c != EOF && c != '\n'; c = getc(fi)) {
-	    if (comment)
-		continue;
-	    if (c == '#')
-		comment = 1;
-	    else if (!isspace(c))
-		*tooLong = 1;
+	    if (!comment) {
+		if (c == '#' && prevSpace)
+		    comment = 1;
+		else if (!isspace(c))
+		    *tooLong = 1;
+	    }
+	    prevSpace = isspace(c);
 	}
     }
     return(buf);
