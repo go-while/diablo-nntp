@@ -106,3 +106,49 @@ func TestReaderdefNumberComment(t *testing.T) {
 		t.Errorf("the comment was read as part of the number:\n%s", log)
 	}
 }
+
+// TestAccessCacheWithStdinClosed (D-160): with file descriptor 0 closed the first file dreaderd
+// opens gets descriptor 0, which is a valid descriptor. The access cache loader took 0 for a
+// failed open, did not load the caches and the reader gave no service.
+func TestAccessCacheWithStdinClosed(t *testing.T) {
+	s := NewReaderSite(t, ReaderOptions{SpoolAddr: "127.0.0.1:1", NoStart: true,
+		Config: map[string]string{"path_generallog": "%s/general.log"}})
+	port := s.Addr[strings.LastIndex(s.Addr, ":")+1:]
+	cmd := exec.Command("/bin/sh", "-c", `exec "$0" "$@" <&-`, filepath.Join(s.Bin, "dreaderd"),
+		"-d", "-p", PathHost, "-h", PathHost, "-P", "[127.0.0.1]:"+port)
+	cmd.Dir = s.Dir
+	cmd.Env = append(os.Environ(), s.Env...)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
+	var g string
+	waitFor(t, 10*time.Second, "a greeting", func() bool {
+		g = readerGreeting(s.Addr)
+		return g != ""
+	})
+	if !strings.HasPrefix(g, "200") && !strings.HasPrefix(g, "201") {
+		t.Errorf("dreaderd started with stdin closed answers %q, want the greeting", g)
+	}
+}
+
+// TestDserverHostsNumbers (D-162): dserver.hosts numbers are read whole. A flag number that
+// overflows and a cache option that is not a number are logged and ignored (the entry keeps
+// its defaults) instead of becoming a clamped or a zero value; a good entry is not touched.
+func TestDserverHostsNumbers(t *testing.T) {
+	_, spool := spoolStore(t)
+	host, port, _ := net.SplitHostPort(spool.Addr())
+	hosts := "127.0.0.2\ts1p99999999999999\n" +
+		"127.0.0.3\ts1p119 cachemin=abc cachemax=12junk\n" +
+		host + "\ts1p" + port + "\n"
+	s := NewReaderSite(t, ReaderOptions{Spool: spool, Files: map[string]string{"dserver.hosts": hosts},
+		Config: map[string]string{"path_generallog": "%s/general.log"}})
+	c := s.Reader(t)
+	expect(t, c, 211, "GROUP e2e.test")
+	expect(t, c, 205, "QUIT")
+	var log string
+	waitFor(t, 10*time.Second, "the log lines", func() bool {
+		log = generalLog(s)
+		return strings.Contains(log, "bad number after 'p'") && strings.Contains(log, "cachemin=abc") && strings.Contains(log, "cachemax=12junk")
+	})
+}
