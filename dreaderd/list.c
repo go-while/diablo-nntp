@@ -536,6 +536,43 @@ NNTPListModerators(Connection *conn, char **pptr)
 }
 
 /*
+ * A LISTGROUP range that is no n, n- or n-m of numbers, or has a number above
+ * the RFC 3977 limit in that numbering: checked before the group is selected,
+ * so a refused command leaves the client's group alone.
+ */
+static int
+badListgroupRange(const Connection *conn, const char *range)
+{
+    const char *p = range;
+    int part;
+
+    for (part = 0; part < 2; part++) {
+	artno_t v = 0;
+	int digits = 0;
+
+	for (; *p >= '0' && *p <= '9'; p++) {
+	    if (v <= (LL_MAX - 9) / 10)
+		v = v * 10 + (*p - '0');
+	    else
+		v = LL_MAX;
+	    digits++;
+	}
+	if (part == 0 && digits == 0)
+	    return(1);
+	if (conn->co_Numbering == CON_RFC3977 && v > 0x7FFFFFFFLL)
+	    return(1);
+	if (*p == 0)
+	    return(0);
+	if (part == 1 || *p != '-')
+	    return(1);
+	p++;
+	if (*p == 0)
+	    return(0);		/* n- */
+    }
+    return(0);
+}
+
+/*
  * LISTGROUP [group [range]] (RFC 3977 6.1.2): select the group as GROUP
  * does (or the current one), answer "211 count low high group" and list
  * the article numbers in range (default: the whole group).
@@ -551,6 +588,11 @@ NNTPListGroup(Connection *conn, char **pptr)
     if (group != NULL) {
 	if (strlen(group) >= MAXGNAME || parseword(pptr, " \t") != NULL) {
 	    MBLogPrintf(conn, &conn->co_TMBuf, "501 listgroup [newsgroup [range]]\r\n");
+	    NNCommand(conn);
+	    return;
+	}
+	if (range != NULL && badListgroupRange(conn, range)) {
+	    MBLogPrintf(conn, &conn->co_TMBuf, "501 Bad range %s\r\n", range);
 	    NNCommand(conn);
 	    return;
 	}

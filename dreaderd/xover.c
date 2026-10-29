@@ -393,6 +393,10 @@ NNStartListOverviewRange(Connection *conn)
 	conn->co_ListEndNo = 0;
 
     if ((rec = KPDBReadRecord(KDBActive, conn->co_GroupName, KP_LOCK, &recLen)) == NULL) {
+	if (conn->co_ArtMode == COM_NEWNEWS) {
+	    NNListNewNews(conn);	/* no such group: the next one */
+	    return;
+	}
 	FinishOverviewDotNewline(conn);
 	NNCommand(conn);
 	return;
@@ -408,6 +412,10 @@ NNStartListOverviewRange(Connection *conn)
 		conn->co_ListBegNo > lend ||
 		conn->co_ListEndNo < lbeg ||
 		conn->co_ListBegNo > conn->co_ListEndNo) {
+	if (conn->co_ArtMode == COM_NEWNEWS) {
+	    NNListNewNews(conn);	/* nothing in this group: the next one */
+	    return;
+	}
 	FinishOverviewDotNewline(conn);
 	NNCommand(conn);
 	return;
