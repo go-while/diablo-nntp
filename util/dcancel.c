@@ -420,6 +420,24 @@ MapArticle(int fd, char *fname, off_t offset, uint32 size, int exp, int *artSize
     return(NULL);
 }
 
+/*
+ * Store the history entries queued by rewriteFile() if the rewritten spool
+ * file was installed. Otherwise drop them, so that the history keeps the
+ * offsets of the old spool file. Frees the queue.
+ */
+static void
+HistoryStoreQueue(HistoryList *pl, int installed)
+{
+    HistoryList *next;
+
+    for (; pl != NULL; pl = next) {
+	next = pl->nextent;
+	if (installed)
+	    HistoryStore(&pl->h);
+	free(pl);
+    }
+}
+
 void
 rewriteFile(HistoryList *hl_file)
 {
@@ -441,6 +459,8 @@ rewriteFile(HistoryList *hl_file)
     int artSize;
     int compressed;
     hash_t hv;
+    HistoryList *pend = NULL;	/* history entries to store after the rename */
+    HistoryList *pl;
     
     /*
      * Get the article filename and open it
@@ -583,11 +603,21 @@ rewriteFile(HistoryList *hl_file)
 	}
 
 	/*
-	 * Update the history entry with the new location or cancel,
-	 * also for -s: the later articles moved
+	 * Queue the history entry with the new location or cancel, also
+	 * for -s: the later articles moved. It is stored only after the
+	 * rewritten file is installed, see below.
 	 */
-	if (inHistory && ForReal)
-	    HistoryStore(&h);
+	if (inHistory && ForReal) {
+	    pl = (HistoryList *)malloc(sizeof(HistoryList));
+	    if (pl == NULL) {
+		fprintf(stderr, "malloc error: %s\n", strerror(errno));
+		break;
+	    }
+	    bzero(pl, sizeof(HistoryList));
+	    pl->h = h;
+	    pl->nextent = pend;
+	    pend = pl;
+	}
     }
     close(oldf);
     close(newf);
@@ -596,15 +626,27 @@ rewriteFile(HistoryList *hl_file)
 	if (ForReal) {
 	    struct stat sb;
 	    if (stat(npath, &sb) == 0 && sb.st_size == 0) {
-		remove(opath);
+		/* every article was cancelled: the old file goes */
+		if (remove(opath) == 0) {
+		    HistoryStoreQueue(pend, 1);
+		} else {
+		    fprintf(stderr, "Cannot remove %s : %s\n",
+				opath, strerror(errno));
+		    HistoryStoreQueue(pend, 0);
+		}
 		remove(npath);
+	    } else if (rename(npath, opath) == 0) {
+		HistoryStoreQueue(pend, 1);
 	    } else {
-		rename(npath, opath);
+		fprintf(stderr, "Cannot rename %s to %s : %s\n",
+				npath, opath, strerror(errno));
+		HistoryStoreQueue(pend, 0);
 	    }
 	}
     } else {
 	if (ForReal)
 	    remove(npath);
+	HistoryStoreQueue(pend, 0);
     }
 }
 
