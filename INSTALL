@@ -6,6 +6,28 @@ README.md lists the build requirements and the packages to install.
 RADIUS is off by default in lib/vendor.h.  To use it, install the
 RADIUS library (radlib.h; libradius on SmartOS) and #define
 RADIUS_ENABLED there; Linux has no BSD libradius.
+lib/vendor.h enables CANLOCK_ENABLED (Cancel-Lock, RFC 8315): install libcanlock
+3.3.0 or later (libcanlock-dev, libcanlock) or #undef CANLOCK_ENABLED.
+
+Files that hold private data are created for the news user and group only:
+the reader's cache files (cache.*, which copy the passwords and secrets of
+dreader.access) are 0600, logs and dreaderd.status 0640, and the log and run
+directories are 0750.  These are the modes of new files: the umask of the
+process can only make them stricter (umask 077 makes the logs 0600), and a
+file that already exists, such as a log from an earlier run, keeps its mode
+(the 0750 directory covers it; chmod it if you want it narrower).  Keep
+dreader.access and the other configuration files 0640 as the installer makes
+them.  If another account (monitoring, a log reader) needs a file, put it in
+the news group or relax that one file.
+
+Starting the daemons at boot: samples/init/ has a systemd unit, FreeBSD rc.d
+scripts, an SMF manifest for illumos/SmartOS and SysV init scripts; they only
+call adm/diablo-ctl, whose settings (diablo-ctl.conf) also switch on checks
+before a start (mounts, history, active file, unclean shutdown) and an
+optional dkp trim of the active file.  The checks are on by default and a start
+is refused when one fails, for example dreaderd without an active file at a
+site set up by hand: create it (README.READER) or start once with
+"diablo-ctl -F start dreaderd".  See samples/init/README.
 
 Please read the README.READER and README.SERVER files if you haven't
 already.

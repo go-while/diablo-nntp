@@ -116,7 +116,7 @@ MultiLineReply(const char *cmd, const char *line)
 {
     switch (atoi(line)) {
     case 100: case 101: case 215: case 220: case 221: case 222:
-    case 224: case 225: case 230: case 231: case 282:
+    case 202: case 224: case 225: case 230: case 231: case 282:
 	return(1);
     case 211:
 	return(strncasecmp(cmd, "LISTGROUP", 9) == 0);

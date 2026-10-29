@@ -305,7 +305,7 @@ zfreeStr(MemPool **pmp, char **ps)
 void
 allocPool(MemPool **pmp, int bytes)
 {
-    MemPool *mp = calloc(sizeof(MemPool), 1);
+    MemPool *mp = calloc(1, sizeof(MemPool));
 
     mp->mp_Next = *pmp;
     mp->mp_Base = pagealloc(&mp->mp_Size, bytes);

@@ -40,6 +40,7 @@ test fails.
 | `TestDnewsfeedsMaxconnect` | diablo | `maxconnect 2` in a dnewsfeeds label lets two parallel connections in and refuses the third with 502 (D-59). **Fails** on main: the third was accepted |
 | `TestDhisexpireFailureKeepsHistoryAlive` | diablo, dhisexpire | a dhisexpire that fails after marking the history dead (backup directory missing) marks it alive again: dhistory is not dead and diablo still greets new connections (D-57). **Fails** on main |
 | `TestDhisexpireKeepsBackup` | diablo, dhisexpire | a normal `dhisexpire -a -o file` installs the new history, replaces an earlier backup with the old file, leaves no temporary name, and diablo still knows the article |
+| `TestDhisexpireNoteWithoutA` | diablo, dhisexpire | without `-a` the old history stays marked dead and the new one is left beside it; the run says so at the end (the note could never print before D-77 was finished), and `dhisexpire -u` makes the old one usable |
 | `TestDnewsfeedsDirectiveWithoutArgument` | dfeedtest | each numeric dnewsfeeds option (`maxparallel`, `port`, `priority`, `feedertxbuf`, ...) written without its value is a configuration error, not a crash (D-58). **Fails** on main: SIGSEGV |
 | `TestDnewsfeedsReloadWithoutArgument` | diablo | saving such a line into dnewsfeeds of a running diablo does not take the master down (D-58). **Fails** on main (the master exits at the next reload); takes 33 s |
 | `TestHostCacheEndEndsLabel` | diablo (dprimehostcache) | an `inhost` line after the `end` of a label is not entered into the host cache under that label (D-60). **Fails** on main |
@@ -57,6 +58,9 @@ test fails.
 | `TestReaderPost` | dreaderd | POST is passed to the outgoing ('o') server (fake peer) with IHAVE: body as posted, the vserver's `postpath` in the Path |
 | `TestReaderCapabilities` | dreaderd | CAPABILITIES (RFC 3977 §5.2): a reader connection lists VERSION 2, READER, OVER, LIST ACTIVE ACTIVE.TIMES NEWSGROUPS OVERVIEW.FMT DISTRIB.PATS, POST and IMPLEMENTATION, and each of them works; a feed-only connection lists IHAVE and STREAMING; MODE STREAM is 501 in reader mode. Then nntp-testkit's conformance checks run against the reader, and none may fail. **Fails** on main before #41: "500 What?" |
 | `TestReaderReplyCodes` | dreaderd | RFC 3977 replies (D-44, D-45, D-47): 412 for LISTGROUP/NEXT/LAST without a group; 420 for ARTICLE/HEAD/BODY/STAT/NEXT/LAST/OVER/HDR in an empty group; LISTGROUP answers "211 count low high group" and honours a range; ARTICLE with a non-number, non-message-id argument is 501; HDR answers 225 (an absent header has an empty value), XHDR still 221; LIST HEADERS and LIST ACTIVE.TIMES answer 215; OVER with a range holding no article is 423, XOVER still an empty 224. **Fails** on main before this change |
+| `TestReaderRangeBeyondLimit` | dreaderd | with `XNUMBERING rfc3977`, an article number above 2147483647 in an OVER, HDR or LISTGROUP range is 501 (D-147, D-148), and a refused LISTGROUP leaves the selected group alone; ordinary ranges still work |
+| `TestReaderNewnewsKeepsSelectedGroup` | dreaderd | the group and article selected before `NEWNEWS` are still current afterwards, also when the list has a missing group first, in the middle or alone, and a group after a missing one is still scanned (D-149) |
+| `TestReaderNewnewsUnreadableOverview` | dreaderd | a group whose overview index cannot be opened is skipped by the `NEWNEWS` scan: the next group is listed and the client's group stays selected (D-149) |
 | `TestReaderAuthinfoCodes` | dreaderd | AUTHINFO (RFC 4643, D-46): PASS before USER is 482, a wrong password 481, AUTHINFO after a successful login 502. **Fails** on main before this change |
 | `TestReaderConformanceAuthinfo` | dreaderd | nntp-testkit's conformance checks against a reader that requires AUTHINFO (user `fred`), with the user and password given, so the six RFC 4643 checks run: login, a wrong password (481), PASS before USER (482), GROUP before login (480), AUTHINFO after login (502), and AUTHINFO gone from CAPABILITIES after login. All checks must pass; `mode-reader` is skipped (dreaderd answers 480 before login). One check at a time: the test reader has one DNS/auth worker (`readerdns 1`) and a concurrent login gets "400 Server too busy". **Fails** on main before #67 (D-46) |
 | `TestReaderLoginsQueueForDNSWorker` | dreaderd | D-51: with one DNS/auth worker (`readerdns 1`), 8 logins at the same time all get 281. **Fails** on main before this change: some got "400 Server too busy" |
@@ -76,6 +80,11 @@ test fails.
 | `TestDnewslinkSmallMaxstream` | dnewslink | D-68: `-M 2` with six queued articles offers all six. **Fails** on main before #117: two |
 | `TestDnewslinkBadCompressLevel` | dnewslink | D-69: `-Z12` (a level zlib rejects) with a peer that accepts MODE COMPRESS: dnewslink ends by itself. **Fails** on main before #118: it spins |
 | `TestDexpireCtlIndent, TestDexpireCtlLongComment, TestDexpireCtlLongPattern, TestConfigLongLine` | dexpire, diablo | D-83: an indented `dexpire.ctl` rule is honoured. D-82: long lines in `diablo.config` and `dexpire.ctl` are not split. **Fail** on main before #119 and #125 |
+| `TestConfigWhitespaceBeforeComment` | any program | a directive followed by so much white space that its comment starts after column 255 is read normally (D-159); a directive that is cut by the buffer is still "too long" |
+| `TestReaderdefNumbersValidated` | dreaderd | a malformed or out-of-range number in a readerdef (`maxconnperhost 1x`, `idletimeout abc`, `maxconn 99999999999`, `bytelimit -5`) makes dreader.access invalid, so dreaderd refuses every client (it stays up) instead of running with 0 or a prefix (D-161) |
+| `TestReaderdefNumbersRejectedReload`, `TestReaderdefNumberComment` | dreaderd | a dreader.access with a bad readerdef number is refused while dreaderd runs and the old cache keeps serving; an inline `# comment` after a number is a comment (D-161) |
+| `TestAccessCacheWithStdinClosed` | dreaderd | dreaderd started with file descriptor 0 closed still loads its access cache (D-160; passes on main too: descriptor 0 does not reach the loader there) |
+| `TestDserverHostsNumbers` | dreaderd | a flag number that overflows and a `cachemin`/`cachemax` that is not a number in dserver.hosts are logged and ignored (D-162) |
 | `TestDicmdConfigInternalFilter` | dicmd, diablo | D-78: `dicmd config internalfilter B3` keeps the body filter working. **Fails** on main before #124: 8 of 8 identical bodies stored |
 | `TestKPDBBlankLine` | dkp | D-79: a blank or short line in a KP database (also as the last line) does not corrupt the sort or crash the lookup. **Fails** on main before #123: SIGSEGV |
 | `TestPathPatternPercent` | dpath | a configured path pattern (`path_log %s/lo%dg%%x`) expands with its first `%s` substituted, `%%` as `%`, and anything else literal; a pattern without `%s` stays as it is. **Fails** on main before this fix: the pattern was the snprintf format, so `%d` printed stack garbage (`lo32g%x`) |
@@ -92,20 +101,46 @@ test fails.
 | `TestControlDuplicateHeadersRefused` | dreaderd | a control message with two Control: headers is not executed, and the refusal is logged; one with a single Control: is (dcontrol.ctl `newgroup:*:*:doit`) |
 | `TestDexpire` | diablo, dexpire | `dexpire -a` removes the spool directory of an article older than `keeptime`; STAT then gives 430, and offering the article again gets 435 (still in history) |
 | `TestDexpireKeepsNewestDir` | diablo, dexpire | `dexpire -a` keeps a spool's newest directory even when it is older than `keeptime` (diablo may be writing into it): the article in it stays readable and the next one is stored. **Fails** on main before jrehmer/diablo-nntp#25 |
+| `TestDexpireKeepsHistoryOfUnremovedDir` | diablo, dexpire | a spool directory that dexpire cannot enter (mode 0) is not removed, its history entries are not expired (STAT still 223), and dexpire says so and ends; before, the history of the directory was expired while its files were there, and dexpire scanned the spool again and again (skipped as root) (D-157) |
+| `TestDoverctlConvertMovesCompressedData` | doverctl | `convert` moves the compressed (`.gz`) data files with the plain ones (D-150); before, they stayed in the old layout |
+| `TestDoverctlConvertCopyFailure` | doverctl | with `-m` a data file that cannot be copied stops the group, the failure is reported and the group is not reported as converted (D-151) |
+| `TestDoverctlCleanRemovesUnknownEntries` | doverctl | `clean` removes an entry that is neither a regular file nor a directory (a fifo) by its real path (D-152) |
+| `TestDoverctlCleanMisalignedData` | doverctl | `clean` removes a data file whose first article is not a multiple of the entries per file and keeps an aligned one (D-153) |
+| `TestDexpireoverHeaderOnlyOver` | dexpireover | an over file that is only a header (no article slots) is skipped with a message; it used to die with SIGFPE (modulo by zero) |
+| `TestDexpireoverBadMaxArts` | dexpireover | an over file whose header promises 0 article slots, or more than the file holds, is skipped with a message (SIGFPE / read behind the mapping before) |
 | `TestSpoolDirRemovedWhileWriting` | diablo | the spool directory a connection writes into is removed (as dexpire can do); the next article on the same connection is stored (235, then STAT 223) in a recreated directory. **Fails** on main before jrehmer/diablo-nntp#24 (235, then STAT 430: the article was lost) |
 | `TestFeederChildSighupAfterQuit` | diablo | 400 rounds of QUIT, then SIGHUP to the feeder child (as `dicmd exit` and `dicmd pause` send) while it logs its session: no child may be left after 10 s. **Fails** on main before the D-40 fix: 85 to 169 of 1000 children hung in a futex wait inside the SIGHUP handler on glibc, 6 of 2000 on musl. Linux only (/proc); `E2E_SIGHUP_ROUNDS` sets the rounds |
 | `TestDiabloCtlFeeder`, `TestDiabloCtlReader` | samples/adm/diablo-ctl | status (3 when stopped), start, a second start ("already running"), restart, stop (port closed), stop again; skipped without the script (`DIABLO_CTL`, default: `samples/adm/diablo-ctl` next to `DIABLO_BIN`) |
 | `TestDiabloCtlOnlyItsOwnSite` | samples/adm/diablo-ctl, diablo | `diablo-ctl stop` acts on its own site only: another site of the same user, started first, keeps its diablo and its dnewslink worker (a stand-in in its dqueue); the site's own worker is stopped; diablo writes `log/diablo.pid` and removes it on exit. **Fails** on main before #31: diablo-ctl reported and killed the other site's diablo and dnewslink. The diablo-ctl tests skip an old diablo-ctl that still looks for "the oldest diablo of the user" |
+| `TestDiabloCtlChecks` | samples/adm/diablo-ctl | every check before a start, with `check` and with `start`: a missing mount, `-F`, `DIABLO_PREFLIGHT=no`, the history note and `DIABLO_REQUIRE_HISTORY`, a missing and a stale active file, an active file that is off, an unclean shutdown with a fresh and an old log; the refusal names `-F` and `DIABLO_PREFLIGHT` |
+| `TestDiabloCtlConfigErrors`, `TestDiabloCtlStopWithBadSettings` | samples/adm/diablo-ctl | an unknown `DIABLO_DAEMONS` entry and a non-numeric wait, age, open-file limit or status area are refused by `start` before anything starts (D-140, D-141) while `stop` and `status` warn, use the default and still work, also on a running site |
+| `TestDiabloCtlOptionsNotGlobbed`, `TestDiabloCtlHomeConfBin`, `TestDiabloCtlActiveFileDetails` | samples/adm/diablo-ctl | a `*` in `DIABLO_OPTS` reaches the daemon as a `*` (D-146, with a stand-in diablo); an auto-loaded `diablo-ctl.conf` that names other binaries makes the paths come from those (D-139) and missing binaries are an error; `DIABLO_ACTIVE_MAXAGE=08` is 8, and `active` is found in any letter case |
+| `TestDiabloCtlActiveFileReading`, `TestDiabloCtlNumbers`, `TestDiabloCtlNoKnownDaemon` | samples/adm/diablo-ctl | the `active` line is read as diablo reads it (a `#` comment, a CR, an absolute path), and a `dpath` that cannot name the active file fails `check`; a number of 10 digits or more is refused, `DIABLO_PS_PAD=00` leaves no bare `-s`, `restart` refuses a wrong setting like `start`; with no valid daemon in `DIABLO_DAEMONS`, `stop` and `status` look at both daemons |
+| `TestDiabloCtlStopRemovesPid`, `TestDiabloCtlDkpTrim` | samples/adm/diablo-ctl, dreaderd, dkp | `stop` removes the pid file dreaderd leaves (so a pid file without a process means an unclean shutdown); `DIABLO_DKP_TRIM=yes` trims the active file before a start, when no daemon of the site runs |
+| `TestInitWrappers`, `TestInitSysV`, `TestInitRcdFreeBSD` | samples/init | the files are well formed and call diablo-ctl; the SysV script starts, checks and stops diablo; the rc.d script runs with the real `rc.subr` (FreeBSD only, skipped elsewhere) |
+| `TestCacheFilesPrivate`, `TestFeederLogsPrivate` | dreaderd, diablo | with umask 0: the reader's cache files (they copy passwords and secrets of `dreader.access`), its status file and the logs of reader and feeder are not readable by others |
 | `TestCanLockVectors` | (Go only) | the Go Cancel-Lock helpers reproduce INN's test vectors (tests/lib/canlock-t.c) |
 | `TestCancelLock`, `TestCancelLockSupersedes`, `TestCancelLockEarlyCancel`, `TestCancelLockTrackonlyRefused` | dreaderd | `readercanlock` (RFC 8315): cancels and supersedes against Cancel-Lock in each mode (require-auth, auth, none, all), matching, wrong and missing keys, sha1 in a folded lock with a comment, early cancels, and the trackonly refusal; skipped without readercanlock support |
+| `TestCancelLockTrackonlyNone` | dreaderd | `readercanlock none` is allowed with `readerxover trackonly` (it refuses every cancel before it needs a header), where other modes but `all` stop dreaderd |
+| `TestCancelLockWithoutLibcanlock` | dreaderd | in a build without libcanlock (skipped in the normal build) no Cancel-Key can be verified and the safe modes stay safe: the default (require-auth), require-auth and none cancel nothing, auth withdraws only an article without a Cancel-Lock, all executes everything; every mode is accepted |
+| `TestCanLockGenerate`, `TestCanLockGenerateOff`, `TestCanLockGenerateOwnLock`, `TestCanLockGenerateFolded`, `TestCanLockGenerateServerID` | dreaderd | the Cancel-Lock added to a post (`canlockadmin`, `canlockuser`, sha256 and sha1, `canlocksha1 no`, `addcanlockuser`): per configuration, nothing without secrets, the poster's own lock stays first, a header folded below 76 columns with the most secrets, a lock made from the Message-ID the server gives |
+| `TestCanLockGenerateKeys`, `TestCanLockGenerateRoundTrip`, `TestCanLockGenerateRefusesBadHeaders`, `TestCanLockGenerateFoldedTarget` | dreaderd | the Cancel-Key added to a poster's own cancel or supersede (a rotated secret still gets its key; a folded Message-ID too); generation and verification agree in require-auth mode; a poster's Cancel-Lock or Cancel-Key of 1023 bytes or more, with an element over 400 bytes, or a second header is refused with 441 (passed on without the server's locks before) |
+| `TestDcanlock`, `TestDcanlockVerify`, `TestDcanlockErrors` | dcanlock | `key` and `lock` for admin and user secrets, the schemes, several Message-IDs, a secret from standard input (no configuration needed); `verify` agrees with the locks dcanlock and dreaderd make; what the tool refuses, with status 2 |
+| `TestDcanlockCancelBody`, `TestDcanlockStdinSecretBadAccess` | dcanlock | the body of a cancel is one line that does not start with a dot; `-S` with an explicit `-A` that is missing or has no such vserverdef fails like it does without `-S` |
+| `TestDcanlockWithdraw`, `TestDcanlockCancel`, `TestDcanlockCancelNewsgroups`, `TestDcanlockCancelDreadartPath`, `TestDcanlockCancelPost`, `TestDcanlockCancelWithdraw` | dcanlock, dreaderd | the key it prints withdraws an article posted through dreaderd; the whole cancel article with its options and CR LF line ends; Newsgroups read with the `dreadart` next to it (a list that does not fit is an error); its output is POSTed as it is and the cancel the reader sends out withdraws the article |
 | `TestDnewslinkConnlife` | diablo, dspoolout, dnewslink | realtime feed with `connlife 8` (skipped without `dnewslink -K`): one TCP session across a queue rotation; after connlife, retirement at the next rotation and a replacement at once (`dspoolout -J`); no descriptor growth over three replacements; every article reaches the peer once, in order. Linux only (reads /proc) |
 | `TestDnewslinkConnlifeNearest` | diablo, dspoolout, dnewslink | with `connlife 12`, a replacement worker that carries traffic retires at the rotation 10 s after its start (the one nearest 12 s), not at the next one about 20 s in. **Fails** on main before #30: the worker is still serving 12 s after its start (connlife 60 gave about 120 s). Linux only (reads /proc) |
 | `TestInstallConfigFiles` | install-portable.sh | `make install` into a temporary prefix: config files are real 0640 copies of the samples, `dactive.kp` is empty, adm scripts in `<prefix>/adm` keep the execute bit; a reinstall keeps a changed config file and puts a changed adm script's new version next to it (`.new`); uninstall leaves the configuration. Skipped without `install-portable.sh` next to `DIABLO_BIN` |
+| `TestInstallKeepsDirectoryModes`, `TestInstallNeedsBuiltPrograms`, `TestInstallStopsWhenFindFails` | install-portable.sh | a reinstall keeps the modes of the home, spool and queue directories and only closes log and run to others (D-142); in a tree where nothing is built the installer says so and installs nothing (D-143); a `find` that fails stops install and uninstall, no success message (D-144) |
 | `TestInstallConvertsConfigSymlinks` | install-portable.sh | a config symlink into `samples/` left by an earlier install becomes a real file with the content in use, before `samples/` is replaced; with install and with bininstall |
 | `TestAdmHourlyExpire` | adm/hourly.expire, dexpire | the script expires an article older than `keeptime` |
 | `TestAdmDailyAtrim` | adm/daily.atrim, adm/rot | the script rotates the logs |
 | `TestAdmBiweeklyAtrim` | adm/biweekly.atrim, dhisexpire | the script trims the history while diablo runs; the stored article stays in history |
 | `TestAdmReaderScripts` | adm/daily.reader, adm/weekly.reader | both scripts run on a reader site. The adm tests are skipped while `samples/adm` still holds the csh scripts |
+| `TestAdmExitStatus` | adm/hourly.expire, daily.reader, weekly.reader, daily.atrim, biweekly.atrim | a job that fails (a stand-in `dexpire`, `dexpireover`, `rot`, `dkp` or `dhisexpire` with a nonzero exit) makes its script exit with that status, and the END line says it (D-135, D-137); before, the END message hid it and the script exited 0 |
+| `TestAdmRotArguments` | adm/rot | a count that is not digits (empty, `x`, `-1`, `1.5`, 10 digits) is refused with 2 before any file is moved (D-136); `08` is decimal; a move that fails (read-only directory) makes rot exit 1 |
+| `TestAdmDumphist`, `TestAdmHistbackup`, `TestAdmActsync` | adm/dumphist, adm/histbackup, adm/actsync | `dumphist` keeps the newest history copy as `dhistory.snp` and the one before as `.old`; `histbackup` asks a running diablo for the snapshot and says so when `path_dumphist` is not set; `actsync` prints a usage message and does nothing on a host that is one of the active file servers |
+| `TestAdmHistbackupDicmdFails` | adm/histbackup | histbackup fails (exit 1) when `dicmd` itself fails, so cron sees it |
 | `TestModerationMailsModerator`, `TestModerationFirstModeratorOnly` | dreaderd | an unapproved POST to a moderated group is mailed to the moderator (moderators file, `%s` = group with dashes) with 240 and not passed on; the address is an argument to sendmail, without `-t`; a crosspost is mailed only to the first moderated group's moderator (#45; before, every moderator got a copy). Mail content is checked only with `ci/fake-sendmail` installed (`E2E_FAKE_SENDMAIL=1` for `ci/build-on-host`, as in CI) |
 | `TestModerationApproveRequired`, `TestModerationApprovedGoesIn` | dreaderd | readerdef `approve` (#42): a POST with Approved: from a reader without `approve yes` gets 441, to a moderated and to an unmoderated group, and nothing is mailed or passed on; with `approve yes` it goes straight out. **Fails** on main before #42: any reader's Approved: post went out |
 | `TestModerationGroupStatus` | dreaderd | group status on POST (#43): a group with status "n" or "x", alone or crossposted, gets `441 Posting to <group> is not allowed (status <c>)`, with or without `checkpostgroups`; the open group still posts. **Fails** on main before #43: the "n" post went out |
@@ -147,11 +182,38 @@ address first:
 
 `TestDnewslinkConnlife` reads `/proc` and is skipped off Linux.
 
-`ci/build-on-host` installs the build packages (apt, dnf, zypper, pacman, apk or emerge), creates the
-`news` user, turns RADIUS off and builds; run it as root from the top of a
-throwaway copy of the source tree. The test binary can be built elsewhere
+`ci/build-on-host` installs the build packages (apt, dnf, zypper, pacman, apk,
+emerge, or `pkg` on FreeBSD and illumos/OmniOS), creates the `news` user, turns
+RADIUS off and builds; run it as root from the top of a throwaway copy of the
+source tree. On FreeBSD and illumos it installs gmake (and gcc on illumos) and
+builds with gmake; libcanlock and Berkeley DB are used only where a package and
+its headers are present, off otherwise. The test binary can be built elsewhere
 with `CGO_ENABLED=0 go test -c` and copied to a machine without Go.
-`.github/workflows/e2e.yml` does the same on GitHub's Ubuntu runners.
+`.github/workflows/ci-matrix.yml` does the same across a broad matrix on
+GitHub's runners (Ubuntu x64 and arm64, a libcanlock-less build, eight distro
+containers, FreeBSD and illumos).
+
+### One distro container, locally
+
+`ci/run-container` runs the suite in a single Linux distro container with the
+same commands the `containers` jobs of `ci-matrix.yml` use — the workflow calls
+this very script, so the invocation does not drift from CI (the image contents,
+distro packages and host kernel can still differ from a given CI run). It needs
+Docker and rsync both installed on an amd64 Linux host (rsync is a prerequisite,
+as on the CI runner; not a live news server). Build the
+pure-Go test binary first, from the same revision, then pass the image, a clean
+tree and that binary:
+
+```sh
+(cd tests/e2e && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -c -o /tmp/e2e.test.linux ./...)
+tests/e2e/ci/run-container alpine:3.24 . /tmp/e2e.test.linux
+```
+
+It mounts a clean copy of the tree (never your `.git`), builds as root with
+`build-on-host`, runs the tests as `news` with `--init` and the loopback peer
+host entries, and removes its own container and root-owned copy on exit or
+interrupt. Pass an `image@sha256:...` digest to pin the exact base a CI run
+logged; a floating tag on your machine need not match a fresh CI pull.
 
 ## Writing a test
 

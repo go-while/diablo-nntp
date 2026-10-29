@@ -1,0 +1,52 @@
+#!/bin/sh
+#
+# PROVIDE: dreaderd
+# REQUIRE: NETWORKING SERVERS LOGIN diablo
+# KEYWORD: shutdown
+#
+# Diablo NNTP reader, started through diablo-ctl.  See samples/init/README.
+# Add to /etc/rc.conf (sysrc dreaderd_enable=YES):
+#
+# dreaderd_enable (bool):	Set to YES to enable dreaderd.  Default NO.
+# dreaderd_ctl (path):	diablo-ctl.  Default /news/adm/diablo-ctl.
+# dreaderd_flags (str):	Options of diablo-ctl, for example "-f /news/diablo-ctl.conf".
+
+. /etc/rc.subr
+
+name="dreaderd"
+rcvar="dreaderd_enable"
+desc="Diablo NNTP reader"
+
+load_rc_config $name
+
+: ${dreaderd_enable:="NO"}
+: ${dreaderd_ctl:="/news/adm/diablo-ctl"}
+: ${dreaderd_flags:=""}
+
+extra_commands="check"
+start_cmd="dreaderd_start"
+stop_cmd="dreaderd_stop"
+status_cmd="dreaderd_status"
+check_cmd="dreaderd_check"
+
+dreaderd_start()
+{
+	${dreaderd_ctl} ${dreaderd_flags} start dreaderd
+}
+
+dreaderd_stop()
+{
+	${dreaderd_ctl} ${dreaderd_flags} stop dreaderd
+}
+
+dreaderd_status()
+{
+	${dreaderd_ctl} ${dreaderd_flags} status dreaderd
+}
+
+dreaderd_check()
+{
+	${dreaderd_ctl} ${dreaderd_flags} check dreaderd
+}
+
+run_rc_command "$1"

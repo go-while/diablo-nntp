@@ -1,0 +1,1 @@
+- dreaderd: with RFC 3977 numbering (`XNUMBERING rfc3977`) an article number above 2147483647 in an `OVER`, `HDR` or `LISTGROUP` range is answered `501 Bad range` instead of being used as a bound; `NEWNEWS` no longer drops the group the client had selected.

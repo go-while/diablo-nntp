@@ -2073,7 +2073,9 @@ DoSession(int fd, int count)
 	} else if (ReadOnlyCxn && (strcasecmp(cmd, "takethis") == 0)) {
 	    xfprintf(fo, "480 Read-only connection.\r\n");
 	} else if (strcasecmp(cmd, "takethis") == 0) {
-	    const char *msgid = MsgId(strtok(NULL, "\r\n"), NULL);
+	    const char *msgidbuf = "";
+	    const char *msgarg = strtok(NULL, "\r\n");
+	    const char *msgid = MsgId(msgarg, &msgidbuf);
 	    int r;
 	    int alreadyResponded = 0;
 	    char rejMsg[REJMSGSIZE];
@@ -2081,24 +2083,34 @@ DoSession(int fd, int count)
 
 	    rejMsg[0] = 0;
 
-	    TtlStats.ArtsTested += 1.0;
-	    DoArtStats(0, STATS_TAKETHIS, 0);
-	    if (ArtHashIsFiltered(msgid)) {
-		LogIncoming("%s - %s %s", HLabel, msgid, "IFILTER");
-		xfprintf(fo, "439 %s\r\n", msgid);
+	    if (msgarg == NULL || msgarg[strspn(msgarg, " \t")] == 0 ||
+						strcmp(msgid, "<>") == 0) {
+		xfprintf(fo, "501 Syntax error: message-id required\r\n");
 		fflush(fo);
 		LoadArticle(bi, msgid, 1, headerOnly, NULL, NULL);
 		r = RCALREADY;
 		alreadyResponded = 1;
-	    } else if (HistoryLookup(msgid, NULL) == 0) {
-		LogIncoming("%s - %s %s", HLabel, msgid, "Duplicate");
-		xfprintf(fo, "439 %s\r\n", msgid);
-		fflush(fo);
-		LoadArticle(bi, msgid, 1, headerOnly, NULL, NULL);
-		r = RCALREADY;
-		alreadyResponded = 1;
-	    } else {
-		r = LoadArticle(bi, msgid, 0, headerOnly, rejMsg, artType);
+	    }
+	    if (!alreadyResponded) {
+		TtlStats.ArtsTested += 1.0;
+		DoArtStats(0, STATS_TAKETHIS, 0);
+		if (ArtHashIsFiltered(msgid)) {
+		    LogIncoming("%s - %s %s", HLabel, msgid, "IFILTER");
+		    xfprintf(fo, "439 %s\r\n", msgid);
+		    fflush(fo);
+		    LoadArticle(bi, msgid, 1, headerOnly, NULL, NULL);
+		    r = RCALREADY;
+		    alreadyResponded = 1;
+		} else if (HistoryLookup(msgid, NULL) == 0) {
+		    LogIncoming("%s - %s %s", HLabel, msgid, "Duplicate");
+		    xfprintf(fo, "439 %s\r\n", msgid);
+		    fflush(fo);
+		    LoadArticle(bi, msgid, 1, headerOnly, NULL, NULL);
+		    r = RCALREADY;
+		    alreadyResponded = 1;
+		} else {
+		    r = LoadArticle(bi, msgid, 0, headerOnly, rejMsg, artType);
+		}
 	    }
 
 	    if (alreadyResponded == 0) {

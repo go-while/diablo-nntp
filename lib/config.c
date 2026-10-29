@@ -889,7 +889,7 @@ dumpConfigFeeder(FILE *fo, char *cmd)
     if (cmd == NULL || strcasecmp(cmd, "rejectartswithnul") == 0)
 	fprintf(fo, "rejectartswithnul: %d\n", DOpts.RejectArtsWithNul);
     if (cmd == NULL || strcasecmp(cmd, "rejectartswithbarecr") == 0)
-	fprintf(fo, "rejectartswithnul: %d\n", DOpts.RejectArtsWithBareCR);
+	fprintf(fo, "rejectartswithbarecr: %d\n", DOpts.RejectArtsWithBareCR);
     if (cmd == NULL || strcasecmp(cmd, "remember") == 0)
 	fprintf(fo, "remember: %d\n", DOpts.RememberSecs / 24 / 60 / 60);
     if (cmd == NULL || strcasecmp(cmd, "feedermaxacceptage") == 0)

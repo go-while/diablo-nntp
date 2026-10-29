@@ -1,0 +1,282 @@
+name: ci-matrix
+
+# Public breadth matrix: build Diablo and run the tests/e2e suite across as many
+# targets as GitHub-hosted runners allow, so the results are publicly verifiable
+# (our private VM matrix covers ~20 distros, but nobody outside can check those).
+# This is the whole e2e workflow: the two ubuntu jobs of the former e2e.yml are
+# folded in as the first two hosted targets, so nothing runs twice.
+#
+#   hosted      - native build+test on GitHub runners (incl. arm64 and a
+#                 libcanlock-less build so TestCancelLockWithoutLibcanlock runs)
+#   build-test-binary - compiles the pure-Go e2e test binary once, CGO off, for
+#                 linux/freebsd/illumos amd64, so no container or VM needs Go
+#   containers  - Linux distro containers via `docker run` on an ubuntu host,
+#                 mirroring the VM runner (build as root, test as the news user)
+#   freebsd / illumos - BSD/illumos via vmactions VMs (best effort)
+#
+# Actions are pinned to a full commit SHA (the tag is in the comment) so a moved
+# tag cannot change what runs. checkout uses persist-credentials: false so the
+# token is never written into .git.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-matrix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Native build + test on GitHub-hosted runners (the two ubuntu jobs folded in
+  # from the former e2e.yml), plus arm64 and a second ubuntu-24.04 build with
+  # libcanlock off (E2E_NO_CANLOCK=1) so TestCancelLockWithoutLibcanlock runs
+  # instead of skipping.
+  hosted:
+    name: hosted (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: ubuntu-24.04,            os: ubuntu-24.04,     no_canlock: "0" }
+          - { name: ubuntu-22.04,            os: ubuntu-22.04,     no_canlock: "0" }
+          - { name: ubuntu-24.04-arm,        os: ubuntu-24.04-arm, no_canlock: "0" }
+          - { name: ubuntu-24.04-no-canlock, os: ubuntu-24.04,     no_canlock: "1" }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: tests/e2e/go.mod
+          cache-dependency-path: tests/e2e/go.sum
+
+      # diablo reverse-resolves the peer before the greeting (lib/hostauth.c,
+      # NI_NAMEREQD); map the loopback test clients in /etc/hosts so that PTR
+      # lookup stays local. The hosted resolver answers quickly today, but this
+      # keeps it off that luck. Names are arbitrary; peers are matched by IP.
+      - name: Map loopback peer names
+        run: |
+          printf '%s\n' \
+            '127.0.0.2 peer.e2e.test' '127.0.0.3 peer3.e2e.test' \
+            '127.0.0.4 peer4.e2e.test' '127.0.0.9 peer9.e2e.test' \
+            '127.0.0.10 peer10.e2e.test' | sudo tee -a /etc/hosts >/dev/null
+
+      # Installs build packages, creates the news user, builds with RADIUS off
+      # (Linux has no BSD libradius). E2E_NO_CANLOCK=1 builds Cancel-Lock out.
+      - name: Build
+        run: sudo E2E_FAKE_SENDMAIL=1 E2E_NO_CANLOCK=${{ matrix.no_canlock }} tests/e2e/ci/build-on-host
+
+      - name: Build log
+        if: always()
+        run: cat build.log
+
+      # As the runner user, not root: diablo's switch to news fails and it keeps
+      # running as the runner, which owns the test sites in the temp directory.
+      - name: Test
+        working-directory: tests/e2e
+        env:
+          DIABLO_BIN: ${{ github.workspace }}/dbin
+          NNTP_TEST_DEADLINE: 30s
+        run: go test -v -count=1 ./...
+
+  # Compile the e2e test binary once, with CGO disabled so it is portable (runs
+  # on glibc and musl alike), for every OS the VM/container jobs need. The test
+  # binary only execs the C binaries via DIABLO_BIN, so it is pure Go and cross
+  # compiles cleanly.
+  build-test-binary:
+    name: build e2e test binary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: tests/e2e/go.mod
+          cache-dependency-path: tests/e2e/go.sum
+
+      - name: Compile (linux, freebsd, illumos; amd64; CGO off)
+        working-directory: tests/e2e
+        run: |
+          set -eux
+          for os in linux freebsd illumos; do
+            CGO_ENABLED=0 GOOS="$os" GOARCH=amd64 go test -c -o "e2e.test.$os" ./...
+          done
+          ls -l e2e.test.*
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-test-binaries
+          path: tests/e2e/e2e.test.*
+          retention-days: 7
+          if-no-files-found: error
+
+  # Linux distro containers, mirroring the private VM matrix. Each runs via the
+  # shared tests/e2e/ci/run-container on the ubuntu host (not the job `container:`
+  # key): checkout and artifact download stay on the host, so minimal images
+  # (alpine, archlinux) need no git or node. The script mounts a clean copy of the
+  # tree (no .git), builds as root with build-on-host, and runs the tests as the
+  # news user -- the same script a developer runs locally, so CI cannot drift.
+  #
+  # Image tags are compatibility lanes; fedora is pinned to its release and
+  # archlinux is the deliberately-rolling lane. The script logs each image's
+  # digest, the kernel and the fd limits.
+  containers:
+    name: container (${{ matrix.name }})
+    needs: build-test-binary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: debian-13,         image: "debian:13" }
+          - { name: ubuntu-26.04,      image: "ubuntu:26.04" }
+          - { name: alpine-3.24,       image: "alpine:3.24" }
+          - { name: fedora-44,         image: "fedora:44" }
+          - { name: almalinux-10,      image: "almalinux:10" }
+          - { name: rockylinux-9,      image: "rockylinux:9" }
+          - { name: opensuse-leap-16,  image: "opensuse/leap:16.0" }
+          - { name: archlinux-rolling, image: "archlinux:latest" }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: e2e-test-binaries
+          path: tests/e2e
+
+      - name: Build and test in ${{ matrix.image }}
+        env:
+          RUN_CONTAINER_NAME: ci-${{ github.run_id }}-${{ matrix.name }}
+        run: tests/e2e/ci/run-container "${{ matrix.image }}" "$PWD" "$PWD/tests/e2e/e2e.test.linux"
+
+      # Belt-and-suspenders for a SIGKILL the script's trap cannot catch: remove
+      # the named container and its root-owned scratch (deleted via a throwaway
+      # container, since the runner user does not own those files).
+      - name: Clean up container and scratch
+        if: always()
+        env:
+          RUN_CONTAINER_NAME: ci-${{ github.run_id }}-${{ matrix.name }}
+        run: |
+          name="$RUN_CONTAINER_NAME"
+          # Same name rules as run-container; never rm a path from an unchecked name.
+          case "$name" in
+            *[!A-Za-z0-9_.-]*|[!A-Za-z0-9]*|*..*) echo "skip cleanup: bad name '$name'"; exit 0 ;;
+          esac
+          docker rm -f "$name" 2>/dev/null || true
+          d="${TMPDIR:-/tmp}/diablo-ci/$name"
+          # Only our own marked scratch, directly under the fixed root.
+          [ "$(dirname "$d")" = "${TMPDIR:-/tmp}/diablo-ci" ] && [ -d "$d" ] && [ -f "$d/.diablo-ci" ] || exit 0
+          docker run --rm --network none --entrypoint /bin/sh \
+            --mount "type=bind,src=$d,dst=/c" "${{ matrix.image }}" -ec 'rm -rf /c/src /c/cid /c/.diablo-ci' 2>/dev/null || true
+          rmdir "$d" 2>/dev/null || true
+
+  # FreeBSD: build + e2e suite on a vmactions VM. build-on-host owns the FreeBSD
+  # path (pkg install gmake, create the news user, build with gmake and clang
+  # from base), so this job calls it like the Linux jobs. RADIUS/libcanlock/
+  # BerkeleyDB stay off (no library is wired up here / the base ships no
+  # db_185.h), keeping the dependency to gmake. This proves the FreeBSD build,
+  # the e2e suite, and TestInitRcdFreeBSD (the rc.d script, which runs only where
+  # /etc/rc.subr exists). The prepare step only sets up loopback aliases and the
+  # peer host names; the build itself goes through the shared build-on-host.
+  freebsd:
+    name: freebsd
+    needs: build-test-binary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: e2e-test-binaries
+          path: tests/e2e
+
+      - name: Build and test on FreeBSD
+        uses: vmactions/freebsd-vm@c46abacb49f09938ca4e1702d15d836285d694cc # v1.5.9
+        with:
+          release: "14.2"
+          usesh: true
+          prepare: |
+            # The e2e tests bind client sockets to several 127.0.0.x source
+            # addresses (PeerIP 127.0.0.2 and .3/.4/.9/.10); unlike Linux, FreeBSD
+            # has only 127.0.0.1 on lo0 by default, so add the rest as aliases.
+            for ip in 2 3 4 9 10; do ifconfig lo0 alias 127.0.0.$ip netmask 0xffffffff; done
+            # diablo reverse-resolves the peer; map these names in /etc/hosts so
+            # the PTR lookup stays local (names arbitrary; peers matched by IP).
+            printf '%s\n' '127.0.0.2 peer.e2e.test' '127.0.0.3 peer3.e2e.test' \
+              '127.0.0.4 peer4.e2e.test' '127.0.0.9 peer9.e2e.test' \
+              '127.0.0.10 peer10.e2e.test' >> /etc/hosts
+          run: |
+            set -e
+            root=$(pwd)
+            cp tests/e2e/e2e.test.freebsd tests/e2e/e2e.test
+            chmod 755 tests/e2e/e2e.test
+            # build-on-host installs gmake, creates the news user, builds the
+            # optional features out (no library wired up here) and builds dbin.
+            tests/e2e/ci/build-on-host
+            echo "=== build.log (last 20 lines) ==="; tail -20 build.log
+            ls dbin
+            chmod -R a+rX .
+            cd tests/e2e
+            # dbin is at the repo root ($root/dbin), two levels up from here.
+            su -m news -c "env DIABLO_BIN=$root/dbin NNTP_TEST_DEADLINE=30s ./e2e.test -test.v -test.count=1 -test.timeout=1200s"
+
+  # illumos (OmniOS): best effort, same shape as FreeBSD via build-on-host
+  # (pkg install gcc13 + gnu-make, create the news user, build with gmake and
+  # CC=gcc). Does not fail the workflow; reported either way.
+  illumos:
+    name: illumos
+    needs: build-test-binary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: e2e-test-binaries
+          path: tests/e2e
+
+      - name: Build and test on OmniOS
+        uses: vmactions/omnios-vm@9576f0b6d15e7696548409baa533bc0a339caf42 # v1.3.7
+        with:
+          prepare: |
+            # Same 127.0.0.x client source addresses as the FreeBSD job needs.
+            for ip in 2 3 4 9 10; do ifconfig lo0 addif 127.0.0.$ip up 2>/dev/null || true; done
+            # Local names so diablo's reverse PTR lookup of the peer stays local.
+            printf '%s\n' '127.0.0.2 peer.e2e.test' '127.0.0.3 peer3.e2e.test' \
+              '127.0.0.4 peer4.e2e.test' '127.0.0.9 peer9.e2e.test' \
+              '127.0.0.10 peer10.e2e.test' >> /etc/hosts
+          run: |
+            set -e
+            root=$(pwd)
+            cp tests/e2e/e2e.test.illumos tests/e2e/e2e.test
+            chmod 755 tests/e2e/e2e.test
+            # build-on-host installs gcc13 + gnu-make, creates the news user,
+            # builds the optional features out and builds dbin with gmake CC=gcc.
+            tests/e2e/ci/build-on-host
+            echo "=== build.log (last 20 lines) ==="; tail -20 build.log
+            ls dbin
+            chmod -R a+rX .
+            cd tests/e2e
+            # dbin is at the repo root ($root/dbin), two levels up from here.
+            su news -c "DIABLO_BIN=$root/dbin NNTP_TEST_DEADLINE=30s ./e2e.test -test.v -test.count=1 -test.timeout=1200s"

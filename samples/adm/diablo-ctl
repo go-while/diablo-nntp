@@ -2,7 +2,7 @@
 #
 # DIABLO-CTL - start, stop, restart or show the status of diablo and dreaderd.
 #
-#	diablo-ctl [-C diablo.config] [-f diablo-ctl.conf] start|stop|restart|status [diablo|dreaderd|all]
+#	diablo-ctl [-C diablo.config] [-f diablo-ctl.conf] [-F] start|stop|restart|status|check [diablo|dreaderd|all]
 #
 #	"all" (the default) means the daemons listed in DIABLO_DAEMONS.
 #
@@ -20,26 +20,47 @@
 # workers by their working directory (this site's path_dqueue).  A diablo
 # too old to write diablo.pid is stopped through its control socket only.
 #
-# Exit status: 0 ok, 1 failure, 2 usage, 3 status: a requested daemon is not
-# running.
+# CHECKS BEFORE A START.  "start" (and restart) first runs these checks, which
+# are ON unless DIABLO_PREFLIGHT="no" is set in diablo-ctl.conf, and does not
+# start a daemon (exit status 1, every reason printed) when one fails:
+#	- a mount point listed in DIABLO_MOUNTS is not mounted;
+#	- the active file the daemon uses (dreaderd: always; diablo: only when
+#	  diablo.config has "active" on or names the file) does not exist, or is older than
+#	  DIABLO_ACTIVE_MAXAGE hours when that is set;
+#	- unclean shutdown: the pid file is left, no process is running, and the
+#	  activity log has not changed for DIABLO_MAX_DOWNTIME minutes (off
+#	  unless that is set);
+#	- the history file is missing and DIABLO_REQUIRE_HISTORY="yes" (by
+#	  default that is not a failure, diablo makes a new one; a note is
+#	  printed only when a snapshot, dhistory.snp or .old, is there).
+# install-portable.sh creates an empty active file; at a site set up by hand it
+# may be missing: create it (README.READER: dsyncgroups) or start once with
+# "diablo-ctl -F start dreaderd".  "check" runs the checks and starts nothing.
+# -F skips them for this start.  Each daemon is checked and started on its own.
+# See diablo-ctl.conf and samples/init/README.
+#
+# Exit status: 0 ok, 1 failure (check: a check failed), 2 usage, 3 status: a
+# requested daemon is not running.
 
 set -u
 
 usage() {
-    echo "usage: diablo-ctl [-C diablo.config] [-f diablo-ctl.conf] start|stop|restart|status [diablo|dreaderd|all]" >&2
+    echo "usage: diablo-ctl [-C diablo.config] [-f diablo-ctl.conf] [-F] start|stop|restart|status|check [diablo|dreaderd|all]" >&2
     exit 2
 }
 
 say() { echo "diablo-ctl: $*"; }
 
 conf=""
-while getopts C:f: opt; do
+force=no
+while getopts C:f:F opt; do
     case $opt in
 	C)
 	    # absolute: the script changes to path_home before starting
 	    case $OPTARG in /*) DIABLO_CONFIG_PATH=$OPTARG ;; *) DIABLO_CONFIG_PATH=$(pwd)/$OPTARG ;; esac
 	    export DIABLO_CONFIG_PATH ;;
 	f) conf=$OPTARG ;;
+	F) force=yes ;;
 	*) usage ;;
     esac
 done
@@ -47,7 +68,7 @@ shift $((OPTIND - 1))
 [ $# -ge 1 ] && [ $# -le 2 ] || usage
 action=$1
 which=${2:-all}
-case $action in start|stop|restart|status) ;; *) usage ;; esac
+case $action in start|stop|restart|status|check) ;; *) usage ;; esac
 case $which in diablo|dreaderd|all) ;; *) usage ;; esac
 
 # Settings, before the binary directory is known: a -f file may set DIABLO_BIN.
@@ -71,12 +92,27 @@ if [ -z "${DIABLO_BIN:-}" ]; then
 fi
 [ -n "${DIABLO_BIN:-}" ] && [ -x "$DIABLO_BIN/dpath" ] || { say "no diablo binaries found; set DIABLO_BIN"; exit 1; }
 
-home=$("$DIABLO_BIN/dpath" home) || { say "dpath cannot read diablo.config"; exit 1; }
-logdir=$("$DIABLO_BIN/dpath" log) || { say "dpath cannot read diablo.config"; exit 1; }
-dqueue=$(cd "$("$DIABLO_BIN/dpath" dqueue 2>/dev/null)" 2>/dev/null && pwd -P) || dqueue=""
+# The paths of the site, from the binaries' own view of diablo.config.
+derive() {
+    home=$("$DIABLO_BIN/dpath" home) || { say "dpath cannot read diablo.config"; exit 1; }
+    logdir=$("$DIABLO_BIN/dpath" log) || { say "dpath cannot read diablo.config"; exit 1; }
+    dqueue=$(cd "$("$DIABLO_BIN/dpath" dqueue 2>/dev/null)" 2>/dev/null && pwd -P) || dqueue=""
+}
+derive
 if [ -z "$conf" ] && [ -r "$home/diablo-ctl.conf" ]; then
+    oldbin=$DIABLO_BIN
     . "$home/diablo-ctl.conf"
+    # It may name other binaries: then the paths come from those, not from
+    # a mix of the two installations.
+    if [ "$DIABLO_BIN" != "$oldbin" ]; then
+	[ -x "$DIABLO_BIN/dpath" ] || { say "no diablo binaries in DIABLO_BIN=$DIABLO_BIN (set in $home/diablo-ctl.conf)"; exit 1; }
+	derive
+    fi
 fi
+
+# The option strings and lists below are split into words and must stay
+# literal: no pathname expansion (a "*" in an option is not a file name).
+set -f
 
 DIABLO_DAEMONS=${DIABLO_DAEMONS:-diablo}
 DIABLO_OPTS=${DIABLO_OPTS:-}
@@ -84,14 +120,73 @@ DREADERD_OPTS=${DREADERD_OPTS:-}
 DIABLO_STOP_WAIT=${DIABLO_STOP_WAIT:-30}
 DIABLO_START_WAIT=${DIABLO_START_WAIT:-30}
 DIABLO_PS_PAD=${DIABLO_PS_PAD-60}
+DIABLO_PREFLIGHT=${DIABLO_PREFLIGHT:-yes}
+DIABLO_MOUNTS=${DIABLO_MOUNTS:-}
+DIABLO_REQUIRE_HISTORY=${DIABLO_REQUIRE_HISTORY:-no}
+DIABLO_ACTIVE_MAXAGE=${DIABLO_ACTIVE_MAXAGE:-}
+DIABLO_MAX_DOWNTIME=${DIABLO_MAX_DOWNTIME:-}
+DIABLO_DKP_TRIM=${DIABLO_DKP_TRIM:-no}
 if [ -z "${DIABLO_USER:-}" ]; then
     if [ "$(id -u)" -eq 0 ]; then DIABLO_USER=news; else DIABLO_USER=$(id -un); fi
 fi
+
+# A wrong setting is an error for start, restart and check, which must not
+# run on a guess.  stop and status have to work whatever the file says (a typo
+# must not leave a daemon running that cannot be stopped): they warn and use
+# the default, or skip the entry.
+# badsetting <message> <variable> <default>
+badsetting() {
+    case $action in
+	start|restart|check) say "$1"; exit 1 ;;
+    esac
+    say "warning: $1; using ${3:-the default}"
+    eval "$2=\$3"
+}
+
+# Settings that are numbers: a wrong one must not turn a timeout into an
+# endless wait (a failed numeric test counts as "not yet").  Leading zeros
+# are dropped (shell arithmetic reads 08 as a bad octal number).
+for spec in DIABLO_STOP_WAIT:30 DIABLO_START_WAIT:30 DIABLO_ACTIVE_MAXAGE: DIABLO_MAX_DOWNTIME: DIABLO_NOFILE: DIABLO_PS_PAD:0; do
+    v=${spec%%:*}
+    dflt=${spec#*:}
+    eval "val=\${$v:-}"
+    case $val in
+	'') continue ;;
+	*[!0-9]*)
+	    badsetting "$v must be a number (seconds for the waits, hours for DIABLO_ACTIVE_MAXAGE, minutes for DIABLO_MAX_DOWNTIME, descriptors for DIABLO_NOFILE), not \"$val\"" "$v" "$dflt"
+	    continue ;;
+    esac
+    zeros=${val%%[!0]*}
+    val=${val#"$zeros"}
+    [ -n "$val" ] || val=0
+    # no more than 9 digits: a longer number wraps or aborts the shell
+    # arithmetic (and a huge wait would never end)
+    if [ "${#val}" -gt 9 ]; then
+	badsetting "$v is too large (at most 9 digits), not \"$val\"" "$v" "$dflt"
+	continue
+    fi
+    eval "$v=\$val"
+done
 
 if [ "$which" = all ]; then
     daemons=$DIABLO_DAEMONS
 else
     daemons=$which
+fi
+known=""
+for d in $daemons; do
+    case $d in
+	diablo|dreaderd) known="$known $d" ;;
+	*) badsetting "unknown daemon \"$d\" in DIABLO_DAEMONS (only diablo and dreaderd)" DIABLO_UNKNOWN_DAEMON "" ;;
+    esac
+done
+daemons=$known
+if [ -z "$daemons" ]; then
+    # Nothing valid is left (a typo, "all", "diablo,dreaderd"): start, restart
+    # and check have refused above.  stop and status then look at both daemons,
+    # so that a live one is stopped and status tells the truth.
+    daemons="diablo dreaderd"
+    say "warning: no daemon left in DIABLO_DAEMONS; using $daemons"
 fi
 
 # The status area for ps: "-s" plus DIABLO_PS_PAD spaces as one argument;
@@ -100,7 +195,6 @@ fi
 pspad=""
 case $DIABLO_PS_PAD in
     ''|0) ;;
-    *[!0-9]*) say "DIABLO_PS_PAD must be a number of spaces"; exit 1 ;;
     *) pspad="-s$(printf "%${DIABLO_PS_PAD}s" "")" ;;
 esac
 
@@ -186,12 +280,123 @@ waitgone() {
     return 0
 }
 
+# older_than <file> <minutes>: the file was last changed more than that many
+# minutes ago.  find without -mmin (illumos) rounds the limit up to whole days.
+older_than() {
+    [ -n "$(find "$1" -prune -mmin +"$2" -print 2>/dev/null)" ] && return 0
+    find "$1" -prune -mmin 0 >/dev/null 2>&1 && return 1	# -mmin works: not older
+    days=$((($2 + 1439) / 1440))
+    [ -n "$(find "$1" -prune -mtime +"$((days - 1))" -print 2>/dev/null)" ]
+}
+
+# ismount <dir>: dir is a mount point (the "Mounted on" of df -P is dir itself).
+ismount() {
+    p=$(cd "$1" 2>/dev/null && pwd -P) || return 1
+    [ "$(df -P "$p" 2>/dev/null | awk 'NR == 2 { print $NF }')" = "$p" ]
+}
+
+# activeneeded <daemon>: the daemon uses an active file: dreaderd always, diablo
+# only when diablo.config turns "active" on (or names the file).  Like
+# diablo, the word and its value are case blind, a "#" starts a comment and
+# trailing white space (a CR) is not part of the value.
+activeneeded() {
+    case $1 in
+	dreaderd) return 0 ;;
+	diablo)
+	    cfg=${DIABLO_CONFIG_PATH:-$home/diablo.config}
+	    v=$(awk '{ sub(/#.*/, ""); sub(/[ \t\r]+$/, "") } tolower($1) == "active" { v = $2 } END { print v }' "$cfg" 2>/dev/null | tr 'A-Z' 'a-z')
+	    case $v in
+		on|/*) return 0 ;;
+	    esac ;;
+    esac
+    return 1
+}
+
+# activefile <daemon>: its path, as the daemon expands it (dpath).
+activefile() {
+    case $1 in
+	dreaderd) "$DIABLO_BIN/dpath" reader_dactive ;;
+	diablo) "$DIABLO_BIN/dpath" server_dactive ;;
+    esac
+}
+
+# preflight <daemon>: the checks before a start.  Prints what is wrong and
+# returns 1 when something is; a missing history file is only a note (diablo
+# makes an empty one), unless DIABLO_REQUIRE_HISTORY says yes.
+preflight() {
+    d=$1
+    bad=0
+    for m in $DIABLO_MOUNTS; do
+	ismount "$m" || { say "$d: $m is not mounted"; bad=1; }
+    done
+    if [ "$d" = diablo ]; then
+	hist=$("$DIABLO_BIN/dpath" dhistory)
+	if [ ! -f "$hist" ]; then
+	    if [ "$DIABLO_REQUIRE_HISTORY" = yes ]; then
+		say "$d: history file $hist not found (DIABLO_REQUIRE_HISTORY=yes); a new site makes one with: dbin/diload $hist </dev/null"
+		bad=1
+	    elif [ -f "$hist.snp" ] || [ -f "$hist.old" ]; then
+		say "$d: note: $hist not found, but a snapshot is there ($hist.snp or $hist.old); diablo will start with an empty history unless you restore it"
+	    fi
+	fi
+    fi
+    if activeneeded "$d"; then
+	act=$(activefile "$d" 2>/dev/null) || act=""
+	if [ -z "$act" ]; then
+	    say "$d: cannot find out the path of the active file (dpath failed); the active file could not be checked"
+	    bad=1
+	elif [ ! -f "$act" ]; then
+	    say "$d: active file $act not found (a site set up by hand: create it, see README.READER, or start once with -F)"
+	    bad=1
+	elif [ -n "$DIABLO_ACTIVE_MAXAGE" ] && older_than "$act" $((DIABLO_ACTIVE_MAXAGE * 60)); then
+	    say "$d: active file $act is more than $DIABLO_ACTIVE_MAXAGE hours old"
+	    bad=1
+	fi
+    fi
+    # A pid file without a process: the last run did not end with a stop of
+    # diablo-ctl.  After a long downtime the spool and the history may be out
+    # of step with the other servers, so ask for a person.
+    pf="$logdir/$d.pid"
+    if [ -n "$DIABLO_MAX_DOWNTIME" ] && [ -e "$pf" ] && [ -z "$(masterpid "$d")" ]; then
+	case $d in diablo) alog=$logdir/article.log ;; dreaderd) alog=$logdir/drincoming.log ;; esac
+	if [ -f "$alog" ] && older_than "$alog" "$DIABLO_MAX_DOWNTIME"; then
+	    say "$d: unclean shutdown ($pf is left) and $alog has not changed for more than $DIABLO_MAX_DOWNTIME minutes; check the site, remove $pf and start with -F"
+	    bad=1
+	fi
+    fi
+    return $bad
+}
+
+# dkptrim <daemon>: trim and sort the active file (dkp -t, dkp -s) while no
+# daemon of this site runs (dkp needs the file to itself).  As root the files
+# are given back to their owner.
+dkptrim() {
+    [ "$DIABLO_DKP_TRIM" = yes ] || return 0
+    if up diablo || up dreaderd; then
+	say "$1: active file not trimmed: a daemon of this site is running"
+	return 0
+    fi
+    case $1 in
+	diablo) f=$("$DIABLO_BIN/dpath" server_dactive) ;;
+	dreaderd) f=$("$DIABLO_BIN/dpath" reader_dactive) ;;
+    esac
+    [ -f "$f" ] || return 0
+    owner=$(ls -ldn "$f" | awk '{ print $3 ":" $4 }')
+    "$DIABLO_BIN/dkp" -t "$f" >/dev/null && "$DIABLO_BIN/dkp" -s "$f" >/dev/null || say "$1: dkp could not trim and sort $f"
+    [ "$(id -u)" -eq 0 ] && chown "$owner" "$f"
+    return 0
+}
+
 start_one() {
     d=$1
     if up "$d"; then
 	say "$d is already running (pid $(pidtext "$d"))"
 	return 0
     fi
+    if [ "$force" != yes ] && [ "$DIABLO_PREFLIGHT" = yes ]; then
+	preflight "$d" || { say "$d not started: a check failed (diablo-ctl -F start skips the checks once, DIABLO_PREFLIGHT=no in diablo-ctl.conf turns them off; see samples/init/README)"; return 1; }
+    fi
+    dkptrim "$d"
     [ -n "${DIABLO_NOFILE:-}" ] && ulimit -n "$DIABLO_NOFILE"
     # Start in path_home, as rc.news does (dreaderd keeps its cwd).
     cd "$home" || { say "cannot cd to $home"; return 1; }
@@ -277,6 +482,9 @@ stop_one() {
 	    done
 	fi
     fi
+    # dreaderd leaves its pid file behind: only a pid file without a process
+    # means that the last run did not end with a stop (see DIABLO_MAX_DOWNTIME)
+    [ -n "$(masterpid "$d")" ] || rm -f "$logdir/$d.pid"
     say "$d stopped"
 }
 
@@ -310,5 +518,9 @@ case $action in
 	[ $rc -eq 0 ] && for d in $daemons; do start_one "$d" || rc=1; done ;;
     status)
 	for d in $daemons; do status_one "$d" || rc=3; done ;;
+    check)
+	for d in $daemons; do
+	    if preflight "$d"; then say "$d: checks passed"; else rc=1; fi
+	done ;;
 esac
 exit $rc

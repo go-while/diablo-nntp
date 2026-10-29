@@ -65,6 +65,28 @@ setServerMaybeCloseFlag(ForkDesc *desc)
 	FD_SET(desc->d_Fd, &RFds);
 }
 
+/*
+ * The number after a letter of the dserver.hosts flags (p119, s2, T180):
+ * none gives 0, as before; one that overflows or is above max is logged and
+ * gives 0 too (the caller's default), instead of an arbitrary clamped value.
+ */
+static int
+flagNumber(const char *p, int base, long max, const char *host, char flag)
+{
+    char *end;
+    long v;
+
+    errno = 0;
+    v = strtol(p, &end, base);
+    if (end == p)
+	return(0);
+    if (errno != 0 || v < 0 || v > max) {
+	logit(LOG_ERR, "dserver.hosts: bad number after '%c' in the flags of %s - ignoring it", flag, host);
+	return(0);
+    }
+    return((int)v);
+}
+
 void
 setServerClosedRemovals(ForkDesc *desc)
 {
@@ -156,12 +178,12 @@ CheckServerConfig(time_t t, int force)
 			nflags |= COF_MAXAGE;
 			break;
 		    case 'p':	/* port			*/
-			port = strtol(flags + 1, NULL, 0);
+			port = flagNumber(flags + 1, 0, 65535, host, 'p');
 			if (port == 0)
 			    port = 119;
 			break;
 		    case 's':	/* spool		*/
-			npri = strtol(flags + 1, NULL, 10);
+			npri = flagNumber(flags + 1, 10, INT_MAX, host, 's');
 			if ((desc = FindThreadId(THREAD_SPOOL, host)) != NULL) {
 			    Connection *conn = desc->d_Data;
 			    conn->co_Flags &= ~COF_MAYCLOSESRV;
@@ -177,7 +199,7 @@ CheckServerConfig(time_t t, int force)
 			nflags |= COF_READONLY;
 			break;
 		    case 'o':	/* outgoing (post)	*/
-			npri = strtol(flags + 1, NULL, 10);
+			npri = flagNumber(flags + 1, 10, INT_MAX, host, 'o');
 			if ((desc = FindThreadId(THREAD_POST, host)) != NULL) {
 			    Connection *conn = desc->d_Data;
 			    conn->co_Flags &= ~COF_MAYCLOSESRV;
@@ -187,12 +209,12 @@ CheckServerConfig(time_t t, int force)
 			}
 			break;
 		    case 't':   /* slow response timer  */
-			timewarn = strtol(flags + 1, NULL, 10);
+			timewarn = flagNumber(flags + 1, 10, INT_MAX, host, 't');
 			if (timewarn == 0)
 			    timewarn = 10;
 			break;
 		    case 'T':   /* timeout              */
-			timeout = strtol(flags + 1, NULL, 10);
+			timeout = flagNumber(flags + 1, 10, INT_MAX, host, 'T');
 			if (timeout == 0)
 			    timeout = 180;
 			break;
@@ -274,13 +296,17 @@ CheckServerConfig(time_t t, int force)
 			    logit(LOG_ERR, "Unknown option '%s' - ignoring", option);
 			}
 		    } else if (strncmp(option, "cachemin=", 9) == 0) {
-			cachemin = strtol(option + 9, NULL, 0);
+			if (ParseIntRange(option + 9, 0, 0, INT_MAX, &cachemin) < 0)
+			    logit(LOG_ERR, "dserver.hosts: bad value in '%s' for %s - ignoring", option, host);
 		    } else if (strncmp(option, "cachemax=", 9) == 0) {
-			cachemax = strtol(option + 9, NULL, 0);
+			if (ParseIntRange(option + 9, 0, 0, INT_MAX, &cachemax) < 0)
+			    logit(LOG_ERR, "dserver.hosts: bad value in '%s' for %s - ignoring", option, host);
 		    } else if (strncmp(option, "cacheabletime=", 14) == 0) {
-			cacheabletime = strtol(option + 14, NULL, 0);
+			if (ParseIntRange(option + 14, 0, 0, INT_MAX, &cacheabletime) < 0)
+			    logit(LOG_ERR, "dserver.hosts: bad value in '%s' for %s - ignoring", option, host);
 		    } else if (strncmp(option, "retention=", 10) == 0) {
-			retention = strtol(option + 10, NULL, 0);
+			if (ParseIntRange(option + 10, 0, 0, INT_MAX, &retention) < 0)
+			    logit(LOG_ERR, "dserver.hosts: bad value in '%s' for %s - ignoring", option, host);
 		    } else if (strncmp(option, "groupdef=", 9) == 0) {
 			groupdef = option+9;
 		    } else {

@@ -24,3 +24,13 @@ func TestDicmdConfig(t *testing.T) {
 		t.Errorf("dicmd config path_dumphist /bin/true: %q, want it rejected as Invalid", out)
 	}
 }
+
+// TestDicmdConfigRejectArtsWithBareCR: the config dump labels the setting
+// rejectartswithbarecr with its own name. Before, it printed it as "rejectartswithnul".
+func TestDicmdConfigRejectArtsWithBareCR(t *testing.T) {
+	s := NewSite(t, SiteOptions{})
+	out := s.Dicmd(t, "config", "rejectartswithbarecr")
+	if !strings.Contains(out, "rejectartswithbarecr:") || strings.Contains(out, "rejectartswithnul") {
+		t.Errorf("dicmd config rejectartswithbarecr: %q, want a rejectartswithbarecr: line only", out)
+	}
+}

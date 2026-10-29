@@ -1,0 +1,151 @@
+#!/bin/sh
+# Run the Diablo e2e suite in one Linux distro container. The ci-matrix workflow
+# and a developer's machine run the SAME commands through this script, so the CI
+# and local invocations stay in step (the image, its packages and the host
+# kernel still differ between runs -- this does not pretend otherwise).
+#
+#   tests/e2e/ci/run-container IMAGE SOURCE_TREE LINUX_TEST_BINARY
+#
+#   IMAGE              a linux/amd64 image tag or tag@sha256 digest
+#   SOURCE_TREE        a clean checkout/worktree (untracked non-.git files are
+#                      copied too, so use a clean one)
+#   LINUX_TEST_BINARY  the pure-Go e2e test binary, built from the SAME revision:
+#       (cd SOURCE_TREE/tests/e2e && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+#            go test -c -o /somewhere/e2e.test.linux ./...)
+#
+# Run on linux/amd64 (the CI job's platform), never on a live news server. It
+# builds only inside a throwaway copy, installs packages only in the container,
+# and removes its own copy and container on exit, errors and INT/TERM. A SIGKILL
+# cannot run the trap, so CI adds an always() step that sweeps by the name below.
+#
+# Env: RUN_CONTAINER_NAME gives the container and scratch a stable name so a CI
+# always() step can find them; it must match ^[A-Za-z0-9][A-Za-z0-9_.-]*$ with no
+# "..". Unset, a private mktemp directory is used. DIABLO_CI_TMP overrides the
+# scratch root (default ${TMPDIR:-/tmp}/diablo-ci); it must be outside the tree.
+set -eu
+
+# Set before any early exit so the cleanup trap is safe on an argument error.
+image='' imageid='' name='' tmp='' cid='' src='' marker=''
+
+usage() { echo "usage: $0 IMAGE SOURCE_TREE LINUX_TEST_BINARY" >&2; exit 2; }
+[ "$#" -eq 3 ] || usage
+image=$1
+tree=$(cd "$2" 2>/dev/null && pwd) || { echo "run-container: no such source tree: $2" >&2; exit 2; }
+binary=$3
+[ -f "$binary" ] || { echo "run-container: no test binary: $binary" >&2; exit 2; }
+
+# One fixed scratch root; named runs live directly under it. Refuse a root inside
+# the source tree, or rsync would copy the growing scratch into itself.
+root=${DIABLO_CI_TMP:-${TMPDIR:-/tmp}/diablo-ci}
+mkdir -p "$root"
+root=$(cd "$root" && pwd)
+case "$root/" in
+    "$tree"/*) echo "run-container: scratch root $root is inside the source tree; set DIABLO_CI_TMP elsewhere" >&2; exit 2 ;;
+esac
+
+name=${RUN_CONTAINER_NAME:-}
+if [ -n "$name" ]; then
+    case "$name" in
+        *[!A-Za-z0-9_.-]*|[!A-Za-z0-9]*|*..*)
+            echo "run-container: bad RUN_CONTAINER_NAME '$name' (allowed ^[A-Za-z0-9][A-Za-z0-9_.-]*\$, no '..')" >&2; exit 2 ;;
+    esac
+    tmp=$root/$name
+else
+    tmp=$(mktemp -d "$root/run.XXXXXX")
+fi
+# The name rules already forbid '/' and '..'; assert containment anyway.
+[ "$(dirname "$tmp")" = "$root" ] || { echo "run-container: scratch path $tmp escapes $root" >&2; exit 2; }
+cid=$tmp/cid
+src=$tmp/src
+marker=$tmp/.diablo-ci
+
+cleanup() {
+    status=$?
+    trap - EXIT HUP INT TERM
+    [ -z "$cid" ] || { [ -s "$cid" ] && docker rm -f "$(cat "$cid")" >/dev/null 2>&1 || true; }
+    [ -z "$name" ] || docker rm -f "$name" >/dev/null 2>&1 || true
+    # Delete only our own marked scratch, through the image's own isolation
+    # (build files are root-owned), never host sudo; then confirm it is gone.
+    if [ -n "$tmp" ] && [ -f "$marker" ]; then
+        docker run --rm --network none --entrypoint /bin/sh \
+            --mount "type=bind,src=$tmp,dst=/c" "${imageid:-$image}" \
+            -ec 'rm -rf /c/src /c/cid /c/.diablo-ci' >/dev/null 2>&1 || true
+        rmdir "$tmp" 2>/dev/null || true
+        if [ -e "$tmp" ]; then
+            echo "run-container: scratch not fully removed, retained at $tmp" >&2
+            [ "$status" -ne 0 ] || status=1
+        fi
+    fi
+    exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' HUP TERM
+
+# Resolve the image to one ID and run that ID, so pull, cleanup and run all use
+# the same build. A failed pull is reported, not swallowed.
+if ! docker pull "$image" >/dev/null 2>&1; then
+    echo "run-container: 'docker pull $image' failed; using a locally cached image if present" >&2
+fi
+imageid=$(docker image inspect --format '{{.Id}}' "$image" 2>/dev/null) \
+    || { echo "run-container: image $image is not available (pull failed and none cached)" >&2; exit 1; }
+echo "run-container: image $image -> $imageid"
+docker image inspect --format 'run-container: repo digests {{json .RepoDigests}}' "$image" 2>/dev/null || true
+
+# Create the scratch. A symlink here could redirect the mount/rm outside the
+# root, so refuse one outright; reclaim only our own marked leftover directory;
+# refuse any other foreign path.
+if [ -L "$tmp" ]; then
+    echo "run-container: $tmp is a symlink; refusing" >&2
+    tmp=''   # do not let cleanup follow it
+    exit 1
+fi
+if [ -e "$tmp" ]; then
+    if [ -f "$marker" ]; then
+        docker run --rm --network none --entrypoint /bin/sh \
+            --mount "type=bind,src=$tmp,dst=/c" "$imageid" -ec 'rm -rf /c/src /c/cid' >/dev/null 2>&1 || true
+    else
+        echo "run-container: $tmp exists and is not ours (no marker); refusing" >&2
+        tmp=''   # do not let cleanup touch a directory that is not ours
+        exit 1
+    fi
+else
+    mkdir "$tmp"          # atomic: fails if a race created it
+fi
+: > "$marker"
+mkdir -p "$src"
+
+# Remove a stale container of the same name from an earlier interrupted run.
+[ -z "$name" ] || docker rm -f "$name" >/dev/null 2>&1 || true
+
+rsync -a --exclude=.git "$tree"/ "$src"/
+cp "$binary" "$src/tests/e2e/e2e.test"
+chmod 755 "$src/tests/e2e/e2e.test"
+# A developer tree may carry a restrictive umask; the copy is public source, so
+# let the container's news user read and traverse it.
+chmod -R a+rX "$src"
+
+# Optional --name as properly quoted arguments (no unquoted word splitting).
+set --
+[ -z "$name" ] || set -- --name "$name"
+
+# Run docker in the background and wait: a SIGTERM/INT then reaches the trap at
+# once (cleanup kills the container via the cidfile), instead of being deferred
+# until a foreground docker returns.
+docker run --rm --init --cidfile "$cid" "$@" \
+    --add-host peer.e2e.test:127.0.0.2 --add-host peer3.e2e.test:127.0.0.3 \
+    --add-host peer4.e2e.test:127.0.0.4 --add-host peer9.e2e.test:127.0.0.9 \
+    --add-host peer10.e2e.test:127.0.0.10 \
+    -e E2E_FAKE_SENDMAIL=1 --mount "type=bind,src=$src,dst=/src" -w /src "$imageid" sh -ec '
+      umask 022
+      echo "=== container: $(uname -srm); nofile soft=$(ulimit -Sn) hard=$(ulimit -Hn) ==="
+      if tests/e2e/ci/build-on-host; then bok=1; else bok=0; fi
+      echo "=== build.log (last 40 lines) ==="
+      tail -40 build.log 2>/dev/null || true
+      [ "$bok" = 1 ] || { echo "BUILD FAILED"; exit 1; }
+      chmod 755 tests/e2e/e2e.test
+      cd tests/e2e
+      su -s /bin/sh news -c "DIABLO_BIN=/src/dbin NNTP_TEST_DEADLINE=30s ./e2e.test -test.v -test.count=1 -test.timeout=1200s"
+    ' &
+dpid=$!
+wait "$dpid"

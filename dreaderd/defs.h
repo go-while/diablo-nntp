@@ -138,6 +138,9 @@ typedef struct Vserver {		/* Define a virtual server	*/
     char vs_Welcome[256];
     char vs_Comments[256];
     char vs_PostTrailer[256];
+    char vs_CanLockAdmin[CANLOCK_MAXSECRETS][CANLOCK_SECRETLEN];	/* every one makes locks */
+    char vs_CanLockUser[CANLOCK_MAXSECRETS][CANLOCK_SECRETLEN];
+    int vs_NoCanLockSha1;		/* canlocksha1 no: sha256 only */
 } Vserver;
 
 typedef struct GroupDef {		/* Define a group access list	*/
@@ -213,7 +216,12 @@ typedef struct ReaderDef {		/* Define a reader group	*/
     int rd_TurnOffNNPH;
     int rd_XzverLevel;
     int rd_RequireGroupCmd;
+    int rd_AddCanLockUser;		/* CANLOCK_USER_*: user in the Cancel-Lock key */
 } ReaderDef;
+
+#define CANLOCK_USER_NAME	0	/* the AUTHINFO user (default) */
+#define CANLOCK_USER_IP		1	/* the client's IP address */
+#define CANLOCK_USER_NONE	2	/* no user lock, only the admin lock */
 
 typedef struct AccessDef {		/* Define the access list	*/
     char ad_Pattern[100];
@@ -459,6 +467,7 @@ typedef struct Connection {
     TimeRestrict co_TimeRestrict;
     DnsRes	co_Auth;
     char	*co_GroupName;	/* current group or NULL	*/
+    char	*co_SavedGroupName;	/* the client's group during NEWNEWS */
     char	*co_IHaveMsgId;
     Control	*co_Ctl;	/* control lookup cache		*/
     struct ServReq *co_SReq;	/* see note(1)			*/

@@ -1,0 +1,36 @@
+#!/bin/sh
+#
+# HISTBACKUP - ask the running diablo for a snapshot of the history file
+# ("dicmd dumphist", which runs the program of path_dumphist in diablo.config;
+# see adm/dumphist).  Run from cron on a machine whose history is on a RAM
+# disk (see crontab.sample).  Does nothing when diablo is not running.
+
+set -u
+here=$(cd "$(dirname "$0")" && pwd)
+dbin=${DIABLO_BIN:-}
+if [ -z "$dbin" ]; then
+    for d in "$here/../dbin" "$here/../../dbin" /news/dbin; do
+	[ -x "$d/dpath" ] && { dbin=$(cd "$d" && pwd); break; }
+    done
+fi
+[ -n "$dbin" ] && [ -x "$dbin/dpath" ] || { echo "$0: no dpath found; set DIABLO_BIN" >&2; exit 1; }
+home=$("$dbin/dpath" home) || exit 1
+cd "$home" || exit 1
+
+echo "$(date) - $0 BEGIN"
+if "$dbin/dicmd" status >/dev/null 2>&1; then
+    # diablo runs the program of path_dumphist and logs it when that fails (to
+    # syslog); the only answer here is "No dumphist program configured".
+    if reply=$("$dbin/dicmd" dumphist 2>&1); then :; else
+	echo "$reply"
+	echo "$0: dicmd dumphist failed" >&2
+	exit 1
+    fi
+    echo "$reply"
+    case $reply in
+	*"No dumphist program"*) echo "$0: set path_dumphist in diablo.config" >&2; exit 1 ;;
+    esac
+else
+    echo "$0: diablo is not running"
+fi
+echo "$(date) - $0 END"

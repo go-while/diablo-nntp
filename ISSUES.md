@@ -12,7 +12,7 @@ re-checked yet.
 Status values: **open**, **PR** (fix waiting for review, with its number), **fixed** (with
 the PR that fixed it), **decision** (needs the maintainer to decide), **won't fix**.
 
-Last updated 2026-10-27: D-66 to D-89 added from the second review pass and the reviews of the fixes
+Last updated 2026-10-29: D-135 to D-146 and D-156, D-157 marked fixed (#145, #151 to #154); D-158 won't fix; D-150 to D-155 marked fixed (#158); D-147 to D-149 marked fixed (#159); D-159 to D-162 marked fixed (#160); D-164 to D-166 added from go-while's review of #160. Before that, 2026-10-28: D-91, D-96, D-98 and D-131 to D-133 marked fixed (#146 to #149). F-01 marked done, F-04 (NoCeM) and F-05 (init scripts, done) added, D-163 (file modes, fixed in #139) added; D-135 to D-162 added from go-while's batch of `main` at `0401451`, and a note on D-94. Before that, D-110 to D-134 added from go-while's third review pass of `main` at `6a4b97d`. Before that, 2026-10-27: D-66 to D-109 added from the second review pass and the reviews of the fixes
 (D-77 is documented behaviour and only needs a note); the fixed ones are marked with their PR. Before that, D-53 to D-65 added from the review of `main` at `ca648d4`. Before that, 2026-10-26, after batch 1 (#30, #31, #37 to #44, #47 to #49) and the first part
 of batch 2 (#46, #50, #52, #62) were merged. Open: #35 (GnuPG pgpverify, held for a private
 advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
@@ -39,7 +39,7 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-18](#d-18-debian-gnuhurd-build) | Low | Debian GNU/Hurd build: `PATH_MAX`, `setpgrp`, `db_185.h` | open |
 | [D-19](#d-19-changelog-links-a-missing-document) | Low | CHANGELOG links the missing `BUILD-PORTABLE-MAKE.md` | fixed (#61) |
 | [D-20](#d-20-strncpy-truncation-warning-in-dreaderddnsc) | Low | `strncpy` truncation warning in `dreaderd/dns.c` (GCC 16) | fixed (#65) |
-| [D-21](#d-21-dactivekp-write-errors-now-exit-the-process) | — | dactive.kp write errors now exit the process (#7) | decision |
+| [D-21](#d-21-dactivekp-write-errors-now-exit-the-process) | — | dactive.kp write errors now exit the process (#7) | won't fix (kept on purpose) |
 | [D-22](#d-22-gnu-make-install-ignores-prefix-and-destdir) | High | GNU Make `install`/`uninstall` ignore `PREFIX` and `DESTDIR` (live `/news` used) | fixed (#16) |
 | [D-23](#d-23-feederreader-sample-config-is-ignored) | Medium | `samples/feeder+reader/diablo.config` has no `version 2.0`: every directive ignored | fixed (#26) |
 | [D-24](#d-24-sample-dreaderaccess-allows-1008-not-localhost) | Medium | Sample `dreader.access` allows 1.0.0.0/8, not localhost | fixed (#55) |
@@ -104,8 +104,84 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-87](#d-87-numeric-ipv6-host-in-diablohosts-dropped-on-a-machine-without-ipv6) | Low | `getaddrinfo()` with NULL hints in `lib/hostauth.c` drops a numeric IPv6 `diablo.hosts` entry on glibc 2.39 without a global IPv6 address | fixed (#115) |
 | [D-88](#d-88-dnewslink--p-overwrites-leftover-lines-of-an-earlier-run) | Low | `dnewslink -p`: a later pipe run overwrites the leftover lines an earlier run wrote to the batch file | open |
 | [D-89](#d-89-ai_addrconfig-still-passed-for-listen-bind-and-connect-addresses) | Low | `dreaderd` listen, bind and connect and `dsyncgroups` still pass `AI_ADDRCONFIG` | open |
+| [D-90](#d-90-kpdb-sort-writes-the-offsets-one-record-at-a-time) | Low | `KPDBSort()` does one 8-byte write per record; on a full ZFS dataset a sort of 259 records took about 51 s | open |
+| [D-91](#d-91-takethis-without-an-argument-answers-439-instead-of-501) | Low | TAKETHIS without an argument answers 439 instead of 501 | fixed (#146) |
+| [D-92](#d-92-header-only-feed-reports-unknownreject-for-laerrnobytes) | Low | Header-only feed reports UnknownReject for LAERR_NOBYTES | open |
+| [D-93](#d-93-kpdbgetfield-key-scan-is-not-bounded-by-the-record-length) | Low | KPDBGetField key scan is not bounded by the record length | open |
+| [D-94](#d-94-dcontrolctl-dnewsfeeds-and-dserverhosts-split-long-lines) | Low | dcontrol.ctl, dnewsfeeds and dserver.hosts split long lines | open |
+| [D-95](#d-95-maxinboundrate-value-is-read-past-its-end) | Low | MaxInboundRate value ending in ';' or in an hour number is read past its end | open |
+| [D-96](#d-96-spamfilter-s0-turns-the-filter-off-and-usespamrwmap-0-does-not-compile) | Low | spamfilter: s0 turns the filter off, and USE_SPAM_RW_MAP 0 does not compile | fixed (#147) |
+| [D-97](#d-97-diab-filter-writes-one-byte-past-its-reply-buffer-writeall-loops-on-a-zero-write) | Low | diab-filter writes one byte past its reply buffer; writeAll loops on a zero write | open |
+| [D-98](#d-98-ctype-calls-on-plain-char) | Low | ctype calls on plain char | fixed (#148) |
+| [D-100](#d-100-cachefile-builds-the-path-without-bounds) | Low | cacheFile builds the path without bounds | open |
+| [D-101](#d-101-spool-server-replies-have-no-line-cap-other-small-items-in-dreaderdserverc) | Low | Spool server replies have no line cap; other small items in dreaderd/server.c | open |
+| [D-102](#d-102-readaccesscache-leaks-descriptors-when-a-cache-open-fails) | Low | ReadAccessCache leaks descriptors when a cache open fails | open |
+| [D-103](#d-103-access-cache-reload-leaks-the-old-groupdef-and-grouplist-nodes) | Low | Access cache reload leaks the old GroupDef and GroupList nodes | open |
+| [D-104](#d-104-dhisexpire-uses-the-history-record-size-without-a-check) | Low | dhisexpire uses the history record size without a check | open |
+| [D-105](#d-105-dexpire--o-uses-a-null-file-after-a-failed-fopen) | Low | dexpire -o uses a NULL FILE after a failed fopen | open |
+| [D-106](#d-106-dexpireover-getfirstartage-trusts-the-over-file-header) | Low | dexpireover getFirstArtAge trusts the over file header | open |
+| [D-107](#d-107-metaspool-with-more-than-100-spool-lines-or-dontstore-with-no-spools) | Low | metaspool with more than 100 spool lines, or dontstore with no spools | open |
+| [D-108](#d-108-dcancel-stores-the-history-offsets-before-the-rewritten-spool-file-is-in-place) | Medium | dcancel stores the history offsets before the rewritten spool file is in place | open |
+| [D-109](#d-109-dsyncgroups-use-after-free-of-the-address-lists-unchecked-strtok-results) | Medium | dsyncgroups: use after free of the address lists, unchecked strtok results | open |
+| [D-110](#d-110-dcontrolctl-ct_verify-leaks-or-keeps-a-stale-value-when-two-rules-match) | Low | dcontrol.ctl: ct_Verify leaks or keeps a stale value when two rules match | open |
+| [D-111](#d-111-pgpverify-does-not-check-fdopen-and-realloc-results) | Low | pgpverify does not check fdopen() and realloc() results | open |
+| [D-112](#d-112-strcpy-into-sun_path-in-the-filter-socket-code) | Low | strcpy() into sun_path in the filter socket code | open |
+| [D-113](#d-113-cached-head-and-body-of-an-article-with-an-lf-only-headerbody-separator) | Medium | Cached HEAD and BODY of an article with an LF-only header/body separator | open |
+| [D-114](#d-114-egets-loses-the-prefix-of-an-overlong-line) | Medium | egets() loses the prefix of an overlong line | open |
+| [D-115](#d-115-dnewslink-flushcommandbuffer-can-spin-on-a-zero-write) | Low | dnewslink flushCommandBuffer() can spin on a zero write | open |
+| [D-116](#d-116-dnewslink-writelarge-reports-a-write-timeout-as-success) | Low | dnewslink writeLarge() reports a write timeout as success | open |
+| [D-117](#d-117-kpdbsort-is-not-synchronized-with-readers) | Medium | KPDBSort() is not synchronized with readers | open |
+| [D-118](#d-118-kpdbwrite-with-a-null-token-the-documented-behaviour-does-not-exist) | Low | KPDBWrite() with a NULL token: the documented behaviour does not exist | open |
+| [D-119](#d-119-articlefilename-builds-a-relative-path-for-an-unconfigured-spool) | Low | ArticleFileName builds a relative path for an unconfigured spool | open |
+| [D-120](#d-120-unknown-options-inside-spool-and-metaspool-blocks-are-only-logged) | Low | Unknown options inside spool and metaspool blocks are only logged | open |
+| [D-121](#d-121-getspoolfrompath-is-dead-code-with-a-stray-printf-and-a-prefix-match) | Low | GetSpoolFromPath is dead code with a stray printf and a prefix match | open |
+| [D-122](#d-122-kp-files-above-2-gb-wrap-the-int-offsets) | Low | KP files above 2 GB wrap the int offsets | open |
+| [D-123](#d-123-authinfo-user-accepted-again-after-a-passwordless-authentication) | Low | AUTHINFO USER accepted again after a passwordless authentication | open |
+| [D-124](#d-124-capabilities-with-an-argument-answers-101) | Low | CAPABILITIES with an argument answers 101 | open |
+| [D-125](#d-125-reader-only-command-on-a-transit-connection-answers-500-not-502) | Low | Reader-only command on a transit connection answers 500, not 502 | open |
+| [D-126](#d-126-strtoll-overflow-into-artno_input) | Low | strtoll() overflow into artno_input() | open |
+| [D-127](#d-127-dicmd-splits-lines-longer-than-255-bytes) | Low | dicmd splits lines longer than 255 bytes | open |
+| [D-128](#d-128-dkp-parses-the-second-piece-of-a-long-input-line-as-a-new-record) | Low | dkp parses the second piece of a long input line as a new record | open |
+| [D-129](#d-129-dclient-is-ipv4-only-gethostbyname) | Low | dclient is IPv4-only (gethostbyname) | open |
+| [D-130](#d-130-newnews-and-newgroups-ignore-the-distributions-argument) | Low | NEWNEWS and NEWGROUPS ignore the distributions argument | open |
+| [D-131](#d-131-dclient-does-not-know-the-202-reply-of-list-extensions) | Low | dclient does not know the 202 reply of LIST EXTENSIONS | fixed (#149) |
+| [D-132](#d-132-config-dump-prints-the-bare-cr-option-under-the-nul-name) | Low | Config dump prints the bare-CR option under the NUL name | fixed (#149) |
+| [D-133](#d-133-list-moderators-adds-an-extra-cr-to-a-crlf-line) | Low | LIST MODERATORS adds an extra CR to a CRLF line | fixed (#149) |
+| [D-134](#d-134-dkp-trim-mode-keeps-the-tail-of-a-long-deleted-line) | Low | dkp trim mode keeps the tail of a long deleted line | open |
+| [D-135](#d-135-maintenance-scripts-hide-failed-jobs-behind-their-end-message) | Low | Maintenance scripts hide failed jobs behind their END message | fixed (#152) |
+| [D-136](#d-136-rot-accepts-an-invalid-retention-count-and-still-rotates-the-current-file) | Low | rot accepts an invalid retention count and still rotates the current file | fixed (#152) |
+| [D-137](#d-137-biweeklyatrim-does-not-return-a-failed-active-file-trim) | Low | biweekly.atrim does not return a failed active-file trim | fixed (#152) |
+| [D-138](#d-138-daily-rotation-writes-its-completion-message-into-dailylog0) | Low | Daily rotation writes its completion message into daily.log.0 | fixed (#152) |
+| [D-139](#d-139-auto-loaded-diablo-ctlconf-can-mix-two-installations-paths) | Low | Auto-loaded diablo-ctl.conf can mix two installations' paths | fixed (#145, #151) |
+| [D-140](#d-140-unknown-diablo_daemons-entries-reuse-command-state-or-abort-the-wrapper) | Low | Unknown DIABLO_DAEMONS entries reuse command state or abort the wrapper | fixed (#145, #151) |
+| [D-141](#d-141-nonnumeric-diablo-ctl-wait-settings-disable-the-timeout) | Low | Nonnumeric diablo-ctl wait settings disable the timeout | fixed (#145, #151) |
+| [D-142](#d-142-reinstall-resets-existing-operational-directory-modes-and-owners) | Low | Reinstall resets existing operational directory modes and owners | fixed (#153) |
+| [D-143](#d-143-direct-installation-from-an-unbuilt-checkout-can-succeed-without-binaries) | Low | Direct installation from an unbuilt checkout can succeed without binaries | fixed (#153) |
+| [D-144](#d-144-installer-pipelines-hide-failed-source-tree-scans) | Low | Installer pipelines hide failed source-tree scans | fixed (#153) |
+| [D-145](#d-145-build-on-host-requires-the-optional-pretty_name-field) | Low | build-on-host requires the optional PRETTY_NAME field | fixed (#153) |
+| [D-146](#d-146-daemon-option-strings-undergo-pathname-expansion) | Low | Daemon option strings undergo pathname expansion | fixed (#145, #151) |
+| [D-147](#d-147-over-and-hdr-do-not-reject-an-invalid-converted-range-bound) | Low | OVER and HDR do not reject an invalid converted range bound | fixed (#159) |
+| [D-148](#d-148-listgroup-accepts-a-failed-article-number-conversion) | Low | LISTGROUP accepts a failed article-number conversion | fixed (#159) |
+| [D-149](#d-149-newnews-clears-the-previously-selected-group) | Low | NEWNEWS clears the previously selected group | fixed (#159) |
+| [D-150](#d-150-doverctl-convert-leaves-compressed-overview-data-in-the-old-layout) | Medium | doverctl convert leaves compressed overview data in the old layout | fixed (#158) |
+| [D-151](#d-151-doverctl-convert--m-ignores-failed-file-moves) | Medium | doverctl convert -m ignores failed file moves | fixed (#158) |
+| [D-152](#d-152-doverctl-clean-removes-nonregular-files-using-the-wrong-path) | Low | doverctl clean removes nonregular files using the wrong path | fixed (#158) |
+| [D-153](#d-153-doverctl-clean-keeps-misaligned-overview-data-after-an-entry-size-change) | Low | doverctl clean keeps misaligned overview data after an entry-size change | fixed (#158) |
+| [D-154](#d-154-dexpireovers-parallel-parent-spins-after-a-failed-fork) | Medium | dexpireover's parallel parent spins after a failed fork | fixed (#158) |
+| [D-155](#d-155-dexpireover-counts-failed-compression-as-completed) | Low | dexpireover counts failed compression as completed | fixed (#158) |
+| [D-156](#d-156-a-failed-free-space-query-can-drive-excessive-spool-expiry) | Medium | A failed free-space query can drive excessive spool expiry | fixed (#154) |
+| [D-157](#d-157-failed-spool-removal-can-still-expire-the-directorys-history-entries) | Medium | Failed spool removal can still expire the directory's history entries | fixed (#154) |
+| [D-158](#d-158-empty-spool-home-shorthand-makes-dexpire-use-the-wrong-partition-path) | Medium | Empty spool-home shorthand makes dexpire use the wrong partition path | won't fix (not reachable) |
+| [D-159](#d-159-long-whitespace-before-a-config-comment-can-reject-an-otherwise-valid-directive) | Low | Long whitespace before a config comment can reject an otherwise valid directive | fixed (#160) |
+| [D-160](#d-160-access-cache-loading-treats-a-valid-descriptor-zero-as-an-open-failure) | Low | Access-cache loading treats a valid descriptor zero as an open failure | fixed (#160) |
+| [D-161](#d-161-several-readerdef-numeric-settings-silently-accept-malformed-values) | Low | Several readerdef numeric settings silently accept malformed values | fixed (#160) |
+| [D-162](#d-162-dserverhosts-numeric-options-lack-complete-conversion-validation) | Low | dserver.hosts numeric options lack complete conversion validation | fixed (#160) |
+| [D-163](#d-163-cache-and-state-files-were-created-with-the-process-umask) | Medium | Cache and state files were created with the process umask | fixed (#139) |
+| [D-164](#d-164-a-misspelled-group-list-name-in-a-readerdef-falls-back-to-the-first-list) | Low | A misspelled `groups`/`listgroups`/`postgroups` name in a readerdef falls back to the first group list | open |
+| [D-165](#d-165-dreaderd-exits-when-one-access-cache-file-cannot-be-opened) | Low | dreaderd exits when one access-cache file cannot be opened | open |
+| [D-166](#d-166-a-misspelled-readerdef-option-is-logged-but-the-file-is-still-installed) | Low | A misspelled readerdef option is logged but the file is still installed | open |
 
-Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315).
+Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315), [F-02 configure script](#f-02-configure-script-for-the-build-options), [F-03 refeed a whole spool](#f-03-refeed-a-whole-spool-to-another-server), [F-04 NoCeM notices](#f-04-nocem-notices), [F-05 init scripts](#f-05-init-scripts-and-adm-script-replacements).
 
 ## Details
 
@@ -214,6 +290,11 @@ GCC 16 (Fedora 46): `-Wstringop-truncation` at `dreaderd/dns.c:2143`, copying 12
 With #7, `KPDBFatalIO` calls `exit(1)` on any failed dactive.kp write, which is on the
 per-article path of diablo children and dreaderd feeds. A full disk now stops those
 processes instead of silently corrupting the file. Probably intended; needs a decision.
+
+**Decision (maintainer, 2026-10-27): kept.** Data integrity comes first, so a process that cannot
+write `dactive.kp` stops. Run diablo and dreaderd under a supervisor or a restart loop on hosts
+where a full disk is possible, and watch the free space. The full-spool tests on 2026-10-27
+(diablo keeps running and answers 436 when the spool is full) did not exercise this path.
 
 ### D-22 GNU make install ignores PREFIX and DESTDIR
 `install-portable.sh` reads PREFIX, DESTDIR, owner and group as arguments; the GNU `Makefile`
@@ -686,16 +767,250 @@ bindhost) and `util/dsyncgroups.c:906` still pass `AI_ADDRCONFIG`. On a glibc 2.
 global IPv6 address a numeric IPv6 listen, bind or connect address (for example `::1`) fails with
 `EAI_ADDRFAMILY`. Same cause as D-87. From reading (found in the reviews of D-87).
 
+### D-90 KPDB sort writes the offsets one record at a time
+`KPDBSort()` (`lib/kpdb.c`) writes the sorted offset of every record with its own 8-byte `pwrite`.
+On a ZFS dataset at its quota each such write took about 0.2 s: `dkp -r` and `dgrpctl newgroup` on a
+full 2 MB test dataset with 259 records spent 40 to 50 s in the sort, with the file locked, while the
+same sort takes well under a second with free space. A real active file has thousands of groups. An
+interrupted sort is safe (the next open sorts again), but a sort that is interrupted by a timeout
+starts over each time. Found while testing a full file system on the scratch instance. Fix idea:
+build the offsets in memory and write them in one or a few large writes.
+
+### D-91 TAKETHIS without an argument answers 439 instead of 501
+`util/diablo.c:2076`: `TAKETHIS` with no message-id answers 439 (MsgIdMismatch); the other commands answer 501. From reading, not run (deep review of main 76578ae by go-while's reviewers).
+
+### D-92 Header-only feed reports UnknownReject for LAERR_NOBYTES
+`util/diablo.c:3629-3639`: `LAERR_NOBYTES` on a header-only feed is reported as `UnknownReject`; the `HdrOnlyNoBytes` branch cannot be reached. Cosmetic. From reading, not run (deep review of main 76578ae by go-while's reviewers).
+
+### D-93 KPDBGetField key scan is not bounded by the record length
+`lib/kpdb.c:403-409`: the scan for a key (`tok == NULL`) does not stop at `recLen`. Needs a damaged file. From reading, not run (deep review of main 76578ae by go-while's reviewers).
+
+### D-94 dcontrol.ctl, dnewsfeeds and dserver.hosts split long lines
+`dreaderd/control.c:354`, `:373`: `dcontrol.ctl` is read with `fgets(buf[256])`; the same class (see D-82) in `dnewsfeeds` through `lib/include.c` `igets` (no long-line signal) and in `dserver.hosts` (`dreaderd/server.c:109`, `:116`). From reading, not run (deep review of main 76578ae by go-while's reviewers). The same long-line splitting occurs when serving LIST DISTRIBUTIONS, LIST DISTRIB.PATS and LIST MODERATORS (`dreaderd/list.c:446-459`, `:474-488`, `:517-529`): each 255-byte `fgets` chunk becomes a separate protocol entry instead of preserving or rejecting a complete source line (malformed list output for long local lines; independent of D-133). Added from go-while's third batch, not run.
+
+### D-95 MaxInboundRate value is read past its end
+`lib/newsfeed.c:2502-2513`: a `MaxInboundRate` value ending in `;` is parsed past its NUL. The same happens for a value whose last hour number ends the string (for example `100:1`): `lib/newsfeed.c:2525-2532` steps past the NUL when the last hour ends the string. Config. From reading, not run (deep review of main 76578ae by go-while's reviewers).
+
+### D-96 spamfilter: s0 turns the filter off, and USE_SPAM_RW_MAP 0 does not compile
+`lib/spamfilter.c:180`: a size of `s0` passes the power-of-two test and silently turns the filter off. With `USE_SPAM_RW_MAP` 0 the file does not compile (`:552`, `:572` use an undeclared fd). From reading, not run (deep review of main 76578ae by go-while's reviewers).
+
+### D-97 diab-filter writes one byte past its reply buffer; writeAll loops on a zero write
+`filter/diab-filter.c:386-392`: a reply that fills `filter_abuf` is written one byte past the end; `writeAll()` loops forever if `write()` returns 0. From reading, not run (deep review of main 76578ae by go-while's reviewers).
+
+### D-98 ctype calls on plain char
+`lib/subs.c:500-508`, `dreaderd/cache.c:408`, `:425`, `:429`: `isalpha()` and friends are called with a plain `char`; they need a cast to `unsigned char`. From reading, not run (deep review of main 76578ae by go-while's reviewers).
+
+### D-100 cacheFile builds the path without bounds
+`dreaderd/cache.c:87-118`: with a very long `path_db` and `readercachedirs` the path is built without a length check. Config. From reading, not run (deep review of main 76578ae by go-while's reviewers).
+
+### D-101 Spool server replies have no line cap; other small items in dreaderd/server.c
+`dreaderd/server.c`: spool replies have no line-length cap; the `ctl[1]` test on a one-character reply (`:821`). Found by go-while's reviewers from reading. The `ctl[1]` read is confirmed with AddressSanitizer on a Debian build: `NNFinishSReq(conn, "", 0)` (the `COM_STAT` case in `dreaderd/spool.c`) makes it read one byte past the empty string (global-buffer-overflow, reached by every STAT answered from the spool server). A normal build shows nothing, but an ASan build of dreaderd exits there, so e2e runs against one fail until it is fixed.
+
+### D-102 ReadAccessCache leaks descriptors when a cache open fails
+`dreaderd/dns.c:3335-3373`: one failed open of the five cache files leaves the others open, and every retry leaks more. From reading, not run (deep review of main 76578ae by go-while's reviewers).
+
+### D-103 Access cache reload leaks the old GroupDef and GroupList nodes
+`dreaderd/dns.c:3420-3444`, `:3477-3480`: each reload leaks the old nodes and names in `DnsMemPool`. From reading, not run (deep review of main 76578ae by go-while's reviewers).
+
+### D-104 dhisexpire uses the history record size without a check
+`util/dhisexpire.c:196-198`: `hh.henSize` is used as the record size with no zero or minimum check (SIGFPE, or a read past the buffer). Needs a damaged history. From reading, not run (deep review of main 76578ae by go-while's reviewers).
+
+### D-105 dexpire -o uses a NULL FILE after a failed fopen
+`util/dexpire.c:973-976`, `:1170-1182`: with `-o`, a failed `fopen` is logged, and the later `fwrite` and `fclose` use NULL. From reading, not run (deep review of main 76578ae by go-while's reviewers).
+
+### D-106 dexpireover getFirstArtAge trusts the over file header
+`util/dexpireover.c:1026-1044`: `oh_MaxArts` is not validated (SIGFPE on 0) and `oaBase[i]` is read before the `i <= n` check. Needs a damaged over.* file. From reading, not run (deep review of main 76578ae by go-while's reviewers).
+
+### D-107 metaspool with more than 100 spool lines, or dontstore with no spools
+`lib/spool.c:840-846`: more than 100 `spool` lines in one metaspool write past `ms_SpoolObjects[]`. `lib/spool.c:302-352` with `addMeta` (`:505-510`): a `dontstore yes` metaspool with no spools reaches a division by zero (allocstrat single) or index -1. Config. From reading, not run (deep review of main 76578ae by go-while's reviewers).
+
+### D-108 dcancel stores the history offsets before the rewritten spool file is in place
+`util/dcancel.c:589-608`: the history offsets are stored before the rewritten file is installed; a later failure or a failed rename leaves the history pointing into a file that was not installed. From reading, not run (deep review of main 76578ae by go-while's reviewers).
+
+### D-109 dsyncgroups: use after free of the address lists, unchecked strtok results
+`util/dsyncgroups.c:918-955`: `freeaddrinfo(dst)` at `:919` and `dst` is used at `:943`, `:949` on every connection; `:929` frees an unset `src`. `:467-469`, `:678-728`: the `strtok` results on a short `LIST ACTIVE` line from the peer are not checked; `CommandResponse` returns on EOF without setting `*pres` (`:965-989`). Checked in the code. From reading, not run (deep review of main 76578ae by go-while's reviewers).
+
+### D-110 dcontrol.ctl: ct_Verify leaks or keeps a stale value when two rules match
+`dreaderd/control.c:420-424` clears the flags of a reused `Control` but not `ct_Verify`; `:456` assigns a new `zallocStr()` over it. With two matching lines that both say `verify-`, the first string leaks (connection mempool, so bounded) and only the last line's flags and verifier are used. Cosmetic: free before assigning and clear it in the reuse branch. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
+
+### D-111 pgpverify does not check fdopen() and realloc() results
+`util/pgpverify.c:218` (`Body = realloc(...)` then `memcpy`), `:391`, `:405`, `:533`, `:572` (`fdopen()` then `fprintf`/`fgets` on the result). On out-of-memory or descriptor exhaustion pgpverify dereferences NULL and crashes (dreaderd treats that as a failed verification, so it fails closed). One-line guards. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
+
+### D-112 strcpy() into sun_path in the filter socket code
+`filter/socket.c:76`: `strcpy(sun.sun_path, pathname)` with no length check; a configured unix-socket path longer than `sizeof(sun_path)` overflows the `struct sockaddr_un`. Config only (same class as D-100). Use `snprintf` with a length check. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
+
+### D-113 Cached HEAD and BODY of an article with an LF-only header/body separator
+`dreaderd/cache.c:480` ends the header only on a CRLF blank line (`i == b + 2 && map[b] == '\r' && map[b+1] == '\n'`). A blank line that is a bare LF (`i == b + 1`) never clears `inHeader`. HEAD (`cache.c:371-376`) then prints the whole article, and BODY (`cache.c:398-399`, prints only when `inHeader == 0`) prints nothing. Affects articles stored with LF-only line ends. Wrong reply from the cache for such articles, no crash. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
+
+### D-114 egets() loses the prefix of an overlong line
+`lib/buffer.c:372-399`. When `bgets()` reports a full buffer without a newline it has set `bu_Beg = bu_NLScan = bu_End` (`buffer.c:198-204`). `egets()` copies `bu_End` bytes into a larger block but leaves `bu_Beg == bu_End`, and the next `bgets()` sees that and resets all offsets to 0 (`buffer.c:140-142`), so the copied prefix is dropped and the returned line is only the tail. The caller is `util/diablo.c:1461-1463` (the control pipe, one SOUT line per call). If a SOUT line can exceed the page-sized buffer (a long Newsgroups list), the master sees a tail that does not start with `SOUT` and the article is silently not fed. The mechanism is exact; whether a real SOUT line can reach that length was not checked (Newsgroups length cap). Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
+
+### D-115 dnewslink flushCommandBuffer() can spin on a zero write
+`util/dnewslink.c:2974-3019`. `r = write(cfd, Cmd + b, Cmde - b)`; a return of 0 is not treated as special (`b += r` at `:2989`), so `b` does not move. The `poll()` at `:3004` only leaves the loop on a timeout, so a socket that keeps returning 0 would loop without a timeout. Same pattern as D-97 (`writeAll`). A blocking Linux socket does not normally return 0, so practical reach is low. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
+
+### D-116 dnewslink writeLarge() reports a write timeout as success
+`util/dnewslink.c:3067-3104`. `NDEBUG` is defined at `:50` (before `<assert.h>` at `:51`), so `assert(bytes == 0)` at `:3102` is compiled out. On a poll timeout the code sets `WritesLosing` and breaks at `:3084` with bytes left, then returns the last `writev()` status, which is 0 after an EAGAIN (`:3061`) or the last partial count. The caller at `:2260` (`if (writeLarge(...) < 0)`) treats any non-negative value as success, so the article's result is wrong for that record. The connection is marked losing, so the next command fails. What the code does after success (whether the record is refiled) was not checked. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
+
+### D-117 KPDBSort() is not synchronized with readers
+`lib/kpdb.c:1286-1361`. `KPDBSort` takes no lock of its own and rewrites each record's offset field with one 8-byte write per record (`:1341-1361`). `KPDBLookup` locks only on a miss with `KP_LOCK` (`:1120-1122`), and the offset check at `:1163` accepts stale offsets that are in range. A reader that looks up a key during a resort can take a wrong branch and report not found for an existing key until the sort ends (a false hit is not possible, the final key compare is exact). The sort runs from `KPDBWrite` (every 128 appends), and D-90 measured it at about 51 s on a slow disk. Transient "no such group" style errors, no corruption. The caller's append lock (`kpdb.c:804-805`) and the read lock (`:261`) were not re-traced. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
+
+### D-118 KPDBWrite() with a NULL token: the documented behaviour does not exist
+`lib/kpdb.c:636-640` says a NULL token unlocks a record without writing and creates a record if the key is missing. The code does neither: `strlen(tok)` at `:870` (copy-old path) and `sprintf("%s", tok)` at `:912` (new record) use the NULL, and a same-length replacement at `:744-766` can write over the key if `KPDBGetField(NULL)` returns it (that last point was taken from the report, not re-traced). Every current caller passes a token, so this is latent. Fix the comment or handle NULL. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
+
+### D-119 ArticleFileName builds a relative path for an unconfigured spool
+`lib/spool.c:179-181`: `GetSpoolPath()` returns `""` when the spool object is missing (spool number below `MAX_SPOOL_OBJECTS` but not configured); only numbers at or above `MAX_SPOOL_OBJECTS` give `/dev/null` (`spool.c:150-151`). `ArtFileName` (`spool.c:94-108`) then builds `D.%08x/...` with no leading directory, so dexpire, dcancel and dreadart open or unlink that name in the current directory. Trigger: a history record that refers to a spool number the admin has removed from `dspool.ctl`. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
+
+### D-120 Unknown options inside spool and metaspool blocks are only logged
+`lib/spool.c:764-767` (spool block) and `:869-872` (metaspool block) log "Unknown ... option" and go on; an unknown top-level definition exits (`spool.c:707-710`). A typo in `minfree`, `maxsize`, `keeptime`, `spooldirs` and so on is ignored and the spool runs with the default (for example no free-space floor). Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
+
+### D-121 GetSpoolFromPath is dead code with a stray printf and a prefix match
+`lib/spool.c:198` prints `XX:%s:%s:` to stdout on every iteration; `:199` compares `strlen(so_Path)` bytes, so "P.01" also matches "P.011". No caller in the tree (only the prototype at `spool.c:43`). Remove it or fix it. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
+
+### D-122 KP files above 2 GB wrap the int offsets
+`lib/kpdb.c:800` (`int nlockoff` from `lseek`) and `:289` (`kp_MapSize = (int)st.st_size`). Between 2 and 4 GB the append offset goes negative (lock failure, then a controlled `KPDBFatalIO` exit); past 4 GB it could wrap to a wrong positive offset. KP files are small control databases and the format itself holds 8 hex digits, so this is a design-limit note. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
+
+### D-123 AUTHINFO USER accepted again after a passwordless authentication
+`dreaderd/nntp.c:92-94` answers 502 "Already authenticated" only when `dr_AuthPass[0]` is non-empty. A connection authorized by host or address in `dreader.access` with no password has an empty `dr_AuthPass`, so `AUTHINFO USER x` falls through to `:104-111`, answers `381 PASS required` and replaces `dr_AuthUser`. The following PASS re-verifies the new identity, so this is not an access bypass; it deviates from RFC 4643 (502 expected) and is a leftover of D-46. What state a passwordless connection starts with was not traced (that part is the reviewer's claim). Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
+
+### D-124 CAPABILITIES with an argument answers 101
+`dreaderd/reader.c:1393-1398` (`NNTPCapabilities`) never uses `pptr`, so `CAPABILITIES foo` gets the capability list; RFC 3977 section 5.2 wants 501. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
+
+### D-125 Reader-only command on a transit connection answers 500, not 502
+`dreaderd/reader.c:1289-1316`: the dispatch loop skips entries whose flags do not match the connection type and falls through to `NNUnknownCommand` (500 "What?"). RFC 3977 section 5.3 wants 502 for a command that is known but not available. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
+
+### D-126 strtoll() overflow into artno_input()
+`dreaderd/nntp.c:422` passes `strtoll(artid, NULL, 10)` to `artno_input` (`dreaderd/subs.c:103-119`) with no `errno` check. `subs.c` rejects values above 0x7FFFFFFF only for RFC 3977 numbering; for window numbering it adds a non-zero delta, so `LLONG_MAX + delta` is signed overflow (undefined behaviour). The delta is non-zero only with window numbering and a group whose high article number is at least 1.5e9 (`subs.c:27-49`); in smaller groups it is 0 and the client simply gets 423. Theoretical. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
+
+### D-127 dicmd splits lines longer than 255 bytes
+`util/dicmd.c:19` (`char buf[256]`), `:51-64` and `:84-91`: `fgets` splits a longer line, and each piece is sent to the server or printed as its own line. Not a hang: the `".\n"` terminator test cannot match a split piece. Cosmetic for very long lines. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
+
+### D-128 dkp parses the second piece of a long input line as a new record
+`util/dkp.c:148-149`: `fgets` into a 1023-byte buffer and `strtok` on it. A longer line is split and the second piece is parsed as a new record, so a long key or value is written as truncated records. Data-quality issue for admin input. The trim mode has a related problem, see D-134. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
+
+### D-129 dclient is IPv4-only (gethostbyname)
+`util/dclient.c:61-73`: `connectnews()` uses `gethostbyname()` and a `struct sockaddr_in`, so it cannot reach an IPv6-only host. The `memcpy` of `h_length` bytes into the 4-byte `sin_addr` is safe for AF_INET results. Modernization: `getaddrinfo()`. Limitation of a test client. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
+
+### D-130 NEWNEWS and NEWGROUPS ignore the distributions argument
+`dreaderd/xover.c:53-54` and `:76` store the distribution pattern in `co_ListPat`, but the NEWNEWS output path (`xover.c:445-449`, `:591-595`) and `dreaderd/list.c:663-674` (NEWGROUPS) never apply it; `co_ListPat` is read in the output path only at `xover.c:583` (the XPAT case). Without the `GMT` token the fourth argument is taken as the GMT field (`xover.c:53`, `list.c:666`). The 501 text advertises `[<distributions>]`. RFC 3977 lets the server ignore it; the behaviour does not match the usage text. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
+
+### D-131 dclient does not know the 202 reply of LIST EXTENSIONS
+`util/dclient.c:117-124` (`MultiLineReply`) lists no 202, while `dreaderd/list.c:138-141` answers 202 followed by HDR, OVER and the dot. dclient prints "Unexpected response from server" and exits 2. A fix with a test is ready on go-while's side (one-line `case 202`, test `TestDclientListExtensions`). Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
+
+### D-132 Config dump prints the bare-CR option under the NUL name
+`lib/config.c:892` prints `"rejectartswithnul: %d"` for `DOpts.RejectArtsWithBareCR`, so `dicmd config rejectartswithbarecr` shows a wrong label and the NUL option appears twice in a full dump. A fix with a test is ready on go-while's side (`TestDicmdConfigRejectArtsWithBareCR`). Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
+
+### D-133 LIST MODERATORS adds an extra CR to a CRLF line
+`dreaderd/list.c:523-528`: only the trailing LF is stripped, so a CRLF line from the moderators file keeps its CR and then gets `"\r\n"` appended (`\r\r\n` on the wire; the e2e reader flags it as a bare CR in the line). A fix with a test is ready on go-while's side (`TestReaderListModeratorsCRLF`). Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
+
+### D-134 dkp trim mode keeps the tail of a long deleted line
+`util/dkp.c:106-115`: the trim loop reads with `fgets` into `tmp[1024]` and drops lines that start with `-`. For such a line longer than the buffer, the first chunk is skipped by the `continue` at `:108-109` before `lnl` is updated, so `lnl` stays 1 and the next chunk (the rest of the same line) is taken as a new line start and written out unless it happens to start with `-`. So part of a line meant to be deleted stays in the KP file. Data quality only (the admin's own KP file). Fix: update `lnl` before the `continue`, or skip until the newline. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
+
+### D-135 Maintenance scripts hide failed jobs behind their END message
+`samples/adm/hourly.expire:27-29`, `samples/adm/daily.reader:22-42`, `samples/adm/weekly.reader:22-30`, `samples/adm/daily.atrim:21-31`: a failed maintenance command is followed by a successful END echo, so the script returns 0 rather than the job's failure. The sample crontab enables hourly expiry and daily rotation; the reader jobs are opt-in. Low: monitoring that checks exit status misses failed expiry, cleanup or rotation. Preserve the command status through the final message. Found by go-while's reviewers, each checked by a second reviewer in the code at main 0401451.
+
+### D-136 rot accepts an invalid retention count and still rotates the current file
+`samples/adm/rot:7-23`: an empty or nonnumeric first argument makes the numeric `-gt` test fail, skipping the old-copy rotation, but the script still moves the current file to `.0`. When that move succeeds the script returns success, potentially replacing the previous `.0` without retaining it. Low, admin-input validation. Reject an invalid count before touching any file. Found by go-while's reviewers, each checked by a second reviewer in the code at main 0401451.
+
+### D-137 biweekly.atrim does not return a failed active-file trim
+`samples/adm/biweekly.atrim:39-47`: only dhisexpire's exit status is saved and returned. If dhisexpire succeeds and the subsequent `dkp -t` fails, the script still exits 0 and its END message reports only the successful history rebuild. Low: the active-file maintenance failure is missed by exit-status monitoring. Preserve either failure while still distinguishing the two operations in the log. Found by go-while's reviewers, each checked by a second reviewer in the code at main 0401451.
+
+### D-138 Daily rotation writes its completion message into daily.log.0
+`samples/adm/daily.atrim:21-31`, `samples/adm/crontab.sample:19`: cron opens daily.log before starting the script, and rot renames that file to daily.log.0. The script's open output descriptor still points to the renamed inode, so its BEGIN and END messages are in daily.log.0 and daily.log does not reappear until the next append. Low, cosmetic log-location surprise, not lost output. Found by go-while's reviewers, each checked by a second reviewer in the code at main 0401451.
+
+### D-139 Auto-loaded diablo-ctl.conf can mix two installations' paths
+`samples/adm/diablo-ctl:74-79`, `:116`, `:124`, `:202-210`, `:237-238`, `:287-288`; `samples/adm/diablo-ctl.conf:3`, `:18-20`: the automatically loaded home configuration is sourced after home, logdir and dqueue have been obtained from the detected DIABLO_BIN. Its DIABLO_BIN override is honored by later commands but is not revalidated, so an override naming another installation mixes the new binaries with the previously derived paths. Low, configuration consistency; the override is not a no-op. A configuration passed with `-f` is read before detection and does not have this late-binding problem. Found by go-while's reviewers, each checked by a second reviewer in the code at main 0401451.
+
+### D-140 Unknown DIABLO_DAEMONS entries reuse command state or abort the wrapper
+`samples/adm/diablo-ctl:81-95`, `:111-117`, `:283-314`: DIABLO_DAEMONS is not checked against the supported daemon names. An unknown entry can reach `up()` without assigning cmd, causing a `set -u` abort, or reuse cmd and status line from a previous entry and report a misleading result. Start, stop and status also handle such entries inconsistently. Low, malformed admin configuration. Validate the daemon list before invoking commands. Found by go-while's reviewers, each checked by a second reviewer in the code at main 0401451.
+
+### D-141 Nonnumeric diablo-ctl wait settings disable the timeout
+`samples/adm/diablo-ctl:84-85`, `:179-187`, `:213-221`, `:241-249`: DIABLO_START_WAIT and DIABLO_STOP_WAIT go directly into numeric `[` comparisons. A nonnumeric value makes those comparisons error and return false on every iteration, so a daemon that never answers or a process that never exits can leave the wrapper waiting indefinitely instead of timing out. Low, invalid admin settings. Validate nonnegative integer values before starting or stopping anything. Found by go-while's reviewers, each checked by a second reviewer in the code at main 0401451.
+
+### D-142 Reinstall resets existing operational directory modes and owners
+`install-portable.sh:31-38`, `:48-57`: make_dir applies chmod and ownership changes even when the directory already exists. Reinstall therefore resets admin-chosen modes on the existing spool and queue directories to 0755 (log and run to 0750), as well as restoring the requested owner and group. Low, local installation-policy/operability issue. Preserve existing directory settings or make resetting them an explicit operation. Found by go-while's reviewers, each checked by a second reviewer in the code at main 0401451.
+
+### D-143 Direct installation from an unbuilt checkout can succeed without binaries
+`install-portable.sh:76-79`, `:128`: when dbin contains no built files, the literal unmatched `dbin/*` is skipped by the `-f` guard. The script still prints installation complete and leaves an empty binary directory. Low: direct script invocation only; make install builds first. Require the expected binaries or explain that the checkout must be built before running the installer directly. Found by go-while's reviewers, each checked by a second reviewer in the code at main 0401451.
+
+### D-144 Installer pipelines hide failed source-tree scans
+`install-portable.sh:81-95`, `:146-157`: each `find | while` pipeline returns the loop's status, not find's. A failed or partial source-tree scan can therefore be followed by an install-complete or uninstall-complete message, even under `set -e`. Low, partial operation reported as success. Capture and check the scan status rather than relying on the pipeline's final command. Found by go-while's reviewers, each checked by a second reviewer in the code at main 0401451, not run.
+
+### D-145 build-on-host requires the optional PRETTY_NAME field
+`tests/e2e/ci/build-on-host:16-19`: after sourcing /etc/os-release the script expands PRETTY_NAME directly under `set -u`. A valid os-release without that optional field aborts before package setup or the build; a missing os-release also aborts at the source command. Low, test-host robustness. Use a fallback name and diagnose an unsupported or missing platform file explicitly. Found by go-while's reviewers, each checked by a second reviewer in the code at main 0401451, not run.
+
+### D-146 Daemon option strings undergo pathname expansion
+`samples/adm/diablo-ctl:197-211`: DIABLO_OPTS and DREADERD_OPTS intentionally undergo shell word splitting, but also pathname expansion after the script changes into path_home. A literal wildcard in an option value becomes matching directory entries when any exist, so the daemon receives different arguments depending on that directory's contents. Low, configured-option correctness. Disable globbing around option expansion or use an argument representation that preserves literal values. Found by go-while's reviewers, each checked by a second reviewer in the code at main 0401451, not run.
+
+### D-147 OVER and HDR do not reject an invalid converted range bound
+`dreaderd/xover.c:251-290`, `:326-350`, `:376-404`; `dreaderd/subs.c:104-118`: strict range validation checks the parsed number before artno_input(), but does not reject the -1 that conversion returns for numbers above the RFC 3977 limit. An open-ended oversized low bound can pass validation, be clamped to the group's low mark and return the whole group instead of an error. An open-ended zero low bound is also accepted. Low, protocol/range correctness; distinct from the high-mark case fixed under D-47. Validate converted bounds and the positive-number syntax before emitting success. Found by go-while's reviewers, each checked by a second reviewer in the code at main 0401451, not run.
+
+### D-148 LISTGROUP accepts a failed article-number conversion
+`dreaderd/list.c:570-619`: LISTGROUP validates the initial strtoll result but not the -1 returned by artno_input() for an oversized RFC 3977 number. An oversized low bound can leave the group's original low mark in place and list the whole range; an oversized high bound can set the end below the start and produce an empty list. Low, range correctness after the D-44 fix. Reject conversion failure rather than using it as an ordinary bound. Found by go-while's reviewers, each checked by a second reviewer in the code at main 0401451, not run.
+
+### D-149 NEWNEWS clears the previously selected group
+`dreaderd/xover.c:86-105`: NEWNEWS uses co_GroupName while walking its groups and frees it when the final continuation completes, without restoring the group that the client selected earlier. A following group-dependent ARTICLE request then gets 412 instead of using that selected group. Low, connection-state correctness; requires allownewnews to be enabled. Keep the scan's group separate from the client's selected group, or preserve and restore the selection. Found by go-while's reviewers, each checked by a second reviewer in the code at main 0401451, not run.
+
+### D-150 doverctl convert leaves compressed overview data in the old layout
+`util/doverctl.c:302-329`, `util/dexpireover.c:1639-1644`: conversion builds and stats only the plain overview-data filename, never its .gz variant. After overview compression and a hash-layout conversion, compressed files remain under the source layout and are unreachable under the destination layout, although the overview index has moved. Medium, article-overview availability/data loss after the hash switch; the old compressed files remain on disk. Convert both supported filename forms, including in dry-run output. Found by go-while's reviewers, each checked by a second reviewer in the code at main 0401451, not run.
+
+### D-151 doverctl convert -m ignores failed file moves
+`util/doverctl.c:290-291`, `:317-329`, `lib/subs.c:861-898`: the copy-and-unlink mode discards MoveFile's failure result. If moving the over file fails, conversion can still move the data files; if moving a data file fails, that range remains behind. The group can still be reported as Converted. Medium, incomplete conversion and unavailable overview data after switching hashes. Unlike the rename branch, this path does not stop on failure; check the result and do not report success for an incomplete group. Found by go-while's reviewers, each checked by a second reviewer in the code at main 0401451, not run.
+
+### D-152 doverctl clean removes nonregular files using the wrong path
+`util/doverctl.c:474-508`, `:522-529`: scanDirectory has already changed into dirname, but passes dirname again to DeleteFile for a nonregular entry. The resulting relative dirname/name targets a directory below the current one rather than the entry being scanned. The failed remove is ignored and RemovedFiles still increases. Low: unwanted entries remain while the summary claims removal. Use the correct path and count only successful removals. Found by go-while's reviewers, each checked by a second reviewer in the code at main 0401451, not run.
+
+### D-153 doverctl clean keeps misaligned overview data after an entry-size change
+`util/doverctl.c:629-643`, compared with `util/dexpireover.c:960-965`: clean tests only whether a data file's article range is outside the group. It lacks dexpireover's artBase alignment check against dataEntries, so obsolete misaligned files left after changing eDATAENTRIES can be retained indefinitely. It also lacks the explicit start-greater-than-end guard. Low, stale disk usage and disagreement between cleanup tools. Apply the same stale-file criteria in both. Found by go-while's reviewers, each checked by a second reviewer in the code at main 0401451, not run.
+
+### D-154 dexpireover's parallel parent spins after a failed fork
+`util/dexpireover.c:326-358`: fork returning -1 is stored as if a worker had been started, but remaining is initialized to the requested ParallelCount. Once all real children have exited, wait3 returns ECHILD and the outer while(remaining) immediately repeats forever. Medium, a stuck CPU-consuming maintenance run after process or memory exhaustion with parallel expiry enabled. Count only successful forks and handle fork/wait errors explicitly. Found by go-while's reviewers, each checked by a second reviewer in the code at main 0401451, not run.
+
+### D-155 dexpireover counts failed compression as completed
+`util/dexpireover.c:1000-1002`, `lib/dgzip.c:192-254`: the return value of diablo_minigzip is ignored and CompressedFiles increases even when compression fails, for example when its temporary output cannot be created. Low, misleading maintenance summary and an unreported compression failure. Count successful compression separately and report failures; distinguish dry-run eligibility counts from completed work. Found by go-while's reviewers, each checked by a second reviewer in the code at main 0401451, not run.
+
+### D-156 A failed free-space query can drive excessive spool expiry
+`util/dexpire.c:1332-1368`, `:1297-1305`, `:641-675`, `:699-737`: freeSpaceOn logs a statfs failure but returns 1 as a normal free-byte count and leaves the free-inode output unset. Cleanup treats that as insufficient free space, so failed queries can cause unnecessary expiry until only the protected newest directory remains; inode-based decisions can also use unset or stale data. Medium, article data loss on a filesystem-query failure, not a failure of the newest-directory guard. Propagate the query failure, initialize outputs and stop destructive cleanup when free space is unknown. Found by go-while's reviewers, each checked by a second reviewer in the code at main 0401451, not run.
+
+### D-157 Failed spool removal can still expire the directory's history entries
+`util/dexpire.c:524-588`, `:722-737`, `:994-1020`, `:1143-1160`: cleanup unconditionally marks a directory removed and schedules history updating even when removeDirectory could not enter it or failed to remove article files. updateHistory excludes that directory from its index and can mark its records expired although their files remain. The same optimistic counts can also misstate freed space. Medium, history/article inconsistency after filesystem or access errors during real expiry. Return and check removal success before excluding a directory from the history index. Found by go-while's reviewers, each checked by a second reviewer in the code at main 0401451, not run.
+
+### D-158 Empty spool-home shorthand makes dexpire use the wrong partition path
+`lib/spool.c:738-743`, `:930-949`, `util/dexpire.c:389-409`, `:994-1020`, `:1143-1160`: a spool path of `%s/` is normalized to an empty so_Path, which other spool path handling recognizes as the spool home. GetFirstSpool returns that empty value unchanged; dexpire's trailing-slash handling does not handle an empty string and can construct `/` instead of the spool-home path. The scan then misses the real spool, and a forced history update can mark valid records expired because their directories were not indexed. Medium, configuration-specific wrong-directory scanning and history data loss. Resolve the empty shorthand to the spool home before constructing the partition path. Found by go-while's reviewers, each checked by a second reviewer in the code at main 0401451, not run. Checked and not reachable: `addSpool()` (`lib/spool.c:463`) turns an empty path into the spool-home pattern before dexpire sees it (go-while agreed on the board); the empty-path guard in `util/dexpire.c` stays, it also removes a latent `path[-1]` read. Won't fix.
+
+### D-159 Long whitespace before a config comment can reject an otherwise valid directive
+`lib/config.c:192-215`: the long-line check accepts a truncated line only if a # is already present in the first buffer. A valid directive followed by enough whitespace to push its comment marker beyond the 255-character chunk is therefore rejected as too long, although its meaningful command fits. Low, narrow continuation of D-82's long-line handling, not ordinary short-command/short-comment input. Determine whether the drained tail is only whitespace and a comment before rejecting the command. Found by go-while's reviewers, each checked by a second reviewer in the code at main 0401451, not run.
+
+### D-160 Access-cache loading treats a valid descriptor zero as an open failure
+`dreaderd/dns.c:3324-3327`, `:3340-3368`: the access-lock and cache-file open results are tested with <= 0 instead of < 0. With stdin closed, the lock open can legitimately return 0; the loader logs a failure and returns without closing that descriptor or loading the caches. This can abort a load attempt, rather than proving all subsequent attempts fail. Low, descriptor-handling correctness; distinct from D-102's failed-open cleanup issue. Accept descriptor zero and close successfully opened descriptors on actual failure paths. Found by go-while's reviewers, each checked by a second reviewer in the code at main 0401451, not run.
+
+### D-161 Several readerdef numeric settings silently accept malformed values
+`dreaderd/dns.c:2984-3010`, `:3029-3043`: maxconn and its per-host/user/group/vserver variants, ratelimittax, bytelimit, pathcomponents, idletimeout and sessiontimeout use atoi without checking conversion or the accepted range. Nonnumeric input becomes 0, a numeric prefix with junk is accepted, and overflow is not diagnosed. Low, admin misconfiguration; validate the complete value and option-specific bounds. This does not claim ratelimitrange lacks range checking: it logs and resets values outside 1..200 at `:3012-3026`. Found by go-while's reviewers, each checked by a second reviewer in the code at main 0401451, not run.
+
+### D-162 dserver.hosts numeric options lack complete conversion validation
+`dreaderd/server.c:158-197`, `:210-215`, `:242-255`, `:276-283`: numeric port/priority/timer flags and cache settings are parsed with strtol or strtod without conversion-error or overflow checks. For example cachemin=abc becomes 0 and cachemax=12junk accepts 12; invalid values can silently change the intended configuration. Low, admin-input correctness. Validate each option's numeric grammar and bounds; the flag string intentionally combines letters and numbers, so its parser must retain that syntax. txbufsize and rxbufsize already call ValidateTcpBufferSize, unlike the plain cache-size/time assignments. Found by go-while's reviewers, each checked by a second reviewer in the code at main 0401451, not run.
+
+### D-163 Cache and state files were created with the process umask
+dreaderd's cache files (`dreaderd/dns.c`; they copy what `dreader.access` holds: the AUTHINFO passwords, `cryptpw` and the Cancel-Lock secrets), `.accesslock`, the logs (`lib/log.c`, dnewslink's feedlog, the control logs) and `dreaderd.status` were created with `fopen()` and the process umask, 0644 under the usual 022, and `install-portable.sh` made the log and run directories 0755. A local user who could reach the directory could read the passwords (verified: `cache.authdef` held a test password at mode 0644). Fixed in #139: the cache files and `.accesslock` are created 0600, logs and status 0640, the log and run directories 0750, whatever a lax umask says (a stricter one narrows them further; existing files keep their mode). These modes have always been like this in the public source tarballs, so this is ordinary hardening, disclosed as it is. Found while adding the Cancel-Lock secrets (F-01) to the same files.
+
+### D-164 A misspelled group-list name in a readerdef falls back to the first list
+`dreaderd/dns.c`, `SetAuthDetails()`: the `groups`, `listgroups` and `postgroups` settings of a readerdef name a group list. When the name is not found the code takes the first group list, which is usually "everything", instead of denying. A typo in the name (or a list that was removed) gives the clients of that readerdef more groups than the admin meant. Low, admin misconfiguration with a permissive result; a missing list should deny, or refuse the file as a bad number now does. Found by DeepSeek in go-while's review of #160, not run.
+
+### D-165 dreaderd exits when one access-cache file cannot be opened
+`dreaderd/dns.c`, `ReadAccessCache()` and its callers: the five cache files are opened together; if one of them cannot be opened the load fails (`-2` when there is no older map) and dreaderd exits, instead of keeping an older map or serving what it can. Low, a damaged or momentarily unreadable cache file stops the daemon. Found by DeepSeek in go-while's review of #160, not run.
+
+### D-166 A misspelled readerdef option is logged but the file is still installed
+`dreaderd/dns.c`, `InstallAccessCache()`: an unknown option inside a readerdef is logged as invalid, but the rest of the file is installed, so the readerdef runs without the setting the admin meant to make (a typo in a limit or a deny). Since the numeric options are validated as of #160 this is the remaining way for a typo to change what a readerdef does silently; refusing the file as for a bad number would match. Low. Found by DeepSeek in go-while's review of #160, not run.
+
 ## Feature requests
 
 ### F-01 Cancel-Lock (RFC 8315)
 Generate `Cancel-Lock` for local posts in dreaderd and verify `Cancel-Key` before executing a
 cancel or supersede. The maintainer's main reason not to replace INN with diablo plus
-dreaderd yet.
+dreaderd yet. **Status: done** (#19, #136, #137, #138), modelled on INN.
 
-**Verification: done in #19.** `CtlCancel` (`dreaderd/control.c`) checks the Cancel-Key of a
-cancel or supersede against the target's Cancel-Lock (`lib/canlock.c`; sha256, sha512 and
-sha1). `readercanlock` in diablo.config:
+**Verification: done in #19, on libcanlock since #137.** `CtlCancel` (`dreaderd/control.c`) checks
+the Cancel-Key of a cancel or supersede against the target's Cancel-Lock (`lib/canlock.c`; sha256,
+sha512 and sha1). `readercanlock` in diablo.config (the values of INN's `docancels`):
 
 - `require-auth` (default): executed only when the target has a Cancel-Lock and the Cancel-Key
   matches it; a target without a lock is not cancelled.
@@ -703,11 +1018,88 @@ sha1). `readercanlock` in diablo.config:
 - `none`: no cancel or supersede is executed.
 - `all`: no checks (the behaviour before #19).
 
-A cancel that arrives before its target is dropped unless the mode is `all`. Trackonly mode
-is refused with a Cancel-Lock check enabled. Tests: `TestCanLockVectors`, `TestCancelLock*`.
+The locks and keys are computed and checked by libcanlock 3.3.0 or later, the library INN uses
+(nothing is re-implemented), behind the optional `CANLOCK_ENABLED` switch in `lib/vendor.h`. A
+build without the library keeps the default `require-auth`, so nothing locked is cancelled (dreaderd
+warns at start), and accepts every mode. Trackonly mode is refused with a Cancel-Lock check (except
+`all` and `none`). Tests: `TestCanLockVectors`, `TestCancelLock*`.
 Upgrades: a reader that relied on unchecked cancels must set `readercanlock all`.
 
-**Generation: open.** Adding `Cancel-Lock` (and `Cancel-Key` on a poster's own cancels) in
-`NNPostBuffer` (`dreaderd/post.c`) with OpenSSL HMAC, byte-identical to INN's locks; then a
-key tool. Waiting for the decision on sha1 (INN still generates it next to sha256) and on
-secret storage.
+**Generation: done in #136.** A `canlockadmin` and/or `canlockuser` secret in the vserverdef (up to
+4 of each, every one makes locks, which lets a secret be replaced while old articles stay
+cancellable) adds a `Cancel-Lock` (sha256 and sha1; `canlocksha1 no` leaves sha1 out) to posts,
+appended to the poster's own header as INN's nnrpd does; `addcanlockuser` (readerdef) says whether
+the user lock is made for the AUTHINFO user, the address or nobody. The poster's own cancel or
+supersede gets the matching `Cancel-Key`. A Cancel-Lock or Cancel-Key of the poster that cannot be
+appended to (1023 bytes or more, a second header) is refused with 441.
+
+**dcanlock: done in #138.** `dcanlock key|lock|verify|cancel`: keys and locks from the secrets of
+`dreader.access`, and a whole cancel article (like INN's `gencancel`) for the administrator who
+withdraws any article that came from the site; the output is POSTed as it is.
+
+**Early cancels: not done, by decision.** A cancel that arrives before its article is dropped under
+the checking modes, as in INN; keeping pending Cancel-Key operations and their interplay with the
+history file is more work than it is worth. Delayed feeds against spam are meant for NoCeM notices
+(F-04), not for authenticated cancels.
+
+### F-02 configure script for the build options
+Every option in `lib/vendor.h` (RADIUS, CDB, zlib, DB and so on) is meant to be chosen by the admin
+before building. Today the defaults must suit every platform at once, which is why `RADIUS_ENABLED`
+(needs a BSD `libradius` with `radlib.h`, not on Linux) cannot simply be on or off for everyone
+(see D-16, which stays undecided until this exists). A `./configure` step would probe the build
+host and turn an option on only where its header and library are there, and the admin could still
+force any option either way.
+
+First step, small: a hand-written `./configure` in POSIX sh. The tree already has most of the parts:
+`compat/detect-vendor-option.awk` reads `vendor.h`, and `tests/e2e/ci/build-on-host` already probes
+for `db_185.h` and `radlib.h`. The script would probe the same headers (and zlib and OpenSSL) and
+write a local override file that `vendor.h` includes, leaving the admin's own settings in charge.
+It covers Linux, FreeBSD and SmartOS with little churn. A full autoconf setup (`configure.ac`, a
+generated `configure`, a `config.h.in`) can follow if it is wanted. Suggested by the maintainer and
+go-while on 2026-10-27.
+
+### F-03 Refeed a whole spool to another server
+There is no command that feeds every article on a diablo spool to another server. To another diablo
+the spool files and a few other files can be copied, but to INN (or any other server) the articles
+have to be offered one by one. A recipe can be built from tools diablo has, and it should either
+become a tool (for example `dspoolrefeed`) or be documented extensively (README and a man page):
+
+1. `didump -v dhistory` lists the history entries with `boff=`, `bsize=` and `file=`.
+2. The history stores only a hash of the Message-ID, so the Message-ID header is read from the
+   spool file at that offset (not possible for compressed spool objects: use `dreadart -h <hash>`).
+3. The result is a `dnewslink` batch file, lines of `D.xxxxxxxx/B.xxxx <message-id> offset,size`,
+   sent with `dnewslink -h host -b batchfile` (CHECK/TAKETHIS or IHAVE; articles the peer has are
+   refused, deferred ones stay in the batch file, so a rerun retries).
+
+Points to cover: the receiving server must accept old articles (INN `artcutoff`, default 10 days)
+and have the sender as a peer; run as the news user from the queue directory; large spools need
+the batch split over several `dnewslink` processes; header-only entries (`flags=H`) are left out.
+
+Checked on 2026-10-27 on a scratch instance (batch generation only, the feeding step could not be
+run because the spool there was full): `didump -x` does **not** leave out expired entries (it dumped
+all 4775 records, 1843 of them still on the spool), so entries whose file is gone have to be
+skipped, and `file=` is an absolute path, so the spool directory has to be stripped to get the
+`D.xxxxxxxx/B.xxxx` form. Raised by the maintainer.
+
+### F-04 NoCeM notices
+INN can act on NoCeM notices (signed notices from third parties that list the Message-IDs of
+spam and other unwanted articles to hide), and such notices are still issued today. Diablo has
+nothing for them. A first design would have to settle: where a notice is applied (hide the
+articles from the readers' overview, HEAD, BODY and ARTICLE, or stop the feeder from taking
+them, or cancel them), whom to trust (the issuers' PGP keys, checked with the existing
+`pgpverify`), where the notices come from (a newsgroup the reader or feeder already gets, or a
+feed of its own), and how to give a notice time to arrive before the spam is delivered (a delayed
+feed). Status: open, not started. Requested by the maintainer on 2026-10-28.
+
+### F-05 Init scripts and adm script replacements
+The xs4all-diablo-patches collection has init scripts and replacements for the adm scripts.
+That repository carries no license, so nothing was copied; the same was built on go-while's
+`diablo-ctl` instead. **Status: done in #140** (with #139's file modes for the installer):
+`samples/init/` has a systemd unit, FreeBSD rc.d scripts, an illumos/SmartOS SMF manifest and
+SysV scripts, all only calling `adm/diablo-ctl`; `diablo-ctl` got `check` and checks before a start
+(mounts, an active file that exists and is not stale, an unclean-shutdown guard, an optional demand
+for the history file; a missing history is still created by diablo), `-F`, and an optional `dkp`
+trim and sort at start; `adm/actsync`, `adm/dumphist` and `adm/histbackup` are new (the dexpireover
+and rewriteover jobs were already `daily.reader` and `weekly.reader`). Tried for real on systemd,
+SMF and FreeBSD rc.d. Follow-ups: #145.
+

@@ -1,0 +1,29 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          diablo
+# Required-Start:    $remote_fs $network $time
+# Required-Stop:     $remote_fs $network $time
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: Diablo NNTP feeder
+### END INIT INFO
+#
+# SysV init script for diablo, through diablo-ctl.  See samples/init/README.
+# Settings in /etc/default/diablo: DIABLO_CTL (default /news/adm/diablo-ctl)
+# and DIABLO_CTL_OPTS (options of diablo-ctl, for example "-f /news/diablo-ctl.conf").
+
+DIABLO_CTL=${DIABLO_CTL:-/news/adm/diablo-ctl}
+DIABLO_CTL_OPTS=${DIABLO_CTL_OPTS:-}
+[ -r /etc/default/diablo ] && . /etc/default/diablo
+
+[ -x "$DIABLO_CTL" ] || { echo "diablo: $DIABLO_CTL not found" >&2; exit 5; }
+
+case "$1" in
+    start|stop|status|check)
+	exec "$DIABLO_CTL" $DIABLO_CTL_OPTS "$1" diablo ;;
+    restart|force-reload)
+	exec "$DIABLO_CTL" $DIABLO_CTL_OPTS restart diablo ;;
+    *)
+	echo "Usage: $0 {start|stop|restart|force-reload|status|check}" >&2
+	exit 2 ;;
+esac

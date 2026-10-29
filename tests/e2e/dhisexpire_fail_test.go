@@ -85,3 +85,35 @@ func TestDhisexpireKeepsBackup(t *testing.T) {
 	expect(t, p, 438, "CHECK %s", id)
 	expect(t, p, 205, "QUIT")
 }
+
+// TestDhisexpireNoteWithoutA (D-77): without -a the old history stays marked dead and the new
+// one is left beside it; the run says so at the end, and dhisexpire -u makes the old one usable.
+// Fails on the first version of the note, which could never print.
+func TestDhisexpireNoteWithoutA(t *testing.T) {
+	s := NewSite(t, SiteOptions{})
+	p := s.Peer(t)
+	id := msgID(t)
+	expect(t, p, 335, "IHAVE %s", id)
+	send(t, p, wire(newArticle(id, "e2e.test", "history", "body")))
+	status(t, p, 235, "IHAVE")
+	expect(t, p, 205, "QUIT")
+
+	out, err := s.TryRun("dhisexpire", s.Dir+"/dhistory", s.Dir+"/dhistory.new")
+	if err != nil {
+		t.Fatalf("dhisexpire: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "stays marked dead") {
+		t.Errorf("no note that the old history stays dead:\n%s", out)
+	}
+	h, rerr := os.ReadFile(s.Dir + "/dhistory")
+	if rerr != nil || len(h) < 8 || !bytes.Equal(h[:4], deadMagic) {
+		t.Errorf("dhistory is not marked dead after a run without -a (%v)", rerr)
+	}
+	if out, err := s.TryRun("dhisexpire", "-u", s.Dir+"/dhistory"); err != nil {
+		t.Fatalf("dhisexpire -u: %v\n%s", err, out)
+	}
+	h, rerr = os.ReadFile(s.Dir + "/dhistory")
+	if rerr != nil || len(h) < 8 || bytes.Equal(h[:4], deadMagic) {
+		t.Errorf("dhistory is still marked dead after dhisexpire -u (%v)", rerr)
+	}
+}

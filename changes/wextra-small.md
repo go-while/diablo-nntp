@@ -1,0 +1,1 @@
+- GCC 15 warnings under `-Wextra`: `calloc` arguments in the right order, and `/* fall through */` marked where the fall through is intended (no change in behaviour).

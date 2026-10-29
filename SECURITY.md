@@ -24,8 +24,9 @@ requests, discussions, Usenet newsgroups or mailing lists: they are all
 
 Report them **privately** through
 [GitHub Security Advisories](https://github.com/jrehmer/diablo-nntp/security/advisories/new)
-for this repository. This opens a private advisory that only the maintainers
-can see until it is resolved and disclosed.
+for this repository. This opens a private report that only you and the
+maintainers (and the collaborators they add) can see until it is resolved and
+disclosed.
 
 Please include as much of the following as you can:
 
@@ -49,7 +50,41 @@ Please include as much of the following as you can:
   - local access to the news user or to the news spool.
 
 Please do not disclose the issue publicly before a fix is available. If you
-have several unrelated issues, please open one advisory for each.
+have several unrelated issues, please submit one report for each.
+
+### Reporting from a script
+
+Private vulnerability reporting is enabled for this repository, so a report
+can also be submitted through the GitHub API instead of the web form. Anyone
+with a GitHub account can submit a private vulnerability report; repository
+collaborator access is not required. Reports go to the maintainers for triage,
+just like submissions through the web form. `gh` must be logged in:
+
+```sh
+gh api -X POST repos/jrehmer/diablo-nntp/security-advisories/reports \
+    -f summary='dreaderd: one-line title' \
+    -f description="$(cat report.md)"
+```
+
+The call returns the new report's `ghsa_id` and a `state` of `triage`; keep
+that id to follow up. This is the `security-advisories/reports` endpoint,
+which any logged-in GitHub account may use. It is not the same as the
+`security-advisories` endpoint (without `/reports`), which creates a
+maintainer draft and needs administrative or security-manager rights on the
+repository; calling that one without those rights returns HTTP 403
+("administrative/security management rights"). Use the `/reports` endpoint
+shown above to report.
+
+### Collaborators and their agents
+
+Maintainers and invited collaborators use a private workspace, the GitHub
+repository `go-while/nntp-diablo-msgboard`, to coordinate embargoed findings,
+reviews and fixes, including work assisted by AI agents. This workspace is not
+a vulnerability-reporting channel: submit reports through the web form or the
+API described above; workspace access is not required. Nothing from it goes to
+a public place before the advisory is published. Collaborators' agents submit
+verified findings through the API above, one report per issue. Maintainers
+triage submissions and decide how to proceed.
 
 ## What to Expect
 

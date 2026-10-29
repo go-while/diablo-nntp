@@ -47,6 +47,7 @@ Prototype int enabled(char *st);
 Prototype HashFeed_MatchList *DiabHashFeedParse(MemPool **mp, char *hashconfig);
 Prototype int MoveFile(char *from, char *to);
 Prototype int TimeSpec(char *t, char *def);
+Prototype int ParseIntRange(const char *str, int base, long min, long max, int *out);
 
 u_long ascToAddr(const char *str);
 u_long ascToMask(const char *str);
@@ -445,7 +446,7 @@ ValidGroupName(const char *name)
 	r = -1;
     } else {
 	for (; *name; ++name) {
-	    if (*name == ' ' || ! isprint((int)*name)) {
+	    if (*name == ' ' || !isprint((unsigned char)*name)) {
 		r = -1;
 	    }
 	    if (*name >= 'a' && *name <= 'z')
@@ -502,7 +503,7 @@ SanitizeDescString(char *name)
     for (; *name; ++name) {
 	if (*name == '\t')
 	    *name = ' ';
-	if (!iscntrl((int)*name))  
+	if (!iscntrl((unsigned char)*name))
 	    continue;
 	*name = '?';
     }
@@ -628,12 +629,12 @@ btimetol(char *p)
     long res = 0;
 
     while (*p) {
-	while (*p && !(int)isdigit(*p))
+	while (*p && !isdigit((unsigned char)*p))
 	    p++;
 	if (*p == '\0')
 	    break;
 	n = strtol(p, &p, 0);
-	while (*p && (int)isdigit(*p))
+	while (*p && isdigit((unsigned char)*p))
 	    p++;
 	if (*p == '\0') {
 	    res += n;
@@ -871,6 +872,7 @@ MoveFile(char *from, char *to)
     }
     if ((to_fd = open(to, O_CREAT | O_TRUNC | O_WRONLY, 0644)) < 0) {
 	printf("ERROR: Unable to create output file: %s\n", to);
+	close(from_fd);
 	return(-1);
     }
     while ((rlen = read(from_fd, buffer, 32768)) > 0)
@@ -894,7 +896,10 @@ MoveFile(char *from, char *to)
 	unlink(to);
 	return(-1);
     }
-    unlink(from);
+    if (unlink(from) != 0) {
+	printf("ERROR: Unable to remove input file: %s\n", from);
+	return(-1);
+    }
     return(0);
 }
 
@@ -981,12 +986,40 @@ NiceBestEffort(int inc)
 }
 
 /*
+ * ParseIntRange() - a number that is all of str (white space around it is
+ * allowed), between min and max.  Returns 0 and sets *out, or -1 and leaves
+ * *out alone for an empty or non-numeric string, trailing junk, overflow or
+ * a value out of range.
+ */
+int
+ParseIntRange(const char *str, int base, long min, long max, int *out)
+{
+    char *end;
+    long v;
+
+    while (isspace((unsigned char)*str))
+	str++;
+    if (*str == 0)
+	return(-1);
+    errno = 0;
+    v = strtol(str, &end, base);
+    if (errno != 0 || end == str)
+	return(-1);
+    while (isspace((unsigned char)*end))
+	end++;
+    if (*end != 0 || v < min || v > max)
+	return(-1);
+    *out = (int)v;
+    return(0);
+}
+
+/*
  * ConfigGets() - fgets() for configuration files.  A line longer than the
  * buffer is not split into two lines: the rest of it is read and dropped
  * and *tooLong is set, so the caller can skip a long comment or report the
  * line instead of parsing its tail as a line of its own.  A line that just
  * fits (its newline is the next character), or whose dropped rest is only
- * white space, is not too long.
+ * white space and a comment (a # after white space), is not too long.
  */
 char *
 ConfigGets(char *buf, int size, FILE *fi, int *tooLong)
@@ -996,10 +1029,19 @@ ConfigGets(char *buf, int size, FILE *fi, int *tooLong)
 	return(NULL);
     if (strchr(buf, '\n') == NULL) {
 	int c = getc(fi);
+	int comment = 0;
+	/* a # starts a comment after white space, not inside a word */
+	size_t n = strlen(buf);
+	int prevSpace = n > 0 && isspace((unsigned char)buf[n - 1]);
 
 	for (; c != EOF && c != '\n'; c = getc(fi)) {
-	    if (!isspace(c))
-		*tooLong = 1;
+	    if (!comment) {
+		if (c == '#' && prevSpace)
+		    comment = 1;
+		else if (!isspace(c))
+		    *tooLong = 1;
+	    }
+	    prevSpace = isspace(c);
 	}
     }
     return(buf);

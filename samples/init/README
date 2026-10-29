@@ -1,0 +1,83 @@
+SAMPLES/INIT - start diablo and dreaderd with the init system of the machine
+
+These are thin wrappers: every one calls samples/adm/diablo-ctl (installed as
+/news/adm/diablo-ctl), which does the starting, stopping, status and checks,
+reads its settings from diablo-ctl.conf (see samples/adm/diablo-ctl.conf) and
+only ever touches its own site.  Edit the options of the daemons there (-p
+pathhost and so on), never in a wrapper.
+
+The wrappers assume the install prefix /news.  With another PREFIX replace
+/news/adm/diablo-ctl (and /news/log/*.pid in the systemd units) by yours, and
+give diablo-ctl "-C <prefix>/diablo.config" (put it into the ExecStart and
+ExecStop lines, the SMF exec attributes, diablo_flags in rc.conf, or
+DIABLO_CTL_OPTS): the programs read /news/diablo.config unless they are told
+another, and that file needs "path_home <prefix>".  Without -C a second site's
+wrapper would start, stop and check the site in /news.
+
+  systemd/diablo.service, dreaderd.service
+		Linux with systemd: copy to /etc/systemd/system, then
+		    systemctl daemon-reload
+		    systemctl enable --now diablo       (and/or dreaderd)
+		Use "systemctl edit" for a spool on its own file system:
+		RequiresMountsFor=/news/spool
+
+  freebsd/diablo, dreaderd
+		FreeBSD rc.d: copy to /usr/local/etc/rc.d (mode 555), then
+		    sysrc diablo_enable=YES dreaderd_enable=YES
+		    service diablo start
+		"service diablo check" runs the checks without starting.
+		Settings in rc.conf: diablo_ctl (path of diablo-ctl) and
+		diablo_flags (its options, for example "-f /news/diablo-ctl.conf").
+
+  smf/diablo.xml, dreaderd.xml
+		illumos and SmartOS: edit the paths if needed, then
+		    svccfg import diablo.xml
+		    svcadm enable site/diablo
+		The daemons run in the service's contract: when they all die,
+		SMF restarts the service.
+
+  sysv/diablo, dreaderd
+		SysV init (Debian without systemd, Devuan, old systems): copy to
+		/etc/init.d, chmod 755, then update-rc.d diablo defaults (or
+		your system's tool).  Settings in /etc/default/diablo:
+		DIABLO_CTL and DIABLO_CTL_OPTS.
+
+Order: on a machine with both, diablo starts first and dreaderd stops first (the
+reader may fetch articles from the feeder).
+
+CHECKS BEFORE A START.  Every start through these wrappers goes through
+"diablo-ctl start", which first runs checks and refuses to start a daemon when
+one fails; they are on by default (DIABLO_PREFLIGHT in diablo-ctl.conf).  The
+service then fails with the reasons in its log (journalctl -u dreaderd; the
+SMF log under /var/svc/log; /var/log/messages or the console for rc.d and
+SysV).  Each daemon is checked and started on its own: a failed check
+prevents that daemon from starting, the other daemons requested are still
+tried.  The checks:
+
+  mounts	every mount point of DIABLO_MOUNTS is mounted (a spool or a RAM
+		disk that did not mount must not be started over an empty
+		directory).  Off while DIABLO_MOUNTS is empty.
+  active file	the active file the daemon uses (dactive.kp: dreaderd always,
+		diablo only with "active" on or naming the file in diablo.config)
+		exists, and is not older than DIABLO_ACTIVE_MAXAGE hours when
+		that is set.
+  unclean stop	the pid file is left, no process runs, and the daemon's log
+		has not changed for DIABLO_MAX_DOWNTIME minutes (off unless set).
+  history	not a failure when missing: diablo makes a new one, which is
+		right for a new site.  A note is printed only when a snapshot
+		(dhistory.snp or .old) is there; DIABLO_REQUIRE_HISTORY="yes"
+		makes a missing history a failure.
+
+install-portable.sh creates an empty active file, so a standard install passes
+the check.  At a site set up by hand the file may be missing, and dreaderd (or
+diablo with "active" on) will not start: create the file (README.READER:
+dsyncgroups -a from an active file server, or the KP tools), or start once by
+hand with "diablo-ctl -F start dreaderd" (-F skips the checks for that start
+only).  On an existing site a refused start means something is wrong (a file
+system that is not mounted, an active file that has gone stale): the lines
+printed say what.  Put DIABLO_PREFLIGHT="no" into diablo-ctl.conf to get the old behaviour
+of starting whatever the state.
+
+"diablo-ctl check" (or "service diablo check" on FreeBSD) runs the checks and
+starts nothing, for a cron job or before a reboot.  On illumos, whose find has
+no -mmin, the two age limits are rounded up to whole days.

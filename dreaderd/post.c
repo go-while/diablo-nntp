@@ -129,6 +129,196 @@ HeaderCmp(const char *big, const char *little, char **errMsg)
 
 
 
+#define CANLOCK_HDRMAX	1024	/* longest Cancel-Lock or Cancel-Key value of a poster that we add to */
+#define CANLOCK_ELEMMAX	400	/* longest element in it: keeps a header line below 998 bytes */
+#define CANLOCK_LISTMAX	(CANLOCK_HDRMAX + 2 * CANLOCK_MAXSECRETS * 2 * 2 * 64)
+
+/*
+ * canLockTarget() - copy the Message-ID that the value of a "Control: cancel"
+ * or "Supersedes" header names (n bytes at v) into buf, which must hold
+ * MAXMSGIDLEN + 1 bytes.  buf is empty when the value is not a Message-ID.
+ */
+static void
+canLockTarget(const char *v, int n, char *buf)
+{
+    int i;
+    int len;
+
+    buf[0] = 0;
+    while (n > 0 && (*v == ' ' || *v == '\t' || *v == '\r' || *v == '\n')) {
+	++v;
+	--n;
+    }
+    if (n < 3 || *v != '<')
+	return;
+    for (i = 1; i < n && v[i] != '>'; ++i) {
+	if (v[i] == '<' || v[i] == ' ' || v[i] == '\t' || v[i] == '\r' || v[i] == '\n')
+	    return;
+    }
+    len = i + 1;
+    if (i >= n || len > MAXMSGIDLEN)
+	return;
+    memcpy(buf, v, len);
+    buf[len] = 0;
+}
+
+/*
+ * canLockUid() - the user-id that goes into the user's Cancel-Key (RFC 8315
+ * section 4) for this connection, or NULL when it has none: the AUTHINFO
+ * user (not one that was ignored), or the client's address, as the readerdef
+ * addcanlockuser says.
+ */
+static const char *
+canLockUid(Connection *conn, char *buf, int bufLen)
+{
+    const char *u = conn->co_Auth.dr_AuthUser;
+
+    switch (conn->co_Auth.dr_ReaderDef->rd_AddCanLockUser) {
+    case CANLOCK_USER_NONE:
+	return(NULL);
+    case CANLOCK_USER_IP:
+	snprintf(buf, bufLen, "%s", NetAddrToSt(0, (struct sockaddr *)&conn->co_Auth.dr_Addr, 1, 0, 0));
+	return(*buf ? buf : NULL);
+    }
+    if (*u == 0 || *u == '!' || (conn->co_Auth.dr_Flags & DF_IGNORED_AUTH_LONG))
+	return(NULL);
+    snprintf(buf, bufLen, "%s", u);
+    return(buf);
+}
+
+/*
+ * canLockAppend() - append the element "scheme:value" (no space first in an
+ * empty list) to the list in out, outLen bytes.  Returns 0 when it doesn't
+ * fit.
+ */
+static int
+canLockAppend(char *out, int outLen, const char *element)
+{
+    int n = strlen(out);
+
+    if (n + (n ? 1 : 0) + (int)strlen(element) + 1 > outLen)
+	return(0);
+    snprintf(out + n, outLen - n, "%s%s", n ? " " : "", element);
+    return(1);
+}
+
+/*
+ * canLockLocks() - append the Cancel-Lock elements for each secret in
+ * secrets and a user-id ("" for the admin secrets) to out: sha256, and sha1
+ * unless the vserverdef has canlocksha1 no (deprecated by RFC 8315 section 6,
+ * kept for older readers and servers that only know it).  Like INN, every
+ * secret makes its locks, so articles stay cancellable while a secret is
+ * being replaced.
+ */
+static void
+canLockLocks(char *out, int outLen, const Vserver *vs, const char secrets[][CANLOCK_SECRETLEN], const char *uid, const char *mid)
+{
+    static const char *schemes[] = { "sha256", "sha1" };
+    int i;
+    int j;
+
+    for (j = 0; j < CANLOCK_MAXSECRETS && secrets[j][0]; ++j) {
+	for (i = 0; i < 2; ++i) {
+	    char lock[192];
+
+	    if (i == 1 && vs->vs_NoCanLockSha1)
+		break;
+	    if (CanLockLock(schemes[i], secrets[j], uid, mid, lock, sizeof(lock)) < 0 ||
+		!canLockAppend(out, outLen, lock))
+		logit(LOG_ERR, "Cancel-Lock: cannot make a %s lock for %s", schemes[i], mid);
+	}
+    }
+}
+
+/*
+ * canLockKeys() - append the Cancel-Key elements for the target of a cancel
+ * or supersede to out: one per user secret and scheme, as INN's nnrpd adds
+ * them.
+ */
+static void
+canLockKeys(char *out, int outLen, const Vserver *vs, const char *uid, const char *target)
+{
+    static const char *schemes[] = { "sha256", "sha1" };
+    int i;
+    int j;
+
+    for (j = 0; j < CANLOCK_MAXSECRETS && vs->vs_CanLockUser[j][0]; ++j) {
+	for (i = 0; i < 2; ++i) {
+	    char key[192];
+
+	    if (i == 1 && vs->vs_NoCanLockSha1)
+		break;
+	    if (CanLockKey(schemes[i], vs->vs_CanLockUser[j], uid, target, key, sizeof(key)) < 0 ||
+		!canLockAppend(out, outLen, key))
+		logit(LOG_ERR, "Cancel-Key: cannot make a %s key for %s", schemes[i], target);
+	}
+    }
+}
+
+/*
+ * canLockCapture() - copy the value of the header called name that starts at
+ * hdr (l bytes with its folded lines) into buf, unfolded and without the
+ * white space around it.  Returns 1 on success, 0 when it doesn't fit or an
+ * element is longer than CANLOCK_ELEMMAX (a real lock or key is 100 bytes or
+ * less).
+ */
+static int
+canLockCapture(const char *hdr, int l, const char *name, char *buf, int bufLen)
+{
+    char *v = buf;
+    int n;
+
+    if (CanLockFindHeader(hdr, l, name, buf, bufLen) != 1)
+	return(0);
+    n = strlen(v);
+    while (n > 0 && isspace((unsigned char)v[n - 1]))
+	v[--n] = 0;
+    while (isspace((unsigned char)*v))
+	++v;
+    memmove(buf, v, strlen(v) + 1);
+    for (v = buf; *v; v += n) {
+	v += strspn(v, " ");
+	n = strcspn(v, " ");
+	if (n > CANLOCK_ELEMMAX)
+	    return(0);
+    }
+    return(1);
+}
+
+/*
+ * canLockEmit() - write a header called name with the elements in list,
+ * folded before 76 columns (RFC 5322) so that it stays a legal line however
+ * many elements there are.
+ */
+static void
+canLockEmit(MBufHead *mb, const char *name, const char *list)
+{
+    int col = strlen(name) + 1;
+    int first = 1;
+
+    MBPrintf(mb, "%s:", name);
+    while (*list) {
+	int n;
+
+	list += strspn(list, " ");
+	n = strcspn(list, " ");
+	if (n == 0)
+	    break;
+	if (!first && col + 1 + n > 76) {
+	    MBWrite(mb, "\r\n\t", 3);
+	    col = 8;
+	} else {
+	    MBWrite(mb, " ", 1);
+	    col += 1;
+	}
+	MBWrite(mb, list, n);
+	col += n;
+	list += n;
+	first = 0;
+    }
+    MBWrite(mb, "\r\n", 2);
+}
+
 /*
  * NNPostBuffer() - called when client connection post buffer contains the
  *		    entire article.  We need to check the article headers
@@ -173,6 +363,14 @@ NNPostBuffer(Connection *conn)
     int haveNewsgroups = 0;
     int haveOrganization = 0;
     int haveDist = 0;
+    const Vserver *vs = conn->co_Auth.dr_VServerDef;
+    char canTarget[MAXMSGIDLEN + 1];	/* what a cancel or supersede withdraws */
+    char canLockIn[CANLOCK_HDRMAX];	/* the poster's own Cancel-Lock, to add to */
+    char canKeyIn[CANLOCK_HDRMAX];	/* and Cancel-Key */
+    int haveCanLock = 0;
+    int haveCanKey = 0;
+    int canLockMerge = 0;		/* the header was taken out: written again with ours */
+    int canKeyMerge = 0;
     char *errMsg = NULL;
     char *newsGrps = NULL, *newsGrps2 = NULL;
     char *base = MBNormalize(&conn->co_ArtBuf, &artLen);
@@ -182,6 +380,7 @@ NNPostBuffer(Connection *conn)
     MBufHead	tmbuf;
 
     MBInit(&tmbuf, -1, &conn->co_MemPool, &conn->co_BufPool);
+    canTarget[0] = 0;
 
     if (!errMsg && conn->co_Flags & COF_POSTTOOBIG) {
 	conn->co_Flags &= ~COF_POSTTOOBIG;
@@ -363,6 +562,7 @@ NNPostBuffer(Connection *conn)
 				errMsg = "441 Illegal \"Control\" message rejected\r\n";
 			}
 		} else {
+			canLockTarget(base + 15, l - 15, canTarget);
 #ifdef	POST_RESTRICTCANCEL
 			char *ptr = zallocStrTrim(&conn->co_MemPool, base+15, l - 15);
 			
@@ -386,7 +586,43 @@ NNPostBuffer(Connection *conn)
 			zfreeStr(&conn->co_MemPool, &ptr);
 #endif
 		}
+	} else if (HeaderCmp(base, "Cancel-Lock", &errMsg) == 0) {
+	    /*
+	     * Only one is allowed (RFC 8315 section 2), so our locks are
+	     * appended to the poster's, as INN does.  When we add locks, a
+	     * second header, or one we can't append to (too long), is
+	     * refused: passing it on would let the poster switch our locks
+	     * off, or leave two headers.
+	     */
+	    if (vs->vs_CanLockAdmin[0][0] || vs->vs_CanLockUser[0][0]) {
+		if (haveCanLock++ > 0) {
+		    if (errMsg == NULL)
+			errMsg = "441 More than one Cancel-Lock header\r\n";
+		} else if (canLockCapture(base, l, "Cancel-Lock", canLockIn, sizeof(canLockIn))) {
+		    canLockMerge = 1;
+		    keep = 0;
+		} else if (errMsg == NULL) {
+		    errMsg = "441 Cancel-Lock header too long\r\n";
+		}
+	    } else {
+		++haveCanLock;
+	    }
+	} else if (HeaderCmp(base, "Cancel-Key", &errMsg) == 0) {
+	    if (vs->vs_CanLockUser[0][0]) {
+		if (haveCanKey++ > 0) {
+		    if (errMsg == NULL)
+			errMsg = "441 More than one Cancel-Key header\r\n";
+		} else if (canLockCapture(base, l, "Cancel-Key", canKeyIn, sizeof(canKeyIn))) {
+		    canKeyMerge = 1;
+		    keep = 0;
+		} else if (errMsg == NULL) {
+		    errMsg = "441 Cancel-Key header too long\r\n";
+		}
+	    } else {
+		++haveCanKey;
+	    }
 	} else if (HeaderCmp(base, "Supersedes", &errMsg) == 0) {
+	    canLockTarget(base + 11, l - 11, canTarget);
 #ifdef	POST_RESTRICTCANCEL
 		char *ptr = zallocStrTrim(&conn->co_MemPool, base+11, l - 11);
 		
@@ -479,6 +715,36 @@ NNPostBuffer(Connection *conn)
 	    if (conn->co_IHaveMsgId == NULL)
 		GenerateMessageID(conn);
 	    MBPrintf(&tmbuf, "Message-ID: %s\r\n", conn->co_IHaveMsgId);
+	}
+	/*
+	 * Add Cancel-Lock and Cancel-Key (RFC 8315), like INN's nnrpd: the
+	 * admin locks go in every article, the user locks when we know who
+	 * the poster is, both after those of the poster's own header.  For
+	 * the poster's own cancel or supersede we add the matching keys.
+	 */
+	if (vs->vs_CanLockAdmin[0][0] || vs->vs_CanLockUser[0][0]) {
+	    char uidBuf[sizeof(conn->co_Auth.dr_AuthUser) + 64];
+	    const char *uid = canLockUid(conn, uidBuf, sizeof(uidBuf));
+	    char list[CANLOCK_LISTMAX];
+
+	    list[0] = 0;
+	    if (canLockMerge)
+		snprintf(list, sizeof(list), "%s", canLockIn);
+	    if (canLockMerge || !haveCanLock) {
+		canLockLocks(list, sizeof(list), vs, vs->vs_CanLockAdmin, "", conn->co_IHaveMsgId);
+		if (uid)
+		    canLockLocks(list, sizeof(list), vs, vs->vs_CanLockUser, uid, conn->co_IHaveMsgId);
+	    }
+	    if (list[0])
+		canLockEmit(&tmbuf, "Cancel-Lock", list);
+
+	    list[0] = 0;
+	    if (canKeyMerge)
+		snprintf(list, sizeof(list), "%s", canKeyIn);
+	    if (canTarget[0] && uid && (canKeyMerge || !haveCanKey))
+		canLockKeys(list, sizeof(list), vs, uid, canTarget);
+	    if (list[0])
+		canLockEmit(&tmbuf, "Cancel-Key", list);
 	}
 	/*
 	 * Add Distribution:

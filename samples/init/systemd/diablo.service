@@ -1,0 +1,26 @@
+# diablo.service - the Diablo feeder.  See samples/init/README.
+# Paths assume the install prefix /news and its diablo.config; for another
+# prefix add -C <prefix>/diablo.config to both diablo-ctl lines.
+[Unit]
+Description=Diablo NNTP feeder
+Documentation=man:diablo(8)
+After=network.target local-fs.target remote-fs.target time-sync.target
+RequiresMountsFor=/news
+
+[Service]
+Type=forking
+# diablo writes its pid file in path_log
+PIDFile=/news/log/diablo.pid
+ExecStart=/news/adm/diablo-ctl start diablo
+ExecStop=/news/adm/diablo-ctl stop diablo
+# diablo-ctl waits for the daemon to answer, and for a clean exit
+TimeoutStartSec=90
+TimeoutStopSec=120
+# diablo-ctl sets DIABLO_NOFILE when diablo-ctl.conf has it; this is the floor
+LimitNOFILE=4096
+# Core dumps hold the AUTHINFO and Cancel-Lock secrets of dreader.access: no
+# core files.  Raise this (LimitCORE=infinity) only to debug a crash.
+LimitCORE=0
+
+[Install]
+WantedBy=multi-user.target

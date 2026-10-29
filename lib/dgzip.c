@@ -293,7 +293,8 @@ diablo_minigzip(char *file)
 		return(-1);
 	}
 
-	unlink(file);
+	if (unlink(file) != 0)
+		return(-1);
 
 	return(0);
 }

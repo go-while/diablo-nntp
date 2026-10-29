@@ -96,6 +96,19 @@ time_t Cache_LastUpdate = 0;
 AccessMap accessmap;
 AccessMap oldaccessmap;
 
+/*
+ * Fallbacks for an empty access map - e.g. a fresh start where dreader.access
+ * was refused, so no cache was ever installed and ReadAccessCache() left every
+ * list NULL.  SetAuthDetails() points the dr_*Def pointers at these instead of
+ * NULL: every rd_* flag is off and the names are empty, so the reader gets no
+ * service (deny, like an unknown client) rather than crashing the daemon.
+ */
+static ReaderDef EmptyReaderDef;
+static Vserver   EmptyVserver;
+static AuthDef   EmptyAuthDef;
+static char      EmptyGroupName[1] = "";
+static GroupDef  EmptyGroupDef = { EmptyGroupName, 0, NULL, NULL };
+
 int DnsTerminate = 0;
 
 void
@@ -2496,6 +2509,74 @@ readAccessLine(FILE *af, char *fname, AccessDef *adef)
 }
 
 /*
+ * addCanLockSecret() - store the value of a canlockadmin or canlockuser line
+ * in the next free slot of a vserverdef (the first is the one that makes new
+ * locks, the others only make keys, for secrets that were rotated out).
+ * Trailing white space is not part of the secret.  A secret that doesn't
+ * fit is refused, never truncated: it would make locks nobody can answer.
+ * The secret is never logged.
+ */
+static void
+addCanLockSecret(char secrets[][CANLOCK_SECRETLEN], const char *opt, const char *val, int linecount)
+{
+    int len = strlen(val);
+    int i;
+
+#ifndef	CANLOCK_ENABLED
+    logit(LOG_ERR, "dreader.access: %s in line %d ignored: this build has no libcanlock (CANLOCK_ENABLED)",
+				opt, linecount);
+    return;
+#endif
+    while (len > 0 && isspace((unsigned char)val[len - 1]))
+	--len;
+    if (len == 0)
+	return;
+    if (len >= CANLOCK_SECRETLEN) {
+	logit(LOG_ERR, "dreader.access: %s in line %d is longer than %d characters, ignored",
+				opt, linecount, CANLOCK_SECRETLEN - 1);
+	return;
+    }
+    for (i = 0; i < CANLOCK_MAXSECRETS; ++i) {
+	if (secrets[i][0] == 0) {
+	    memcpy(secrets[i], val, len);
+	    secrets[i][len] = 0;
+	    return;
+	}
+    }
+    logit(LOG_ERR, "dreader.access: more than %d %s lines, line %d ignored",
+				CANLOCK_MAXSECRETS, opt, linecount);
+}
+
+/*
+ * A readerdef number: all of val, 0 or more, within int.  A bad value is
+ * logged and leaves *dst alone; the caller then keeps the old cache
+ * (the same as for an invalid definition) instead of using 0 for it.
+ */
+static int
+readerdefNumber(const char *opt, const char *val, int linecount, int *dst)
+{
+    char num[40];
+    const char *end;
+    size_t len;
+
+    /* "maxconn 50 # note": a # after white space starts a comment */
+    for (end = val; *end; end++)
+	if (*end == '#' && end > val && isspace((unsigned char)end[-1]))
+	    break;
+    len = end - val;
+    /* too long to be a number is a bad value, not a number cut short */
+    if (len < sizeof(num)) {
+	memcpy(num, val, len);
+	num[len] = 0;
+	if (ParseIntRange(num, 10, 0, INT_MAX, dst) == 0)
+	    return(0);
+    }
+    logit(LOG_ERR, "dreader.access: bad value '%s' for '%s' in line %d (a number from 0 to %d); the file is not installed, and a first start without an older access cache gives no service",
+					val, opt, linecount, INT_MAX);
+    return(-1);
+}
+
+/*
  * Install a new copy of the access cache
  * This is done by creating the new cache files first, locking and then
  * renaming the files.
@@ -2522,6 +2603,8 @@ InstallAccessCache(void) {
     GroupList *groupptr = NULL;
     AccessDef accessdef;
     int copt = OPT_NONE;
+    int parseError = 0;	/* bad file content, as opposed to a transient failure */
+    time_t seen;
     char vsnewbuf[PATH_MAX];
     char grnewbuf[PATH_MAX];
     char aunewbuf[PATH_MAX];
@@ -2541,6 +2624,7 @@ InstallAccessCache(void) {
 
     logit(LOG_INFO, "Installing access cache");
 
+    seen = time(NULL);	/* when we read the file, for the settled check at the parse-error bail */
     if ((fp = fopen(PatLibExpand(DReaderAccessPat), "r")) == NULL) {
 	logit(LOG_CRIT, "Unable to open %s (%s)",
 			PatLibExpand(DReaderAccessPat), strerror(errno));
@@ -2554,6 +2638,11 @@ InstallAccessCache(void) {
     Access_LastSize = st.st_size;
     Access_LastIno = st.st_ino;
 
+    /*
+     * The cache files hold what dreader.access holds, among it the AUTHINFO
+     * passwords, cryptpw and the Cancel-Lock secrets: only the news user may
+     * read them, even with a lax umask.
+     */
     snprintf(vsnewbuf, sizeof(vsnewbuf), "%s.new",
 				PatDbExpand(DRVserverCachePat));
     snprintf(grnewbuf, sizeof(grnewbuf), "%s.new",
@@ -2565,25 +2654,25 @@ InstallAccessCache(void) {
     snprintf(ranewbuf, sizeof(ranewbuf), "%s.new",
 				PatDbExpand(DRAccessCachePat));
 
-    if ((vsf = fopen(vsnewbuf, "w+")) == NULL) {
+    if ((vsf = PrivateFOpen(vsnewbuf, "w+", 0600)) == NULL) {
 	logit(LOG_CRIT, "Unable to create %s (%s)", vsnewbuf, strerror(errno));
 	fclose(fp);
 	return;
     }
-    if ((grf = fopen(grnewbuf, "w+")) == NULL) {
+    if ((grf = PrivateFOpen(grnewbuf, "w+", 0600)) == NULL) {
 	logit(LOG_CRIT, "Unable to create %s (%s)", grnewbuf, strerror(errno));
 	fclose(fp);
 	fclose(vsf);
 	return;
     }
-    if ((auf = fopen(aunewbuf , "w+")) == NULL) {
+    if ((auf = PrivateFOpen(aunewbuf, "w+", 0600)) == NULL) {
 	logit(LOG_CRIT, "Unable to create %s (%s)", aunewbuf, strerror(errno));
 	fclose(fp);
 	fclose(vsf);
 	fclose(grf);
 	return;
     }
-    if ((rdf = fopen(rdnewbuf, "w+")) == NULL) {
+    if ((rdf = PrivateFOpen(rdnewbuf, "w+", 0600)) == NULL) {
 	logit(LOG_CRIT, "Unable to create %s (%s)", rdnewbuf, strerror(errno));
 	fclose(fp);
 	fclose(vsf);
@@ -2592,7 +2681,7 @@ InstallAccessCache(void) {
 	return;
     }
 
-    if ((raf = fopen(ranewbuf, "w+")) == NULL) {
+    if ((raf = PrivateFOpen(ranewbuf, "w+", 0600)) == NULL) {
 	logit(LOG_CRIT, "Unable to create %s (%s)", ranewbuf, strerror(errno));
 	fclose(fp);
 	fclose(vsf);
@@ -2661,6 +2750,16 @@ InstallAccessCache(void) {
 					sizeof(vserver.vs_HostName) - 1);
 		    if (!*vserver.vs_ClusterName)
 			strcpy(vserver.vs_ClusterName, vserver.vs_HostName);
+		    {
+			int i, j;
+
+			for (i = 0; i < CANLOCK_MAXSECRETS; ++i)
+			    for (j = 0; j < CANLOCK_MAXSECRETS; ++j)
+				if (vserver.vs_CanLockUser[i][0] &&
+				    strcmp(vserver.vs_CanLockUser[i], vserver.vs_CanLockAdmin[j]) == 0)
+				    logit(LOG_ERR, "dreader.access: vserverdef %s: a canlockuser secret is also a canlockadmin secret, they must differ",
+						vserver.vs_Name);
+		    }
 		    if (strcmp(vserver.vs_Name, "DEFAULT") == 0) {
 			long fpos;
 			fpos = ftell(vsf);
@@ -2723,7 +2822,7 @@ InstallAccessCache(void) {
 	}
 	if (!*val) {
 	    logit(LOG_ERR, "dreader.access: Missing value/label for %s in line %d", opt, linecount);
-	    Access_LastUpdate = 0;
+	    parseError = 1;
 	    continue;
 	}
 	/* Handle the definition options */
@@ -2800,6 +2899,21 @@ InstallAccessCache(void) {
 			vserver.vs_NoReadPath = 1;
 		    else
 			vserver.vs_NoReadPath = 0;
+		    continue;
+		}
+		if (*val && strcmp(opt, "canlockadmin") == 0) {
+		    addCanLockSecret(vserver.vs_CanLockAdmin, opt, val, linecount);
+		    continue;
+		}
+		if (*val && strcmp(opt, "canlockuser") == 0) {
+		    addCanLockSecret(vserver.vs_CanLockUser, opt, val, linecount);
+		    continue;
+		}
+		if (*val && strcmp(opt, "canlocksha1") == 0) {
+		    if (*val == 'n' || *val == 'N' || *val == '0')
+			vserver.vs_NoCanLockSha1 = 1;
+		    else
+			vserver.vs_NoCanLockSha1 = 0;
 		    continue;
 		}
 		if (*val && strcmp(opt, "postcomments") == 0) {
@@ -2977,23 +3091,28 @@ InstallAccessCache(void) {
 		    continue;
 		}
 		if (*val && strcmp(opt, "maxconn") == 0) {
-		    readerdef.rd_MaxConnTotal = atoi(val);
+		    if (readerdefNumber(opt, val, linecount, &readerdef.rd_MaxConnTotal) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "maxconnperhost") == 0) {
-		    readerdef.rd_MaxConnPerHost = atoi(val);
+		    if (readerdefNumber(opt, val, linecount, &readerdef.rd_MaxConnPerHost) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "maxconnperuser") == 0) {
-		    readerdef.rd_MaxConnPerUser = atoi(val);
+		    if (readerdefNumber(opt, val, linecount, &readerdef.rd_MaxConnPerUser) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "maxconnpergroup") == 0) {
-		    readerdef.rd_MaxConnPerGroup = atoi(val);
+		    if (readerdefNumber(opt, val, linecount, &readerdef.rd_MaxConnPerGroup) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "maxconnpervs") == 0) {
-		    readerdef.rd_MaxConnPerVs = atoi(val);
+		    if (readerdefNumber(opt, val, linecount, &readerdef.rd_MaxConnPerVs) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "ratelimit") == 0) {
@@ -3001,7 +3120,8 @@ InstallAccessCache(void) {
 		    continue;
 		}
 		if (*val && strcmp(opt, "ratelimittax") == 0) {
-		    readerdef.rd_RateLimitTax = atoi(val);
+		    if (readerdefNumber(opt, val, linecount, &readerdef.rd_RateLimitTax) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "ratelimitrange") == 0) {
@@ -3022,19 +3142,31 @@ InstallAccessCache(void) {
 		    continue;
 		}
 		if (*val && strcmp(opt, "bytelimit") == 0) {
-		    readerdef.rd_ByteLimit = atoi(val);
+		    if (readerdefNumber(opt, val, linecount, &readerdef.rd_ByteLimit) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "pathcomponents") == 0) {
-		    readerdef.rd_PathComponents = atoi(val);
+		    if (readerdefNumber(opt, val, linecount, &readerdef.rd_PathComponents) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "idletimeout") == 0) {
-		    readerdef.rd_IdleTimeout = atoi(val);
+		    int num;
+
+		    if (readerdefNumber(opt, val, linecount, &num) < 0)
+			parseError = 1;
+		    else
+			readerdef.rd_IdleTimeout = num;
 		    continue;
 		}
 		if (*val && strcmp(opt, "sessiontimeout") == 0) {
-		    readerdef.rd_SessionTimeout = atoi(val);
+		    int num;
+
+		    if (readerdefNumber(opt, val, linecount, &num) < 0)
+			parseError = 1;
+		    else
+			readerdef.rd_SessionTimeout = num;
 		    continue;
 		}
 		if (*val && strcmp(opt, "allowdnsmismatch") == 0) {
@@ -3139,6 +3271,17 @@ InstallAccessCache(void) {
 		    readerdef.rd_MaxAgePolicy = atoi(val);
 		    continue;
 		}
+		if (*val && strcmp(opt, "addcanlockuser") == 0) {
+		    if (strcasecmp(val, "username") == 0)
+			readerdef.rd_AddCanLockUser = CANLOCK_USER_NAME;
+		    else if (strcasecmp(val, "ip") == 0)
+			readerdef.rd_AddCanLockUser = CANLOCK_USER_IP;
+		    else if (strcasecmp(val, "none") == 0)
+			readerdef.rd_AddCanLockUser = CANLOCK_USER_NONE;
+		    else
+			logit(LOG_ERR, "dreader.access: addcanlockuser must be username, ip or none, line %d\n", linecount);
+		    continue;
+		}
 		if (*val && strcmp(opt, "turnoffnnph") == 0) {
 		    readerdef.rd_TurnOffNNPH = atoi(val);
 		    continue;
@@ -3240,7 +3383,7 @@ InstallAccessCache(void) {
 	    continue;
 	}
 	logit(LOG_ERR, "dreader.access: Invalid access definition : %s in line %d\n", opt, linecount);
-	Access_LastUpdate = 0;
+	parseError = 1;
     }
     fclose(fp);
     fclose(vsf);
@@ -3248,8 +3391,16 @@ InstallAccessCache(void) {
     fclose(auf);
     fclose(rdf);
     fclose(raf);
-    if (Access_LastUpdate == 0) {
+    if (parseError) {
+	/*
+	 * Bad content.  Keep the refused file's mtime/size/ino (set above) so
+	 * the unchanged check skips it silently until it is edited; a changed
+	 * file is parsed again.  Transient failures below still retry.
+	 */
 	logit(LOG_ERR, "Errors in dreader.access file - not updating");
+	/* the file is settled only if it was already older than the moment we read it (seen); a same-second in-place fix reuses its mtime/size/inode, so a not-yet-settled file must be reparsed or it is skipped forever */
+	if (st.st_mtime >= seen - 1)
+	    Access_LastUpdate = 0;
 	return;
     }
     /*
@@ -3258,7 +3409,7 @@ InstallAccessCache(void) {
      * cater for possible race conditions.
      */
 
-    if ((tfp = open(PatDbExpand(DRAccessLockPat), O_RDWR|O_CREAT, 0644)) <= 0) {
+    if ((tfp = open(PatDbExpand(DRAccessLockPat), O_RDWR|O_CREAT, 0600)) < 0) {
 	logit(LOG_CRIT, "Cannot create access lock %s",
 		PatDbExpand(DRAccessLockPat));
 	Access_LastUpdate = 0;
@@ -3267,6 +3418,7 @@ InstallAccessCache(void) {
     if (xflock(tfp, XLOCK_SH) < 0) {
 	if (DebugOpt)
 	    printf("Unable to obtain access lock (%s)\n", strerror(errno));
+	close(tfp);
 	Access_LastUpdate = 0;
 	return;
     }
@@ -3316,7 +3468,7 @@ ReadAccessCache(void) {
 
     /* Obtain a lock so that we know it won't disappear from under us */
 
-    if ((tfp = open(PatDbExpand(DRAccessLockPat), O_RDONLY)) <= 0) {
+    if ((tfp = open(PatDbExpand(DRAccessLockPat), O_RDONLY)) < 0) {
 	logit(LOG_ERR, "Cannot open access lock %s",
 		PatDbExpand(DRAccessLockPat));
 	return(0);
@@ -3324,6 +3476,7 @@ ReadAccessCache(void) {
     if (hflock(tfp, 0, XLOCK_SH) < 0) {
 	if (DebugOpt)
 	    printf("No lock or not changed\n");
+	close(tfp);
 	return(0);
     }
 
@@ -3332,34 +3485,25 @@ ReadAccessCache(void) {
 
     fail = 0;
     /* We must be able to load all the files at	the same time */
-    if ((vsf = open(PatDbExpand(DRVserverCachePat), O_RDONLY)) <= 0) {
+    vsf = grf = auf = raf = rdf = -1;
+    if ((vsf = open(PatDbExpand(DRVserverCachePat), O_RDONLY)) < 0) {
 	logit(LOG_CRIT, "Unable to open %s", PatDbExpand(DRVserverCachePat));
 	fail = 1;
     }
-    if ((grf = open(PatDbExpand(DRGroupCachePat), O_RDONLY)) <= 0) {
+    if ((grf = open(PatDbExpand(DRGroupCachePat), O_RDONLY)) < 0) {
 	logit(LOG_CRIT, "Unable to open %s", PatDbExpand(DRGroupCachePat));
-	close(vsf);
 	fail = 1;
     }
-    if ((auf = open(PatDbExpand(DRAuthCachePat), O_RDONLY)) <= 0) {
+    if ((auf = open(PatDbExpand(DRAuthCachePat), O_RDONLY)) < 0) {
 	logit(LOG_CRIT, "Unable to open %s", PatDbExpand(DRAuthCachePat));
-	close(vsf);
-	close(grf);
 	fail = 1;
     }
-    if ((raf = open(PatDbExpand(DRAccessCachePat), O_RDONLY)) <= 0) {
+    if ((raf = open(PatDbExpand(DRAccessCachePat), O_RDONLY)) < 0) {
 	logit(LOG_CRIT, "Unable to open %s", PatDbExpand(DRAccessCachePat));
-	close(vsf);
-	close(grf);
-	close(auf);
 	fail = 1;
     }
-    if ((rdf = open(PatDbExpand(DRReaderCachePat), O_RDONLY)) <= 0) {
+    if ((rdf = open(PatDbExpand(DRReaderCachePat), O_RDONLY)) < 0) {
 	logit(LOG_CRIT, "Unable to open %s", PatDbExpand(DRReaderCachePat));
-	close(vsf);
-	close(grf);
-	close(auf);
-	close(raf);
 	fail = 1;
     }
 
@@ -3368,6 +3512,17 @@ ReadAccessCache(void) {
     close(tfp);
 
     if (fail) {
+	/* whatever did open (descriptor 0 too) is closed again */
+	if (vsf >= 0)
+	    close(vsf);
+	if (grf >= 0)
+	    close(grf);
+	if (auf >= 0)
+	    close(auf);
+	if (raf >= 0)
+	    close(raf);
+	if (rdf >= 0)
+	    close(rdf);
 	if (accessmap.AccessList == NULL)
 	    return(-2);
 	return(-1);
@@ -3514,6 +3669,8 @@ SetAuthDetails(DnsRes *dres, char *which)
 	    printf("Unable to locate %s in accessmap\n", which);
 	rdp = accessmap.ReaderList;
     }
+    if (rdp == NULL)	/* empty access map: deny, do not crash */
+	rdp = &EmptyReaderDef;
     dres->dr_ReaderDef = rdp;
     
     for (vsp = accessmap.VServerList, i = 0; i < accessmap.VServerCount;
@@ -3536,9 +3693,12 @@ SetAuthDetails(DnsRes *dres, char *which)
     /* The first VServer is always the default one */
     if (i >= accessmap.VServerCount) {
         if (DebugOpt)
-	    printf("Unable to locate %s in virtuals\n", vsp->vs_Name);
+	    printf("Unable to locate %s in virtuals\n",
+		    *dres->dr_VServer ? dres->dr_VServer : rdp->rd_Vserver);
 	vsp = accessmap.VServerList;
     }
+    if (vsp == NULL)
+	vsp = &EmptyVserver;
     dres->dr_VServerDef = vsp;
     
     for (gdp = accessmap.GroupsList, i = 0; i < accessmap.GroupCount;
@@ -3552,9 +3712,11 @@ SetAuthDetails(DnsRes *dres, char *which)
     /* The first group list is always everything */
     if (i >= accessmap.GroupCount) {
 	if (DebugOpt)
-	    printf("Unable to locate %s in accessmap groupslist\n", gdp->gr_Name);
+	    printf("Unable to locate %s in accessmap groupslist\n", rdp->rd_Groups);
 	gdp = accessmap.GroupsList;
     }
+    if (gdp == NULL)
+	gdp = &EmptyGroupDef;
     dres->dr_GroupDef = gdp;
     
     for (gdp = accessmap.GroupsList, i = 0; i < accessmap.GroupCount;
@@ -3568,9 +3730,11 @@ SetAuthDetails(DnsRes *dres, char *which)
     /* The first group list is always everything */
     if (i >= accessmap.GroupCount) {
 	if (DebugOpt)
-	    printf("Unable to locate %s in accessmap listgroupslist\n", gdp->gr_Name);
+	    printf("Unable to locate %s in accessmap listgroupslist\n", rdp->rd_ListGroups);
 	gdp = accessmap.GroupsList;
     }
+    if (gdp == NULL)
+	gdp = &EmptyGroupDef;
     dres->dr_ListGroupDef = gdp;
   
     
@@ -3585,9 +3749,11 @@ SetAuthDetails(DnsRes *dres, char *which)
     /* The first group list is always everything */
     if (i >= accessmap.GroupCount) {
 	if (DebugOpt)
-	    printf("Unable to locate %s in accessmap postgroupslist\n", gdp->gr_Name);
+	    printf("Unable to locate %s in accessmap postgroupslist\n", rdp->rd_PostGroups);
 	gdp = accessmap.GroupsList;
     }
+    if (gdp == NULL)
+	gdp = &EmptyGroupDef;
     dres->dr_PostGroupDef = gdp;
     
     for (adp = accessmap.AuthList, i = 0; i < accessmap.AuthCount; i++, adp++)
@@ -3599,9 +3765,11 @@ SetAuthDetails(DnsRes *dres, char *which)
     /* The first auth list is no access */
     if (i >= accessmap.AuthCount) {
 	if (DebugOpt)
-	    printf("Unable to locate %s in accessmap authlist - USING NO ACCESS\n", adp->au_Name);
+	    printf("Unable to locate %s in accessmap authlist - USING NO ACCESS\n", rdp->rd_Auth);
 	adp = accessmap.AuthList;
     }
+    if (adp == NULL)
+	adp = &EmptyAuthDef;
     dres->dr_AuthDef = adp;
 
     if (dres->dr_ReaderDef->rd_Read)
@@ -3745,6 +3913,9 @@ PrintAuthDetails(DnsRes *dres)
     printf(" vs_Org: %s\n", dres->dr_VServerDef->vs_Org);
     printf(" vs_AbuseTo: %s\n", dres->dr_VServerDef->vs_AbuseTo);
     printf(" vs_CryptPw: %s\n", dres->dr_VServerDef->vs_CryptPw);
+    printf(" vs_CanLockAdmin: %s\n", dres->dr_VServerDef->vs_CanLockAdmin[0][0] ? "set" : "none");
+    printf(" vs_CanLockUser: %s\n", dres->dr_VServerDef->vs_CanLockUser[0][0] ? "set" : "none");
+    printf(" vs_NoCanLockSha1: %d\n", dres->dr_VServerDef->vs_NoCanLockSha1);
     printf(" vs_Interface: %s\n", "XXX"); /* dres->dr_VServerDef->vs_Interface); */
     printf(" vs_AccessFile: %s\n", dres->dr_VServerDef->vs_AccessFile);
    printf("au_Name: %s\n", dres->dr_AuthDef->au_Name);

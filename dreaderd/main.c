@@ -261,7 +261,7 @@ main(int ac, char **av)
 	    break;
 	case 'B':
 	    {
-		BindList *bl = calloc(sizeof(BindList), 1);
+		BindList *bl = calloc(1, sizeof(BindList));
 
 		bl->bl_Port = NULL;
 		bl->bl_Host = NULL;
@@ -319,7 +319,7 @@ main(int ac, char **av)
 	    break;
 	case 'P':
 	    {
-		BindList *bl = calloc(sizeof(BindList), 1);
+		BindList *bl = calloc(1, sizeof(BindList));
 
 		bl->bl_Port = NULL;
 		bl->bl_Host = NULL;
@@ -410,7 +410,7 @@ main(int ac, char **av)
     ValidateTcpBufferSize(&TxBufSize);
 
     if (BindBase == NULL) {
-	BindList *bl = calloc(sizeof(BindList), 1);
+	BindList *bl = calloc(1, sizeof(BindList));
 
 	bl->bl_Next = BindBase;
 	BindBase = bl;
@@ -445,11 +445,13 @@ main(int ac, char **av)
 
     /*
      * Cancel-Lock checks need the target's headers from the overview data,
-     * which 'readerxover trackonly' doesn't store.
+     * which 'readerxover trackonly' doesn't store.  Mode 'none' refuses every
+     * cancel before it needs a header, and 'all' checks nothing.
      */
-    if (DOpts.ReaderXOverMode == 2 && DOpts.ReaderCanLock != CANLOCK_ALL) {
+    if (DOpts.ReaderXOverMode == 2 && DOpts.ReaderCanLock != CANLOCK_ALL &&
+				DOpts.ReaderCanLock != CANLOCK_NONE) {
 	fprintf(stderr, "dreaderd: readercanlock %s needs article headers, "
-	    "but readerxover is trackonly; set readercanlock all\n",
+	    "but readerxover is trackonly; set readercanlock all or none\n",
 	    CanLockModeName(DOpts.ReaderCanLock));
 	exit(1);
     }
@@ -460,6 +462,22 @@ main(int ac, char **av)
      */
     openlog("dreaderd", (DebugOpt ? LOG_PERROR : 0) | LOG_NDELAY | LOG_PID,
             LOG_NEWS);
+
+#ifndef	CANLOCK_ENABLED
+    /*
+     * Without libcanlock no Cancel-Key can be verified: say what the mode
+     * then does, so that a build without the library is not a surprise.
+     */
+    if (DOpts.ReaderCanLock == CANLOCK_REQUIRE_AUTH ||
+				DOpts.ReaderCanLock == CANLOCK_AUTH) {
+	logit(LOG_WARNING, "readercanlock %s: this build has no libcanlock "
+	    "(CANLOCK_ENABLED), so no Cancel-Key can be verified and %s",
+	    CanLockModeName(DOpts.ReaderCanLock),
+	    (DOpts.ReaderCanLock == CANLOCK_AUTH) ?
+		"only articles without a Cancel-Lock can be cancelled" :
+		"no cancel or supersede is executed");
+    }
+#endif
 
     /*
      * bind to our socket prior to changing uid/gid
