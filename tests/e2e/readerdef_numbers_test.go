@@ -56,7 +56,8 @@ func generalLog(s *Site) string {
 	return string(b)
 }
 
-var badReaderdefNumbers = []string{"maxconnperhost 1x", "idletimeout abc", "maxconn 99999999999", "bytelimit -5"}
+var badReaderdefNumbers = []string{"maxconnperhost 1x", "idletimeout abc", "maxconn 99999999999", "bytelimit -5",
+	"maxconn " + strings.Repeat("0", 39) + "1", "pathcomponents 3" + strings.Repeat(" ", 40) + "junk"}
 
 func accessWith(line string) string {
 	return strings.Replace(DefaultReaderAccess, "readerdef rp\n", "readerdef rp\n    "+line+"\n", 1)
