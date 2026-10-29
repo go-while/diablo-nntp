@@ -164,9 +164,12 @@ address first:
 
 `TestDnewslinkConnlife` reads `/proc` and is skipped off Linux.
 
-`ci/build-on-host` installs the build packages (apt, dnf, zypper, pacman, apk or emerge), creates the
-`news` user, turns RADIUS off and builds; run it as root from the top of a
-throwaway copy of the source tree. The test binary can be built elsewhere
+`ci/build-on-host` installs the build packages (apt, dnf, zypper, pacman, apk,
+emerge, or `pkg` on FreeBSD and illumos/OmniOS), creates the `news` user, turns
+RADIUS off and builds; run it as root from the top of a throwaway copy of the
+source tree. On FreeBSD and illumos it installs gmake (and gcc on illumos) and
+builds with gmake; libcanlock and Berkeley DB are used only where a package and
+its headers are present, off otherwise. The test binary can be built elsewhere
 with `CGO_ENABLED=0 go test -c` and copied to a machine without Go.
 `.github/workflows/ci-matrix.yml` does the same across a broad matrix on
 GitHub's runners (Ubuntu x64 and arm64, a libcanlock-less build, eight distro

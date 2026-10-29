@@ -184,13 +184,14 @@ jobs:
             --mount "type=bind,src=$d,dst=/c" "${{ matrix.image }}" -ec 'rm -rf /c/src /c/cid /c/.diablo-ci' 2>/dev/null || true
           rmdir "$d" 2>/dev/null || true
 
-  # FreeBSD: build-on-host has no FreeBSD/pkg branch (it would exit "no supported
-  # package manager"), so this job does not call it; it installs gmake via pkg
-  # and builds with gmake directly (the Makefile supports FreeBSD: CC=clang from
-  # base). RADIUS/libcanlock/BerkeleyDB are built out to keep deps to gmake only;
-  # this proves the FreeBSD build, the e2e suite, and TestInitRcdFreeBSD (the
-  # rc.d script, which runs only where /etc/rc.subr exists). See the PR notes for
-  # what build-on-host would need to own the FreeBSD path too.
+  # FreeBSD: build + e2e suite on a vmactions VM. build-on-host owns the FreeBSD
+  # path (pkg install gmake, create the news user, build with gmake and clang
+  # from base), so this job calls it like the Linux jobs. RADIUS/libcanlock/
+  # BerkeleyDB stay off (no library is wired up here / the base ships no
+  # db_185.h), keeping the dependency to gmake. This proves the FreeBSD build,
+  # the e2e suite, and TestInitRcdFreeBSD (the rc.d script, which runs only where
+  # /etc/rc.subr exists). The prepare step only sets up loopback aliases and the
+  # peer host names; the build itself goes through the shared build-on-host.
   freebsd:
     name: freebsd
     needs: build-test-binary
@@ -212,7 +213,6 @@ jobs:
           release: "14.2"
           usesh: true
           prepare: |
-            pkg install -y gmake
             # The e2e tests bind client sockets to several 127.0.0.x source
             # addresses (PeerIP 127.0.0.2 and .3/.4/.9/.10); unlike Linux, FreeBSD
             # has only 127.0.0.1 on lo0 by default, so add the rest as aliases.
@@ -227,23 +227,19 @@ jobs:
             root=$(pwd)
             cp tests/e2e/e2e.test.freebsd tests/e2e/e2e.test
             chmod 755 tests/e2e/e2e.test
-            # No libradius/libcanlock/db dependency: build those features out.
-            sed -i '' 's/^#define[[:space:]]*RADIUS_ENABLED/#undef RADIUS_ENABLED/' lib/vendor.h
-            sed -i '' 's/^#define[[:space:]]*CANLOCK_ENABLED/#undef CANLOCK_ENABLED/' lib/vendor.h
-            sed -i '' -e 's/^#define[[:space:]]*DB_ENABLED/#undef DB_ENABLED/' \
-                      -e 's/^#define[[:space:]]*REJECT_DB.*/#undef REJECT_DB/' lib/vendor.h
-            gmake -k -j"$(sysctl -n hw.ncpu)" > build.log 2>&1 || { tail -40 build.log; exit 1; }
+            # build-on-host installs gmake, creates the news user, builds the
+            # optional features out (no library wired up here) and builds dbin.
+            tests/e2e/ci/build-on-host
             echo "=== build.log (last 20 lines) ==="; tail -20 build.log
             ls dbin
-            pw groupadd news 2>/dev/null || true
-            pw useradd news -g news -d /var/tmp -s /bin/sh 2>/dev/null || true
             chmod -R a+rX .
             cd tests/e2e
             # dbin is at the repo root ($root/dbin), two levels up from here.
             su -m news -c "env DIABLO_BIN=$root/dbin NNTP_TEST_DEADLINE=30s ./e2e.test -test.v -test.count=1 -test.timeout=1200s"
 
-  # illumos (OmniOS): best effort, same shape as FreeBSD (gmake build, CC=gcc).
-  # Does not fail the workflow; reported either way.
+  # illumos (OmniOS): best effort, same shape as FreeBSD via build-on-host
+  # (pkg install gcc13 + gnu-make, create the news user, build with gmake and
+  # CC=gcc). Does not fail the workflow; reported either way.
   illumos:
     name: illumos
     needs: build-test-binary
@@ -264,8 +260,6 @@ jobs:
         uses: vmactions/omnios-vm@9576f0b6d15e7696548409baa533bc0a339caf42 # v1.3.7
         with:
           prepare: |
-            pkg install -q developer/gcc13 developer/build/gnu-make || \
-              pkg install developer/gcc13 developer/build/gnu-make || true
             # Same 127.0.0.x client source addresses as the FreeBSD job needs.
             for ip in 2 3 4 9 10; do ifconfig lo0 addif 127.0.0.$ip up 2>/dev/null || true; done
             # Local names so diablo's reverse PTR lookup of the peer stays local.
@@ -277,15 +271,11 @@ jobs:
             root=$(pwd)
             cp tests/e2e/e2e.test.illumos tests/e2e/e2e.test
             chmod 755 tests/e2e/e2e.test
-            sed -i 's/^#define[[:space:]]*RADIUS_ENABLED/#undef RADIUS_ENABLED/' lib/vendor.h
-            sed -i 's/^#define[[:space:]]*CANLOCK_ENABLED/#undef CANLOCK_ENABLED/' lib/vendor.h
-            sed -i -e 's/^#define[[:space:]]*DB_ENABLED/#undef DB_ENABLED/' \
-                   -e 's/^#define[[:space:]]*REJECT_DB.*/#undef REJECT_DB/' lib/vendor.h
-            gmake -k -j"$(getconf NPROCESSORS_ONLN)" CC=gcc > build.log 2>&1 || { tail -40 build.log; exit 1; }
+            # build-on-host installs gcc13 + gnu-make, creates the news user,
+            # builds the optional features out and builds dbin with gmake CC=gcc.
+            tests/e2e/ci/build-on-host
             echo "=== build.log (last 20 lines) ==="; tail -20 build.log
             ls dbin
-            groupadd news 2>/dev/null || true
-            useradd -g news -d /var/tmp -s /bin/sh news 2>/dev/null || true
             chmod -R a+rX .
             cd tests/e2e
             # dbin is at the repo root ($root/dbin), two levels up from here.

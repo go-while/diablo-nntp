@@ -1,21 +1,32 @@
 #!/bin/sh
 
-##  Install build packages and build Diablo for the e2e tests on a Linux
-##  test machine.  Run as root from the top of a Diablo source tree copy:
+##  Install build packages and build Diablo for the e2e tests on a test
+##  machine.  Run as root from the top of a Diablo source tree copy:
 ##
 ##      tests/e2e/ci/build-on-host
 ##
-##  This copy's lib/vendor.h is changed: RADIUS is turned off (Linux has no
-##  BSD libradius), and DB_ENABLED and REJECT_DB are turned off when the
+##  Linux (apt, dnf, zypper, pacman, apk or emerge), FreeBSD and illumos
+##  (OmniOS) with pkg are supported; the package manager is chosen from the
+##  system.  This copy's lib/vendor.h is changed: RADIUS is turned off (Linux
+##  and illumos have no BSD libradius, and FreeBSD's base libradius is not
+##  wired up here), and DB_ENABLED and REJECT_DB are turned off when the
 ##  system has no Berkeley DB 1.85 API (db_185.h; several distributions
-##  dropped Berkeley DB).  The binaries end up in dbin/.  The news user and
-##  group are created when missing (diablo switches to them at startup).
-##  With E2E_FAKE_SENDMAIL=1 the moderation tests' fake sendmail is installed
-##  as /usr/sbin/sendmail where no sendmail exists (see ci/fake-sendmail).
-##  With E2E_NO_CANLOCK=1 Cancel-Lock (CANLOCK_ENABLED) is built out even if
+##  dropped Berkeley DB, and the BSD/illumos base systems do not ship it).
+##  The binaries end up in dbin/.  The news user and group are created when
+##  missing (diablo switches to them at startup).  With E2E_FAKE_SENDMAIL=1
+##  the moderation tests' fake sendmail is installed as /usr/sbin/sendmail
+##  where no sendmail exists (Linux only; see ci/fake-sendmail).  With
+##  E2E_NO_CANLOCK=1 Cancel-Lock (CANLOCK_ENABLED) is built out even if
 ##  libcanlock is installed, to test the build without it.
 
 set -eu
+
+# FreeBSD has no /etc/os-release, and its base `make` is BSD make, not GNU
+# make -- so the OS is chosen from uname before anything else, and the GNU
+# Makefile is driven with gmake on FreeBSD/illumos.
+os=$(uname -s)
+
+if [ "$os" = Linux ]; then
 
 . /etc/os-release
 echo "== $PRETTY_NAME"
@@ -185,11 +196,78 @@ if [ "${E2E_FAKE_SENDMAIL:-}" = 1 ]; then
     fi
 fi
 
-jobs=$(nproc 2>/dev/null || echo 1)
-echo "cc: $(cc --version 2>/dev/null | head -1)"
-# -k: one program that fails to build doesn't stop the others.
+MAKE=make; MAKEARGS=; CCBIN=cc
+
+else  # FreeBSD / illumos (OmniOS): pkg, gmake, portable vendor.h editing
+
+# The GNU Makefile needs gmake here (base `make` is BSD make on FreeBSD).
+MAKE=gmake; MAKEARGS=
+
+# In-place sed differs across systems (BSD sed wants `-i ''`, illumos /usr/bin/sed
+# has no -i at all), so edit lib/vendor.h through a temp file, which any sed does.
+vedit() { sed "$@" lib/vendor.h > lib/vendor.h.new && mv lib/vendor.h.new lib/vendor.h; }
+
+case "$os" in
+FreeBSD)
+    echo "== FreeBSD $(freebsd-version 2>/dev/null || uname -r)"
+    CCBIN=cc  # clang from base
+    export ASSUME_ALWAYS_YES=yes
+    # gmake is what the build needs beyond the base compiler, OpenSSL and zlib.
+    pkg install -y gmake >/dev/null 2>&1 || pkg install -y gmake
+    # libcanlock from pkg where available; if it is not, the feature is built
+    # out below (as the gmake-only CI job did). Best effort -- a missing port
+    # just leaves the header absent.
+    if [ "${E2E_NO_CANLOCK:-}" != 1 ] \
+        && [ ! -e /usr/local/include/libcanlock-3/canlock.h ]; then
+        pkg install -y libcanlock >/dev/null 2>&1 || true
+    fi
+    pw groupadd news 2>/dev/null || true
+    pw useradd news -g news -d /var/tmp -s /bin/sh 2>/dev/null || true
+    ;;
+SunOS)
+    echo "== $(uname -srv)"
+    CCBIN=gcc; MAKEARGS="CC=gcc"
+    # OmniOS: gcc and GNU make from pkg; the base has OpenSSL and zlib.
+    pkg install -q developer/gcc13 developer/build/gnu-make || \
+        pkg install developer/gcc13 developer/build/gnu-make || true
+    groupadd news 2>/dev/null || true
+    useradd -g news -d /var/tmp -s /bin/sh news 2>/dev/null || true
+    ;;
+*)
+    echo "build-on-host: no supported package manager for $os" >&2
+    exit 1
+    ;;
+esac
+
+# RADIUS: no library is wired up on these systems -> off.
+vedit 's/^#define[[:space:]]*RADIUS_ENABLED/#undef RADIUS_ENABLED/'
+# Cancel-Lock: on only when libcanlock's header is present (installed from pkg
+# above where a package exists); otherwise built out, like a Linux host without it.
+if [ "${E2E_NO_CANLOCK:-}" = 1 ]; then
+    vedit 's/^#define[[:space:]]*CANLOCK_ENABLED/#undef CANLOCK_ENABLED/'
+    echo "libcanlock: off (E2E_NO_CANLOCK=1)"
+elif [ -e /usr/local/include/libcanlock-3/canlock.h ] || [ -e /usr/include/libcanlock-3/canlock.h ]; then
+    echo "libcanlock: on"
+else
+    vedit 's/^#define[[:space:]]*CANLOCK_ENABLED/#undef CANLOCK_ENABLED/'
+    echo "libcanlock: off (no libcanlock-3/canlock.h)"
+fi
+# Berkeley DB 1.85 API: the FreeBSD/illumos base systems ship no db_185.h -> off.
+if [ -e /usr/include/db_185.h ] || [ -e /usr/local/include/db_185.h ]; then
+    echo "berkeley db: on"
+else
+    vedit -e 's/^#define[[:space:]]*DB_ENABLED/#undef DB_ENABLED/' \
+          -e 's/^#define[[:space:]]*REJECT_DB.*/#undef REJECT_DB/'
+    echo "berkeley db: off (no db_185.h)"
+fi
+
+fi
+
+# Shared build.  -k: one program that fails to build doesn't stop the others.
+jobs=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || getconf NPROCESSORS_ONLN 2>/dev/null || echo 1)
+echo "cc: $($CCBIN --version 2>/dev/null | head -1)"
 status=0
-make -k -j"$jobs" > build.log 2>&1 || status=$?
+$MAKE -k -j"$jobs" $MAKEARGS > build.log 2>&1 || status=$?
 echo "warnings: $(grep -c 'warning:' build.log || true)"
 echo "errors: $(grep -c 'error:' build.log || true)"
 ls dbin 2>/dev/null | wc -l | sed 's/^ */executables: /'
