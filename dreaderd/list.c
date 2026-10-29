@@ -536,6 +536,43 @@ NNTPListModerators(Connection *conn, char **pptr)
 }
 
 /*
+ * A LISTGROUP range that is no n, n- or n-m of numbers, or has a number above
+ * the RFC 3977 limit in that numbering: checked before the group is selected,
+ * so a refused command leaves the client's group alone.
+ */
+static int
+badListgroupRange(const Connection *conn, const char *range)
+{
+    const char *p = range;
+    int part;
+
+    for (part = 0; part < 2; part++) {
+	artno_t v = 0;
+	int digits = 0;
+
+	for (; *p >= '0' && *p <= '9'; p++) {
+	    if (v <= (LL_MAX - 9) / 10)
+		v = v * 10 + (*p - '0');
+	    else
+		v = LL_MAX;
+	    digits++;
+	}
+	if (part == 0 && digits == 0)
+	    return(1);
+	if (conn->co_Numbering == CON_RFC3977 && v > 0x7FFFFFFFLL)
+	    return(1);
+	if (*p == 0)
+	    return(0);
+	if (part == 1 || *p != '-')
+	    return(1);
+	p++;
+	if (*p == 0)
+	    return(0);		/* n- */
+    }
+    return(0);
+}
+
+/*
  * LISTGROUP [group [range]] (RFC 3977 6.1.2): select the group as GROUP
  * does (or the current one), answer "211 count low high group" and list
  * the article numbers in range (default: the whole group).
@@ -551,6 +588,11 @@ NNTPListGroup(Connection *conn, char **pptr)
     if (group != NULL) {
 	if (strlen(group) >= MAXGNAME || parseword(pptr, " \t") != NULL) {
 	    MBLogPrintf(conn, &conn->co_TMBuf, "501 listgroup [newsgroup [range]]\r\n");
+	    NNCommand(conn);
+	    return;
+	}
+	if (range != NULL && badListgroupRange(conn, range)) {
+	    MBLogPrintf(conn, &conn->co_TMBuf, "501 Bad range %s\r\n", range);
 	    NNCommand(conn);
 	    return;
 	}
@@ -576,6 +618,7 @@ NNTPListGroup(Connection *conn, char **pptr)
 	char *p;
 	artno_t lo = strtoll(range, &p, 10);
 	artno_t hi = lo;
+	int openEnd = 0;
 
 	if (p == range || lo < 0) {
 	    MBLogPrintf(conn, &conn->co_TMBuf, "501 Bad range %s\r\n", range);
@@ -586,7 +629,7 @@ NNTPListGroup(Connection *conn, char **pptr)
 	    char *q = p + 1;
 
 	    if (*q == 0) {
-		hi = -1;		/* n-: to the end */
+		openEnd = 1;		/* n-: to the end */
 		p = q;
 	    } else {
 		hi = strtoll(q, &p, 10);
@@ -600,13 +643,18 @@ NNTPListGroup(Connection *conn, char **pptr)
 	    return;
 	}
 	lo = artno_input(conn->co_ArtBeg, conn->co_ArtEnd, lo, conn->co_Numbering);
+	if (!openEnd)
+	    hi = artno_input(conn->co_ArtBeg, conn->co_ArtEnd, hi, conn->co_Numbering);
+	if (lo < 0 || (!openEnd && hi < 0)) {
+	    /* a number above the RFC 3977 limit is no bound */
+	    MBLogPrintf(conn, &conn->co_TMBuf, "501 Bad range %s\r\n", range);
+	    NNCommand(conn);
+	    return;
+	}
 	if (lo > beg)
 	    beg = lo;
-	if (hi >= 0) {
-	    hi = artno_input(conn->co_ArtBeg, conn->co_ArtEnd, hi, conn->co_Numbering);
-	    if (hi < end)
-		end = hi;
-	}
+	if (!openEnd && hi < end)
+	    end = hi;
     }
 
     {

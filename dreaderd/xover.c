@@ -78,6 +78,12 @@ NNTPNewNews(Connection *conn, char **pptr)
 	conn->co_ArtMode = COM_NEWNEWS;
 	conn->co_ListCacheGroups = NULL;
 	ListActiveGroups(conn, newsgroups);
+	/*
+	 * The scan walks co_GroupName over the matching groups; the group the
+	 * client selected is kept aside and put back at the end.
+	 */
+	conn->co_SavedGroupName = conn->co_GroupName;
+	conn->co_GroupName = NULL;
 	NNListNewNews(conn);
     }
 }
@@ -92,6 +98,8 @@ NNListNewNews(Connection *conn)
 	MBPrintf(&conn->co_TMBuf, ".\r\n");
 	if (conn->co_GroupName)
 	    zfreeStr(&conn->co_MemPool, &conn->co_GroupName);
+	conn->co_GroupName = conn->co_SavedGroupName;
+	conn->co_SavedGroupName = NULL;
 	NNCommand(conn);
     } else {
 	GroupList *gl = conn->co_ListCacheGroups;
@@ -263,8 +271,11 @@ NNStartListOverview(Connection *conn, const char *hdr, const char *ran, const ch
 		KPDBUnlock(KDBActive, rec);
 	    }
 
-	    if (!bad)
+	    if (!bad) {
 		lo = artno_input(conn->co_ArtBeg, conn->co_ArtEnd, lo, conn->co_Numbering);
+		if (lo < 0)		/* above the RFC 3977 limit */
+		    bad = 1;
+	    }
 	    hi = lo;
 	    if (!bad && *p == '-') {
 		q = p + 1;
@@ -275,8 +286,11 @@ NNStartListOverview(Connection *conn, const char *hdr, const char *ran, const ch
 		    hi = strtoll(q, &p, 10);
 		    if (p == q || hi < 0)
 			bad = 1;
-		    else
+		    else {
 			hi = artno_input(conn->co_ArtBeg, conn->co_ArtEnd, hi, conn->co_Numbering);
+			if (hi < 0)
+			    bad = 1;
+		    }
 		}
 	    }
 	    if (bad || *p != 0) {
@@ -379,6 +393,10 @@ NNStartListOverviewRange(Connection *conn)
 	conn->co_ListEndNo = 0;
 
     if ((rec = KPDBReadRecord(KDBActive, conn->co_GroupName, KP_LOCK, &recLen)) == NULL) {
+	if (conn->co_ArtMode == COM_NEWNEWS) {
+	    NNListNewNews(conn);	/* no such group: the next one */
+	    return;
+	}
 	FinishOverviewDotNewline(conn);
 	NNCommand(conn);
 	return;
@@ -394,6 +412,10 @@ NNStartListOverviewRange(Connection *conn)
 		conn->co_ListBegNo > lend ||
 		conn->co_ListEndNo < lbeg ||
 		conn->co_ListBegNo > conn->co_ListEndNo) {
+	if (conn->co_ArtMode == COM_NEWNEWS) {
+	    NNListNewNews(conn);	/* nothing in this group: the next one */
+	    return;
+	}
 	FinishOverviewDotNewline(conn);
 	NNCommand(conn);
 	return;
@@ -415,6 +437,10 @@ NNListOverviewRange(Connection *conn)
     conn->co_State = "listover";
 
     if ((ov = GetOverInfo(conn->co_GroupName)) == NULL) {
+	if (conn->co_ArtMode == COM_NEWNEWS) {
+	    NNListNewNews(conn);	/* no overview for this group: the next one */
+	    return;
+	}
 	FinishOverviewDotNewline(conn);
 	NNCommand(conn);
 	return;

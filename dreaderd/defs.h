@@ -467,6 +467,7 @@ typedef struct Connection {
     TimeRestrict co_TimeRestrict;
     DnsRes	co_Auth;
     char	*co_GroupName;	/* current group or NULL	*/
+    char	*co_SavedGroupName;	/* the client's group during NEWNEWS */
     char	*co_IHaveMsgId;
     Control	*co_Ctl;	/* control lookup cache		*/
     struct ServReq *co_SReq;	/* see note(1)			*/
