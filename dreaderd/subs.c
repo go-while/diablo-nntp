@@ -175,49 +175,72 @@ SetTimeRestrict(TimeRestrict *tr, const char *yymmdd, const char *hhmmss, const 
     /*
      * Handle various cases of year specification:
      *
-     * 20yymmdd	= 4 digit year, only valid until 2099    XXX
-     * 1yymmdd  = 3 digit year from non-y2k clients
+     * yyyymmdd	= 4 digit year (RFC 3977 7.3.2), taken as given
+     * 1yymmdd  = 3 digit year from non-y2k clients (years 2000 - 2099)
      * yymmdd   = 2 digit year that conforms to NNTP spec
      *
+     * All digits, no more and no less; month, day and time must exist.
      */
-    switch(strlen(yymmdd)) {
-    case 8:
-	if (sscanf(yymmdd, "20%2d%2d%2d", &tmv.tm_year,
-					&tmv.tm_mon, &tmv.tm_mday) != 3)
+    {
+	static const char mdays[12] = { 31,29,31,30,31,30,31,31,30,31,30,31 };
+	size_t len = strlen(yymmdd);
+	int year4 = 0;
+	int ycent = 0;
+
+	if (strspn(yymmdd, "0123456789") != len ||
+	    strspn(hhmmss, "0123456789") != 6 || hhmmss[6] != 0)
 	    return(-1);
-	break;
-    case 7:
-	if(*yymmdd=='1' && *(yymmdd+1)=='0') {
-	    if (sscanf(yymmdd, "1%2d%2d%2d", &tmv.tm_year,
+	switch(len) {
+	case 8:
+	    if (sscanf(yymmdd, "%4d%2d%2d", &year4,
+					&tmv.tm_mon, &tmv.tm_mday) != 3 ||
+		year4 < 1900)
+		return(-1);
+	    tmv.tm_year = year4 - 1900;
+	    ycent = 1;
+	    break;
+	case 7:
+	    if (yymmdd[0] != '1' ||
+		sscanf(yymmdd, "1%2d%2d%2d", &tmv.tm_year,
 					&tmv.tm_mon,&tmv.tm_mday) != 3)
 		return(-1);
-	} else {
+	    tmv.tm_year += 100;
+	    ycent = 1;
+	    break;
+	case 6:
+	    if (sscanf(yymmdd, "%2d%2d%2d", &tmv.tm_year,
+					&tmv.tm_mon,&tmv.tm_mday) != 3)
+		return(-1);
+	    break;
+	default:
 	    return (-1);
 	}
-	break;
-    case 6:
-	if (sscanf(yymmdd, "%2d%2d%2d", &tmv.tm_year,
-					&tmv.tm_mon,&tmv.tm_mday) != 3)
+
+	if (sscanf(hhmmss, "%2d%2d%2d", &tmv.tm_hour,&tmv.tm_min,&tmv.tm_sec) != 3)
 	    return(-1);
-	break;
-    default:
-	return (-1);
+	if (tmv.tm_mon < 1 || tmv.tm_mon > 12 || tmv.tm_mday < 1 ||
+	    tmv.tm_mday > mdays[tmv.tm_mon - 1] ||
+	    tmv.tm_hour > 23 || tmv.tm_min > 59 || tmv.tm_sec > 59)
+	    return(-1);
+	--tmv.tm_mon;
+	if (!ycent) {
+	    /*
+	     * Handle year rollover, aka '00 - 99' == -99.
+	     */
+	    tmv.tm_year += (tp->tm_year / 100) * 100;
+
+	    if (tp->tm_year - tmv.tm_year < -50)
+		tmv.tm_year -= 100;
+	    else if (tp->tm_year - tmv.tm_year > 50)
+		tmv.tm_year += 100;
+	}
+	/* 29 February only in a leap year */
+	if (tmv.tm_mon == 1 && tmv.tm_mday == 29) {
+	    int y = tmv.tm_year + 1900;
+	    if (y % 4 != 0 || (y % 100 == 0 && y % 400 != 0))
+		return(-1);
+	}
     }
-
-    if (sscanf(hhmmss, "%2d%2d%2d", &tmv.tm_hour,&tmv.tm_min,&tmv.tm_sec) != 3)
-	return(-1);
-    if (--tmv.tm_mon < 0 || tmv.tm_mday <= 0)
-	return(-1);
-
-    /*
-     * Handle year rollover, aka '00 - 99' == -99.
-     */
-    tmv.tm_year += (tp->tm_year / 100) * 100;
-
-    if (tp->tm_year - tmv.tm_year < -50)
-	tmv.tm_year -= 100;
-    else if (tp->tm_year - tmv.tm_year > 50)
-	tmv.tm_year += 100;
 
     tmv.tm_isdst = -1;
 
@@ -227,7 +250,7 @@ SetTimeRestrict(TimeRestrict *tr, const char *yymmdd, const char *hhmmss, const 
      * don't use localtime, use gmt.  Figure out the GMT offset.
      */
 
-    if (gmt && strcmp(gmt, "GMT") == 0) {
+    if (gmt && strcasecmp(gmt, "GMT") == 0) {
         struct tm lt = *localtime(&t);
         struct tm gt = *gmtime(&t);
         int dt =
