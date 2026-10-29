@@ -227,10 +227,13 @@ FeedWrite(int logIt,
 	ptr = "?";
     }
 
-    siz = strlen(msgid) + strlen(ptr) + strlen(artType) + 4;
+    /*
+     * " + " + msgid + " " + ptr + [":" + cSize] + " " + artType
+     */
+    siz = strlen(msgid) + strlen(ptr) + strlen(artType) + 5;
     if (cSize != NULL && strlen(cSize) > 1)
-	siz += strlen(cSize);
-    if (linesiz + siz < sizeof(linebuf) - 1) {
+	siz += 1 + strlen(cSize);
+    if (linesiz + siz < sizeof(linebuf)) {
 	strcat(linebuf, " + ");
 	strcat(linebuf, msgid);
 	strcat(linebuf, " ");
@@ -262,7 +265,7 @@ FeedWrite(int logIt,
 	    feedHashFeedOK(nf->nf_HashFeed, md5hash, msgid) == 0
 	) {
 	    siz = strlen(nf->nf_Label) + 1;
-	    if (linesiz + siz < sizeof(linebuf) - 1) {
+	    if (linesiz + siz < sizeof(linebuf)) {
 		strcat(linebuf, " ");
 		strcat(linebuf, nf->nf_Label);
 		linesiz += siz;
