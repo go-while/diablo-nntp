@@ -2,22 +2,35 @@
 #
 # ROT <n> <file>... - rotate each file: file.<n-1> -> file.<n>, ...,
 # file.0 -> file.1, file -> file.0.  Files that don't exist are skipped.
+# n is the number of old copies to keep (digits, at most 9); anything else is
+# refused before any file is touched.  Exit status: 0, 1 when a move failed,
+# 2 for a usage error.
 
 [ $# -ge 2 ] || { echo "usage: rot <n> <file>..." >&2; exit 2; }
 n=$1
 shift
+case $n in
+    ''|*[!0-9]*) echo "rot: the number of copies must be digits, not \"$n\"" >&2; exit 2 ;;
+esac
+# no leading zeros (08 is not a number to the shell arithmetic below)
+zeros=${n%%[!0]*}
+n=${n#"$zeros"}
+[ -n "$n" ] || n=0
+[ "${#n}" -le 9 ] || { echo "rot: the number of copies is too large (at most 9 digits)" >&2; exit 2; }
+rc=0
 for f in "$@"; do
     j=$n
     while [ "$j" -gt 0 ]; do
 	p=$((j - 1))
 	if [ -f "$f.$p" ]; then
-	    mv -f "$f.$p" "$f.$j"
+	    mv -f "$f.$p" "$f.$j" || rc=1
 	else
-	    rm -f "$f.$j"
+	    rm -f "$f.$j" || rc=1
 	fi
 	j=$p
     done
     if [ -f "$f" ]; then
-	mv -f "$f" "$f.0"
+	mv -f "$f" "$f.0" || rc=1
     fi
 done
+exit $rc
