@@ -9,6 +9,7 @@ import (
 	"strings"
 	"os/exec"
 	"testing"
+	"time"
 )
 
 // overSite is a reader site (not started) with one group e2e.test whose article range is
@@ -104,25 +105,49 @@ func TestDoverctlConvertMovesCompressedData(t *testing.T) {
 }
 
 // TestDoverctlConvertCopyFailure (D-151): with -m a data file that cannot be copied stops the
-// conversion of the group, with a message, and the group is not reported as converted. The
-// result of the copy was ignored.
+// conversion of the group, with a message and exit status 1, and the group is not reported
+// as converted. The over file is moved last, so after the obstacle is gone a second run
+// finishes the group: the data file that already moved is not found at its old place and
+// skipped. The result of the copy was ignored.
 func TestDoverctlConvertCopyFailure(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root can read any file")
 	}
 	s, home := overSite(t, nil)
-	writeOver(t, filepath.Join(home, "e2e", "o.0.e2e.test"), overHead("e2e.test"))
-	data := filepath.Join(home, "e2e", "d.0.e2e.test")
-	writeOver(t, data, []byte("plain"))
+	over := filepath.Join(home, "e2e", "o.0.e2e.test")
+	writeOver(t, over, overHead("e2e.test"))
+	writeOver(t, filepath.Join(home, "e2e", "d.0.e2e.test"), []byte("first"))
+	data := filepath.Join(home, "e2e", "d.256.e2e.test")
+	writeOver(t, data, []byte("second"))
 	if err := os.Chmod(data, 0); err != nil {
 		t.Fatal(err)
 	}
-	out := s.Run(t, "doverctl", "-v", "-m", "convert", "hierarchy", "crc")
+	out, err := s.TryRun("doverctl", "-v", "-m", "convert", "hierarchy", "crc")
+	if err == nil {
+		t.Errorf("doverctl exits 0 although a file could not be moved:\n%s", out)
+	}
 	if strings.Contains(out, "Converted e2e.test") {
 		t.Errorf("incomplete conversion reported as converted:\n%s", out)
 	}
 	if !strings.Contains(out, "Cannot move") {
 		t.Errorf("the failed move was not reported:\n%s", out)
+	}
+	if _, err := os.Stat(over); err != nil {
+		t.Errorf("the over file moved before the data files were done: %v\n%s", err, out)
+	}
+
+	if err := os.Chmod(data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out = s.Run(t, "doverctl", "-v", "-m", "convert", "hierarchy", "crc")
+	if !strings.Contains(out, "Converted e2e.test") {
+		t.Errorf("the second run did not finish the group:\n%s", out)
+	}
+	if left, _ := filepath.Glob(filepath.Join(home, "e2e", "*")); len(left) != 0 {
+		t.Errorf("files left in the old layout after the second run: %q", left)
+	}
+	if n := len(filesBelow(t, home)); n != 3 {
+		t.Errorf("%d files after the conversion, want 3", n)
 	}
 }
 
@@ -157,5 +182,58 @@ func TestDoverctlCleanMisalignedData(t *testing.T) {
 	}
 	if _, err := os.Stat(good); err != nil {
 		t.Errorf("the aligned data file was removed:\n%s", out)
+	}
+}
+
+// TestDexpireoverCompressionFailure (D-155): a compression that fails is counted and reported
+// as a failure, not as "Compressed"; the plain file stays, and the exit status is 1. With -n
+// the files that would be compressed are counted separately.
+func TestDexpireoverCompressionFailure(t *testing.T) {
+	st, spool := spoolStore(t)
+	s := NewReaderSite(t, ReaderOptions{Spool: spool, Files: map[string]string{"dexpire.ctl": "e2e.*:x30:Z0:F0\n"}})
+	feedReader(t, s, st, "e2e.test", newArticle(msgID(t), "e2e.test", "compress", "body"))
+	c := s.Reader(t)
+	waitFor(t, 10*time.Second, "the article in GROUP e2e.test", func() bool {
+		_, line := c.Cmd("GROUP e2e.test")
+		return strings.HasPrefix(line, "211 1")
+	})
+	expect(t, c, 205, "QUIT")
+	var data string
+	waitFor(t, 10*time.Second, "a data file", func() bool {
+		m, _ := filepath.Glob(filepath.Join(s.Dir, "spool", "group", "*", "data.*"))
+		if len(m) == 0 {
+			m, _ = filepath.Glob(filepath.Join(s.Dir, "spool", "group", "data.*"))
+		}
+		if len(m) > 0 {
+			data = m[0]
+		}
+		return data != ""
+	})
+	old := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(data, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	out := s.Run(t, "dexpireover", "-n", "-y", "-z", "-v")
+	if !strings.Contains(out, "1 files would be compressed") {
+		t.Errorf("dry run did not count the file that would be compressed:\n%s", out)
+	}
+	if strings.Contains(out, "Compressed 1 files") {
+		t.Errorf("dry run says it compressed a file:\n%s", out)
+	}
+
+	// the name of the compressed file is taken by a directory: the compression cannot finish
+	if err := os.Mkdir(data+".gz", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out, err := s.TryRun("dexpireover", "-y", "-z", "-v")
+	if strings.Contains(out, "Compressed 1 files") || !strings.Contains(out, "Compression failed for 1 files") {
+		t.Errorf("a failed compression is not reported as failed:\n%s", out)
+	}
+	if err == nil {
+		t.Errorf("dexpireover exits 0 after a failed compression:\n%s", out)
+	}
+	if _, err := os.Stat(data); err != nil {
+		t.Errorf("the plain data file is gone: %v", err)
 	}
 }

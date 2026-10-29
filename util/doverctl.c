@@ -69,6 +69,7 @@ Group *GHash[GHSIZE];
 int TotalFiles = 0;
 int BadGroups = 0;
 int RemovedFiles = 0;
+int Failures = 0;		/* moves and removals that failed: exit status 1 */
 int FileCopy = 0;
 
 void
@@ -254,8 +255,10 @@ main(int ac, char **av)
 
     if (Action & ACT_CONVERT)
 	printf("Don't forget to set the new hash method in diablo.config\n");
+    if (Failures)
+	printf("%d file operations failed\n", Failures);
 
-    return(0);
+    return(Failures ? 1 : 0);
 }
 
 /*
@@ -268,10 +271,12 @@ MoveGroupFile(char *path1, char *path2)
     if (FileCopy) {
 	if (MoveFile(path1, path2) != 0) {
 	    printf("Cannot move %s -> %s\n", path1, path2);
+	    ++Failures;
 	    return(-1);
 	}
     } else if (rename(path1, path2) != 0) {
 	printf("Cannot rename %s -> %s (%s)\n", path1, path2, strerror(errno));
+	++Failures;
 	return(-1);
     }
     return(0);
@@ -282,6 +287,8 @@ ConvertHash(const char *group, GroupHashType *srcHash, GroupHashType *dstHash, i
 {
     char path1[PATH_MAX];
     char path2[PATH_MAX];
+    char ovSrc[PATH_MAX];
+    char ovDst[PATH_MAX];
     char dir[PATH_MAX];
     struct stat st;
     artno_t artNo;
@@ -307,9 +314,9 @@ ConvertHash(const char *group, GroupHashType *srcHash, GroupHashType *dstHash, i
     }
     /* the entry count is read from the old file, before it moves */
     dataEntriesMask = getDataEntries(path1) - 1;
+    strcpy(ovSrc, path1);
+    strcpy(ovDst, path2);
     MakeGroupDirectory(dir);
-    if (ForReal && MoveGroupFile(path1, path2) != 0)
-	return;
     prevArtBase = -1;
     for (artNo = begNo; artNo <= endNo; artNo++) {
 	int variant;
@@ -342,6 +349,13 @@ ConvertHash(const char *group, GroupHashType *srcHash, GroupHashType *dstHash, i
 		return;
 	}
     }
+    /*
+     * The over file goes last: if a data file could not be moved, the group
+     * still has its over file in the old place, and a second run converts
+     * what is left (files that already moved are not found there again).
+     */
+    if (ForReal && MoveGroupFile(ovSrc, ovDst) != 0)
+	return;
     if (VerboseOpt)
 	printf("Converted %s\n", group);
 }
@@ -543,6 +557,7 @@ DeleteFile(const char *dirPath, const char *name)
     snprintf(path, sizeof(path), "%s/%s", dirPath, name);
     if (ForReal && remove(path) != 0) {
 	printf("Unable to remove %s: %s\n", path, strerror(errno));
+	++Failures;
 	return(-1);
     }
     ++RemovedFiles;

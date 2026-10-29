@@ -353,11 +353,12 @@ main(int ac, char **av)
 
 	if (ParallelIdx == ParallelCount) {
 	    pid_t pid;
+	    int status;
 	    int remaining = started;
 
 	    /* only workers that really started are waited for */
 	    while (remaining) {
-		pid = wait3(NULL, 0, NULL);
+		pid = wait3(&status, 0, NULL);
 		if (pid < 0) {
 		    if (errno == EINTR)
 			continue;
@@ -370,6 +371,10 @@ main(int ac, char **av)
 		    if(ParallelPid[i] == pid) {
 			ParallelPid[i] = 0;
 			--remaining;
+			if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+			    fprintf(stderr, "Parallel worker %d did not finish cleanly\n", i);
+			    ++failed;
+			}
 		    }
 	    }
 
@@ -568,7 +573,7 @@ main(int ac, char **av)
     if (UseExpireBySpool)
 	HistoryClose();
 
-    return(0);
+    return(CompressFailed ? 1 : 0);
 }
 
 /*
