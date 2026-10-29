@@ -35,7 +35,8 @@ Group *EnterGroup(const char *groupName, artno_t begNo, artno_t endNo, int lmts,
 Group *FindGroupByHash(char *Hash, int iter);
 void CleanSpool(char *cleanDir);
 void scanDirectory(const char *dirpath, char *dirname, int *level);
-void DeleteFile(const char *dirPath, const char *name);
+int DeleteFile(const char *dirPath, const char *name);
+int MoveGroupFile(char *path1, char *path2);
 void ProcessFile(const char *dirPath, const char *name);
 int getDataEntries(const char *path);
 
@@ -257,6 +258,25 @@ main(int ac, char **av)
     return(0);
 }
 
+/*
+ * Move one file to its new name, by copy (-m) or rename.  A failure is
+ * reported and the group is not marked converted.
+ */
+int
+MoveGroupFile(char *path1, char *path2)
+{
+    if (FileCopy) {
+	if (MoveFile(path1, path2) != 0) {
+	    printf("Cannot move %s -> %s\n", path1, path2);
+	    return(-1);
+	}
+    } else if (rename(path1, path2) != 0) {
+	printf("Cannot rename %s -> %s (%s)\n", path1, path2, strerror(errno));
+	return(-1);
+    }
+    return(0);
+}
+
 void
 ConvertHash(const char *group, GroupHashType *srcHash, GroupHashType *dstHash, int iter, artno_t begNo, artno_t endNo)
 {
@@ -285,44 +305,41 @@ ConvertHash(const char *group, GroupHashType *srcHash, GroupHashType *dstHash, i
 	    printf("over file for %s not found - skipping conversion\n", group);
 	return;
     }
-    MakeGroupDirectory(dir);
-    if (ForReal) {
-	if (FileCopy) {
-	    MoveFile(path1, path2);
-	} else {
-	    if (rename(path1, path2) != 0) {
-		printf("Cannot rename %s -> %s (%s)\n", path1, path2,
-							strerror(errno));
-		return;
-	    }
-	}
-    }
+    /* the entry count is read from the old file, before it moves */
     dataEntriesMask = getDataEntries(path1) - 1;
+    MakeGroupDirectory(dir);
+    if (ForReal && MoveGroupFile(path1, path2) != 0)
+	return;
     prevArtBase = -1;
     for (artNo = begNo; artNo <= endNo; artNo++) {
+	int variant;
+
 	artBase = artNo & ~dataEntriesMask;
 	if (artBase == prevArtBase)
 	    continue;
 	prevArtBase = artBase;
 	strcpy(path1, GFName(group, GRPFTYPE_DATA, artBase, 1, iter, srcHash));
 	strcpy(path2, GFName(group, GRPFTYPE_DATA, artBase, 1, iter, dstHash));
-	if (stat(path1, &st) != 0) {
-	    if (VerboseOpt > 1)
-		printf("data file for %s not found - ignoring\n", group);
-	    continue;
-	}
-	if (DebugOpt > 1)
-	    printf("Converting %s -> %s\n", path1, path2);
-	if (ForReal) {
-	    if (FileCopy) {
-		MoveFile(path1, path2);
-	    } else {
-		if (rename(path1, path2) != 0) {
-		    printf("Cannot rename %s -> %s (%s)\n", path1, path2,
-							strerror(errno));
-		    return;
-		}
+	/* a data file is either plain or compressed (.gz) */
+	for (variant = 0; variant < 2; variant++) {
+	    char src[PATH_MAX];
+	    char dst[PATH_MAX];
+	    const char *ext = variant ? ".gz" : "";
+
+	    if (snprintf(src, sizeof(src), "%s%s", path1, ext) >= (int)sizeof(src) ||
+		snprintf(dst, sizeof(dst), "%s%s", path2, ext) >= (int)sizeof(dst)) {
+		printf("Path too long for data file of %s\n", group);
+		return;
 	    }
+	    if (stat(src, &st) != 0) {
+		if (variant == 0 && VerboseOpt > 1)
+		    printf("data file for %s not found - ignoring\n", group);
+		continue;
+	    }
+	    if (DebugOpt > 1)
+		printf("Converting %s -> %s\n", src, dst);
+	    if (ForReal && MoveGroupFile(src, dst) != 0)
+		return;
 	}
     }
     if (VerboseOpt)
@@ -505,7 +522,7 @@ scanDirectory(const char *dirpath, char *dirname, int *level)
 	    } else {
 		if (VerboseOpt)
 		    printf("Removing unknown file: %s/%s\n", dirname, den2->d_name);
-		DeleteFile(dirname, den2->d_name);
+		DeleteFile(path, den2->d_name);
 	    }
 	    if (MustExit)
 		exit(1);
@@ -518,15 +535,18 @@ scanDirectory(const char *dirpath, char *dirname, int *level)
     }
 }
 
-void
+int
 DeleteFile(const char *dirPath, const char *name)
 {
     char path[PATH_MAX];
 
     snprintf(path, sizeof(path), "%s/%s", dirPath, name);
-    if (ForReal)
-	remove(path);
+    if (ForReal && remove(path) != 0) {
+	printf("Unable to remove %s: %s\n", path, strerror(errno));
+	return(-1);
+    }
     ++RemovedFiles;
+    return(0);
 }
 
 
@@ -629,8 +649,11 @@ ProcessFile(const char *dirPath, const char *name)
     	ovpath = GFName(group->gr_GroupName, GRPFTYPE_OVER, 0, 0, iter,
 						&DOpts.ReaderGroupHashMethod);
 	dataEntries = getDataEntries(ovpath);
+	/* same criteria as dexpireover: also misaligned or empty ranges */
 	if (artBase + dataEntries <= group->gr_StartNo ||
-	    artBase >= group->gr_EndNo + dataEntries
+	    artBase >= group->gr_EndNo + dataEntries ||
+	    group->gr_StartNo > group->gr_EndNo ||
+	    (artBase & (dataEntries - 1))
 	) {
 	    printf("Deleting stale overview data %s: %s\n",
 		group->gr_GroupName,
@@ -662,7 +685,8 @@ getDataEntries(const char *path)
 	if (oh.oh_Version > OH_VERSION ||
 		oh.oh_ByteOrder != OH_BYTEORDER)
 	    r = 0;
-	if (r == 1 && oh.oh_Version >= 3)
+	if (r == 1 && oh.oh_Version >= 3 && oh.oh_DataEntries > 0 &&
+	    (oh.oh_DataEntries & (oh.oh_DataEntries - 1)) == 0)
 	    de = oh.oh_DataEntries;
 	close(fd);
     }
