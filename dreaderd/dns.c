@@ -2535,6 +2535,22 @@ addCanLockSecret(char secrets[][CANLOCK_SECRETLEN], const char *opt, const char 
 }
 
 /*
+ * A readerdef number: all of val, 0 or more, within int.  A bad value is
+ * logged and leaves *dst alone; the caller then keeps the old cache
+ * (the same as for an invalid definition) instead of using 0 for it.
+ */
+static int
+readerdefNumber(const char *opt, const char *val, int linecount, int *dst)
+{
+    if (ParseIntRange(val, 10, 0, INT_MAX, dst) < 0) {
+	logit(LOG_ERR, "dreader.access: bad value '%s' for '%s' in line %d (a number from 0 to %d)",
+					val, opt, linecount, INT_MAX);
+	return(-1);
+    }
+    return(0);
+}
+
+/*
  * Install a new copy of the access cache
  * This is done by creating the new cache files first, locking and then
  * renaming the files.
@@ -3046,23 +3062,28 @@ InstallAccessCache(void) {
 		    continue;
 		}
 		if (*val && strcmp(opt, "maxconn") == 0) {
-		    readerdef.rd_MaxConnTotal = atoi(val);
+		    if (readerdefNumber(opt, val, linecount, &readerdef.rd_MaxConnTotal) < 0)
+			Access_LastUpdate = 0;
 		    continue;
 		}
 		if (*val && strcmp(opt, "maxconnperhost") == 0) {
-		    readerdef.rd_MaxConnPerHost = atoi(val);
+		    if (readerdefNumber(opt, val, linecount, &readerdef.rd_MaxConnPerHost) < 0)
+			Access_LastUpdate = 0;
 		    continue;
 		}
 		if (*val && strcmp(opt, "maxconnperuser") == 0) {
-		    readerdef.rd_MaxConnPerUser = atoi(val);
+		    if (readerdefNumber(opt, val, linecount, &readerdef.rd_MaxConnPerUser) < 0)
+			Access_LastUpdate = 0;
 		    continue;
 		}
 		if (*val && strcmp(opt, "maxconnpergroup") == 0) {
-		    readerdef.rd_MaxConnPerGroup = atoi(val);
+		    if (readerdefNumber(opt, val, linecount, &readerdef.rd_MaxConnPerGroup) < 0)
+			Access_LastUpdate = 0;
 		    continue;
 		}
 		if (*val && strcmp(opt, "maxconnpervs") == 0) {
-		    readerdef.rd_MaxConnPerVs = atoi(val);
+		    if (readerdefNumber(opt, val, linecount, &readerdef.rd_MaxConnPerVs) < 0)
+			Access_LastUpdate = 0;
 		    continue;
 		}
 		if (*val && strcmp(opt, "ratelimit") == 0) {
@@ -3070,7 +3091,8 @@ InstallAccessCache(void) {
 		    continue;
 		}
 		if (*val && strcmp(opt, "ratelimittax") == 0) {
-		    readerdef.rd_RateLimitTax = atoi(val);
+		    if (readerdefNumber(opt, val, linecount, &readerdef.rd_RateLimitTax) < 0)
+			Access_LastUpdate = 0;
 		    continue;
 		}
 		if (*val && strcmp(opt, "ratelimitrange") == 0) {
@@ -3091,19 +3113,31 @@ InstallAccessCache(void) {
 		    continue;
 		}
 		if (*val && strcmp(opt, "bytelimit") == 0) {
-		    readerdef.rd_ByteLimit = atoi(val);
+		    if (readerdefNumber(opt, val, linecount, &readerdef.rd_ByteLimit) < 0)
+			Access_LastUpdate = 0;
 		    continue;
 		}
 		if (*val && strcmp(opt, "pathcomponents") == 0) {
-		    readerdef.rd_PathComponents = atoi(val);
+		    if (readerdefNumber(opt, val, linecount, &readerdef.rd_PathComponents) < 0)
+			Access_LastUpdate = 0;
 		    continue;
 		}
 		if (*val && strcmp(opt, "idletimeout") == 0) {
-		    readerdef.rd_IdleTimeout = atoi(val);
+		    int num;
+
+		    if (readerdefNumber(opt, val, linecount, &num) < 0)
+			Access_LastUpdate = 0;
+		    else
+			readerdef.rd_IdleTimeout = num;
 		    continue;
 		}
 		if (*val && strcmp(opt, "sessiontimeout") == 0) {
-		    readerdef.rd_SessionTimeout = atoi(val);
+		    int num;
+
+		    if (readerdefNumber(opt, val, linecount, &num) < 0)
+			Access_LastUpdate = 0;
+		    else
+			readerdef.rd_SessionTimeout = num;
 		    continue;
 		}
 		if (*val && strcmp(opt, "allowdnsmismatch") == 0) {
@@ -3338,7 +3372,7 @@ InstallAccessCache(void) {
      * cater for possible race conditions.
      */
 
-    if ((tfp = open(PatDbExpand(DRAccessLockPat), O_RDWR|O_CREAT, 0600)) <= 0) {
+    if ((tfp = open(PatDbExpand(DRAccessLockPat), O_RDWR|O_CREAT, 0600)) < 0) {
 	logit(LOG_CRIT, "Cannot create access lock %s",
 		PatDbExpand(DRAccessLockPat));
 	Access_LastUpdate = 0;
@@ -3347,6 +3381,7 @@ InstallAccessCache(void) {
     if (xflock(tfp, XLOCK_SH) < 0) {
 	if (DebugOpt)
 	    printf("Unable to obtain access lock (%s)\n", strerror(errno));
+	close(tfp);
 	Access_LastUpdate = 0;
 	return;
     }
@@ -3396,7 +3431,7 @@ ReadAccessCache(void) {
 
     /* Obtain a lock so that we know it won't disappear from under us */
 
-    if ((tfp = open(PatDbExpand(DRAccessLockPat), O_RDONLY)) <= 0) {
+    if ((tfp = open(PatDbExpand(DRAccessLockPat), O_RDONLY)) < 0) {
 	logit(LOG_ERR, "Cannot open access lock %s",
 		PatDbExpand(DRAccessLockPat));
 	return(0);
@@ -3404,6 +3439,7 @@ ReadAccessCache(void) {
     if (hflock(tfp, 0, XLOCK_SH) < 0) {
 	if (DebugOpt)
 	    printf("No lock or not changed\n");
+	close(tfp);
 	return(0);
     }
 
@@ -3412,34 +3448,25 @@ ReadAccessCache(void) {
 
     fail = 0;
     /* We must be able to load all the files at	the same time */
-    if ((vsf = open(PatDbExpand(DRVserverCachePat), O_RDONLY)) <= 0) {
+    vsf = grf = auf = raf = rdf = -1;
+    if ((vsf = open(PatDbExpand(DRVserverCachePat), O_RDONLY)) < 0) {
 	logit(LOG_CRIT, "Unable to open %s", PatDbExpand(DRVserverCachePat));
 	fail = 1;
     }
-    if ((grf = open(PatDbExpand(DRGroupCachePat), O_RDONLY)) <= 0) {
+    if ((grf = open(PatDbExpand(DRGroupCachePat), O_RDONLY)) < 0) {
 	logit(LOG_CRIT, "Unable to open %s", PatDbExpand(DRGroupCachePat));
-	close(vsf);
 	fail = 1;
     }
-    if ((auf = open(PatDbExpand(DRAuthCachePat), O_RDONLY)) <= 0) {
+    if ((auf = open(PatDbExpand(DRAuthCachePat), O_RDONLY)) < 0) {
 	logit(LOG_CRIT, "Unable to open %s", PatDbExpand(DRAuthCachePat));
-	close(vsf);
-	close(grf);
 	fail = 1;
     }
-    if ((raf = open(PatDbExpand(DRAccessCachePat), O_RDONLY)) <= 0) {
+    if ((raf = open(PatDbExpand(DRAccessCachePat), O_RDONLY)) < 0) {
 	logit(LOG_CRIT, "Unable to open %s", PatDbExpand(DRAccessCachePat));
-	close(vsf);
-	close(grf);
-	close(auf);
 	fail = 1;
     }
-    if ((rdf = open(PatDbExpand(DRReaderCachePat), O_RDONLY)) <= 0) {
+    if ((rdf = open(PatDbExpand(DRReaderCachePat), O_RDONLY)) < 0) {
 	logit(LOG_CRIT, "Unable to open %s", PatDbExpand(DRReaderCachePat));
-	close(vsf);
-	close(grf);
-	close(auf);
-	close(raf);
 	fail = 1;
     }
 
@@ -3448,6 +3475,17 @@ ReadAccessCache(void) {
     close(tfp);
 
     if (fail) {
+	/* whatever did open (descriptor 0 too) is closed again */
+	if (vsf >= 0)
+	    close(vsf);
+	if (grf >= 0)
+	    close(grf);
+	if (auf >= 0)
+	    close(auf);
+	if (raf >= 0)
+	    close(raf);
+	if (rdf >= 0)
+	    close(rdf);
 	if (accessmap.AccessList == NULL)
 	    return(-2);
 	return(-1);

@@ -47,6 +47,7 @@ Prototype int enabled(char *st);
 Prototype HashFeed_MatchList *DiabHashFeedParse(MemPool **mp, char *hashconfig);
 Prototype int MoveFile(char *from, char *to);
 Prototype int TimeSpec(char *t, char *def);
+Prototype int ParseIntRange(const char *str, int base, long min, long max, int *out);
 
 u_long ascToAddr(const char *str);
 u_long ascToMask(const char *str);
@@ -981,12 +982,40 @@ NiceBestEffort(int inc)
 }
 
 /*
+ * ParseIntRange() - a number that is all of str (white space around it is
+ * allowed), between min and max.  Returns 0 and sets *out, or -1 and leaves
+ * *out alone for an empty or non-numeric string, trailing junk, overflow or
+ * a value out of range.
+ */
+int
+ParseIntRange(const char *str, int base, long min, long max, int *out)
+{
+    char *end;
+    long v;
+
+    while (isspace((unsigned char)*str))
+	str++;
+    if (*str == 0)
+	return(-1);
+    errno = 0;
+    v = strtol(str, &end, base);
+    if (errno != 0 || end == str)
+	return(-1);
+    while (isspace((unsigned char)*end))
+	end++;
+    if (*end != 0 || v < min || v > max)
+	return(-1);
+    *out = (int)v;
+    return(0);
+}
+
+/*
  * ConfigGets() - fgets() for configuration files.  A line longer than the
  * buffer is not split into two lines: the rest of it is read and dropped
  * and *tooLong is set, so the caller can skip a long comment or report the
  * line instead of parsing its tail as a line of its own.  A line that just
  * fits (its newline is the next character), or whose dropped rest is only
- * white space, is not too long.
+ * white space and a comment, is not too long.
  */
 char *
 ConfigGets(char *buf, int size, FILE *fi, int *tooLong)
@@ -996,9 +1025,14 @@ ConfigGets(char *buf, int size, FILE *fi, int *tooLong)
 	return(NULL);
     if (strchr(buf, '\n') == NULL) {
 	int c = getc(fi);
+	int comment = 0;
 
 	for (; c != EOF && c != '\n'; c = getc(fi)) {
-	    if (!isspace(c))
+	    if (comment)
+		continue;
+	    if (c == '#')
+		comment = 1;
+	    else if (!isspace(c))
 		*tooLong = 1;
 	}
     }

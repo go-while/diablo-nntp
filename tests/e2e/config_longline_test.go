@@ -29,3 +29,29 @@ func TestConfigLongLine(t *testing.T) {
 		t.Errorf("dicmd with a %d character comment line in diablo.config: %q, want it to read the configuration and fail to connect (udom-connect)", len(comment), out)
 	}
 }
+
+// TestConfigWhitespaceBeforeComment (D-159): a valid directive followed by so much white
+// space that its "# comment" starts beyond the 255 characters read at a time is no long
+// line; only the directive counts. It was rejected as "line too long".
+func TestConfigWhitespaceBeforeComment(t *testing.T) {
+	s := NewSite(t, SiteOptions{NoStart: true})
+	conf := strings.SplitN(s.ReadFile(t, "diablo.config"), "\n", 2)
+	if !strings.HasPrefix(conf[0], "version") || len(conf) != 2 {
+		t.Fatalf("unexpected diablo.config: %q", conf)
+	}
+	line := "remember\t7" + strings.Repeat(" ", 300) + "# a comment after a lot of white space"
+	s.WriteFile(t, "diablo.config", conf[0]+"\n"+line+"\n"+conf[1])
+
+	out, _ := s.TryRun("dicmd", "info")
+	if strings.Contains(out, "too long") || !strings.Contains(out, "udom-connect") {
+		t.Errorf("dicmd with white space before a comment past column 255: %q, want it to read the configuration and fail to connect (udom-connect)", out)
+	}
+
+	// a directive cut by the end of the buffer stays an error
+	long := "remember\t7" + strings.Repeat(" ", 300) + "8"
+	s.WriteFile(t, "diablo.config", conf[0]+"\n"+long+"\n"+conf[1])
+	out, _ = s.TryRun("dicmd", "info")
+	if !strings.Contains(out, "too long") {
+		t.Errorf("dicmd with a directive that does not fit: %q, want \"line too long\"", out)
+	}
+}
