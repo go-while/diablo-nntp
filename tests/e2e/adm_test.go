@@ -6,6 +6,7 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -111,6 +112,10 @@ func TestAdmDailyAtrim(t *testing.T) {
 		t.Fatal(err)
 	}
 	runAdm(t, s, "daily.atrim")
+	// the new daily.log exists after a rotation (D-138), for the jobs that append to it by name
+	if fi, err := os.Stat(logf("daily.log")); err != nil || fi.Size() != 0 {
+		t.Errorf("daily.log after the rotation: %v, %v; want an empty file", fi, err)
+	}
 	b0, _ := os.ReadFile(logf("daily.log.0"))
 	b1, _ := os.ReadFile(logf("daily.log.1"))
 	if string(b0) != "second\n" || string(b1) != "first\n" {
@@ -138,4 +143,158 @@ func TestAdmReaderScripts(t *testing.T) {
 	withAdm(src)(t, s)
 	runAdm(t, s, "daily.reader")
 	runAdm(t, s, "weekly.reader")
+}
+
+// runAdmStatus runs <site>/adm/<name> with DIABLO_BIN set to bin (a fakeBin, or "" for the
+// site's own) and returns its output and exit status.
+func runAdmStatus(tb testing.TB, s *Site, bin, name string, args ...string) (string, int) {
+	tb.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*testkit.Deadline())
+	defer cancel()
+	cmd := exec.CommandContext(ctx, filepath.Join(s.Dir, "adm", name), args...)
+	cmd.Dir = tb.TempDir()
+	cmd.Env = append(os.Environ(), append(s.Env, "HOME="+tb.TempDir())...)
+	if bin != "" {
+		cmd.Env = append(cmd.Env, "DIABLO_BIN="+bin)
+	}
+	out, err := cmd.CombinedOutput()
+	code := 0
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		code = ee.ExitCode()
+	} else if err != nil {
+		tb.Fatalf("adm/%s: %v", name, err)
+	}
+	return string(out), code
+}
+
+// TestAdmExitStatus (D-135, D-137): a maintenance job that fails makes its script fail, and the END
+// line says with which status; before, the END message hid it and the script exited 0.
+func TestAdmExitStatus(t *testing.T) {
+	src := admSource(t)
+	fail := func(code int) string { return fmt.Sprintf("exit %d\n", code) }
+	t.Run("hourly.expire", func(t *testing.T) {
+		s := NewSite(t, SiteOptions{Setup: withAdm(src)})
+		bin := fakeBin(t, s, map[string]string{"dexpire": fail(7)})
+		out, code := runAdmStatus(t, s, bin, "hourly.expire")
+		if code != 7 || !strings.Contains(out, "END (exit status 7)") {
+			t.Errorf("exit %d, output %q; want 7 and an END line with the status", code, out)
+		}
+	})
+	for _, name := range []string{"daily.reader", "weekly.reader"} {
+		t.Run(name, func(t *testing.T) {
+			_, spool := spoolStore(t)
+			s := NewReaderSite(t, ReaderOptions{Spool: spool, NoStart: true})
+			withAdm(src)(t, s)
+			bin := fakeBin(t, s, map[string]string{"dexpireover": fail(5)})
+			out, code := runAdmStatus(t, s, bin, name)
+			if code != 5 || !strings.Contains(out, "END (exit status 5)") {
+				t.Errorf("exit %d, output %q; want 5 and an END line with the status", code, out)
+			}
+			if out, code := runAdmStatus(t, s, "", name); code != 0 || !strings.Contains(out, "END (exit status 0)") {
+				t.Errorf("with the real programs: exit %d, output %q; want 0", code, out)
+			}
+		})
+	}
+	t.Run("daily.atrim", func(t *testing.T) {
+		s := NewSite(t, SiteOptions{Setup: withAdm(src)})
+		if err := os.WriteFile(filepath.Join(s.Dir, "adm", "rot"), []byte("#!/bin/sh\nexit 4\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		out, code := runAdmStatus(t, s, "", "daily.atrim")
+		if code != 4 || !strings.Contains(out, "END (exit status 4)") {
+			t.Errorf("exit %d, output %q; want 4 and an END line with the status", code, out)
+		}
+	})
+	t.Run("biweekly.atrim", func(t *testing.T) {
+		s := NewSite(t, SiteOptions{Setup: withAdm(src)})
+		s.Inject(t, "e2e.test", 1)
+		dp := exec.Command(filepath.Join(s.Bin, "dpath"), "server_dactive")
+		dp.Env = append(os.Environ(), s.Env...)
+		dactive, err := dp.Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(strings.TrimSpace(string(dactive)), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		// dkp fails after a good history rebuild: the failure is not lost (D-137)
+		bin := fakeBin(t, s, map[string]string{"dkp": fail(6)})
+		out, code := runAdmStatus(t, s, bin, "biweekly.atrim")
+		if code != 6 || !strings.Contains(out, "dkp exit status 6") {
+			t.Errorf("failing dkp: exit %d, output %q; want 6 and the dkp status in the END line", code, out)
+		}
+		// a failing history rebuild is still reported first
+		bin = fakeBin(t, s, map[string]string{"dhisexpire": fail(3), "dkp": fail(6)})
+		out, code = runAdmStatus(t, s, bin, "biweekly.atrim")
+		if code != 3 || !strings.Contains(out, "dhisexpire exit status 3") {
+			t.Errorf("failing dhisexpire: exit %d, output %q; want 3", code, out)
+		}
+		if out, code := runAdmStatus(t, s, "", "biweekly.atrim"); code != 0 || !strings.Contains(out, "dkp exit status 0") {
+			t.Errorf("with the real programs: exit %d, output %q; want 0", code, out)
+		}
+	})
+}
+
+// TestAdmRotArguments (D-136): a count that is not a number is refused before any file is moved,
+// leading zeros are decimal, and a move that fails makes rot fail.
+func TestAdmRotArguments(t *testing.T) {
+	rot := filepath.Join(admSource(t), "rot")
+	run := func(dir string, args ...string) (string, int) {
+		// a count of a billion must be refused at once, not looped over
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "/bin/sh", append([]string{rot}, args...)...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		code := 0
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			code = ee.ExitCode()
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		return string(out), code
+	}
+	dir := t.TempDir()
+	write := func(name, content string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("f", "now")
+	write("f.0", "before")
+	for _, n := range []string{"", "x", "1x", "-1", "1.5", "1234567890"} {
+		out, code := run(dir, n, "f")
+		if code != 2 {
+			t.Errorf("rot %q f: exit %d, output %q; want 2", n, code, out)
+		}
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "f")); string(b) != "now" {
+		t.Errorf("f after the refused counts: %q, want it untouched", b)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "f.0")); string(b) != "before" {
+		t.Errorf("f.0 after the refused counts: %q, want it untouched (it was replaced before)", b)
+	}
+	if out, code := run(dir, "08", "f"); code != 0 {
+		t.Fatalf("rot 08 f: exit %d, output %q", code, out)
+	}
+	for name, want := range map[string]string{"f.0": "now", "f.1": "before"} {
+		if b, _ := os.ReadFile(filepath.Join(dir, name)); string(b) != want {
+			t.Errorf("%s after rot 08: %q, want %q", name, b, want)
+		}
+	}
+	if os.Geteuid() != 0 { // root moves files into a read-only directory
+		ro := t.TempDir()
+		if err := os.WriteFile(filepath.Join(ro, "g"), []byte("g"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(ro, 0o555); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.Chmod(ro, 0o755) })
+		if out, code := run(ro, "2", "g"); code != 1 {
+			t.Errorf("rot in a read-only directory: exit %d, output %q; want 1", code, out)
+		}
+	}
 }

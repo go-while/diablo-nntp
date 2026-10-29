@@ -22,9 +22,14 @@ cd "$home" || exit 1
 echo "$(date) - $0 BEGIN"
 
 group=$("$dbin/dpath" group)
+status=0
 if [ -d "$group" ]; then
-    cd "$group" &&
-    "$dbin/plock" -t "$home/.dexpireover" "$dbin/dexpireover" -a -R -l720
+    if cd "$group"; then
+	"$dbin/plock" -t "$home/.dexpireover" "$dbin/dexpireover" -a -R -l720 || status=$?
+    else
+	status=$?
+    fi
 fi
 
-echo "$(date) - $0 END"
+echo "$(date) - $0 END (exit status $status)"
+exit $status

@@ -41,7 +41,12 @@ rm -f "$dhistory.new" "$dhistory.bak"
 status=$?
 
 # Trim the server's active file.
-[ -f "$dactive" ] && "$dbin/dkp" -t "$dactive"
+dstatus=0
+if [ -f "$dactive" ]; then
+    "$dbin/dkp" -t "$dactive" || dstatus=$?
+fi
 
-echo "$(date) - $0 END (dhisexpire exit status $status)"
-exit $status
+echo "$(date) - $0 END (dhisexpire exit status $status, dkp exit status $dstatus)"
+# the history rebuild's failure first, else the active file's
+[ "$status" -eq 0 ] || exit $status
+exit $dstatus

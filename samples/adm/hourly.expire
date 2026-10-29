@@ -25,5 +25,9 @@ home=$("$dbin/dpath" home) || exit 1
 cd "$home" || exit 1
 
 echo "$(date) $0 BEGIN"
-"$dbin/plock" -t "$home/.lock" "$dbin/dexpire" -a -s4
-echo "$(date) $0 END"
+# The exit status is dexpire's.  plock -t exits 1 when another expire or history
+# trim holds the lock ("lock already held, exiting" is printed then).
+status=0
+"$dbin/plock" -t "$home/.lock" "$dbin/dexpire" -a -s4 || status=$?
+echo "$(date) $0 END (exit status $status)"
+exit $status

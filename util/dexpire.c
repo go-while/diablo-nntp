@@ -59,8 +59,9 @@
  */
 typedef struct FileSystem {
     dev_t		dev;		/* The unique filesystem ID */
-    double		fsfree;		/* Space free on filesystem  (MB) */
-    long		fsfreefiles;	/* Inodes free on filesystem */
+    double		fsfree;		/* Space free on filesystem  (MB), < 0: unknown */
+    long		fsfreefiles;	/* Inodes free on filesystem, < 0: unknown */
+    int			fswarned;	/* said that they are unknown */
     struct FileSystem	*next;
 } FileSystem;
 
@@ -131,7 +132,7 @@ int CleanAllSpools(void);
 int spoolEntSort(const void *s1, const void *s2);
 void addFreeSpaceTarget(char *which);
 int cleanupDirectories(void);
-long removeDirectory(char *partname, char *dirname, int *count, int *ccount, double *size);
+long removeDirectory(char *partname, char *dirname, int *count, int *ccount, double *size, int *gone);
 void scanDirectory(Partition *scanpart);
 double findSize(char *pathname, char *dirname);
 void printPartition(Partition *p);
@@ -386,10 +387,19 @@ CleanAllSpools(void)
 	
 		if (VerboseOpt)
 		    printf("Spool Object: %02d\n", spoolnum);
-		p->partname = (char *)malloc(strlen(path) + 2);
-		strcpy(p->partname, path);
-		if (path[strlen(path) - 1] != '/')
-		    strcat(p->partname, "/");
+		p->partname = (char *)malloc(strlen(path) + 3);
+		/*
+		 * An empty path is the spool home (we are in it): "./", not
+		 * "/", and no look at path[-1].  LoadSpoolCtl() makes an empty
+		 * path P.nn, so this is only a guard.
+		 */
+		if (*path == 0) {
+		    strcpy(p->partname, "./");
+		} else {
+		    strcpy(p->partname, path);
+		    if (path[strlen(path) - 1] != '/')
+			strcat(p->partname, "/");
+		}
 		p->partsize = 0.0;
 		p->age = 0;
 		p->minfree = minfree;
@@ -512,8 +522,16 @@ addFreeSpaceTarget(char *which)
     }
 }
 
+/*
+ * removeDirectory() - remove the files of a spool directory and the directory
+ * (renamed from D.* to A.* first).  Returns the number of things removed.
+ * *gone (if given) is set to 1 when the directory is out of the way: it was
+ * renamed (the articles in it are unreachable then, whatever is left in it is
+ * removed by the next run), and 0 when it is still there under its name, so
+ * that its history entries must not be expired.
+ */
 long
-removeDirectory(char *partname, char *dirname, int *count, int *ccount, double *size)
+removeDirectory(char *partname, char *dirname, int *count, int *ccount, double *size, int *gone)
 {
     DIR *dir;
     char pwd[PATH_MAX];
@@ -521,6 +539,8 @@ removeDirectory(char *partname, char *dirname, int *count, int *ccount, double *
     char *ptr;
     int c = 0;
 
+    if (gone)
+	*gone = 0;
     if (getcwd(pwd, sizeof(pwd)) == NULL) {
 	fprintf(stderr, "Unable to determine current directory\n");
 	return(c);
@@ -545,10 +565,15 @@ removeDirectory(char *partname, char *dirname, int *count, int *ccount, double *
 	    if ((den->d_name[0] == 'B' && den->d_name[1]=='.') ||
 		    (strlen(den->d_name) > 8 && den->d_name[8] =='.')
 	    ) {
-		if (size != NULL && stat(den->d_name, &sb) == 0)
+		int havesize = (size != NULL && stat(den->d_name, &sb) == 0);
+
+		if (!NotForReal && remove(den->d_name) != 0) {
+		    fprintf(stderr, "Unable to remove %s/%s: %s\n", tdir,
+					den->d_name, strerror(errno));
+		    continue;
+		}
+		if (havesize)
 		    *size += sb.st_size;
-		if (!NotForReal)
-		    remove(den->d_name);
 		if (count)
 		    ++*count;
 		c++;
@@ -556,10 +581,15 @@ removeDirectory(char *partname, char *dirname, int *count, int *ccount, double *
 				WildCmp("core.*", den->d_name) == 0 ||
 				strcmp(den->d_name, "core") == 0
 	    ) {
-		if (size != NULL && stat(den->d_name, &sb) == 0)
+		int havesize = (size != NULL && stat(den->d_name, &sb) == 0);
+
+		if (!NotForReal && remove(den->d_name) != 0) {
+		    fprintf(stderr, "Unable to remove %s/%s: %s\n", tdir,
+					den->d_name, strerror(errno));
+		    continue;
+		}
+		if (havesize)
 		    *size += sb.st_size;
-		if (!NotForReal)
-		    remove(den->d_name);
 		if (ccount)
 		    ++*ccount;
 		c++;
@@ -577,6 +607,8 @@ removeDirectory(char *partname, char *dirname, int *count, int *ccount, double *
     if (!NotForReal && rename(dirname, tdir) < 0) {
 	printf("unable to rename directory: %s\n", dirname);
     } else {
+	if (gone)
+	    *gone = 1;
 	if (VerboseOpt)
 	    printf("done.\n");
 	errno = 0;
@@ -667,9 +699,21 @@ cleanupDirectories(void)
 			(part->expmethod == EXM_SYNC) ? "sync" : "dirsize");
 
 	}
-	if (part->minfree && spacefree < part->minfree)
+	/*
+	 * A failed statfs() leaves the free space unknown (< 0): that is not
+	 * "full", and must not make dexpire remove directories down to the
+	 * newest one.  The limits on size and age still apply.
+	 */
+	if ((part->minfree && spacefree < 0) ||
+				(part->minfreefiles && freefiles < 0)) {
+	    if (!part->filesys->fswarned) {
+		fprintf(stderr, "dexpire: free space of %s is unknown: not expiring for minfree there\n", part->partname);
+		part->filesys->fswarned = 1;
+	    }
+	}
+	if (part->minfree && spacefree >= 0 && spacefree < part->minfree)
 	    spaceok = 0;
-	if (part->minfreefiles && freefiles < part->minfreefiles)
+	if (part->minfreefiles && freefiles >= 0 && freefiles < part->minfreefiles)
 	    filesok = 0;
 	if (part->maxsize && part->partsize > part->maxsize)
 	    sizeok = 0;
@@ -719,16 +763,32 @@ cleanupDirectories(void)
 	/*
 	 * XXX We should probably include the size of the dir in remsize
 	 */
-	c = removeDirectory(part->partname, SpoolEntries[i]->dirname,
-						&count, &ccount, &remsize);
-	tremsize += remsize;
-	++dircount;
-	allclean = 0;
-	SpoolEntries[i]->removed = 1;
-	if (HistoryUpdateOpt != 0)
-	    UpdateHistory = 1;
-	part->filesys->fsfree += remsize;
-	part->filesys->fsfreefiles += c;
+	{
+	    int gone = 0;
+
+	    c = removeDirectory(part->partname, SpoolEntries[i]->dirname,
+						&count, &ccount, &remsize, &gone);
+	    tremsize += remsize;
+	    if (gone) {
+		++dircount;
+		allclean = 0;
+		SpoolEntries[i]->removed = 1;
+		if (HistoryUpdateOpt != 0)
+		    UpdateHistory = 1;
+	    } else {
+		/*
+		 * Still there: its history entries stay as they are, and this
+		 * is no progress (allclean stays as it is), or the spool would
+		 * be scanned again and again for a directory that cannot go.
+		 */
+		fprintf(stderr, "dexpire: %s%s was not removed; its history entries are kept\n",
+					part->partname, SpoolEntries[i]->dirname);
+	    }
+	}
+	if (part->filesys->fsfree >= 0)
+	    part->filesys->fsfree += remsize;
+	if (part->filesys->fsfreefiles >= 0)
+	    part->filesys->fsfreefiles += c;
 	if (part->expmethod == EXM_DIRSIZE || part->maxsize) {
 	    SpoolEntries[i]->dirsize = remsize;
 	    part->partsize -= remsize;
@@ -855,7 +915,7 @@ scanDirectory(Partition *scanpart)
 					scanpart->partname, den->d_name);
 		break;
 	    case 'A':
-		removeDirectory(scanpart->partname, den->d_name, NULL, NULL, NULL);
+		removeDirectory(scanpart->partname, den->d_name, NULL, NULL, NULL, NULL);
 		break;
 	    case 'D':
 		if (entryIdx == entryMax) {
@@ -1303,6 +1363,7 @@ findFileSys(char *path)
     f->dev = sb.st_dev;
     f->fsfree = freeSpaceOn(path, 0, &f->fsfreefiles);
     f->next = 0;
+    f->fswarned = 0;
     if (DebugOpt > 1)
 	printf("ADD FS: %s\n", path);
     return(f);
@@ -1324,7 +1385,8 @@ getAge(char *dirname)
 }
 
 /*
- * freeSpaceOn() - return the space free (MB) in a directory/partition
+ * freeSpaceOn() - return the space free (MB) in a directory/partition, or
+ * -1 when it cannot be found out (*freefiles is then -1 too)
  *
  */
 
@@ -1335,6 +1397,9 @@ freeSpaceOn(char *path, int syncit, long *freefiles)
     double avail;
     static int synccount = 1;
 
+    /* unknown (< 0) until statfs has answered */
+    if (freefiles != NULL)
+	*freefiles = -1;
     if (DebugOpt)
 	printf("Check space on %s\n", path);
 
@@ -1361,7 +1426,7 @@ freeSpaceOn(char *path, int syncit, long *freefiles)
 #endif
 	fprintf(stderr, "dexpire: unable to statfs %s (%s)\n", path,
 						strerror(errno));
-	return(1);
+	return(-1.0);		/* unknown: callers must not read it as "full" */
     }
     avail = stmp.f_bavail * 1.0 * stmp.f_bsize;
     if (freefiles != NULL)

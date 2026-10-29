@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	testkit "github.com/go-while/nntp-testkit"
@@ -174,5 +175,102 @@ func TestInstallConvertsConfigSymlinks(t *testing.T) {
 				t.Errorf("samples/dnewsfeeds not updated by %s", mode)
 			}
 		})
+	}
+}
+
+// installIn runs install-portable.sh in dir with the extra environment and returns the output
+// and the error.
+func installIn(tb testing.TB, dir, mode, stage string, env ...string) (string, error) {
+	tb.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), testkit.Deadline())
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "/bin/sh", "./install-portable.sh", mode, "/news", stage)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), env...)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// TestInstallKeepsDirectoryModes (D-142): a reinstall does not reset the modes of the directories
+// the admin owns (the home, the spool, the queue) to 755; log and run, which are private, are
+// only closed to others, never opened.
+func TestInstallKeepsDirectoryModes(t *testing.T) {
+	root := sourceRoot(t)
+	stage := t.TempDir()
+	news := filepath.Join(stage, "news")
+	for dir, mode := range map[string]os.FileMode{
+		"": 0o750, "spool": 0o700, "spool/news": 0o770, "dqueue": 0o775, "log": 0o755, "run": 0o770,
+	} {
+		p := filepath.Join(news, dir)
+		if err := os.MkdirAll(p, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(p, mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	install(t, root, "install", stage)
+	for dir, want := range map[string]os.FileMode{
+		"": 0o750, "spool": 0o700, "spool/news": 0o770, "dqueue": 0o775,
+		"log": 0o750,  // 755 is closed to others
+		"run": 0o770,  // group access the admin gave is kept
+		"adm": 0o755,  // installer-managed directories are set
+		"dbin": 0o755,
+	} {
+		if m := fileMode(t, filepath.Join(news, dir)); m.Perm() != want {
+			t.Errorf("%s after a reinstall: mode %v, want %v", filepath.Join("news", dir), m, want)
+		}
+	}
+	// a missing one is made as before
+	if m := fileMode(t, filepath.Join(news, "spool", "group")); m.Perm() != 0o755 {
+		t.Errorf("spool/group: mode %v, want 0755", m)
+	}
+}
+
+// TestInstallNeedsBuiltPrograms (D-143): in a tree where nothing has been built the installer
+// says so and installs nothing, instead of reporting "install complete" with an empty dbin.
+func TestInstallNeedsBuiltPrograms(t *testing.T) {
+	root := sourceRoot(t)
+	src := t.TempDir()
+	b, err := os.ReadFile(filepath.Join(root, "install-portable.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "install-portable.sh"), b, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{"dbin", "samples", "man"} {
+		if err := os.Mkdir(filepath.Join(src, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stage := t.TempDir()
+	out, err := installIn(t, src, "install", stage)
+	if err == nil || !strings.Contains(out, "No programs in dbin") || strings.Contains(out, "complete") {
+		t.Errorf("install without built programs: err %v, output %q; want a refusal", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(stage, "news")); err == nil {
+		t.Errorf("the installer made %s although nothing was built", filepath.Join(stage, "news"))
+	}
+}
+
+// TestInstallStopsWhenFindFails (D-144): the source tree is read with find into a list first, so a
+// find that fails stops the installer; before, the loop reading its output hid the failure and
+// the installer said "install complete".
+func TestInstallStopsWhenFindFails(t *testing.T) {
+	root := sourceRoot(t)
+	shim := t.TempDir()
+	if err := os.WriteFile(filepath.Join(shim, "find"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []string{"install", "uninstall"} {
+		stage := t.TempDir()
+		if mode == "uninstall" {
+			install(t, root, "install", stage)
+		}
+		out, err := installIn(t, root, mode, stage, "PATH="+shim+string(os.PathListSeparator)+os.Getenv("PATH"))
+		if err == nil || strings.Contains(out, "complete") || strings.Contains(out, "Uninstalled") {
+			t.Errorf("%s with a failing find: err %v, output %q; want a failure and no success message", mode, err, out)
+		}
 	}
 }

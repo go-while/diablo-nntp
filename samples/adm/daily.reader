@@ -23,10 +23,11 @@ echo "$(date) - $0 BEGIN"
 
 cache=$("$dbin/dpath" cache)
 group=$("$dbin/dpath" group)
+status=0
 
 # Cached articles over 3 days old.
 if [ -d "$cache" ]; then
-    find "$cache" -type f -name '????????.????????' -mtime +3 -exec rm -f {} +
+    find "$cache" -type f -name '????????.????????' -mtime +3 -exec rm -f {} + || status=$?
 fi
 
 # Expire overview information.  The commented entry does a second pass to
@@ -34,9 +35,13 @@ fi
 # WARNING: the '-O' option on a non-dreaderd server, or on a dreaderd that
 #	only receives control messages, will cause problems; see dexpireover(8).
 if [ -d "$group" ]; then
-    cd "$group" &&
-    "$dbin/plock" -t "$home/.dexpireover" "$dbin/dexpireover" -a -l180
+    if cd "$group"; then
+	"$dbin/plock" -t "$home/.dexpireover" "$dbin/dexpireover" -a -l180 || status=$?
+    else
+	status=$?
+    fi
     # "$dbin/plock" -t "$home/.dexpireover" "$dbin/dexpireover" -w 'alt.*' -O180 -y
 fi
 
-echo "$(date) - $0 END"
+echo "$(date) - $0 END (exit status $status)"
+exit $status

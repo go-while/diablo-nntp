@@ -23,9 +23,16 @@ echo "$(date) - $0 BEGIN"
 log=$("$dbin/dpath" log)
 cd "$log" || exit 1
 # A pattern that matches nothing stays as it is; rot skips it.
+status=0
 "$here/rot" 4 daily.log dspoolout.log control.log miscctl \
     newgroup*.alt newgroup*.other newgroup*.log \
     rmgroup*.alt rmgroup*.other rmgroup*.log \
-    checkgroup*.alt checkgroup*.other checkgroup*.log
+    checkgroup*.alt checkgroup*.other checkgroup*.log || status=$?
 
-echo "$(date) - $0 END"
+# cron opened daily.log for this script before it started, and rot has just
+# renamed that file to daily.log.0, so the messages of this run end up there.
+# Make the new daily.log exist, for the jobs that append to it by name.
+: >> daily.log
+
+echo "$(date) - $0 END (exit status $status)"
+exit $status
