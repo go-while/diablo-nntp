@@ -65,7 +65,8 @@ func accessWith(line string) string {
 
 // TestReaderdefNumbersValidated (D-161): a readerdef number that is not all digits (or is out
 // of range) is logged ("bad value") and makes dreader.access invalid: it is not installed.
-// On a first start there is no other access cache, so dreaderd gives no service; atoi() made
+// On a first start there is no other access cache, so dreaderd refuses every client and stays
+// up; atoi() made
 // "abc" 0 and "1x" 1, and dreaderd served with limits the admin never wrote.
 func TestReaderdefNumbersValidated(t *testing.T) {
 	for _, bad := range badReaderdefNumbers {

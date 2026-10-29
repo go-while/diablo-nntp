@@ -96,6 +96,19 @@ time_t Cache_LastUpdate = 0;
 AccessMap accessmap;
 AccessMap oldaccessmap;
 
+/*
+ * Fallbacks for an empty access map - e.g. a fresh start where dreader.access
+ * was refused, so no cache was ever installed and ReadAccessCache() left every
+ * list NULL.  SetAuthDetails() points the dr_*Def pointers at these instead of
+ * NULL: every rd_* flag is off and the names are empty, so the reader gets no
+ * service (deny, like an unknown client) rather than crashing the daemon.
+ */
+static ReaderDef EmptyReaderDef;
+static Vserver   EmptyVserver;
+static AuthDef   EmptyAuthDef;
+static char      EmptyGroupName[1] = "";
+static GroupDef  EmptyGroupDef = { EmptyGroupName, 0, NULL, NULL };
+
 int DnsTerminate = 0;
 
 void
@@ -3645,6 +3658,8 @@ SetAuthDetails(DnsRes *dres, char *which)
 	    printf("Unable to locate %s in accessmap\n", which);
 	rdp = accessmap.ReaderList;
     }
+    if (rdp == NULL)	/* empty access map: deny, do not crash */
+	rdp = &EmptyReaderDef;
     dres->dr_ReaderDef = rdp;
     
     for (vsp = accessmap.VServerList, i = 0; i < accessmap.VServerCount;
@@ -3667,9 +3682,12 @@ SetAuthDetails(DnsRes *dres, char *which)
     /* The first VServer is always the default one */
     if (i >= accessmap.VServerCount) {
         if (DebugOpt)
-	    printf("Unable to locate %s in virtuals\n", vsp->vs_Name);
+	    printf("Unable to locate %s in virtuals\n",
+		    *dres->dr_VServer ? dres->dr_VServer : rdp->rd_Vserver);
 	vsp = accessmap.VServerList;
     }
+    if (vsp == NULL)
+	vsp = &EmptyVserver;
     dres->dr_VServerDef = vsp;
     
     for (gdp = accessmap.GroupsList, i = 0; i < accessmap.GroupCount;
@@ -3683,9 +3701,11 @@ SetAuthDetails(DnsRes *dres, char *which)
     /* The first group list is always everything */
     if (i >= accessmap.GroupCount) {
 	if (DebugOpt)
-	    printf("Unable to locate %s in accessmap groupslist\n", gdp->gr_Name);
+	    printf("Unable to locate %s in accessmap groupslist\n", rdp->rd_Groups);
 	gdp = accessmap.GroupsList;
     }
+    if (gdp == NULL)
+	gdp = &EmptyGroupDef;
     dres->dr_GroupDef = gdp;
     
     for (gdp = accessmap.GroupsList, i = 0; i < accessmap.GroupCount;
@@ -3699,9 +3719,11 @@ SetAuthDetails(DnsRes *dres, char *which)
     /* The first group list is always everything */
     if (i >= accessmap.GroupCount) {
 	if (DebugOpt)
-	    printf("Unable to locate %s in accessmap listgroupslist\n", gdp->gr_Name);
+	    printf("Unable to locate %s in accessmap listgroupslist\n", rdp->rd_ListGroups);
 	gdp = accessmap.GroupsList;
     }
+    if (gdp == NULL)
+	gdp = &EmptyGroupDef;
     dres->dr_ListGroupDef = gdp;
   
     
@@ -3716,9 +3738,11 @@ SetAuthDetails(DnsRes *dres, char *which)
     /* The first group list is always everything */
     if (i >= accessmap.GroupCount) {
 	if (DebugOpt)
-	    printf("Unable to locate %s in accessmap postgroupslist\n", gdp->gr_Name);
+	    printf("Unable to locate %s in accessmap postgroupslist\n", rdp->rd_PostGroups);
 	gdp = accessmap.GroupsList;
     }
+    if (gdp == NULL)
+	gdp = &EmptyGroupDef;
     dres->dr_PostGroupDef = gdp;
     
     for (adp = accessmap.AuthList, i = 0; i < accessmap.AuthCount; i++, adp++)
@@ -3730,9 +3754,11 @@ SetAuthDetails(DnsRes *dres, char *which)
     /* The first auth list is no access */
     if (i >= accessmap.AuthCount) {
 	if (DebugOpt)
-	    printf("Unable to locate %s in accessmap authlist - USING NO ACCESS\n", adp->au_Name);
+	    printf("Unable to locate %s in accessmap authlist - USING NO ACCESS\n", rdp->rd_Auth);
 	adp = accessmap.AuthList;
     }
+    if (adp == NULL)
+	adp = &EmptyAuthDef;
     dres->dr_AuthDef = adp;
 
     if (dres->dr_ReaderDef->rd_Read)
