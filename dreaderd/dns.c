@@ -2604,6 +2604,7 @@ InstallAccessCache(void) {
     AccessDef accessdef;
     int copt = OPT_NONE;
     int parseError = 0;	/* bad file content, as opposed to a transient failure */
+    time_t seen;
     char vsnewbuf[PATH_MAX];
     char grnewbuf[PATH_MAX];
     char aunewbuf[PATH_MAX];
@@ -2623,6 +2624,7 @@ InstallAccessCache(void) {
 
     logit(LOG_INFO, "Installing access cache");
 
+    seen = time(NULL);	/* when we read the file, for the settled check at the parse-error bail */
     if ((fp = fopen(PatLibExpand(DReaderAccessPat), "r")) == NULL) {
 	logit(LOG_CRIT, "Unable to open %s (%s)",
 			PatLibExpand(DReaderAccessPat), strerror(errno));
@@ -3396,6 +3398,9 @@ InstallAccessCache(void) {
 	 * file is parsed again.  Transient failures below still retry.
 	 */
 	logit(LOG_ERR, "Errors in dreader.access file - not updating");
+	/* the file is settled only if it was already older than the moment we read it (seen); a same-second in-place fix reuses its mtime/size/inode, so a not-yet-settled file must be reparsed or it is skipped forever */
+	if (st.st_mtime >= seen - 1)
+	    Access_LastUpdate = 0;
 	return;
     }
     /*
