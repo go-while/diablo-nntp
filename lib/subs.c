@@ -1027,7 +1027,8 @@ ConfigGets(char *buf, int size, FILE *fi, int *tooLong)
 	int c = getc(fi);
 	int comment = 0;
 	/* a # starts a comment after white space, not inside a word */
-	int prevSpace = isspace((unsigned char)buf[strlen(buf) - 1]);
+	size_t n = strlen(buf);
+	int prevSpace = n > 0 && isspace((unsigned char)buf[n - 1]);
 
 	for (; c != EOF && c != '\n'; c = getc(fi)) {
 	    if (!comment) {

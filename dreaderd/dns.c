@@ -2551,17 +2551,16 @@ readerdefNumber(const char *opt, const char *val, int linecount, int *dst)
 	if (*end == '#' && end > val && isspace((unsigned char)end[-1]))
 	    break;
     len = end - val;
-    if (len >= sizeof(num))
-	len = sizeof(num) - 1;		/* too long to be a number anyway */
-    memcpy(num, val, len);
-    num[len] = 0;
-
-    if (ParseIntRange(num, 10, 0, INT_MAX, dst) < 0) {
-	logit(LOG_ERR, "dreader.access: bad value '%s' for '%s' in line %d (a number from 0 to %d)",
-					val, opt, linecount, INT_MAX);
-	return(-1);
+    /* too long to be a number is a bad value, not a number cut short */
+    if (len < sizeof(num)) {
+	memcpy(num, val, len);
+	num[len] = 0;
+	if (ParseIntRange(num, 10, 0, INT_MAX, dst) == 0)
+	    return(0);
     }
-    return(0);
+    logit(LOG_ERR, "dreader.access: bad value '%s' for '%s' in line %d (a number from 0 to %d); the file is not installed, and a first start without an older access cache gives no service",
+					val, opt, linecount, INT_MAX);
+    return(-1);
 }
 
 /*

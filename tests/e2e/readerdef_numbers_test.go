@@ -7,9 +7,28 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
+
+// runDetached starts cmd in its own process group in the site directory and, when the test is
+// over, kills the whole group (dreaderd's children too) and waits for it, so that nothing writes
+// to the site's log directory while the test directory is removed.
+func runDetached(tb testing.TB, s *Site, cmd *exec.Cmd) {
+	tb.Helper()
+	cmd.Dir = s.Dir
+	cmd.Env = append(os.Environ(), s.Env...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		tb.Fatal(err)
+	}
+	tb.Cleanup(func() {
+		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		cmd.Wait()
+		time.Sleep(200 * time.Millisecond) // the killed children are gone for good
+	})
+}
 
 // startReaderNoWait starts dreaderd -d for a reader site (written with NoStart) without
 // waiting for a greeting, which a dreaderd without access definitions does not give.
@@ -17,12 +36,7 @@ func startReaderNoWait(tb testing.TB, s *Site) {
 	tb.Helper()
 	port := s.Addr[strings.LastIndex(s.Addr, ":")+1:]
 	cmd := exec.Command(filepath.Join(s.Bin, "dreaderd"), "-d", "-p", PathHost, "-h", PathHost, "-P", "[127.0.0.1]:"+port)
-	cmd.Dir = s.Dir
-	cmd.Env = append(os.Environ(), s.Env...)
-	if err := cmd.Start(); err != nil {
-		tb.Fatal(err)
-	}
-	tb.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
+	runDetached(tb, s, cmd)
 }
 
 // readerGreeting dials addr and returns the first line of the answer ("" for none).
@@ -116,12 +130,7 @@ func TestAccessCacheWithStdinClosed(t *testing.T) {
 	port := s.Addr[strings.LastIndex(s.Addr, ":")+1:]
 	cmd := exec.Command("/bin/sh", "-c", `exec "$0" "$@" <&-`, filepath.Join(s.Bin, "dreaderd"),
 		"-d", "-p", PathHost, "-h", PathHost, "-P", "[127.0.0.1]:"+port)
-	cmd.Dir = s.Dir
-	cmd.Env = append(os.Environ(), s.Env...)
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
+	runDetached(t, s, cmd)
 	var g string
 	waitFor(t, 10*time.Second, "a greeting", func() bool {
 		g = readerGreeting(s.Addr)
