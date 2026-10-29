@@ -12,7 +12,7 @@ re-checked yet.
 Status values: **open**, **PR** (fix waiting for review, with its number), **fixed** (with
 the PR that fixed it), **decision** (needs the maintainer to decide), **won't fix**.
 
-Last updated 2026-10-29: D-135 to D-146 and D-156, D-157 marked fixed (#145, #151 to #154); D-158 won't fix; D-147 to D-155 and D-159 to D-162 marked PR (#158 to #160). Before that, 2026-10-28: D-91, D-96, D-98 and D-131 to D-133 marked fixed (#146 to #149). F-01 marked done, F-04 (NoCeM) and F-05 (init scripts, done) added, D-163 (file modes, fixed in #139) added; D-135 to D-162 added from go-while's batch of `main` at `0401451`, and a note on D-94. Before that, D-110 to D-134 added from go-while's third review pass of `main` at `6a4b97d`. Before that, 2026-10-27: D-66 to D-109 added from the second review pass and the reviews of the fixes
+Last updated 2026-10-29: D-135 to D-146 and D-156, D-157 marked fixed (#145, #151 to #154); D-158 won't fix; D-150 to D-155 marked fixed (#158); D-147 to D-149 and D-159 to D-162 marked PR (#159, #160). Before that, 2026-10-28: D-91, D-96, D-98 and D-131 to D-133 marked fixed (#146 to #149). F-01 marked done, F-04 (NoCeM) and F-05 (init scripts, done) added, D-163 (file modes, fixed in #139) added; D-135 to D-162 added from go-while's batch of `main` at `0401451`, and a note on D-94. Before that, D-110 to D-134 added from go-while's third review pass of `main` at `6a4b97d`. Before that, 2026-10-27: D-66 to D-109 added from the second review pass and the reviews of the fixes
 (D-77 is documented behaviour and only needs a note); the fixed ones are marked with their PR. Before that, D-53 to D-65 added from the review of `main` at `ca648d4`. Before that, 2026-10-26, after batch 1 (#30, #31, #37 to #44, #47 to #49) and the first part
 of batch 2 (#46, #50, #52, #62) were merged. Open: #35 (GnuPG pgpverify, held for a private
 advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
@@ -163,12 +163,12 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-147](#d-147-over-and-hdr-do-not-reject-an-invalid-converted-range-bound) | Low | OVER and HDR do not reject an invalid converted range bound | PR (#159) |
 | [D-148](#d-148-listgroup-accepts-a-failed-article-number-conversion) | Low | LISTGROUP accepts a failed article-number conversion | PR (#159) |
 | [D-149](#d-149-newnews-clears-the-previously-selected-group) | Low | NEWNEWS clears the previously selected group | PR (#159) |
-| [D-150](#d-150-doverctl-convert-leaves-compressed-overview-data-in-the-old-layout) | Medium | doverctl convert leaves compressed overview data in the old layout | PR (#158) |
-| [D-151](#d-151-doverctl-convert--m-ignores-failed-file-moves) | Medium | doverctl convert -m ignores failed file moves | PR (#158) |
-| [D-152](#d-152-doverctl-clean-removes-nonregular-files-using-the-wrong-path) | Low | doverctl clean removes nonregular files using the wrong path | PR (#158) |
-| [D-153](#d-153-doverctl-clean-keeps-misaligned-overview-data-after-an-entry-size-change) | Low | doverctl clean keeps misaligned overview data after an entry-size change | PR (#158) |
-| [D-154](#d-154-dexpireovers-parallel-parent-spins-after-a-failed-fork) | Medium | dexpireover's parallel parent spins after a failed fork | PR (#158) |
-| [D-155](#d-155-dexpireover-counts-failed-compression-as-completed) | Low | dexpireover counts failed compression as completed | PR (#158) |
+| [D-150](#d-150-doverctl-convert-leaves-compressed-overview-data-in-the-old-layout) | Medium | doverctl convert leaves compressed overview data in the old layout | fixed (#158) |
+| [D-151](#d-151-doverctl-convert--m-ignores-failed-file-moves) | Medium | doverctl convert -m ignores failed file moves | fixed (#158) |
+| [D-152](#d-152-doverctl-clean-removes-nonregular-files-using-the-wrong-path) | Low | doverctl clean removes nonregular files using the wrong path | fixed (#158) |
+| [D-153](#d-153-doverctl-clean-keeps-misaligned-overview-data-after-an-entry-size-change) | Low | doverctl clean keeps misaligned overview data after an entry-size change | fixed (#158) |
+| [D-154](#d-154-dexpireovers-parallel-parent-spins-after-a-failed-fork) | Medium | dexpireover's parallel parent spins after a failed fork | fixed (#158) |
+| [D-155](#d-155-dexpireover-counts-failed-compression-as-completed) | Low | dexpireover counts failed compression as completed | fixed (#158) |
 | [D-156](#d-156-a-failed-free-space-query-can-drive-excessive-spool-expiry) | Medium | A failed free-space query can drive excessive spool expiry | fixed (#154) |
 | [D-157](#d-157-failed-spool-removal-can-still-expire-the-directorys-history-entries) | Medium | Failed spool removal can still expire the directory's history entries | fixed (#154) |
 | [D-158](#d-158-empty-spool-home-shorthand-makes-dexpire-use-the-wrong-partition-path) | Medium | Empty spool-home shorthand makes dexpire use the wrong partition path | won't fix (not reachable) |
