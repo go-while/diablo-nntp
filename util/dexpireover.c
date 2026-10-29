@@ -1064,6 +1064,10 @@ getFirstArtAge(Group *group, int fd, OverHead *oh)
      */
 
     n = (st.st_size - oh->oh_HeadSize) / sizeof(OverArt);
+    if (n <= 0) {
+	fprintf(stderr, "Over file of group %s has no article slots (damaged header?) - skipped\n", group->gr_GroupName);
+	return(-1);
+    }
 
     oaBase = xmap(NULL, n * sizeof(OverArt), PROT_READ, MAP_SHARED, fd,
 			oh->oh_HeadSize);
@@ -1209,6 +1213,10 @@ ExpireByDays(Group *group, int fd, OverHead *oh, int expireSecs)
      */
 
     n = (st.st_size - oh->oh_HeadSize) / sizeof(OverArt);
+    if (n <= 0) {
+	fprintf(stderr, "Over file of group %s has no article slots (damaged header?) - skipped\n", group->gr_GroupName);
+	return;
+    }
 
     oaBase = xmap(NULL, n * sizeof(OverArt), PROT_READ, MAP_SHARED, fd, oh->oh_HeadSize);
     if (oaBase == NULL) {
@@ -1325,6 +1333,10 @@ ExpireBySpool(Group *group, int fd, OverHead *oh)
      */
 
     n = (st.st_size - oh->oh_HeadSize) / sizeof(OverArt);
+    if (n <= 0) {
+	fprintf(stderr, "Over file of group %s has no article slots (damaged header?) - skipped\n", group->gr_GroupName);
+	return;
+    }
 
     oaBase = xmap(NULL, n * sizeof(OverArt), PROT_READ, MAP_SHARED, fd, oh->oh_HeadSize);
     if (oaBase == NULL) {
@@ -1441,6 +1453,10 @@ ExpireFromFile(Group *group, int fd, OverHead *oh, int expireSecs)
      */
 
     n = (st.st_size - oh->oh_HeadSize) / sizeof(OverArt);
+    if (n <= 0) {
+	fprintf(stderr, "Over file of group %s has no article slots (damaged header?) - skipped\n", group->gr_GroupName);
+	return;
+    }
 
     oaBase = xmap(NULL, n * sizeof(OverArt), PROT_READ, MAP_SHARED, fd, oh->oh_HeadSize);
     if (oaBase == NULL) {
@@ -1582,6 +1598,10 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
      * Calculate number of overview records
      */
     n = (st.st_size - oh->oh_HeadSize) / sizeof(OverArt);
+    if (n <= 0) {
+	fprintf(stderr, "Over file of group %s has no article slots (damaged header?) - skipped\n", group->gr_GroupName);
+	return;
+    }
 
     if ((sizeof(size_t) < sizeof(long long)) && (n > 0x7FFFFFFF)) {
 	fprintf(stderr, "Sanity check: dangerous number of records on non-64-bit system\n");

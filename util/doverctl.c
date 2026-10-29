@@ -487,8 +487,13 @@ CleanSpool(char *cleanDir)
 		 * directory in case it is empty. If it is not empty, the
 		 * remove should fail silently - at least we hope so!
 		 */
-		if (ForReal && remove(den->d_name) == 0) {
-		    printf("Removed empty directory: %s/%s\n", PatExpand(GroupHomePat), den->d_name);
+		if (ForReal) {
+		    if (remove(den->d_name) == 0)
+			printf("Removed empty directory: %s/%s\n", PatExpand(GroupHomePat), den->d_name);
+		    else if (errno != ENOTEMPTY && errno != EEXIST) {
+			printf("Unable to remove directory %s/%s: %s\n", PatExpand(GroupHomePat), den->d_name, strerror(errno));
+			++Failures;
+		    }
 		}
 	    }
 	}
@@ -528,8 +533,13 @@ scanDirectory(const char *dirpath, char *dirname, int *level)
 		 * directory in case it is empty. If it is not empty, the
 		 * remove should fail silently - at leat we hope so!
 		 */
-		if (ForReal && remove(den2->d_name) == 0) {
-		    printf("Removed empty directory: %s/%s\n", dirpath, den2->d_name);
+		if (ForReal) {
+		    if (remove(den2->d_name) == 0)
+			printf("Removed empty directory: %s/%s\n", dirpath, den2->d_name);
+		    else if (errno != ENOTEMPTY && errno != EEXIST) {
+			printf("Unable to remove directory %s/%s: %s\n", dirpath, den2->d_name, strerror(errno));
+			++Failures;
+		    }
 		}
 	    } else if (S_ISREG(st.st_mode)) {
 		ProcessFile(path, den2->d_name);

@@ -3,11 +3,12 @@ package e2e
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
-	"os/exec"
 	"testing"
 	"time"
 )
@@ -235,5 +236,21 @@ func TestDexpireoverCompressionFailure(t *testing.T) {
 	}
 	if _, err := os.Stat(data); err != nil {
 		t.Errorf("the plain data file is gone: %v", err)
+	}
+}
+
+// TestDexpireoverHeaderOnlyOver: an over file that is only a header (no article slots) is
+// skipped with a message; dexpireover divided by the number of slots and died with SIGFPE.
+func TestDexpireoverHeaderOnlyOver(t *testing.T) {
+	s, home := overSite(t, map[string]string{"readergrouphash": "hierarchy"})
+	s.WriteFile(t, "dexpire.ctl", "e2e.*:x30\n")
+	writeOver(t, filepath.Join(home, "e2e", "o.0.e2e.test"), overHead("e2e.test"))
+	out, err := s.TryRun("dexpireover", "-y", "-v")
+	var ee *exec.ExitError
+	if errors.As(err, &ee) && !ee.Exited() {
+		t.Errorf("dexpireover on a header-only over file was killed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "no article slots") {
+		t.Errorf("the damaged over file was not reported:\n%s", out)
 	}
 }
