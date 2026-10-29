@@ -393,6 +393,12 @@ egets(Buffer *b, int *pbytes)
 		pagefree(b->bu_Data, b->bu_DataMax);
 	    b->bu_Data = cpy;
 	    b->bu_DataMax = cpyLen;
+	    /*
+	     * bgets() set bu_Beg = bu_End on overflow, which would make
+	     * the next bgets() reset the buffer and drop the copied prefix.
+	     * The prefix is still unconsumed: the line starts at 0 again.
+	     */
+	    b->bu_Beg = 0;
 	}
     }
     return(ptr);
