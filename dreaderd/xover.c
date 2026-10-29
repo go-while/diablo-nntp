@@ -437,6 +437,10 @@ NNListOverviewRange(Connection *conn)
     conn->co_State = "listover";
 
     if ((ov = GetOverInfo(conn->co_GroupName)) == NULL) {
+	if (conn->co_ArtMode == COM_NEWNEWS) {
+	    NNListNewNews(conn);	/* no overview for this group: the next one */
+	    return;
+	}
 	FinishOverviewDotNewline(conn);
 	NNCommand(conn);
 	return;

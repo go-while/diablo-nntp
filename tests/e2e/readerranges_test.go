@@ -1,6 +1,9 @@
 package e2e
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -73,4 +76,50 @@ func TestReaderNewnewsKeepsSelectedGroup(t *testing.T) {
 			t.Errorf("after NEWNEWS %s: STAT answers %q, want article 2 of the selected group", groups, line)
 		}
 	}
+}
+
+// TestReaderNewnewsUnreadableOverview (D-149): a group whose overview index cannot be opened is
+// skipped by the NEWNEWS scan like a missing group: the groups after it are listed and the
+// client's group stays selected. It ended the list and left the scan's group selected.
+func TestReaderNewnewsUnreadableOverview(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can read any file")
+	}
+	st, spool := spoolStore(t)
+	st.AddGroup("e2e.other", "second group")
+	access := strings.Replace(DefaultReaderAccess, "readerdef rp\n", "readerdef rp\n    allownewnews yes\n", 1)
+	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: access})
+	id1, id2 := msgID(t), msgID(t)
+	feedReader(t, s, st, "e2e.test", newArticle(id1, "e2e.test", "first group", "body"))
+	feedReader(t, s, st, "e2e.other", newArticle(id2, "e2e.other", "second group", "body"))
+
+	// the overview index of e2e.other, from the group name in its header
+	var other string
+	waitFor(t, 10*time.Second, "both overview indexes", func() bool {
+		n := 0
+		filepath.WalkDir(filepath.Join(s.Dir, "spool", "group"), func(p string, d os.DirEntry, err error) error {
+			if err == nil && !d.IsDir() && strings.HasPrefix(d.Name(), "over.") {
+				n++
+				if b, err := os.ReadFile(p); err == nil && bytes.Contains(b[:min(len(b), 300)], []byte("e2e.other")) {
+					other = p
+				}
+			}
+			return nil
+		})
+		return n == 2 && other != ""
+	})
+	if err := os.Chmod(other, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(other, 0o644) })
+
+	c := s.Reader(t)
+	defer expect(t, c, 205, "QUIT")
+	expect(t, c, 211, "GROUP e2e.test")
+	expect(t, c, 223, "STAT 1")
+	expect(t, c, 230, "NEWNEWS e2e.other,e2e.test 000101 000000 GMT")
+	if got := c.ReadDotLines(); len(got) != 1 || got[0] != id1 {
+		t.Errorf("NEWNEWS with an unreadable overview: %q, want [%s] (the group after it)", got, id1)
+	}
+	expect(t, c, 223, "STAT")
 }
