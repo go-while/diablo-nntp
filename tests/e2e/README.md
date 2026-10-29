@@ -153,6 +153,7 @@ test fails.
 | `TestSoutOverlongLine` | diablo | D-114: an article with a 2.5 KB Newsgroups and a 1.8 KB Path line (the SOUT line on the control pipe is longer than the page-sized buffer) is queued for the outgoing label, and so is a short one after it. **Fails** on main before this fix: only the short article is queued |
 | `TestCachedLFSeparator` | dreaderd | D-113: HEAD and BODY of an article in the reader cache whose header/body separator is a bare LF (the cache file is rewritten with LF line ends) have the same lines as for the CRLF original. **Fails** on main: HEAD printed the whole article, BODY nothing |
 | `TestDcancelFailedRewriteKeepsHistory` | diablo, dcancel | D-108: a spool rewrite that stops at a damaged third article leaves the history on the old file: the second article is still read with its own text. **Fails** on main before this fix: ARTICLE returned the cancelled first article |
+| `TestDsyncgroupsBlankNewsgroupLine`, `TestDsyncgroupsPeerClosesAtQuit` | dsyncgroups | D-109: a blank LIST NEWSGROUPS line with `-w` is skipped, and a peer that closes instead of answering QUIT gives an error with an empty reply and exit 1. **Fail** on main before this fix: SIGSEGV, or the earlier reply printed from an unset pointer |
 
 ## Running
 

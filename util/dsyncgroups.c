@@ -512,6 +512,8 @@ main(int ac, char **av)
 		}
 		group = strtok(cmd, " \t\r\n");
 		desc  = strtok(NULL, "\r\n");
+		if (group == NULL)
+		    continue;
 
 		/*
 		 * ignore group that does not match the wildcard, even though
@@ -916,9 +918,10 @@ ConnectToHost(const char *host, int port)
     }
 
     fd = socket(dst->ai_family, dst->ai_socktype, 0);
-    freeaddrinfo(dst);
-    if (fd < 0)
+    if (fd < 0) {
+	freeaddrinfo(dst);
 	return(-1);
+    }
 
     if (BindHost != NULL || BindPort != NULL) {
 	e = getaddrinfo(BindHost, BindPort, &hints, &src);
@@ -926,7 +929,6 @@ ConnectToHost(const char *host, int port)
 	    fprintf(stderr, "Cannot resolve bindhost/bindport %s%s%s: %s\n",
 			BindHost ? BindHost : "", BindPort ? ":" : "",
 			BindPort ? BindPort : "", gai_strerror(e));
-	    freeaddrinfo(src);
 	    close(fd);
 	    exit(1);
 	}
@@ -934,6 +936,7 @@ ConnectToHost(const char *host, int port)
 	if (bind(fd, src->ai_addr, src->ai_addrlen) < 0) {
 	    freeaddrinfo(src);
 	    close(fd);
+	    freeaddrinfo(dst);
 	    return(-1);
 	}
 	freeaddrinfo(src);
@@ -952,8 +955,10 @@ ConnectToHost(const char *host, int port)
 	    fflush(stderr);
 	}
 	close(fd);
+	freeaddrinfo(dst);
 	return(-1);
     }
+    freeaddrinfo(dst);
     if (DebugOpt) {
 	fprintf(stderr, "connection success\n");
 	fflush(stderr);
@@ -974,13 +979,14 @@ CommandResponse(const char *cmd, char **pres)
     if (cmd)
 	fprintf(Fo, "%s\r\n", cmd);
     fflush(Fo);
+    buf[0] = 0;
+    if (pres)
+	*pres = buf;
     if (fgets(buf, sizeof(buf), Fi) != NULL) {
 	if (DebugOpt) {
 	    fprintf(stderr, "<< %s", buf);
 	    fflush(stderr);
 	}
-	if (pres)
-	    *pres = buf;
 	return(strtol(buf, NULL, 10));
     } else if (DebugOpt) {
 	fprintf(stderr, "<< (EOF)\n");
