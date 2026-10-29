@@ -29,3 +29,13 @@ func TestDexpireCtlLongPattern(t *testing.T) {
 		t.Errorf("with a 320 character pattern as the last dexpire.ctl rule the overview file is %d bytes, want %d (the e2e.* rule before it)", got, want)
 	}
 }
+
+// TestDexpireCtlWhitespaceBeforeComment (D-159): a rule followed by so much white space that
+// its comment starts beyond the 511 bytes read at a time is still the rule.
+func TestDexpireCtlWhitespaceBeforeComment(t *testing.T) {
+	want := overviewSize(t, "e2e.*:a4000\n")
+	rule := "e2e.*:a4000" + strings.Repeat(" ", 520) + "# a comment\n"
+	if got := overviewSize(t, rule); got != want {
+		t.Errorf("a rule with a comment after 520 spaces: overview file is %d bytes, want %d", got, want)
+	}
+}

@@ -96,6 +96,19 @@ time_t Cache_LastUpdate = 0;
 AccessMap accessmap;
 AccessMap oldaccessmap;
 
+/*
+ * Fallbacks for an empty access map - e.g. a fresh start where dreader.access
+ * was refused, so no cache was ever installed and ReadAccessCache() left every
+ * list NULL.  SetAuthDetails() points the dr_*Def pointers at these instead of
+ * NULL: every rd_* flag is off and the names are empty, so the reader gets no
+ * service (deny, like an unknown client) rather than crashing the daemon.
+ */
+static ReaderDef EmptyReaderDef;
+static Vserver   EmptyVserver;
+static AuthDef   EmptyAuthDef;
+static char      EmptyGroupName[1] = "";
+static GroupDef  EmptyGroupDef = { EmptyGroupName, 0, NULL, NULL };
+
 int DnsTerminate = 0;
 
 void
@@ -2535,6 +2548,35 @@ addCanLockSecret(char secrets[][CANLOCK_SECRETLEN], const char *opt, const char 
 }
 
 /*
+ * A readerdef number: all of val, 0 or more, within int.  A bad value is
+ * logged and leaves *dst alone; the caller then keeps the old cache
+ * (the same as for an invalid definition) instead of using 0 for it.
+ */
+static int
+readerdefNumber(const char *opt, const char *val, int linecount, int *dst)
+{
+    char num[40];
+    const char *end;
+    size_t len;
+
+    /* "maxconn 50 # note": a # after white space starts a comment */
+    for (end = val; *end; end++)
+	if (*end == '#' && end > val && isspace((unsigned char)end[-1]))
+	    break;
+    len = end - val;
+    /* too long to be a number is a bad value, not a number cut short */
+    if (len < sizeof(num)) {
+	memcpy(num, val, len);
+	num[len] = 0;
+	if (ParseIntRange(num, 10, 0, INT_MAX, dst) == 0)
+	    return(0);
+    }
+    logit(LOG_ERR, "dreader.access: bad value '%s' for '%s' in line %d (a number from 0 to %d); the file is not installed, and a first start without an older access cache gives no service",
+					val, opt, linecount, INT_MAX);
+    return(-1);
+}
+
+/*
  * Install a new copy of the access cache
  * This is done by creating the new cache files first, locking and then
  * renaming the files.
@@ -2561,6 +2603,8 @@ InstallAccessCache(void) {
     GroupList *groupptr = NULL;
     AccessDef accessdef;
     int copt = OPT_NONE;
+    int parseError = 0;	/* bad file content, as opposed to a transient failure */
+    time_t seen;
     char vsnewbuf[PATH_MAX];
     char grnewbuf[PATH_MAX];
     char aunewbuf[PATH_MAX];
@@ -2580,6 +2624,7 @@ InstallAccessCache(void) {
 
     logit(LOG_INFO, "Installing access cache");
 
+    seen = time(NULL);	/* when we read the file, for the settled check at the parse-error bail */
     if ((fp = fopen(PatLibExpand(DReaderAccessPat), "r")) == NULL) {
 	logit(LOG_CRIT, "Unable to open %s (%s)",
 			PatLibExpand(DReaderAccessPat), strerror(errno));
@@ -2777,7 +2822,7 @@ InstallAccessCache(void) {
 	}
 	if (!*val) {
 	    logit(LOG_ERR, "dreader.access: Missing value/label for %s in line %d", opt, linecount);
-	    Access_LastUpdate = 0;
+	    parseError = 1;
 	    continue;
 	}
 	/* Handle the definition options */
@@ -3046,23 +3091,28 @@ InstallAccessCache(void) {
 		    continue;
 		}
 		if (*val && strcmp(opt, "maxconn") == 0) {
-		    readerdef.rd_MaxConnTotal = atoi(val);
+		    if (readerdefNumber(opt, val, linecount, &readerdef.rd_MaxConnTotal) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "maxconnperhost") == 0) {
-		    readerdef.rd_MaxConnPerHost = atoi(val);
+		    if (readerdefNumber(opt, val, linecount, &readerdef.rd_MaxConnPerHost) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "maxconnperuser") == 0) {
-		    readerdef.rd_MaxConnPerUser = atoi(val);
+		    if (readerdefNumber(opt, val, linecount, &readerdef.rd_MaxConnPerUser) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "maxconnpergroup") == 0) {
-		    readerdef.rd_MaxConnPerGroup = atoi(val);
+		    if (readerdefNumber(opt, val, linecount, &readerdef.rd_MaxConnPerGroup) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "maxconnpervs") == 0) {
-		    readerdef.rd_MaxConnPerVs = atoi(val);
+		    if (readerdefNumber(opt, val, linecount, &readerdef.rd_MaxConnPerVs) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "ratelimit") == 0) {
@@ -3070,7 +3120,8 @@ InstallAccessCache(void) {
 		    continue;
 		}
 		if (*val && strcmp(opt, "ratelimittax") == 0) {
-		    readerdef.rd_RateLimitTax = atoi(val);
+		    if (readerdefNumber(opt, val, linecount, &readerdef.rd_RateLimitTax) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "ratelimitrange") == 0) {
@@ -3091,19 +3142,31 @@ InstallAccessCache(void) {
 		    continue;
 		}
 		if (*val && strcmp(opt, "bytelimit") == 0) {
-		    readerdef.rd_ByteLimit = atoi(val);
+		    if (readerdefNumber(opt, val, linecount, &readerdef.rd_ByteLimit) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "pathcomponents") == 0) {
-		    readerdef.rd_PathComponents = atoi(val);
+		    if (readerdefNumber(opt, val, linecount, &readerdef.rd_PathComponents) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "idletimeout") == 0) {
-		    readerdef.rd_IdleTimeout = atoi(val);
+		    int num;
+
+		    if (readerdefNumber(opt, val, linecount, &num) < 0)
+			parseError = 1;
+		    else
+			readerdef.rd_IdleTimeout = num;
 		    continue;
 		}
 		if (*val && strcmp(opt, "sessiontimeout") == 0) {
-		    readerdef.rd_SessionTimeout = atoi(val);
+		    int num;
+
+		    if (readerdefNumber(opt, val, linecount, &num) < 0)
+			parseError = 1;
+		    else
+			readerdef.rd_SessionTimeout = num;
 		    continue;
 		}
 		if (*val && strcmp(opt, "allowdnsmismatch") == 0) {
@@ -3320,7 +3383,7 @@ InstallAccessCache(void) {
 	    continue;
 	}
 	logit(LOG_ERR, "dreader.access: Invalid access definition : %s in line %d\n", opt, linecount);
-	Access_LastUpdate = 0;
+	parseError = 1;
     }
     fclose(fp);
     fclose(vsf);
@@ -3328,8 +3391,16 @@ InstallAccessCache(void) {
     fclose(auf);
     fclose(rdf);
     fclose(raf);
-    if (Access_LastUpdate == 0) {
+    if (parseError) {
+	/*
+	 * Bad content.  Keep the refused file's mtime/size/ino (set above) so
+	 * the unchanged check skips it silently until it is edited; a changed
+	 * file is parsed again.  Transient failures below still retry.
+	 */
 	logit(LOG_ERR, "Errors in dreader.access file - not updating");
+	/* the file is settled only if it was already older than the moment we read it (seen); a same-second in-place fix reuses its mtime/size/inode, so a not-yet-settled file must be reparsed or it is skipped forever */
+	if (st.st_mtime >= seen - 1)
+	    Access_LastUpdate = 0;
 	return;
     }
     /*
@@ -3338,7 +3409,7 @@ InstallAccessCache(void) {
      * cater for possible race conditions.
      */
 
-    if ((tfp = open(PatDbExpand(DRAccessLockPat), O_RDWR|O_CREAT, 0600)) <= 0) {
+    if ((tfp = open(PatDbExpand(DRAccessLockPat), O_RDWR|O_CREAT, 0600)) < 0) {
 	logit(LOG_CRIT, "Cannot create access lock %s",
 		PatDbExpand(DRAccessLockPat));
 	Access_LastUpdate = 0;
@@ -3347,6 +3418,7 @@ InstallAccessCache(void) {
     if (xflock(tfp, XLOCK_SH) < 0) {
 	if (DebugOpt)
 	    printf("Unable to obtain access lock (%s)\n", strerror(errno));
+	close(tfp);
 	Access_LastUpdate = 0;
 	return;
     }
@@ -3396,7 +3468,7 @@ ReadAccessCache(void) {
 
     /* Obtain a lock so that we know it won't disappear from under us */
 
-    if ((tfp = open(PatDbExpand(DRAccessLockPat), O_RDONLY)) <= 0) {
+    if ((tfp = open(PatDbExpand(DRAccessLockPat), O_RDONLY)) < 0) {
 	logit(LOG_ERR, "Cannot open access lock %s",
 		PatDbExpand(DRAccessLockPat));
 	return(0);
@@ -3404,6 +3476,7 @@ ReadAccessCache(void) {
     if (hflock(tfp, 0, XLOCK_SH) < 0) {
 	if (DebugOpt)
 	    printf("No lock or not changed\n");
+	close(tfp);
 	return(0);
     }
 
@@ -3412,34 +3485,25 @@ ReadAccessCache(void) {
 
     fail = 0;
     /* We must be able to load all the files at	the same time */
-    if ((vsf = open(PatDbExpand(DRVserverCachePat), O_RDONLY)) <= 0) {
+    vsf = grf = auf = raf = rdf = -1;
+    if ((vsf = open(PatDbExpand(DRVserverCachePat), O_RDONLY)) < 0) {
 	logit(LOG_CRIT, "Unable to open %s", PatDbExpand(DRVserverCachePat));
 	fail = 1;
     }
-    if ((grf = open(PatDbExpand(DRGroupCachePat), O_RDONLY)) <= 0) {
+    if ((grf = open(PatDbExpand(DRGroupCachePat), O_RDONLY)) < 0) {
 	logit(LOG_CRIT, "Unable to open %s", PatDbExpand(DRGroupCachePat));
-	close(vsf);
 	fail = 1;
     }
-    if ((auf = open(PatDbExpand(DRAuthCachePat), O_RDONLY)) <= 0) {
+    if ((auf = open(PatDbExpand(DRAuthCachePat), O_RDONLY)) < 0) {
 	logit(LOG_CRIT, "Unable to open %s", PatDbExpand(DRAuthCachePat));
-	close(vsf);
-	close(grf);
 	fail = 1;
     }
-    if ((raf = open(PatDbExpand(DRAccessCachePat), O_RDONLY)) <= 0) {
+    if ((raf = open(PatDbExpand(DRAccessCachePat), O_RDONLY)) < 0) {
 	logit(LOG_CRIT, "Unable to open %s", PatDbExpand(DRAccessCachePat));
-	close(vsf);
-	close(grf);
-	close(auf);
 	fail = 1;
     }
-    if ((rdf = open(PatDbExpand(DRReaderCachePat), O_RDONLY)) <= 0) {
+    if ((rdf = open(PatDbExpand(DRReaderCachePat), O_RDONLY)) < 0) {
 	logit(LOG_CRIT, "Unable to open %s", PatDbExpand(DRReaderCachePat));
-	close(vsf);
-	close(grf);
-	close(auf);
-	close(raf);
 	fail = 1;
     }
 
@@ -3448,6 +3512,17 @@ ReadAccessCache(void) {
     close(tfp);
 
     if (fail) {
+	/* whatever did open (descriptor 0 too) is closed again */
+	if (vsf >= 0)
+	    close(vsf);
+	if (grf >= 0)
+	    close(grf);
+	if (auf >= 0)
+	    close(auf);
+	if (raf >= 0)
+	    close(raf);
+	if (rdf >= 0)
+	    close(rdf);
 	if (accessmap.AccessList == NULL)
 	    return(-2);
 	return(-1);
@@ -3594,6 +3669,8 @@ SetAuthDetails(DnsRes *dres, char *which)
 	    printf("Unable to locate %s in accessmap\n", which);
 	rdp = accessmap.ReaderList;
     }
+    if (rdp == NULL)	/* empty access map: deny, do not crash */
+	rdp = &EmptyReaderDef;
     dres->dr_ReaderDef = rdp;
     
     for (vsp = accessmap.VServerList, i = 0; i < accessmap.VServerCount;
@@ -3616,9 +3693,12 @@ SetAuthDetails(DnsRes *dres, char *which)
     /* The first VServer is always the default one */
     if (i >= accessmap.VServerCount) {
         if (DebugOpt)
-	    printf("Unable to locate %s in virtuals\n", vsp->vs_Name);
+	    printf("Unable to locate %s in virtuals\n",
+		    *dres->dr_VServer ? dres->dr_VServer : rdp->rd_Vserver);
 	vsp = accessmap.VServerList;
     }
+    if (vsp == NULL)
+	vsp = &EmptyVserver;
     dres->dr_VServerDef = vsp;
     
     for (gdp = accessmap.GroupsList, i = 0; i < accessmap.GroupCount;
@@ -3632,9 +3712,11 @@ SetAuthDetails(DnsRes *dres, char *which)
     /* The first group list is always everything */
     if (i >= accessmap.GroupCount) {
 	if (DebugOpt)
-	    printf("Unable to locate %s in accessmap groupslist\n", gdp->gr_Name);
+	    printf("Unable to locate %s in accessmap groupslist\n", rdp->rd_Groups);
 	gdp = accessmap.GroupsList;
     }
+    if (gdp == NULL)
+	gdp = &EmptyGroupDef;
     dres->dr_GroupDef = gdp;
     
     for (gdp = accessmap.GroupsList, i = 0; i < accessmap.GroupCount;
@@ -3648,9 +3730,11 @@ SetAuthDetails(DnsRes *dres, char *which)
     /* The first group list is always everything */
     if (i >= accessmap.GroupCount) {
 	if (DebugOpt)
-	    printf("Unable to locate %s in accessmap listgroupslist\n", gdp->gr_Name);
+	    printf("Unable to locate %s in accessmap listgroupslist\n", rdp->rd_ListGroups);
 	gdp = accessmap.GroupsList;
     }
+    if (gdp == NULL)
+	gdp = &EmptyGroupDef;
     dres->dr_ListGroupDef = gdp;
   
     
@@ -3665,9 +3749,11 @@ SetAuthDetails(DnsRes *dres, char *which)
     /* The first group list is always everything */
     if (i >= accessmap.GroupCount) {
 	if (DebugOpt)
-	    printf("Unable to locate %s in accessmap postgroupslist\n", gdp->gr_Name);
+	    printf("Unable to locate %s in accessmap postgroupslist\n", rdp->rd_PostGroups);
 	gdp = accessmap.GroupsList;
     }
+    if (gdp == NULL)
+	gdp = &EmptyGroupDef;
     dres->dr_PostGroupDef = gdp;
     
     for (adp = accessmap.AuthList, i = 0; i < accessmap.AuthCount; i++, adp++)
@@ -3679,9 +3765,11 @@ SetAuthDetails(DnsRes *dres, char *which)
     /* The first auth list is no access */
     if (i >= accessmap.AuthCount) {
 	if (DebugOpt)
-	    printf("Unable to locate %s in accessmap authlist - USING NO ACCESS\n", adp->au_Name);
+	    printf("Unable to locate %s in accessmap authlist - USING NO ACCESS\n", rdp->rd_Auth);
 	adp = accessmap.AuthList;
     }
+    if (adp == NULL)
+	adp = &EmptyAuthDef;
     dres->dr_AuthDef = adp;
 
     if (dres->dr_ReaderDef->rd_Read)
