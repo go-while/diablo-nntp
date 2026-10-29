@@ -871,6 +871,7 @@ MoveFile(char *from, char *to)
     }
     if ((to_fd = open(to, O_CREAT | O_TRUNC | O_WRONLY, 0644)) < 0) {
 	printf("ERROR: Unable to create output file: %s\n", to);
+	close(from_fd);
 	return(-1);
     }
     while ((rlen = read(from_fd, buffer, 32768)) > 0)

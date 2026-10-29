@@ -3,11 +3,13 @@ package e2e
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
+	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
-	"os/exec"
 	"testing"
 	"time"
 )
@@ -34,13 +36,16 @@ func overSite(t *testing.T, config map[string]string) (s *Site, home string) {
 
 // overHead returns an OverHead (dreaderd/defs.h: version 4, 256 entries per data file) for
 // group, in the byte order of this host.
-func overHead(group string) []byte {
+func overHead(group string) []byte { return overHeadMax(group, 1000) }
+
+// overHeadMax is overHead with maxArts article slots promised in the header.
+func overHeadMax(group string, maxArts uint32) []byte {
 	b := make([]byte, 16+256+4)
 	o := binary.NativeEndian
 	o.PutUint32(b[0:], 4)
 	o.PutUint32(b[4:], 0xF1E2D3C4)
 	o.PutUint32(b[8:], uint32(len(b)))
-	o.PutUint32(b[12:], 1000)
+	o.PutUint32(b[12:], maxArts)
 	copy(b[16:16+256], group)
 	o.PutUint32(b[16+256:], 256)
 	return b
@@ -235,5 +240,43 @@ func TestDexpireoverCompressionFailure(t *testing.T) {
 	}
 	if _, err := os.Stat(data); err != nil {
 		t.Errorf("the plain data file is gone: %v", err)
+	}
+}
+
+// TestDexpireoverHeaderOnlyOver: an over file that is only a header (no article slots) is
+// skipped with a message; dexpireover divided by the number of slots and died with SIGFPE.
+func TestDexpireoverHeaderOnlyOver(t *testing.T) {
+	s, home := overSite(t, map[string]string{"readergrouphash": "hierarchy"})
+	s.WriteFile(t, "dexpire.ctl", "e2e.*:x30\n")
+	writeOver(t, filepath.Join(home, "e2e", "o.0.e2e.test"), overHead("e2e.test"))
+	out, err := s.TryRun("dexpireover", "-y", "-v")
+	var ee *exec.ExitError
+	if errors.As(err, &ee) && !ee.Exited() {
+		t.Errorf("dexpireover on a header-only over file was killed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "no article slots") {
+		t.Errorf("the damaged over file was not reported:\n%s", out)
+	}
+}
+
+// TestDexpireoverBadMaxArts: a header that promises no article slots (oh_MaxArts 0), or more
+// than the file holds, is a damaged over file: skipped with a message, no modulo by zero and
+// no read behind the mapped records.
+func TestDexpireoverBadMaxArts(t *testing.T) {
+	for _, maxArts := range []uint32{0, 1000000} {
+		t.Run(fmt.Sprint(maxArts), func(t *testing.T) {
+			s, home := overSite(t, map[string]string{"readergrouphash": "hierarchy"})
+			s.WriteFile(t, "dexpire.ctl", "e2e.*:x30\n")
+			writeOver(t, filepath.Join(home, "e2e", "o.0.e2e.test"),
+				append(overHeadMax("e2e.test", maxArts), make([]byte, 64)...))
+			out, err := s.TryRun("dexpireover", "-s", "-y", "-v")
+			var ee *exec.ExitError
+			if errors.As(err, &ee) && !ee.Exited() {
+				t.Errorf("dexpireover with oh_MaxArts %d was killed: %v\n%s", maxArts, err, out)
+			}
+			if !strings.Contains(out, "no article slots") {
+				t.Errorf("the damaged over file was not reported:\n%s", out)
+			}
+		})
 	}
 }
