@@ -3,11 +3,13 @@
 These tests run Diablo's programs as separate processes and talk to them over
 real TCP connections, the way a peer or an operator would.
 
-Each test builds a throwaway feeder site in a temporary directory: a
+Many tests build a throwaway feeder site in a temporary directory: a
 `diablo.config` whose `path_home` points there, `dnewsfeeds`, `dspool.ctl`,
-and `diablo -d` (in the foreground) listening on a free port of 127.0.0.1. The
-test talks to it and stops it with `dicmd exit`. Nothing outside the temporary
-directory is touched, and the sites of different tests share nothing.
+and `diablo -d` (in the foreground) listening on a free port of 127.0.0.1.
+Tests also start other programs and use host resources such as network ports.
+The root-only full-disk test mounts a temporary filesystem; the optional
+`ci/build-on-host` setup helper changes the host by installing packages and
+creating a user. Run on a throwaway machine, not a live news server.
 
 The tests are written in Go and use the
 [nntp-testkit](https://github.com/go-while/nntp-testkit) library (standard
