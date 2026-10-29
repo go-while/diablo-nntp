@@ -66,6 +66,15 @@ gh api -X POST repos/jrehmer/diablo-nntp/security-advisories/reports \
     -f description="$(cat report.md)"
 ```
 
+The call returns the new report's `ghsa_id` and a `state` of `triage`; keep
+that id to follow up. This is the `security-advisories/reports` endpoint,
+which any logged-in GitHub account may use. It is not the same as the
+`security-advisories` endpoint (without `/reports`), which creates a
+maintainer draft and needs administrative or security-manager rights on the
+repository; calling that one without those rights returns HTTP 403
+("administrative/security management rights"). Use the `/reports` endpoint
+shown above to report.
+
 ### Collaborators and their agents
 
 Maintainers and invited collaborators use a private workspace, the GitHub
