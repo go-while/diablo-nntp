@@ -558,15 +558,21 @@ radiusAuthenticate(char *user, char *pass, const char *ipname, int is_proxied, c
 	char name[64], val[DEFNAMELEN + 1];
 
 	if ((vp = rc_avpair_get(received, PW_FILTER_ID, 0)) != NULL &&
-	    rc_avpair_tostr(rh, vp, name, sizeof(name), val, sizeof(val)) == 0 && val[0]) {
-	    snprintf(result, sizeof(result), "110 %s", val);
+	    rc_avpair_tostr(rh, vp, name, sizeof(name), val, sizeof(val)) != 0) {
+	    /* a readerdef was named but cannot be used: refuse, do not fall back to the default */
+	    logit(LOG_ERR, "radius: unusable Filter-Id in the reply, login refused");
 	} else {
-	    strcpy(result, "100 Success");
+	    if (vp != NULL && val[0])
+		snprintf(result, sizeof(result), "110 %s", val);
+	    else
+		strcpy(result, "100 Success");
+	    r = result;
 	}
-	r = result;
     } else if (rval != REJECT_RC) {
-	logit(LOG_ERR, "radius: rc_auth failed (%d): %s", rval,
-				rval == TIMEOUT_RC ? "timeout" : "error");
+	logit(LOG_ERR, "radius: rc_auth failed (%d): %s%s%s", rval,
+				rval == BADRESP_RC ? "bad response" :
+				rval == TIMEOUT_RC ? "timeout" : "error",
+				msg[0] ? ": " : "", msg);
     }
     rc_avpair_free(send);
     rc_avpair_free(received);

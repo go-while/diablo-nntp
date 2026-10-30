@@ -1652,9 +1652,24 @@ writeFeedOut(const char *label, const char *file, const char *msgid, const char 
 	int l = strlen(file) + strlen(msgid) + strlen(offSize) + (3 + 32 + 1);
 
 	/*
-	 * line would be too long?
+	 * cSize is the " C<size>" field.  Count it: it is not bounded by
+	 * this function, and a desynchronised SOUT line can put a whole
+	 * Path: value here (hundreds of bytes), which used to make the
+	 * "does it fit?" test below undershoot and sprintf() run past
+	 * fe_Buf.
 	 */
-	if (l < fe->fe_BufMax) {
+	if (cSize != NULL && strlen(cSize) > 1)
+	    l += strlen(cSize);
+
+	/*
+	 * line would be too long, even for an empty buffer?
+	 */
+	if (l >= fe->fe_BufMax) {
+	    logit(LOG_ERR, "%s: queue line for %s is too long (%d bytes), dropped",
+			fe->fe_Label,
+			msgid,
+			l);
+	} else {
 	    /*
 	     * line fits in buffer with trailing nul ?
 	     */
@@ -1665,7 +1680,9 @@ writeFeedOut(const char *label, const char *file, const char *msgid, const char 
 		sprintf(delayTime, " D%d", (int)time(NULL));
 	    else
 		delayTime[0] = 0;
-	    sprintf(fe->fe_Buf + fe->fe_BufIdx, "%s %s %s%s%s%s%s\n",
+	    snprintf(fe->fe_Buf + fe->fe_BufIdx,
+		fe->fe_BufMax - fe->fe_BufIdx,
+		"%s %s %s%s%s%s%s\n",
 		file, msgid, offSize, 
 		(headOnly ? " H" : ""),
 		delayTime,
@@ -2754,6 +2771,7 @@ SendArticle(const char *data, int fsize, FILE *fo, int doHead, int doBody)
 #define	LAERR_NOHDREND		0x200000
 #define	LAERR_ARTHASBARECR	0x400000
 #define	LAERR_UNAPPROVED	0x800000	/* moderated group, no Approved: */
+#define	LAERR_DISTTAB		0x1000000	/* TAB in Distribution: header */
 
 int
 LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *rejBuf, char *artType)
@@ -3184,7 +3202,21 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		    /* write thru */
 		} else if (hch == 'd' && bytes >= 13 &&
 			   strncasecmp(p, "Distribution:", 13) == 0) {
+		    int i;
+
 		    diablo_strlcpynl(dist, p + 13, bytes - 13 - aflen, sizeof(dist));
+		    /*
+		     * The SOUT line uses tabs as field separators and
+		     * FeedAdd() requires every string object to be free of
+		     * them.  Drop the article if the header carries one
+		     * (Path: and Newsgroups: are checked the same way above).
+		     */
+		    for (i = 13; i < bytes; ++i) {
+			if (p[i] == '\t' &&
+				p[i+1] != '\n' && p[i+1] != '\r') {
+			    artError |= LAERR_DISTTAB;
+			}
+		    }
 		    /* write thru */
 		} else if (hch == 'n' && bytes >= 11 &&
 			   strncasecmp(p, "Newsgroups:", 11) == 0) {
@@ -3633,6 +3665,12 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		DoArtStats(STATS_REJECTED, STATS_REJ_NGTAB, size);
 		DEBUGLOG(msgid, "NewsgroupsTab");
 		SETREJECT("NewsgroupsTab");
+	    } else if (artError & LAERR_DISTTAB) {
+		(void)PreCommit(msgid, PC_DELCOMM);
+		/* counted with the other "TAB in a header" rejects */
+		DoArtStats(STATS_REJECTED, STATS_REJ_NGTAB, size);
+		DEBUGLOG(msgid, "DistributionTab");
+		SETREJECT("DistributionTab");
 	    } else if (artError & LAERR_ARTHASNUL) {
 		(void)PreCommit(msgid, PC_DELCOMM);
 		DoArtStats(STATS_REJECTED, STATS_REJ_ARTNUL, size);

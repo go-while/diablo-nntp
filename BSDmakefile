@@ -11,6 +11,9 @@ LDLIBS += -lfilter -ldiablo -lm -lmd -lz -lcrypto
 # The libraries behind the optional features are found by ./configure, which sets the options
 # in lib/vendor.h and writes their compiler and linker flags, and the programs they add
 # (OPTIONAL_PROGS), to config.mk.
+.if !exists(config.mk) && empty(.TARGETS:Mclean) && empty(.TARGETS:Mdistclean)
+.error config.mk not found: run ./configure first (see INSTALL)
+.endif
 .sinclude "config.mk"
 LIB_SRCS = lib/global.c lib/node.c lib/xopen.c lib/buffer.c lib/wildcmp.c lib/history.c lib/expire.c lib/newsfeed.c lib/parsedate.c lib/sigs.c lib/lock.c lib/alloc.c lib/subs.c lib/xmap.c lib/precommit.c lib/spamfilter.c lib/strerror.c lib/memcpy.c lib/zalloc.c lib/config.c lib/kpdb.c lib/active.c lib/msgid.c lib/hash.c lib/psstat.c lib/runprog.c lib/snprintf.c lib/fatal.c lib/log.c lib/logtime.c lib/iplist.c lib/dgp.c lib/pgp.c lib/hostauth.c lib/strsep.c lib/groupfind.c lib/spool.c lib/arttype.c lib/stats.c lib/dmd5.c lib/notify.c lib/wildmat.c lib/include.c lib/hashfeed.c lib/dgzip.c lib/canlock.c
 FILTER_SRCS = filter/diab-filter.c filter/diab-read.c filter/socket.c

@@ -153,6 +153,7 @@ test fails.
 | `TestModerationNoModerator441`, `TestModerationMailFailureReported`, `TestModerationAddressFormat` | dreaderd | #45: no moderators line gives `441 No moderator known for <group>, article not posted`; a failing sendmail gives `441 Unable to mail article to the moderator of <group>`; neither is passed on (before: passed on, or 240). In the moderators file `%s` and `%%` are substituted and any other `%` makes the entry unusable (before: snprintf with the entry as the format) |
 | `TestModerationAliasStatus` | dreaderd, dgrpctl | #50: a group whose status is an INN alias (`=comp.unix.mx`) posts normally, neither refused as n/x nor mailed as moderated (before: refused) |
 | `TestFeederUnapprovedModerated` | diablo | with `active on`, `activedrop yes` and `xrefhost`, an unapproved article to a moderated group gets 437 with the reason `Unapproved/<group>` in the reply and in incoming.log (#46; before, "NotInActive" in incoming.log only); an article to an open group is accepted |
+| `TestSoutOverlongLine` | diablo | D-114: an article with a 2.5 KB Newsgroups and a 1.8 KB Path line (the SOUT line on the control pipe is longer than the page-sized buffer) is queued for the outgoing label, and so is a short one after it. **Fails** on main before this fix: only the short article is queued |
 
 ## Running
 
