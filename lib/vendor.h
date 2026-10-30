@@ -88,6 +88,17 @@
 #undef	RADIUS_ENABLED
 
 /*
+ * Use the radcli library (radcli/radcli.h; Debian libradcli-dev, Fedora
+ * radcli-devel, Alpine radcli-dev) for RADIUS_ENABLED instead of the BSD
+ * libradius (radlib.h) of FreeBSD and SmartOS.  The radius file of an
+ * authdef keeps the BSD radius.conf format ("auth host[:port] secret
+ * [timeout [tries]]"); a radcli radiusclient.conf ("authserver ...") also
+ * works.  ./configure turns this on where only radcli is found.
+ */
+
+#undef	RADIUS_RADCLI
+
+/*
  * Enable Cancel-Lock (RFC 8315): dreaderd checks the Cancel-Key of a cancel
  * or supersede against the Cancel-Lock of the article (diablo.config
  * readercanlock), and can add locks to local posts.  Needs libcanlock 3.3.0

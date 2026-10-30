@@ -44,6 +44,7 @@ CANLOCK_ENABLED := $(shell awk -v option=CANLOCK_ENABLED -f compat/detect-vendor
 REJECT_DB_ENABLED := $(shell awk -v option=REJECT_DB -f compat/detect-vendor-option.awk lib/vendor.h)
 LDAP_ENABLED := $(shell awk -v option=LDAP_ENABLED -f compat/detect-vendor-option.awk lib/vendor.h)
 PERL_ENABLED := $(shell awk -v option=PERL_ENABLED -f compat/detect-vendor-option.awk lib/vendor.h)
+RADIUS_RADCLI := $(shell awk -v option=RADIUS_RADCLI -f compat/detect-vendor-option.awk lib/vendor.h)
 # Either DB authentication or the rejection database uses dbopen().
 DB185_REQUIRED := $(if $(filter 1,$(DB_ENABLED) $(REJECT_DB_ENABLED)),1,)
 
@@ -71,6 +72,23 @@ LDFLAGS += -L$(LDAP_PREFIX)/lib -Wl,-R,$(LDAP_PREFIX)/lib
 endif
 endif
 
+# RADIUS with radcli instead of the BSD libradius: the library, its package
+# prefix, and the dictionary file the adapter in dreaderd/dns.c reads.
+ifeq ($(RADIUS_ENABLED)$(RADIUS_RADCLI),11)
+LDLIBS += -lradcli
+RADCLI_PREFIX := $(firstword $(foreach dir, /usr/local /opt/local /opt/ooce, \
+    $(if $(wildcard $(dir)/include/radcli/radcli.h),$(dir))))
+ifneq ($(RADCLI_PREFIX),)
+CPPFLAGS += -I$(RADCLI_PREFIX)/include
+LDFLAGS += -L$(RADCLI_PREFIX)/lib -Wl,-R,$(RADCLI_PREFIX)/lib
+endif
+RADCLI_DICTIONARY := $(firstword $(wildcard /etc/radcli/dictionary \
+    /usr/local/etc/radcli/dictionary /opt/local/etc/radcli/dictionary))
+ifneq ($(RADCLI_DICTIONARY),)
+CPPFLAGS += -DRADCLI_DICTIONARY=\"$(RADCLI_DICTIONARY)\"
+endif
+endif
+
 # Perl authentication: the compile and link options of the installed perl.
 ifeq ($(PERL_ENABLED),1)
 CPPFLAGS += $(shell perl -MExtUtils::Embed -e ccopts)
@@ -89,7 +107,7 @@ endif
 
 ifeq ($(UNAME_S),Linux)
 CPPFLAGS += -D_FILE_OFFSET_BITS=64
-ifeq ($(RADIUS_ENABLED),1)
+ifeq ($(RADIUS_ENABLED)$(RADIUS_RADCLI),1)
 LDLIBS += -lradius
 endif
 # libdb-devel supplies libdb.so and the Berkeley DB 1.85 dbopen() shim.

@@ -7,9 +7,9 @@
 ##
 ##  Linux (apt, dnf, zypper, pacman, apk or emerge), FreeBSD and illumos
 ##  (OmniOS) with pkg are supported; the package manager is chosen from the
-##  system.  This copy's lib/vendor.h is changed: RADIUS stays off (off by default
-##  since D-16; Linux and illumos have no BSD libradius, and FreeBSD's base
-##  libradius is not wired up here), and DB_ENABLED and REJECT_DB are turned off when the
+##  system.  This copy's lib/vendor.h is changed: ./configure turns RADIUS on where the
+##  system has radcli (Linux) or libradius (FreeBSD base) and leaves it off otherwise,
+##  and DB_ENABLED and REJECT_DB are turned off when the
 ##  system has no Berkeley DB 1.85 API (db_185.h; several distributions
 ##  dropped Berkeley DB, and the BSD/illumos base systems do not ship it).
 ##  The binaries end up in dbin/.  The news user and group are created when
@@ -147,6 +147,18 @@ if [ "${E2E_NO_CANLOCK:-}" != 1 ] && [ ! -e /usr/include/libcanlock-3/canlock.h 
     elif command -v emerge >/dev/null; then emerge --quiet --noreplace --getbinpkg net-libs/canlock >/dev/null 2>&1 || true
     fi
 fi
+# RADIUS: the radcli library where the distribution has it (best effort: the RHEL clones
+# need EPEL and go without), then ./configure turns RADIUS on if radcli is found.  Perl and
+# LDAP stay off.  TestReaderRadius* run only when RADIUS is on.
+if ! { [ -e /usr/include/radcli/radcli.h ] || [ -e /usr/local/include/radcli/radcli.h ]; }; then
+    if command -v apt-get >/dev/null; then apt-get -qq install -y libradcli-dev >/dev/null 2>&1 || true
+    elif command -v dnf >/dev/null; then dnf -q -y install radcli-devel >/dev/null 2>&1 || true
+    elif command -v zypper >/dev/null; then zypper -n -q install radcli-devel >/dev/null 2>&1 || true
+    elif command -v pacman >/dev/null; then pacman -S --noconfirm --needed --quiet $nosandbox radcli >/dev/null 2>&1 || true
+    elif command -v apk >/dev/null; then apk add -q radcli-dev >/dev/null 2>&1 || true
+    fi
+fi
+sh ./configure --without-perl --without-ldap | grep RADIUS || true
 if [ "${E2E_NO_CANLOCK:-}" = 1 ]; then
     sed -i 's/^#define[[:space:]]*CANLOCK_ENABLED/#undef CANLOCK_ENABLED/' lib/vendor.h
     echo "libcanlock: off (E2E_NO_CANLOCK=1)"
@@ -251,8 +263,10 @@ SunOS)
     ;;
 esac
 
-# RADIUS: no library is wired up on these systems -> off.
+# RADIUS: off, then ./configure turns it on where radlib.h and libradius are found (the
+# FreeBSD base system has them; OmniOS does not).  Perl and LDAP stay off.
 vedit 's/^#define[[:space:]]*RADIUS_ENABLED/#undef RADIUS_ENABLED/'
+sh ./configure --without-perl --without-ldap | grep RADIUS || true
 # Cancel-Lock: on only when libcanlock's header is present (installed from pkg
 # above where a package exists); otherwise built out, like a Linux host without it.
 if [ "${E2E_NO_CANLOCK:-}" = 1 ]; then
