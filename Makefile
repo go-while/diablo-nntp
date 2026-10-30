@@ -37,13 +37,9 @@ LDLIBS += -lfilter -ldiablo -lm -lz -lcrypto
 
 # The libraries behind the optional features (zlib, libcanlock, Berkeley DB, cdb, PAM, LDAP,
 # Perl, RADIUS) are found by ./configure, which sets the options in lib/vendor.h and writes
-# their compiler and linker flags to config.mk.  Run it before make.
+# their compiler and linker flags, and the programs they add (OPTIONAL_PROGS), to config.mk.
+# Run it before make.
 -include config.mk
-
-# Cancel-Lock adds the dcanlock program.  The awk reads the active #define from lib/vendor.h
-# (the awk script keeps regular expressions out of $(shell ...), which older GNU make
-# versions misparse).
-CANLOCK_ENABLED := $(shell awk -v option=CANLOCK_ENABLED -f compat/detect-vendor-option.awk lib/vendor.h)
 
 # Platform-specific settings
 
@@ -108,7 +104,7 @@ UTIL_PROGS = \
     dclient dfeedinfo dlockhistory dfeedtest doverctl \
     drequeue dhisbench dhisexpire dhisctl dexpirecache \
     dcancel dexpirescoring diablo dnewslink dgrpctl \
-    $(if $(filter 1,$(CANLOCK_ENABLED)),dcanlock)
+    $(OPTIONAL_PROGS)
 
 SUP_PROGS = plock showlocks
 

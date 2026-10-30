@@ -305,6 +305,7 @@ fi
 
 if decide canlock probe_canlock; then
     note "canlock: on"; set_option CANLOCK_ENABLED on; add_flags canlock
+    echo "OPTIONAL_PROGS += dcanlock" >> "$tmp/mk"
 else set_option CANLOCK_ENABLED off; fi
 
 if decide db probe_db; then
