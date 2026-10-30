@@ -358,6 +358,7 @@ DumpArticleFromCache(Connection *conn, const char *map, int size, int grpIter, a
     while (b < size) {
 	int i;
 	int yes = 0;
+	int blank;
 
 	for (i = b; i < size && map[i] != '\n'; ++i)
 	    ;
@@ -365,13 +366,20 @@ DumpArticleFromCache(Connection *conn, const char *map, int size, int grpIter, a
 	    ++i;
 	else
 	    nonl = 1;
+
+	/*
+	 * The empty line that ends the header is CRLF, or a bare LF in an
+	 * article that was stored with LF line ends.
+	 */
+	blank = (i == b + 2 && map[b] == '\r' && map[b+1] == '\n') ||
+		(i == b + 1 && map[b] == '\n');
 	switch(conn->co_ArtMode) {
 	case COM_STAT:
 	    break;
 	case COM_HEAD:
 	    if (inHeader == 1) {
 		yes = 1;
-		if (i == b + 2 && map[b] == '\r' && map[b+1] == '\n')
+		if (blank)
 		    yes = 0;
 	    }
 	    break;
@@ -477,7 +485,7 @@ DumpArticleFromCache(Connection *conn, const char *map, int size, int grpIter, a
 		MBWrite(&conn->co_TMBuf, map + b, i - b);
 	}
 
-	if (inHeader && i == b + 2 && map[b] == '\r' && map[b+1] == '\n')
+	if (inHeader && blank)
 	    inHeader = 0;
 
 	b = i;
