@@ -1,0 +1,181 @@
+--- a/contrib/htpasswd-auth.pl
++++ b/contrib/htpasswd-auth.pl
+@@ -24,11 +24,18 @@
+ # Another authdef can use the same script with another file; a path with
+ # spaces goes in double quotes: perl /news/htpasswd-auth.pl -f "/news/my users".
+ #
+-# The file is read again on every login attempt: no cache, so a new user,
+-# a changed password or a removed user counts at once, without restarting
+-# dreaderd.  (dreaderd runs the script in its DNS/auth worker processes; the
+-# script itself is read once per worker, so a change of THIS file needs a
+-# restart of dreaderd.)
++# The file is cached per worker and reloaded only when it changes, so a new
++# user, a changed password or a removed user still counts at once without
++# restarting dreaderd: every login stat()s the file and rebuilds the cache
++# when (mtime, size, inode) differ from the cached copy, or when the file was
++# touched within the last couple of seconds (to catch a same-second,
++# same-size edit).  The whole file is slurped and parsed from memory, so a
++# login never sees a half-written file during an htpasswd rewrite.  Because
++# the lookup is cached, an unauthenticated client looping AUTHINFO with an
++# unknown user no longer forces a full-file scan on every attempt.
++# (dreaderd runs the script in its DNS/auth worker processes, each its own
++# single-threaded process with its own cache; the script itself is read once
++# per worker, so a change of THIS file needs a restart of dreaderd.)
+ #
+ # Password hashes it checks:
+ #
+@@ -58,6 +65,13 @@
+ our $ALLOW_PLAINTEXT = 0;	# --plaintext: a hash without a known format is a plain text password
+ our $SUCCESS = '100 Success';
+ 
++# per-interpreter cache of the htpasswd file (each perl line gets its own
++# interpreter, so these are naturally per -f file; workers are separate
++# single-threaded processes, so no locking is needed)
++our %USERS;			# user => stored hash, from the last load
++our $LOADED = 0;		# %USERS reflects a real file
++our ($MTIME, $SIZE, $INO) = (-1, -1, -1);	# stat of the cached copy
++
+ # the arguments of the script (dreaderd gives it those of the authdef)
+ GetOptions('f=s' => \$HTPASSWD, 'plaintext' => \$ALLOW_PLAINTEXT)
+     or die "usage: htpasswd-auth.pl -f htpasswd-file [--plaintext]\n";
+@@ -141,6 +155,55 @@
+     return $ALLOW_PLAINTEXT ? same($pw, $hash) : 0;
+ }
+ 
++# Load the htpasswd file into %USERS, but only when it has changed since the
++# last load.  Returns 1 if %USERS is usable, 0 if the file is gone/unreadable
++# (in which case the cache is dropped and every login is refused).
++sub load_htpasswd {
++    my @st = stat($HTPASSWD);
++    unless (@st) {
++	warn "htpasswd-auth: cannot stat $HTPASSWD: $!\n";
++	%USERS = ();
++	$LOADED = 0;
++	($MTIME, $SIZE, $INO) = (-1, -1, -1);
++	return 0;
++    }
++    my ($ino, $size, $mtime) = @st[1, 7, 9];
++    my $now = time;
++    # Trust the cache only when identity is unchanged AND the file has been
++    # stable for a couple of seconds: within that window a same-second,
++    # same-size edit could be invisible to (mtime,size,ino), so reload.
++    return 1 if $LOADED
++	     && $ino == $INO && $size == $SIZE && $mtime == $MTIME
++	     && ($now - $mtime) >= 2;
++
++    my $fh;
++    unless (open($fh, '<', $HTPASSWD)) {
++	warn "htpasswd-auth: cannot open $HTPASSWD: $!\n";
++	%USERS = ();
++	$LOADED = 0;
++	($MTIME, $SIZE, $INO) = (-1, -1, -1);
++	return 0;
++    }
++    # Slurp the whole file in one read and parse from memory, so a login never
++    # parses a half-written file in the middle of an htpasswd rewrite.
++    my $data = do { local $/; <$fh> };
++    close($fh);
++
++    my %u;
++    for my $line (split(/\n/, defined $data ? $data : '')) {
++	$line =~ s/\r\z//;
++	next if $line eq '' || $line =~ /^\s*#/;
++	my ($usr, $hash) = split(/:/, $line, 3);	# user:hash[:comment]
++	next unless defined $hash;
++	# the first line of a user decides, as in Apache
++	$u{$usr} = $hash unless exists $u{$usr};
++    }
++    %USERS = %u;
++    ($MTIME, $SIZE, $INO) = ($mtime, $size, $ino);
++    $LOADED = 1;
++    return 1;
++}
++
+ # --- the hook ------------------------------------------------------------
+ 
+ # dreaderd calls this for every AUTHINFO PASS; the result "100 Success" logs the user in
+@@ -149,23 +212,11 @@
+     return '0' unless defined $user && defined $pass && length $user && length $pass;
+     return '0' if $user =~ /[:\r\n\0]/ || length($user) > 255 || length($pass) > 1024;
+ 
+-    my $fh;
+-    unless (open($fh, '<', $HTPASSWD)) {
+-	warn "htpasswd-auth: cannot open $HTPASSWD: $!\n";
+-	return '0';
+-    }
+-    my $result = '0';
+-    while (my $line = <$fh>) {
+-	$line =~ s/\r?\n\z//;
+-	next if $line eq '' || $line =~ /^\s*#/;
+-	my ($u, $hash) = split(/:/, $line, 3);	# user:hash[:comment]
+-	next unless defined $hash && $u eq $user;
+-	# the first line of the user decides, as in Apache
+-	$result = $SUCCESS if password_ok($pass, $hash);
+-	last;
+-    }
+-    close($fh);
+-    return $result;
++    return '0' unless load_htpasswd();	# file gone/unreadable: refuse, keep serving
++
++    my $hash = $USERS{$user};
++    return '0' unless defined $hash;		# unknown user: refuse
++    return password_ok($pass, $hash) ? $SUCCESS : '0';
+ }
+ 
+ # --- self test: perl htpasswd-auth.pl user password ------------------------
+--- a/dreaderd/dns.c
++++ b/dreaderd/dns.c
+@@ -1515,7 +1515,7 @@
+     /* DynaLoader is a special case */
+     newXS("DynaLoader::boot_DynaLoader", boot_DynaLoader, file);
+ }
+-char *call_checkuser(char *auth_args[])
++char *call_checkuser(char *auth_args[], const char *conf)
+ {
+     static char buff[DEFNAMELEN + 16];
+ 
+@@ -1528,14 +1528,31 @@
+     ENTER;
+     SAVETMPS;
+ 
+-    call_argv("checkuser", G_SCALAR, auth_args);
++    /*
++     * G_EVAL traps a runtime die in checkuser: without it the die longjmps
++     * with no JMPENV to catch it and perl exit()s the whole worker.  With
++     * G_SCALAR|G_EVAL the call leaves exactly one value on the stack (the
++     * result, or undef on a die) and sets ERRSV ($@).
++     */
++    call_argv("checkuser", G_SCALAR | G_EVAL, auth_args);
+ 
+     SPAGAIN;
+ 
+-    sv = POPs;
+-    if (SvTRUE(sv) && (str = SvPV(sv, len)) && len < DEFNAMELEN + 16) 
+-        result = strcpy(buff, str);
++    if (SvTRUE(ERRSV)) {
++	char *emsg = SvPV_nolen(ERRSV);
+ 
++	/* checkuser died: refuse this login but keep serving the next one */
++	logit(LOG_ERR, "PERL: checkuser died in \"%s\": %s", conf,
++	      emsg ? emsg : "(unknown error)");
++	(void)POPs;			/* drop the undef G_SCALAR left on the stack */
++	result = NULL;
++    } else {
++	sv = POPs;
++	if (SvTRUE(sv) && (str = SvPV(sv, len)) && len < DEFNAMELEN + 16)
++	    result = strcpy(buff, str);
++    }
++
++    PUTBACK;				/* resync the stack after the POP */
+     FREETMPS;
+     LEAVE;
+     return result;
+@@ -1651,7 +1668,7 @@
+ 	return(NULL);
+     my_perl = pi->interp;
+     PERL_SET_CONTEXT(my_perl);
+-    reslog = result = call_checkuser(auth_args);
++    reslog = result = call_checkuser(auth_args, conf);
+     if (reslog == NULL) 
+ 	reslog = "FAILED";
+     logit(LOG_INFO, "PERL auth request for %s: %s\n", user, reslog);
