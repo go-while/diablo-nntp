@@ -65,7 +65,12 @@ func TestReaderHtpasswdAuth(t *testing.T) {
 
 	write := func(lines ...string) {
 		t.Helper()
-		if err := os.WriteFile(htfile, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		// replace the file by rename, as htpasswd does: a login never sees a half-written file
+		tmp := htfile + ".new"
+		if err := os.WriteFile(tmp, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(tmp, htfile); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -135,7 +140,8 @@ access ` + PeerIP + ` others
 		t.Error("the first line of a user that is listed twice must decide")
 	}
 
-	// the file is read for every login: change, add and remove entries without a restart
+	// the file is checked at every login and read again when it changed: change, add and remove
+	// entries without a restart
 	write("apr1:"+htVectors[0].hash, "newuser:{SHA}9KaZc+ewv50WD59g48Os0klL6w0=")
 	if !login("newuser", htPass) {
 		t.Error("a user added to the file was not accepted at once")

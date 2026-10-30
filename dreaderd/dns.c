@@ -1515,7 +1515,7 @@ EXTERN_C void xs_init(pTHX)
     /* DynaLoader is a special case */
     newXS("DynaLoader::boot_DynaLoader", boot_DynaLoader, file);
 }
-char *call_checkuser(char *auth_args[])
+char *call_checkuser(char *auth_args[], const char *conf)
 {
     static char buff[DEFNAMELEN + 16];
 
@@ -1528,14 +1528,31 @@ char *call_checkuser(char *auth_args[])
     ENTER;
     SAVETMPS;
 
-    call_argv("checkuser", G_SCALAR, auth_args);
+    /*
+     * G_EVAL traps a runtime die in checkuser: without it the die longjmps
+     * with no JMPENV to catch it and perl exit()s the whole worker.  With
+     * G_SCALAR|G_EVAL the call leaves exactly one value on the stack (the
+     * result, or undef on a die) and sets ERRSV ($@).
+     */
+    call_argv("checkuser", G_SCALAR | G_EVAL, auth_args);
 
     SPAGAIN;
 
-    sv = POPs;
-    if (SvTRUE(sv) && (str = SvPV(sv, len)) && len < DEFNAMELEN + 16) 
-        result = strcpy(buff, str);
+    if (SvTRUE(ERRSV)) {
+	char *emsg = SvPV_nolen(ERRSV);
 
+	/* checkuser died: refuse this login but keep serving the next one */
+	logit(LOG_ERR, "PERL: checkuser died in \"%s\": %s", conf,
+	      emsg ? emsg : "(unknown error)");
+	(void)POPs;			/* drop the undef G_SCALAR left on the stack */
+	result = NULL;
+    } else {
+	sv = POPs;
+	if (SvTRUE(sv) && (str = SvPV(sv, len)) && len < DEFNAMELEN + 16)
+	    result = strcpy(buff, str);
+    }
+
+    PUTBACK;				/* resync the stack after the POP */
     FREETMPS;
     LEAVE;
     return result;
@@ -1651,7 +1668,7 @@ char *PerlAuthenticate(char *user, char *pass, char *conf)
 	return(NULL);
     my_perl = pi->interp;
     PERL_SET_CONTEXT(my_perl);
-    reslog = result = call_checkuser(auth_args);
+    reslog = result = call_checkuser(auth_args, conf);
     if (reslog == NULL) 
 	reslog = "FAILED";
     logit(LOG_INFO, "PERL auth request for %s: %s\n", user, reslog);
