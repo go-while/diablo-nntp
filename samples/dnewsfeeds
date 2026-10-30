@@ -628,6 +628,11 @@
 #	dnewslink process(es). On low volume streaming feeds, there may
 #	also be an extra delay as enough articles are accumulated for a
 #	number of CHECK commands.
+#	Delayed feeds were originally meant to let a cancel arrive over a
+#	separate, non-delayed feed before the article it cancels, when
+#	Usenet text volume was extremely high. With today's low volume and
+#	Cancel-Lock this is no longer necessary; delayed feeds are not
+#	widely used today but may still serve other purposes.
 #
 # delayinfeed		N
 #	Specify the number of seconds to delay after diablo has started

@@ -329,6 +329,13 @@ online readers or more.
     cancel controls to leap ahead of articles and reduce INN's article write
     overhead (which is usually the big bottleneck in INN).
 
+    Historical note: this advice dates from when Usenet text volume was
+    extremely high.  Delayed feeds were meant to let a cancel arrive over a
+    separate, non-delayed feed before the article it cancels.  With today's
+    low volume, and Cancel-Lock to authenticate cancels, delaying a feed is
+    no longer necessary for that.  Delayed feeds are not widely used today,
+    but may still be wanted for other purposes.
+
     Typically, you separate control messages out by creating two separate
     feeds to your reader box.  The first one has a 'delgroupany control.*',
     and the second one has a 'requiregroup control.*'.  Taking the example
