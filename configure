@@ -27,9 +27,17 @@
 #
 # The options are all #undef in lib/vendor.h as shipped; this script is what turns them on.
 # Run it again after installing or removing a library, and make clean before the next make.
-# CC and PERL in the environment name the compiler and the perl to probe.
+# CC and PERL in the environment name the compiler and the perl to probe (the default
+# compiler is the one the makefiles use).
 
-CC=${CC:-cc}
+# The compiler the makefiles use: clang on FreeBSD, gcc elsewhere (cc and clang as fallbacks)
+if [ -z "${CC:-}" ]; then
+    if [ "$(uname -s)" = FreeBSD ]; then try_cc="clang cc gcc"; else try_cc="gcc cc clang"; fi
+    for c in $try_cc; do
+	if command -v "$c" >/dev/null 2>&1; then CC=$c; break; fi
+    done
+    if [ -z "${CC:-}" ]; then echo "configure: no C compiler found (tried $try_cc)" >&2; exit 1; fi
+fi
 PERL=${PERL:-perl}
 vendor=lib/vendor.h
 mk=config.mk
