@@ -153,7 +153,7 @@ fi
 if ! { [ -e /usr/include/radcli/radcli.h ] || [ -e /usr/local/include/radcli/radcli.h ]; }; then
     if command -v apt-get >/dev/null; then apt-get -qq install -y libradcli-dev >/dev/null 2>&1 || true
     elif command -v dnf >/dev/null; then dnf -q -y install radcli-devel >/dev/null 2>&1 || true
-    elif command -v zypper >/dev/null; then zypper -n -q install radcli-devel >/dev/null 2>&1 || true
+    elif command -v zypper >/dev/null; then zypper -n -q install radcli radcli-devel >/dev/null 2>&1 || true
     elif command -v pacman >/dev/null; then pacman -S --noconfirm --needed --quiet $nosandbox radcli >/dev/null 2>&1 || true
     elif command -v apk >/dev/null; then apk add -q radcli-dev >/dev/null 2>&1 || true
     fi
