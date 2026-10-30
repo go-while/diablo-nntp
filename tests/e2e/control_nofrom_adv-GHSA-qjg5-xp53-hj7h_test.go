@@ -13,7 +13,7 @@ import (
 // (GHSA-qjg5-xp53-hj7h). After 40 of them the dreaderd processes of the site must not hold
 // (nearly) 40 more descriptors. Linux only (/proc).
 func TestControlWithoutFromNoFdLeak(t *testing.T) {
-	st, spool := spoolStore(t)
+	_, spool := spoolStore(t)
 	s := NewReaderSite(t, ReaderOptions{
 		Spool: spool,
 		Files: map[string]string{"dcontrol.ctl": "newgroup:*:*:doit\n"},
@@ -35,32 +35,45 @@ func TestControlWithoutFromNoFdLeak(t *testing.T) {
 		t.Fatal("no blank line in the article")
 		return nil
 	}
-	fds := func() int {
-		pids := sitePids(s, "dreaderd")
-		if len(pids) == 0 {
-			t.Skip("no /proc or no dreaderd processes found")
-		}
-		n := 0
-		for _, pid := range pids {
-			if c := fdCount(pid); c > 0 {
-				n += c
+	fds := func() map[int]int {
+		m := map[int]int{}
+		for _, pid := range sitePids(s, "dreaderd") {
+			if c := fdCount(pid); c >= 0 {
+				m[pid] = c
 			}
 		}
-		return n
+		if len(m) == 0 {
+			t.Skip("no /proc or no dreaderd processes found")
+		}
+		return m
 	}
 
-	// One first, so the feed process exists and has opened what it keeps open anyway.
-	feedReader(t, s, st, "e2e.test", noFrom(0))
+	// Keep one feed connection open across the warm-up and the 40 articles:
+	// the leak is in the child that handles this connection, and a new
+	// connection would be a new pid that the before map does not know.
+	p := s.Peer(t)
+	sendOne := func(i int) {
+		a := noFrom(i)
+		id := headerValue(a, "Message-ID")
+		expect(t, p, 335, "IHAVE %s", id)
+		send(t, p, wire(a))
+		status(t, p, 235, "IHAVE control without From")
+	}
+	sendOne(0) // warm-up: the feed child has opened what it keeps open
 	time.Sleep(500 * time.Millisecond)
 	before := fds()
-	var arts [][]string
 	for i := 1; i <= 40; i++ {
-		arts = append(arts, noFrom(i))
+		sendOne(i)
 	}
-	feedReader(t, s, st, "e2e.test", arts...)
 	time.Sleep(time.Second)
-	after := fds()
-	if after-before >= 20 {
-		t.Errorf("40 control articles without From: left the dreaderd processes with %d more open descriptors (%d -> %d)", after-before, before, after)
+	worst := 0
+	for pid, n := range before {
+		if d := fdCount(pid) - n; d > worst {
+			worst = d
+		}
 	}
+	if worst >= 20 {
+		t.Errorf("40 control articles without From: left the feed child with %d more open descriptors", worst)
+	}
+	expect(t, p, 205, "QUIT")
 }
