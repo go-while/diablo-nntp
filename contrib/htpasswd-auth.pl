@@ -6,7 +6,7 @@
 # ./configure turns on where perl can be embedded):
 #
 #	authdef webusers
-#	    perl /news/htpasswd-auth.pl
+#	    perl /news/htpasswd-auth.pl -f /news/htpasswd
 #	end
 #	readerdef members
 #	    read yes
@@ -15,8 +15,14 @@
 #	end
 #
 # The htpasswd file is the one `htpasswd` (Apache), `openssl passwd` or any
-# tool that writes "user:hash" lines makes.  Its name is $HTPASSWD below, or
-# the environment variable DIABLO_HTPASSWD of dreaderd when that is set.
+# tool that writes "user:hash" lines makes.  The arguments after the script
+# in the authdef are the arguments of the script:
+#
+#	-f FILE		the htpasswd file (required)
+#	--plaintext	accept a plain text password in the file (off by default)
+#
+# Another authdef can use the same script with another file; a path with
+# spaces goes in double quotes: perl /news/htpasswd-auth.pl -f "/news/my users".
 #
 # The file is read again on every login attempt: no cache, so a new user,
 # a changed password or a removed user counts at once, without restarting
@@ -38,20 +44,24 @@
 # crypt(3) lacks it, never matches: the login is refused.  `perl -e 'print
 # crypt("pw", q($6$salt))'` shows what crypt(3) here can do.
 #
-# Plain text passwords are not accepted unless $ALLOW_PLAINTEXT is set.
-#
-# Self test, without dreaderd:   perl htpasswd-auth.pl user password
-# prints "100 Success" or "0".  With the file in DIABLO_HTPASSWD.
+# Self test, without dreaderd:   perl htpasswd-auth.pl -f FILE user password
+# prints "100 Success" or "0".
 
 use strict;
 use warnings;
 use Digest::MD5 qw(md5);
 use Digest::SHA qw(sha1);
 use MIME::Base64 qw(decode_base64 encode_base64);
+use Getopt::Long qw(GetOptions);
 
-our $HTPASSWD = $ENV{DIABLO_HTPASSWD} // '/news/htpasswd';
-our $ALLOW_PLAINTEXT = 0;	# 1: a hash without a known format is a plain text password
+our $HTPASSWD;			# -f FILE
+our $ALLOW_PLAINTEXT = 0;	# --plaintext: a hash without a known format is a plain text password
 our $SUCCESS = '100 Success';
+
+# the arguments of the script (dreaderd gives it those of the authdef)
+GetOptions('f=s' => \$HTPASSWD, 'plaintext' => \$ALLOW_PLAINTEXT)
+    or die "usage: htpasswd-auth.pl -f htpasswd-file [--plaintext]\n";
+die "htpasswd-auth.pl: -f htpasswd-file is required\n" unless defined $HTPASSWD && length $HTPASSWD;
 
 # --- the checks ----------------------------------------------------------
 

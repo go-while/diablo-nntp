@@ -39,7 +39,7 @@ func cryptWorks(hash string) bool {
 // ($apr1$), {SHA} and {SSHA} everywhere, the ones of the platform's crypt(3) (MD5 $1$, SHA-256
 // and SHA-512, DES, bcrypt, yescrypt) where it has them; a wrong password, an unknown user and a
 // plain text entry are refused, and a changed, added or removed entry counts at once without a
-// restart. Skipped without Perl support in dreaderd (./configure) or without perl.
+// restart. Two authdefs with the script and two -f files each have their own interpreter (D-167). Skipped without Perl support in dreaderd (./configure) or without perl.
 func TestReaderHtpasswdAuth(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join(bin(t), "dreaderd"))
 	if err != nil {
@@ -57,11 +57,9 @@ func TestReaderHtpasswdAuth(t *testing.T) {
 	}
 	dir := t.TempDir()
 	htfile := filepath.Join(dir, "htpasswd")
+	htfile2 := filepath.Join(dir, "other users") // a space in the name: the quotes keep it one word
 	script := filepath.Join(dir, "htpasswd-auth.pl")
-	if !strings.Contains(string(src), "'/news/htpasswd'") {
-		t.Fatal("the default htpasswd path of the script has changed")
-	}
-	if err := os.WriteFile(script, []byte(strings.Replace(string(src), "'/news/htpasswd'", "'"+htfile+"'", 1)), 0o644); err != nil {
+	if err := os.WriteFile(script, src, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -88,17 +86,21 @@ func TestReaderHtpasswdAuth(t *testing.T) {
     hostname ` + PathHost + `
 end
 authdef webusers
-    perl ` + script + `
+    perl ` + script + ` -f ` + htfile + `
+end
+authdef otherusers
+    perl ` + script + ` -f "` + htfile2 + `"
 end
 readerdef members
     read yes
     auth webusers
 end
-readerdef feed
-    feed yes
+readerdef others
+    read yes
+    auth otherusers
 end
 access 127.0.0.1 members
-access ` + PeerIP + ` feed
+access ` + PeerIP + ` others
 `
 	_, spool := spoolStore(t)
 	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: access})
@@ -145,11 +147,79 @@ access ` + PeerIP + ` feed
 	if login("apr1", htPass) {
 		t.Error("the old password of a changed entry was still accepted")
 	}
+	// a second authdef with the script and another -f file (its own interpreter and file; the
+	// first one a worker loads must not answer for both), for clients from the other address
+	if err := os.WriteFile(htfile2, []byte("carol:"+htVectors[1].hash+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	login2 := func(user, pass string) bool {
+		t.Helper()
+		c := s.dialFrom(t, PeerIP)
+		expect(t, c, 381, "AUTHINFO USER %s", user)
+		code, _ := c.Cmd("AUTHINFO PASS %s", pass)
+		c.Close()
+		return code == 281
+	}
+	if !login2("carol", htPass) {
+		t.Error("the authdef with the other -f file did not accept its user")
+	}
+	if login2("newuser", htPass) {
+		t.Error("the authdef with the other -f file answered from the first file")
+	}
+	if !login("newuser", htPass) {
+		t.Error("the first authdef stopped working after the second one was used")
+	}
 	// a missing file refuses everybody
 	if err := os.Remove(htfile); err != nil {
 		t.Fatal(err)
 	}
 	if login("newuser", htPass) {
 		t.Error("a user was accepted although the htpasswd file is gone")
+	}
+}
+
+// TestReaderHtpasswdNoFile: the script without -f cannot start; the login is refused and the
+// reader keeps serving (before, a script that failed to load made the DNS worker exit).
+func TestReaderHtpasswdNoFile(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join(bin(t), "dreaderd"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(b, []byte("PERL auth request")) {
+		t.Skip("dreaderd is built without Perl support (PERL_ENABLED)")
+	}
+	src, err := os.ReadFile(filepath.Join(filepath.Dir(bin(t)), "contrib", "htpasswd-auth.pl"))
+	if err != nil {
+		t.Skip("no contrib/htpasswd-auth.pl next to DIABLO_BIN: " + err.Error())
+	}
+	script := filepath.Join(t.TempDir(), "htpasswd-auth.pl")
+	if err := os.WriteFile(script, src, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	access := `vserverdef DEFAULT
+    hostname ` + PathHost + `
+end
+authdef broken
+    perl ` + script + `
+end
+readerdef members
+    read yes
+    auth broken
+end
+readerdef feed
+    feed yes
+end
+access 127.0.0.1 members
+access ` + PeerIP + ` feed
+`
+	_, spool := spoolStore(t)
+	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: access})
+	for i := 0; i < 3; i++ {
+		c := s.Reader(t)
+		expect(t, c, 381, "AUTHINFO USER pat")
+		if code, line := c.Cmd("AUTHINFO PASS patspass"); code == 281 {
+			t.Errorf("logged in through a script that cannot start: %s", line)
+		}
+		c.Close()
 	}
 }

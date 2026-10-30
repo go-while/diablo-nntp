@@ -1541,33 +1541,116 @@ char *call_checkuser(char *auth_args[])
     return result;
 }
 
+/*
+ * One embedded interpreter for every distinct "perl <script> [arguments]" of an authdef,
+ * made on its first use in this worker and kept: the script is read once, and the
+ * arguments (for example -f /news/htpasswd) become its @ARGV.  A perl without
+ * MULTIPLICITY can have one interpreter only.
+ */
+#define PERL_MAXINTERP	16
+static struct PerlInterp {
+    char		conf[256];
+    PerlInterpreter	*interp;
+    int			failed;
+} PerlTab[PERL_MAXINTERP];
+static int PerlTabN = 0;
+
+/*
+ * perlWords: split conf at white space into argv, "double quotes" keep spaces in a word.
+ * The words are copies that stay: perl keeps pointers to its arguments.
+ */
+static int
+perlWords(const char *conf, char **argv, int max)
+{
+    int n = 0;
+    const char *p = conf;
+
+    while (n < max - 1) {
+	char buf[256];
+	int len = 0, quoted = 0;
+
+	while (*p == ' ' || *p == '\t')
+	    ++p;
+	if (*p == 0)
+	    break;
+	while (*p && len < (int)sizeof(buf) - 1 && (quoted || (*p != ' ' && *p != '\t'))) {
+	    if (*p == '"')
+		quoted = !quoted;
+	    else
+		buf[len++] = *p;
+	    ++p;
+	}
+	buf[len] = 0;
+	if ((argv[n] = strdup(buf)) == NULL)
+	    break;
+	++n;
+    }
+    argv[n] = NULL;
+    return n;
+}
+
 char *PerlAuthenticate(char *user, char *pass, char *conf)
 {
-    char *embedding[] = { "", conf };
     char *auth_args[] = { user, pass, NULL };
     char *result;
     char *reslog;
+    struct PerlInterp *pi = NULL;
+    int i;
 
-    int exitstatus = 0;
-
-    if (my_perl == NULL) {
-        if((my_perl = perl_alloc()) == NULL) {
-            fprintf(stderr, "perl_alloc no memory\n");
-            exit(1);
-        }
-        PL_perl_destruct_level = 0;
-        perl_construct(my_perl);
-        exitstatus = perl_parse(my_perl, xs_init, 2, embedding, NULL);
-        if (!exitstatus) {
-            exitstatus = perl_run(my_perl);
-        }
-        if (exitstatus) {
-            fprintf(stderr, "perl_parse or perl_run failed\n");
-            perl_destruct(my_perl);
-            perl_free(my_perl);
-            exit(exitstatus);
-        }
+    for (i = 0; i < PerlTabN; ++i) {
+	if (strcmp(PerlTab[i].conf, conf) == 0) {
+	    pi = &PerlTab[i];
+	    break;
+	}
     }
+    if (pi == NULL) {
+	char *argv[PERL_MAXINTERP + 2];
+	int argc;
+	int exitstatus;
+
+	if (PerlTabN >= PERL_MAXINTERP) {
+	    logit(LOG_ERR, "PERL: more than %d different perl authdefs", PERL_MAXINTERP);
+	    return(NULL);
+	}
+#ifndef MULTIPLICITY
+	if (PerlTabN > 0) {
+	    logit(LOG_ERR, "PERL: this perl can run one script only, not \"%s\" as well", conf);
+	    return(NULL);
+	}
+#endif
+	pi = &PerlTab[PerlTabN++];
+	snprintf(pi->conf, sizeof(pi->conf), "%s", conf);
+	pi->failed = 1;
+	argv[0] = "";
+	argc = 1 + perlWords(conf, argv + 1, PERL_MAXINTERP);
+	if (argc < 2) {
+	    logit(LOG_ERR, "PERL: no script in \"%s\"", conf);
+	    return(NULL);
+	}
+	if ((my_perl = perl_alloc()) == NULL) {
+	    logit(LOG_ERR, "PERL: perl_alloc: no memory");
+	    return(NULL);
+	}
+	PERL_SET_CONTEXT(my_perl);
+	PL_perl_destruct_level = 0;
+	perl_construct(my_perl);
+	exitstatus = perl_parse(my_perl, xs_init, argc, argv, NULL);
+	if (!exitstatus)
+	    exitstatus = perl_run(my_perl);
+	if (exitstatus) {
+	    logit(LOG_ERR, "PERL: cannot load \"%s\" (perl_parse or perl_run failed)", conf);
+	    perl_destruct(my_perl);
+	    perl_free(my_perl);
+	    my_perl = NULL;
+	    return(NULL);
+	}
+	pi->interp = my_perl;
+	pi->failed = 0;
+    }
+    if (pi->failed)
+	return(NULL);
+    my_perl = pi->interp;
+    PERL_SET_CONTEXT(my_perl);
     reslog = result = call_checkuser(auth_args);
     if (reslog == NULL) 
 	reslog = "FAILED";
