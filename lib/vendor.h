@@ -106,35 +106,38 @@
  * the library INN uses.  Without it no Cancel-Key can be verified: the
  * default 'readercanlock require-auth' then refuses every cancel and
  * supersede (dreaderd says so in the log at start), and 'readercanlock all'
- * brings back the unchecked behaviour.
+ * brings back the unchecked behaviour.  ./configure turns this on where
+ * libcanlock is found.
  */
 
-#define	CANLOCK_ENABLED
+#undef	CANLOCK_ENABLED
 
 /*
- * Enable CDB authentication. Needs the CDB libraries installed.
- * Available from: http://cr.yp.to/cdb.html
- *
- * You also need to add the following to the LFLAGS line in XMakefile.inc
- *  -L$(BD)cdb -lcdb
+ * Enable CDB authentication. Needs a cdb library with cdb_seek() (-lcdb).
+ * D. J. Bernstein's original had it (http://cr.yp.to/cdb.html); the cdb
+ * packages of FreeBSD ports and pkgsrc today do not.  tinycdb provides it as
+ * a compatibility call (libcdb-dev on Debian and Ubuntu).  ./configure turns
+ * this on where it finds one.
  */
 
 #undef	CDB_ENABLED
 
 /*
- * Enable Berkeley DB authentication. Needs the DB libraries installed.
- *
+ * Enable Berkeley DB authentication. Needs the Berkeley DB libraries
+ * with the 1.85 interface, dbopen() (db_185.h and -ldb on Linux and
+ * illumos, <db.h> in the C library on FreeBSD).  ./configure turns this on,
+ * and REJECT_DB below, where they are found.
  */
 
-#define	DB_ENABLED
+#undef	DB_ENABLED
 
 /*
  * Set a path to a Berkeley DB that includes a list of users that
- * should be rejected before auth methods are consulted
- *
+ * should be rejected before auth methods are consulted.  Needs the same
+ * library as DB_ENABLED; ./configure defines it as "/news/db/reject.db".
  */
 
-#define	REJECT_DB	"/news/db/reject.db"
+#undef	REJECT_DB
 
 /*
  * Enable NetRemote authentication.  Works on FreeBSD, requires DES.
@@ -186,9 +189,9 @@
 #undef	NEW_LDAP
 
 /*
- * Enable PAM authentication. Requires a PAM library and -lpam to be added
- * to LFLAGS in XMakefile.inc. This has been confirmed to work
- * on Linux and appears to work on FreeBSD. The pam_unix.so module
+ * Enable PAM authentication. Requires a PAM library (security/pam_appl.h
+ * and -lpam); ./configure turns this on where they are found. This has
+ * been confirmed to work on Linux and appears to work on FreeBSD. The pam_unix.so module
  * is unlikely to work as it requires root access to verify the
  * password.
  */
@@ -207,8 +210,8 @@
 #undef	POST_CFILTERHOOK
 
 /*
- * Experimental compression. This option requires zlib (-lz added
- * to LFLAGS in XMakefile.inc) and if set, enables an option 'compresslvl'
+ * Experimental compression. This option requires zlib (zlib.h and -lz;
+ * ./configure turns it on) and if set, enables an option 'compresslvl'
  * in dspool.ctl that allows you to set spool objects as compressed. The
  * number refers to the zlib level, which is lower (min 1) for faster
  * compression and higher (max 9) for slower, but better compression. All
@@ -220,7 +223,7 @@
  * This option also enables compressed newsfeeds. See the sample dnewsfeeds
  * entry for a description.
  */
-#define	USE_ZLIB
+#undef	USE_ZLIB
 
 /*
  * Add CPU timing to dreaderd clients. Enabling this option causes an

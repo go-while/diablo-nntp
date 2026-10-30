@@ -35,92 +35,24 @@ CFLAGS += -MMD -MP
 LDFLAGS += -Lobj
 LDLIBS += -lfilter -ldiablo -lm -lz -lcrypto
 
-# Detect optional vendor features without embedding AWK regex parentheses
-# inside a GNU make $(shell ...) expression. Older GNU make versions may
-# misparse the original inline expressions, even for `make clean`.
-RADIUS_ENABLED := $(shell awk -v option=RADIUS_ENABLED -f compat/detect-vendor-option.awk lib/vendor.h)
-DB_ENABLED := $(shell awk -v option=DB_ENABLED -f compat/detect-vendor-option.awk lib/vendor.h)
+# The libraries behind the optional features (zlib, libcanlock, Berkeley DB, cdb, PAM, LDAP,
+# Perl, RADIUS) are found by ./configure, which sets the options in lib/vendor.h and writes
+# their compiler and linker flags to config.mk.  Run it before make.
+-include config.mk
+
+# Cancel-Lock adds the dcanlock program.  The awk reads the active #define from lib/vendor.h
+# (the awk script keeps regular expressions out of $(shell ...), which older GNU make
+# versions misparse).
 CANLOCK_ENABLED := $(shell awk -v option=CANLOCK_ENABLED -f compat/detect-vendor-option.awk lib/vendor.h)
-REJECT_DB_ENABLED := $(shell awk -v option=REJECT_DB -f compat/detect-vendor-option.awk lib/vendor.h)
-LDAP_ENABLED := $(shell awk -v option=LDAP_ENABLED -f compat/detect-vendor-option.awk lib/vendor.h)
-PERL_ENABLED := $(shell awk -v option=PERL_ENABLED -f compat/detect-vendor-option.awk lib/vendor.h)
-RADIUS_RADCLI := $(shell awk -v option=RADIUS_RADCLI -f compat/detect-vendor-option.awk lib/vendor.h)
-# Either DB authentication or the rejection database uses dbopen().
-DB185_REQUIRED := $(if $(filter 1,$(DB_ENABLED) $(REJECT_DB_ENABLED)),1,)
-
-# libcanlock: in the system directories on Debian and Ubuntu, under a package
-# prefix on FreeBSD (/usr/local) and SmartOS (/opt/local, /opt/ooce).
-ifeq ($(CANLOCK_ENABLED),1)
-LDLIBS += -lcanlock
-CANLOCK_PREFIX := $(firstword $(foreach dir, /usr/local /opt/local /opt/ooce, \
-    $(if $(wildcard $(dir)/include/libcanlock-3/canlock.h),$(dir))))
-ifneq ($(CANLOCK_PREFIX),)
-CPPFLAGS += -I$(CANLOCK_PREFIX)/include
-LDFLAGS += -L$(CANLOCK_PREFIX)/lib -Wl,-R,$(CANLOCK_PREFIX)/lib
-endif
-endif
-
-# LDAP authentication: libldap and liblber, in the system directories on Linux,
-# under a package prefix on FreeBSD and SmartOS.
-ifeq ($(LDAP_ENABLED),1)
-LDLIBS += -lldap -llber
-LDAP_PREFIX := $(firstword $(foreach dir, /usr/local /opt/local /opt/ooce, \
-    $(if $(wildcard $(dir)/include/ldap.h),$(dir))))
-ifneq ($(LDAP_PREFIX),)
-CPPFLAGS += -I$(LDAP_PREFIX)/include
-LDFLAGS += -L$(LDAP_PREFIX)/lib -Wl,-R,$(LDAP_PREFIX)/lib
-endif
-endif
-
-# RADIUS with radcli instead of the BSD libradius: the library, its package
-# prefix, and the dictionary file the adapter in dreaderd/dns.c reads.
-ifeq ($(RADIUS_ENABLED)$(RADIUS_RADCLI),11)
-LDLIBS += -lradcli
-RADCLI_PREFIX := $(firstword $(foreach dir, /usr/local /opt/local /opt/ooce, \
-    $(if $(wildcard $(dir)/include/radcli/radcli.h),$(dir))))
-ifneq ($(RADCLI_PREFIX),)
-CPPFLAGS += -I$(RADCLI_PREFIX)/include
-LDFLAGS += -L$(RADCLI_PREFIX)/lib -Wl,-R,$(RADCLI_PREFIX)/lib
-endif
-# /etc/radcli on Debian, Ubuntu and Fedora, /usr/share/radcli on Arch; any other
-# */radcli/dictionary under the usual directories is found by the find.
-RADCLI_DICTIONARY := $(firstword $(wildcard /etc/radcli/dictionary \
-    /usr/local/etc/radcli/dictionary /opt/local/etc/radcli/dictionary \
-    /usr/share/radcli/dictionary /usr/local/share/radcli/dictionary \
-    /usr/etc/radcli/dictionary) \
-    $(shell find /etc /usr/etc /usr/local/etc /opt/local/etc /usr/share /usr/local/share \
-    -maxdepth 3 -path '*/radcli/dictionary' 2>/dev/null))
-ifneq ($(RADCLI_DICTIONARY),)
-CPPFLAGS += -DRADCLI_DICTIONARY=\"$(RADCLI_DICTIONARY)\"
-endif
-endif
-
-# Perl authentication: the compile and link options of the installed perl.
-ifeq ($(PERL_ENABLED),1)
-CPPFLAGS += $(shell perl -MExtUtils::Embed -e ccopts)
-LDLIBS += $(shell perl -MExtUtils::Embed -e ldopts)
-endif
 
 # Platform-specific settings
 
 ifeq ($(UNAME_S),FreeBSD)
 LDLIBS += -lmd
-
-ifeq ($(RADIUS_ENABLED),1)
-LDLIBS += -lradius
-endif
 endif
 
 ifeq ($(UNAME_S),Linux)
 CPPFLAGS += -D_FILE_OFFSET_BITS=64
-ifeq ($(RADIUS_ENABLED)$(RADIUS_RADCLI),1)
-LDLIBS += -lradius
-endif
-# libdb-devel supplies libdb.so and the Berkeley DB 1.85 dbopen() shim.
-# Neither feature is required when both DB_ENABLED and REJECT_DB are off.
-ifeq ($(DB185_REQUIRED),1)
-LDLIBS += -ldb
-endif
 endif
 
 # illumos platform configuration
@@ -129,48 +61,9 @@ ifneq ($(filter SunOS illumos,$(UNAME_S)),)
 CPPFLAGS += -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64
 CPPFLAGS += -D_XOPEN_SOURCE=600 -D__EXTENSIONS__
 
-# Berkeley DB 1.85 compatibility auto-detection.
-# Generates obj/db185-config.mk on the first build.
-# Either DB authentication or REJECT_DB requires the dbopen() library.
-ifeq ($(DB185_REQUIRED),1)
-
-DB185_CONFIG := obj/db185-config.mk
-
-$(DB185_CONFIG): compat/detect-db185.sh | obj
-	@echo "Detecting Berkeley DB 1.85 compatibility..."
-	@CC="$(CC)" sh compat/detect-db185.sh > $@.tmp || { rm -f $@.tmp; exit 1; }
-	@mv $@.tmp $@
-
-include $(DB185_CONFIG)
-
-CPPFLAGS += $(DB185_CPPFLAGS)
-LDFLAGS += $(DB185_LDFLAGS)
-LDLIBS += $(DB185_LIBS)
-
-endif
-
-# illumos networking and RADIUS dependencies.
+# illumos networking libraries.
 LDLIBS += -lnsl -lsocket -lposix4 -lmd
 
-# Enable RADIUS dependencies only when requested by vendor.h.
-ifeq ($(RADIUS_ENABLED),1)
-
-LDLIBS += -lradius
-
-# Find the installed RADIUS library.
-RADIUS_LIBDIR := $(firstword $(foreach dir, \
-    /opt/local/lib \
-    /opt/ooce/lib/amd64 \
-    /opt/ooce/lib \
-    /usr/local/lib \
-    /usr/lib/amd64 \
-    /usr/lib, \
-    $(if $(wildcard $(dir)/libradius.so $(dir)/libradius.a),$(dir))))
-
-ifneq ($(RADIUS_LIBDIR),)
-LDFLAGS += -L$(RADIUS_LIBDIR)
-endif
-endif
 # Compatibility implementation for libradius srandomdev().
 ILLUMOS_COMPAT_OBJS = obj/compat_srandomdev.o
 
@@ -343,6 +236,7 @@ clean:
 	rm -rf obj dbin
 
 distclean: clean
+	rm -f config.mk
 
 help:
 	@echo 'Targets: all clean distclean install bininstall uninstall help'
