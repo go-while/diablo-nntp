@@ -11,6 +11,9 @@ all #undef as shipped, and writes config.mk with the compiler and linker
 flags.  Install the libraries you want first; ./configure --help lists the
 options (--without-NAME, --with-NAME).  README.md has the table of options
 and packages.
+./configure owns these options in lib/vendor.h and sets them on every run, so
+choose them with --with-NAME/--without-NAME rather than by editing the file.
+make stops with an error until ./configure has been run.
 
 Files that hold private data are created for the news user and group only:
 the reader's cache files (cache.*, which copy the passwords and secrets of

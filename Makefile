@@ -39,7 +39,12 @@ LDLIBS += -lfilter -ldiablo -lm -lz -lcrypto
 # Perl, RADIUS) are found by ./configure, which sets the options in lib/vendor.h and writes
 # their compiler and linker flags, and the programs they add (OPTIONAL_PROGS), to config.mk.
 # Run it before make.
--include config.mk
+ifeq ($(wildcard config.mk),)
+ifeq ($(filter clean distclean,$(MAKECMDGOALS)),)
+$(error config.mk not found: run ./configure first (see INSTALL))
+endif
+endif
+include config.mk
 
 # Platform-specific settings
 

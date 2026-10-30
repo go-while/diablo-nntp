@@ -68,7 +68,8 @@ cd "$(dirname "$0")" || exit 1
 [ -f "$vendor" ] || { echo "configure: $vendor not found" >&2; exit 1; }
 
 tmp=${TMPDIR:-/tmp}/diablo-configure.$$
-trap 'rm -rf "$tmp"' EXIT HUP INT TERM
+trap 'rm -rf "$tmp"' EXIT
+trap 'exit 1' HUP INT TERM
 mkdir "$tmp" || exit 1
 uname_s=$(uname -s)
 
@@ -249,6 +250,7 @@ set_option() {
     fi
     if ! grep -E "^#[[:space:]]*(define|undef)[[:space:]]+$name([[:space:]]|\$)" "$cur" >/dev/null; then
 	echo "configure: no $name line in $vendor, not changed" >&2
+	rc=1
 	return 1
     fi
     sed -E "s@^#[[:space:]]*(define|undef)[[:space:]]+$name([[:space:]].*)?\$@$new@" "$cur" > "$tmp/vendor.next" &&
@@ -361,6 +363,7 @@ fi
 {
     echo "# Written by ./configure: compiler and linker flags for the options in lib/vendor.h."
     echo "# Included by Makefile and BSDmakefile; do not edit, run ./configure again."
+    echo "CC = $CC"
     cat "$tmp/mk"
 } > "$tmp/config.mk"
 
@@ -368,6 +371,9 @@ if [ "$dry" -eq 1 ]; then
     cmp -s "$vendor" "$cur" && note "lib/vendor.h: no change" || note "lib/vendor.h: would change"
     exit 0
 fi
-cmp -s "$vendor" "$cur" || cat "$cur" > "$vendor"
-cat "$tmp/config.mk" > "$mk"
+# replace the files by rename, so an interrupted run never leaves one of them truncated
+if ! cmp -s "$vendor" "$cur"; then
+    cp "$cur" "$vendor.new" && mv "$vendor.new" "$vendor" || { rm -f "$vendor.new"; echo "configure: cannot write $vendor" >&2; exit 1; }
+fi
+cp "$tmp/config.mk" "$mk.new" && mv "$mk.new" "$mk" || { rm -f "$mk.new"; echo "configure: cannot write $mk" >&2; exit 1; }
 note "wrote $mk and updated $vendor; now run make (gmake on FreeBSD and illumos)"
