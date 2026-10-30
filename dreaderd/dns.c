@@ -12,6 +12,10 @@
 
 #ifdef LDAP_ENABLED
 #define LDAP_COMPARE
+/* the synchronous calls used below are deprecated, but still in OpenLDAP 2.x */
+#ifndef LDAP_DEPRECATED
+#define LDAP_DEPRECATED 1
+#endif
 #include <lber.h>
 #include <ldap.h>
 #endif
@@ -1322,10 +1326,16 @@ LDAPAuthenticate(char *user, char *pass, char *conf)
 
 #ifdef PERL_ENABLED
 
-EXTERN_C void xs_init (pTHXo);
-EXTERN_C void boot_DynaLoader (pTHXo_ CV* cv);
+/*
+ * A perl built with threads or multiplicity (the usual case today) wants
+ * the interpreter in a variable of this name.
+ */
+static PerlInterpreter *my_perl = NULL;
 
-EXTERN_C void xs_init(pTHXo)
+EXTERN_C void xs_init (pTHX);
+EXTERN_C void boot_DynaLoader (pTHX_ CV* cv);
+
+EXTERN_C void xs_init(pTHX)
 {
     char *file = __FILE__;
     dXSUB_SYS;
@@ -1366,24 +1376,23 @@ char *PerlAuthenticate(char *user, char *pass, char *conf)
     char *result;
     char *reslog;
 
-    static PerlInterpreter *perl = NULL;
     int exitstatus = 0;
 
-    if (perl == NULL) {
-        if((perl = perl_alloc()) == NULL) {
+    if (my_perl == NULL) {
+        if((my_perl = perl_alloc()) == NULL) {
             fprintf(stderr, "perl_alloc no memory\n");
             exit(1);
         }
         PL_perl_destruct_level = 0;
-        perl_construct(perl);
-        exitstatus = perl_parse(perl, xs_init, 2, embedding, NULL);
+        perl_construct(my_perl);
+        exitstatus = perl_parse(my_perl, xs_init, 2, embedding, NULL);
         if (!exitstatus) {
-            exitstatus = perl_run(perl);
+            exitstatus = perl_run(my_perl);
         }
         if (exitstatus) {
             fprintf(stderr, "perl_parse or perl_run failed\n");
-            perl_destruct(perl);
-            perl_free(perl);
+            perl_destruct(my_perl);
+            perl_free(my_perl);
             exit(exitstatus);
         }
     }

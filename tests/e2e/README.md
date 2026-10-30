@@ -53,6 +53,7 @@ test fails.
 | `TestReaderListActiveAfterRecordRewrite` | dreaderd | a reader that listed the groups before a control message rewrote a group record lists every group in its next LIST ACTIVE (D-54). **Fails** on main: the appended record was skipped once |
 | `TestDnewslinkTermStalledPeer` | diablo, dnewslink | SIGTERM while dnewslink waits for a stalled peer (at the greeting, and on an unanswered CHECK/TAKETHIS): it exits within 5 s and both articles stay queued. **Fails** on main before this fix: dnewslink polled again for the full `-T` timeout (600 s) after the signal |
 | `TestReaderFeedAndRead` | dreaderd, dgrpctl | an article fed to the reader by IHAVE shows in GROUP and OVER; BODY and ARTICLE fetch it from the spool server (fake) |
+| `TestReaderPerlAuth` | dreaderd | with `PERL_ENABLED` (`./configure`), an authdef `perl <script>` logs in when the script's `checkuser` returns a result starting with 1, and refuses a wrong password; skipped when dreaderd is built without Perl |
 | `TestReaderQuitAlone` | dreaderd | QUIT gets 205 and nothing follows it |
 | `TestReaderQuitWhileConnecting` | dreaderd | a client that QUITs while another connects gets 205 and nothing after it. **Fails** on main before jrehmer/diablo-nntp#12 (dreaderd wrote "400 Server too busy" after the 205 when its only DNS worker was busy) |
 | `TestReaderPost` | dreaderd | POST is passed to the outgoing ('o') server (fake peer) with IHAVE: body as posted, the vserver's `postpath` in the Path |

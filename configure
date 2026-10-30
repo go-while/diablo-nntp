@@ -1,0 +1,118 @@
+#!/bin/sh
+# configure: detect Perl and LDAP support and set PERL_ENABLED and LDAP_ENABLED in
+# lib/vendor.h before the build.
+#
+#   ./configure                  turn an option on when the build host can build it;
+#                                what is not found is left as it is in lib/vendor.h
+#   ./configure --with-perl      turn the option on without looking (also --with-ldap)
+#   ./configure --without-perl   turn the option off (also --without-ldap)
+#   ./configure -n               only report, change nothing
+#
+# CC and PERL in the environment name the compiler and the perl to probe.
+# Then run make as usual.
+
+CC=${CC:-cc}
+PERL=${PERL:-perl}
+vendor=lib/vendor.h
+perl_mode=auto
+ldap_mode=auto
+dry=0
+
+while [ $# -gt 0 ]; do
+    case $1 in
+	--with-perl) perl_mode=on ;;
+	--without-perl) perl_mode=off ;;
+	--with-ldap) ldap_mode=on ;;
+	--without-ldap) ldap_mode=off ;;
+	-n|--dry-run) dry=1 ;;
+	-h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+	*) echo "configure: unknown option $1" >&2; exit 2 ;;
+    esac
+    shift
+done
+
+cd "$(dirname "$0")" || exit 1
+[ -f "$vendor" ] || { echo "configure: $vendor not found" >&2; exit 1; }
+
+tmp=${TMPDIR:-/tmp}/diablo-configure.$$
+trap 'rm -rf "$tmp"' EXIT HUP INT TERM
+mkdir "$tmp" || exit 1
+
+# can_build_perl: an embedded perl compiles and links with the options perl itself gives
+can_build_perl() {
+    cat > "$tmp/p.c" <<'EOT'
+#include <EXTERN.h>
+#include <perl.h>
+static PerlInterpreter *my_perl;
+int main(void) { my_perl = perl_alloc(); return my_perl == 0; }
+EOT
+    cc_opts=$("$PERL" -MExtUtils::Embed -e ccopts 2>/dev/null) || return 1
+    ld_opts=$("$PERL" -MExtUtils::Embed -e ldopts 2>/dev/null) || return 1
+    # shellcheck disable=SC2086
+    $CC $cc_opts -o "$tmp/p" "$tmp/p.c" $ld_opts >/dev/null 2>&1
+}
+
+# can_build_ldap: ldap.h and libldap/liblber, in the system directories or under a package prefix
+can_build_ldap() {
+    cat > "$tmp/l.c" <<'EOT'
+#define LDAP_DEPRECATED 1
+#include <lber.h>
+#include <ldap.h>
+int main(void) { LDAP *ld = ldap_init("localhost", 389); return ld == 0; }
+EOT
+    for p in "" /usr/local /opt/local /opt/ooce; do
+	if [ -z "$p" ]; then
+	    flags=""
+	else
+	    [ -f "$p/include/ldap.h" ] || continue
+	    flags="-I$p/include -L$p/lib"
+	fi
+	# shellcheck disable=SC2086
+	if $CC $flags -o "$tmp/l" "$tmp/l.c" -lldap -llber >/dev/null 2>&1; then
+	    return 0
+	fi
+    done
+    return 1
+}
+
+# set_option NAME on|off: make lib/vendor.h say #define or #undef for NAME
+set_option() {
+    name=$1
+    want=$2
+    if [ "$want" = on ]; then new="#define	$name"; else new="#undef	$name"; fi
+    # the line that sets the option, not the comment text around it
+    if ! grep -E "^#[[:space:]]*(define|undef)[[:space:]]+$name([[:space:]]|\$)" "$vendor" >/dev/null; then
+	echo "configure: no $name line in $vendor, not changed" >&2
+	return 1
+    fi
+    sed -E "s/^#[[:space:]]*(define|undef)[[:space:]]+$name([[:space:]].*)?\$/$new/" "$vendor" > "$tmp/vendor.h" || return 1
+    if cmp -s "$vendor" "$tmp/vendor.h"; then
+	echo "$name: already $want"
+    elif [ "$dry" -eq 1 ]; then
+	echo "$name: would turn $want"
+    else
+	cat "$tmp/vendor.h" > "$vendor" || return 1
+	echo "$name: turned $want in $vendor"
+    fi
+}
+
+# handle NAME mode probe-function
+handle() {
+    name=$1
+    mode=$2
+    probe=$3
+    case $mode in
+	on) set_option "$name" on ;;
+	off) set_option "$name" off ;;
+	auto)
+	    if "$probe"; then
+		echo "$name: found"
+		set_option "$name" on
+	    else
+		echo "$name: not found, $vendor unchanged"
+	    fi ;;
+    esac
+}
+
+handle PERL_ENABLED "$perl_mode" can_build_perl
+handle LDAP_ENABLED "$ldap_mode" can_build_ldap

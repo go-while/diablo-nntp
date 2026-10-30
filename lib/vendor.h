@@ -131,8 +131,9 @@
 #undef	NETREMOTE_ENABLED
 
 /*
- * Enable LDAP authentication.  Requires LDAP libraries and -lldap to
- * be add to LFLAGS in XMakefile.inc
+ * Enable LDAP authentication.  Requires the OpenLDAP development files
+ * (ldap.h, libldap and liblber); the Makefile adds the libraries.
+ * ./configure turns this on where they are found.
  */
 
 #undef	LDAP_ENABLED
@@ -272,17 +273,14 @@
 #define INET6
 
 /*
- * Experimental PERL authentication by an external script.  Requires
- * perl-5.6 and -L and -I options added to XMakefile.inc CFLAGS and LFLAGS
- * based on the results of:
+ * Experimental PERL authentication by an external script.  Requires a
+ * perl that can be embedded (perl.h and libperl, e.g. libperl-dev); the
+ * Makefile takes the compile and link options from:
  *
  * perl -MExtUtils::Embed -e ccopts
  * perl -MExtUtils::Embed -e ldopts
  *
- * e.g:
- *
- * -I/usr/local/lib/perl5/5.6.1/sun4-solaris/CORE
- * -L/usr/local/lib/perl5/5.6.1/sun4-solaris/CORE -lperl
+ * ./configure turns this on where perl can be embedded.
  *
  * The perl script is specified as an authdef in dreader.access.
  * A sample perl script is available in contrib/ckpasswd  and uses

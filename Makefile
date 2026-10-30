@@ -42,6 +42,8 @@ RADIUS_ENABLED := $(shell awk -v option=RADIUS_ENABLED -f compat/detect-vendor-o
 DB_ENABLED := $(shell awk -v option=DB_ENABLED -f compat/detect-vendor-option.awk lib/vendor.h)
 CANLOCK_ENABLED := $(shell awk -v option=CANLOCK_ENABLED -f compat/detect-vendor-option.awk lib/vendor.h)
 REJECT_DB_ENABLED := $(shell awk -v option=REJECT_DB -f compat/detect-vendor-option.awk lib/vendor.h)
+LDAP_ENABLED := $(shell awk -v option=LDAP_ENABLED -f compat/detect-vendor-option.awk lib/vendor.h)
+PERL_ENABLED := $(shell awk -v option=PERL_ENABLED -f compat/detect-vendor-option.awk lib/vendor.h)
 # Either DB authentication or the rejection database uses dbopen().
 DB185_REQUIRED := $(if $(filter 1,$(DB_ENABLED) $(REJECT_DB_ENABLED)),1,)
 
@@ -55,6 +57,24 @@ ifneq ($(CANLOCK_PREFIX),)
 CPPFLAGS += -I$(CANLOCK_PREFIX)/include
 LDFLAGS += -L$(CANLOCK_PREFIX)/lib -Wl,-R,$(CANLOCK_PREFIX)/lib
 endif
+endif
+
+# LDAP authentication: libldap and liblber, in the system directories on Linux,
+# under a package prefix on FreeBSD and SmartOS.
+ifeq ($(LDAP_ENABLED),1)
+LDLIBS += -lldap -llber
+LDAP_PREFIX := $(firstword $(foreach dir, /usr/local /opt/local /opt/ooce, \
+    $(if $(wildcard $(dir)/include/ldap.h),$(dir))))
+ifneq ($(LDAP_PREFIX),)
+CPPFLAGS += -I$(LDAP_PREFIX)/include
+LDFLAGS += -L$(LDAP_PREFIX)/lib -Wl,-R,$(LDAP_PREFIX)/lib
+endif
+endif
+
+# Perl authentication: the compile and link options of the installed perl.
+ifeq ($(PERL_ENABLED),1)
+CPPFLAGS += $(shell perl -MExtUtils::Embed -e ccopts)
+LDLIBS += $(shell perl -MExtUtils::Embed -e ldopts)
 endif
 
 # Platform-specific settings
