@@ -12,7 +12,7 @@ re-checked yet.
 Status values: **open**, **PR** (fix waiting for review, with its number), **fixed** (with
 the PR that fixed it), **decision** (needs the maintainer to decide), **won't fix**.
 
-Last updated 2026-10-29: D-16 marked fixed (#127). D-135 to D-146 and D-156, D-157 marked fixed (#145, #151 to #154); D-158 won't fix; D-150 to D-155 marked fixed (#158); D-147 to D-149 marked fixed (#159); D-159 to D-162 marked fixed (#160); D-164 to D-166 added from go-while's review of #160. Before that, 2026-10-28: D-91, D-96, D-98 and D-131 to D-133 marked fixed (#146 to #149). F-01 marked done, F-04 (NoCeM) and F-05 (init scripts, done) added, D-163 (file modes, fixed in #139) added; D-135 to D-162 added from go-while's batch of `main` at `0401451`, and a note on D-94. Before that, D-110 to D-134 added from go-while's third review pass of `main` at `6a4b97d`. Before that, 2026-10-27: D-66 to D-109 added from the second review pass and the reviews of the fixes
+Last updated 2026-10-30: F-06 (Perl authentication) added; F-02 noted in progress (#167). Before that, 2026-10-29: D-16 marked fixed (#127). D-135 to D-146 and D-156, D-157 marked fixed (#145, #151 to #154); D-158 won't fix; D-150 to D-155 marked fixed (#158); D-147 to D-149 marked fixed (#159); D-159 to D-162 marked fixed (#160); D-164 to D-166 added from go-while's review of #160. Before that, 2026-10-28: D-91, D-96, D-98 and D-131 to D-133 marked fixed (#146 to #149). F-01 marked done, F-04 (NoCeM) and F-05 (init scripts, done) added, D-163 (file modes, fixed in #139) added; D-135 to D-162 added from go-while's batch of `main` at `0401451`, and a note on D-94. Before that, D-110 to D-134 added from go-while's third review pass of `main` at `6a4b97d`. Before that, 2026-10-27: D-66 to D-109 added from the second review pass and the reviews of the fixes
 (D-77 is documented behaviour and only needs a note); the fixed ones are marked with their PR. Before that, D-53 to D-65 added from the review of `main` at `ca648d4`. Before that, 2026-10-26, after batch 1 (#30, #31, #37 to #44, #47 to #49) and the first part
 of batch 2 (#46, #50, #52, #62) were merged. Open: #35 (GnuPG pgpverify, held for a private
 advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
@@ -181,7 +181,7 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-165](#d-165-dreaderd-exits-when-one-access-cache-file-cannot-be-opened) | Low | dreaderd exits when one access-cache file cannot be opened | open |
 | [D-166](#d-166-a-misspelled-readerdef-option-is-logged-but-the-file-is-still-installed) | Low | A misspelled readerdef option is logged but the file is still installed | open |
 
-Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315), [F-02 configure script](#f-02-configure-script-for-the-build-options), [F-03 refeed a whole spool](#f-03-refeed-a-whole-spool-to-another-server), [F-04 NoCeM notices](#f-04-nocem-notices), [F-05 init scripts](#f-05-init-scripts-and-adm-script-replacements).
+Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315), [F-02 configure script](#f-02-configure-script-for-the-build-options), [F-03 refeed a whole spool](#f-03-refeed-a-whole-spool-to-another-server), [F-04 NoCeM notices](#f-04-nocem-notices), [F-05 init scripts](#f-05-init-scripts-and-adm-script-replacements), [F-06 Perl authentication](#f-06-perl-authentication-for-dreaderd).
 
 ## Details
 
@@ -1056,7 +1056,7 @@ for `db_185.h` and `radlib.h`. The script would probe the same headers (and zlib
 write a local override file that `vendor.h` includes, leaving the admin's own settings in charge.
 It covers Linux, FreeBSD and SmartOS with little churn. A full autoconf setup (`configure.ac`, a
 generated `configure`, a `config.h.in`) can follow if it is wanted. Suggested by the maintainer and
-go-while on 2026-10-27.
+go-while on 2026-10-27. **Status: in progress in #167** (draft): a hand-written POSIX-sh `./configure` probes zlib, libcanlock, Berkeley DB, cdb, PAM, LDAP, Perl and RADIUS (radcli on Linux), writes `config.mk` and sets the `vendor.h` options; review findings are being worked before it lands. This also settles D-16.
 
 ### F-03 Refeed a whole spool to another server
 There is no command that feeds every article on a diablo spool to another server. To another diablo
@@ -1103,3 +1103,18 @@ trim and sort at start; `adm/actsync`, `adm/dumphist` and `adm/histbackup` are n
 and rewriteover jobs were already `daily.reader` and `weekly.reader`). Tried for real on systemd,
 SMF and FreeBSD rc.d. Follow-ups: #145.
 
+### F-06 Perl authentication for dreaderd
+dreaderd can call an external `perl` auth hook, but the path was thin and effectively single-use. This
+feature tracks bringing dreaderd authentication up to standard as part of the auth-backend
+modernization (alongside F-02's configure step, which also wires up RADIUS/radcli, cdb and PAM). Work
+is on the maintainer's branches: **#167** adds `./configure` feature-detection and RADIUS via radcli;
+**#168** adds the tracking rows D-167 to D-169 (Perl authentication, file and cdb deny lists); **#169**
+adds `contrib/htpasswd-auth.pl` (auth against an Apache htpasswd file) and reworks the dreaderd Perl
+hook so each distinct `perl` line gets its own interpreter (fixes D-167) and a failed load refuses
+logins instead of killing the worker.
+
+`PERL_ENABLED` is treated as a feature, not a quick merge: it goes live only after (1) the #167/#169
+review findings are fixed — notably the htpasswd no-cache DoS and the `call_checkuser` `G_EVAL` guard
+(patch sent), the configure missing-`config.mk` hard error, and the radcli Filter-Id fail-open — and
+(2) a second deep code review of the fixed auth path (`dreaderd/dns.c` `PerlAuthenticate`/`perlWords`,
+`contrib/htpasswd-auth.pl`, the radcli adapter). Agreed with the maintainer on 2026-10-30.
