@@ -82,8 +82,11 @@ ifneq ($(RADCLI_PREFIX),)
 CPPFLAGS += -I$(RADCLI_PREFIX)/include
 LDFLAGS += -L$(RADCLI_PREFIX)/lib -Wl,-R,$(RADCLI_PREFIX)/lib
 endif
+# /etc/radcli on Debian, Ubuntu and Fedora; /usr/share/radcli on Arch; /usr/etc on openSUSE.
 RADCLI_DICTIONARY := $(firstword $(wildcard /etc/radcli/dictionary \
-    /usr/local/etc/radcli/dictionary /opt/local/etc/radcli/dictionary))
+    /usr/local/etc/radcli/dictionary /opt/local/etc/radcli/dictionary \
+    /usr/share/radcli/dictionary /usr/local/share/radcli/dictionary \
+    /usr/etc/radcli/dictionary))
 ifneq ($(RADCLI_DICTIONARY),)
 CPPFLAGS += -DRADCLI_DICTIONARY=\"$(RADCLI_DICTIONARY)\"
 endif

@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"bytes"
+	"crypto/hmac"
 	"crypto/md5"
 	"fmt"
 	"net"
@@ -70,6 +71,7 @@ func (f *fakeRadius) answer(p []byte) []byte {
 	}
 	id, reqAuth := p[1], p[4:20]
 	var req radiusReq
+	var wantMA bool
 	for a := p[20:]; len(a) >= 2 && int(a[1]) >= 2 && int(a[1]) <= len(a); a = a[a[1]:] {
 		v := a[2:a[1]]
 		switch a[0] {
@@ -81,6 +83,8 @@ func (f *fakeRadius) answer(p []byte) []byte {
 			req.callingStation = string(v)
 		case 77:
 			req.connectInfo = string(v)
+		case 80:
+			wantMA = true // Message-Authenticator: newer radcli sends it and wants it back
 		}
 	}
 	f.mu.Lock()
@@ -95,9 +99,19 @@ func (f *fakeRadius) answer(p []byte) []byte {
 			attrs = append([]byte{11, byte(2 + len(u.filterID))}, u.filterID...)
 		}
 	}
+	if wantMA {
+		// Message-Authenticator (BlastRADIUS): HMAC-MD5 over the reply with the request's
+		// authenticator in the header and zeros in the attribute itself
+		attrs = append(attrs, 80, 18, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+	}
 	n := 20 + len(attrs)
 	resp := append([]byte{code, id, byte(n >> 8), byte(n)}, reqAuth...)
 	resp = append(resp, attrs...)
+	if wantMA {
+		mac := hmac.New(md5.New, []byte(f.secret))
+		mac.Write(resp)
+		copy(resp[n-16:], mac.Sum(nil))
+	}
 	sum := md5.Sum(append(append([]byte(nil), resp...), f.secret...))
 	copy(resp[4:20], sum[:])
 	return resp
@@ -265,9 +279,16 @@ func TestReaderRadiusNativeConfig(t *testing.T) {
 	if !ok || !radcli {
 		t.Skip("dreaderd is not built with the radcli adapter (RADIUS_RADCLI)")
 	}
-	dict := "/etc/radcli/dictionary"
-	if _, err := os.Stat(dict); err != nil {
-		t.Skip("no radcli dictionary at " + dict)
+	dict := ""
+	for _, d := range []string{"/etc/radcli/dictionary", "/usr/local/etc/radcli/dictionary",
+		"/usr/share/radcli/dictionary", "/usr/local/share/radcli/dictionary", "/usr/etc/radcli/dictionary"} {
+		if _, err := os.Stat(d); err == nil {
+			dict = d
+			break
+		}
+	}
+	if dict == "" {
+		t.Skip("no radcli dictionary found")
 	}
 	srv := startFakeRadius(t, "testing123", map[string]radiusUser{"pat": {pass: "patspass"}})
 	conf := filepath.Join(t.TempDir(), "radiusclient.conf")
