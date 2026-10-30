@@ -107,3 +107,31 @@ func TestDsyncgroupsPeerClosesAtQuit(t *testing.T) {
 		t.Errorf("the missing QUIT reply was printed as %q (an unset reply pointer), want nothing", rest)
 	}
 }
+
+// TestDsyncgroupsShortActiveLine (D-109): a blank or short LIST ACTIVE line ("", "alpha",
+// "alpha 10") left the group name or an article number NULL after strtok() and dsyncgroups
+// dereferenced it (with -w, WildCmp() read the NULL name). Such lines are skipped, with and
+// without -w, and the complete line after them is still read.
+func TestDsyncgroupsShortActiveLine(t *testing.T) {
+	for _, wild := range []string{"", "a*"} {
+		wild := wild
+		t.Run("wild="+wild, func(t *testing.T) {
+			s := NewSite(t, SiteOptions{NoStart: true})
+			port := dsyncPeer{
+				Active: []string{"", "alpha", "alpha 10", "alpha 10 1 y"},
+			}.listen(t)
+			args := []string{"-h", "127.0.0.1", "-p", strconv.Itoa(port),
+				"-F", filepath.Join(s.Dir, "dactive.kp"), "-z"}
+			if wild != "" {
+				args = append(args, "-w", wild)
+			}
+			out, err := s.TryRun("dsyncgroups", args...)
+			if err != nil {
+				t.Errorf("dsyncgroups failed (%v) on short LIST ACTIVE lines:\n%s", err, out)
+			}
+			if !strings.Contains(out, "1 groups returned by list active") {
+				t.Errorf("want 1 group (alpha) from list active in:\n%s", out)
+			}
+		})
+	}
+}

@@ -697,6 +697,13 @@ processLine(char *cmd, char *wild, int *count, int *ok)
 	flags = strtok(NULL, " \r\n");
 
 	/*
+	 * a blank or short line has no group name or numbers: skip it
+	 */
+
+	if (group == NULL || gend == NULL || gbeg == NULL)
+	    return;
+
+	/*
 	 * ignore group that does not match the wildcard, even though
 	 * the remote end is supposed to do this for us.
 	 */
