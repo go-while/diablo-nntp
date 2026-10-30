@@ -36,7 +36,7 @@
 
 Prototype void RTClearStatus(int index, int count);
 Prototype void RTUpdateStatus(int slot, const char *ctl, ...);
-Prototype pid_t ForkPipe(int *pfd, void (*task)(int fd, const char *id), const char *description);
+Prototype pid_t ForkPipe(int *pfd, void (*task)(int fd, const char *id), const char *description, int sockType);
 Prototype void ValidateTcpBufferSize(int *psize);
 
 Prototype int NumReaderForks;
@@ -95,6 +95,14 @@ int NumDnsForks;
 int NumSDnsForks;
 int NumPending;			/* pending connections	*/
 int NumActive;			/* active connections	*/
+
+/*
+ * Socket type of the DNS/auth IPC socketpair.  SOCK_SEQPACKET keeps the
+ * fixed-size DnsReq and DnsRes messages apart; SOCK_STREAM is the fallback
+ * for systems whose AF_UNIX does not implement SOCK_SEQPACKET (illumos and
+ * Solaris document it as not implemented for any protocol family).
+ */
+static int DnsSockType = SOCK_STREAM;
 
 /*
  * Requests (new connections, AUTHINFO logins) that found every DNS worker
@@ -881,7 +889,7 @@ main(int ac, char **av)
 
 	    ThisReaderFork = getReaderForkSlot();
 	    FeedOnlyServer = 0;
-	    pid = ForkPipe(&fd, ReaderTask, "reader");
+	    pid = ForkPipe(&fd, ReaderTask, "reader", SOCK_STREAM);
 	    FeedOnlyServer = -1;
 	    if (pid < 0)
 		break;
@@ -900,7 +908,7 @@ main(int ac, char **av)
 
 	    ThisReaderFork = getReaderForkSlot();
 	    FeedOnlyServer = 1;
-	    pid = ForkPipe(&fd, ReaderTask, "feed");
+	    pid = ForkPipe(&fd, ReaderTask, "feed", SOCK_STREAM);
 	    FeedOnlyServer = -1;
 	    if (pid < 0)
 		break;
@@ -917,7 +925,7 @@ main(int ac, char **av)
 	    pid_t pid;
 	    int fd;
 
-	    if ((pid = ForkPipe(&fd, DnsTask, "reader-dns")) < 0)
+	    if ((pid = ForkPipe(&fd, DnsTask, "reader-dns", SOCK_SEQPACKET)) < 0)
 		break;
 	    AddThread("dns", fd, pid, THREAD_DNS, -1, 0);
 	    ++NumDnsForks;
@@ -932,7 +940,7 @@ main(int ac, char **av)
 	    pid_t pid;
 	    int fd;
 
-	    if ((pid = ForkPipe(&fd, DnsTask, "reader-sdns")) < 0)
+	    if ((pid = ForkPipe(&fd, DnsTask, "reader-sdns", SOCK_SEQPACKET)) < 0)
 		break;
 	    AddThread("sdns", fd, pid, THREAD_SDNS, -1, 0);
 	    ++NumSDnsForks;
@@ -1576,12 +1584,29 @@ TrySendDns(int fd, struct sockaddr_in *rsin, DnsRes *dres)
 	else
 	    best->d_FdPend = fd;
 	bcopy(rsin, &best->d_SaveRSin, sizeof(best->d_SaveRSin));
-	/* 
-	 * A failure is only logged.  If the DNS process died, it
-	 * will be cleaned up later.
+	/*
+	 * The worker never received a whole request, so no reply is coming:
+	 * undo the accounting and let the caller queue the request again.
+	 * With SOCK_SEQPACKET a failed write sent nothing at all.  On the
+	 * SOCK_STREAM fallback a short write may already have left half a
+	 * request in the pipe, so retire the worker instead of feeding it
+	 * the next request at a wrong offset.
 	 */
-	if (WriteAll(best->d_Fd, &dreq, sizeof(dreq)) < 0)
-	    logit(LOG_ERR, "DNS request to worker failed: %s", strerror(errno));
+	if (WriteAll(best->d_Fd, &dreq, sizeof(dreq)) < 0) {
+	    int err = errno;
+
+	    logit(LOG_ERR, "DNS request to worker failed: %s", strerror(err));
+	    best->d_FdPend = -1;
+	    --best->d_Count;
+	    --NumPending;
+	    --NumActive;
+	    if (DnsSockType != SOCK_SEQPACKET) {
+		best->d_Dead = 1;
+		if (best->d_Pid > 0)
+		    kill(best->d_Pid, SIGKILL);
+	    }
+	    return(0);
+	}
 	return(1);
     }
     return(0);
@@ -1685,7 +1710,7 @@ DnsQueueRun(void)
 }
 
 pid_t
-ForkPipe(int *pfd, void (*task)(int fd, const char *id), const char *description)
+ForkPipe(int *pfd, void (*task)(int fd, const char *id), const char *description, int sockType)
 {
     int fds[2] = { 0, 0 };
     pid_t pid;
@@ -1694,11 +1719,32 @@ ForkPipe(int *pfd, void (*task)(int fd, const char *id), const char *description
 
     /*
      * NOTE: must use socketpair in order to be able to pass descriptors.
+     *
+     * The DNS workers exchange fixed-size DnsReq and DnsRes structs.  A
+     * SOCK_SEQPACKET pair preserves their message boundaries, so a short
+     * write cannot leave a fragment that the worker reads together with
+     * the next request.  Fall back to a stream where SEQPACKET is not
+     * implemented; the protocol still works there, it just relies on the
+     * writer completing every message.
      */
 
-    if (socketpair(PF_UNIX, SOCK_STREAM, IPPROTO_IP, fds) < 0) {
-	logit(LOG_ERR, "socketpair() call failed");
-	return((pid_t)-1);
+    if (socketpair(PF_UNIX, sockType, IPPROTO_IP, fds) < 0) {
+	if (sockType == SOCK_STREAM) {
+	    logit(LOG_ERR, "socketpair() call failed");
+	    return((pid_t)-1);
+	}
+	logit(LOG_NOTICE, "socketpair(SOCK_SEQPACKET) failed (%s), using SOCK_STREAM",
+		strerror(errno));
+	sockType = SOCK_STREAM;
+	if (socketpair(PF_UNIX, SOCK_STREAM, IPPROTO_IP, fds) < 0) {
+	    logit(LOG_ERR, "socketpair() call failed");
+	    return((pid_t)-1);
+	}
+    }
+    if (task == DnsTask && DnsSockType != sockType) {
+	DnsSockType = sockType;
+	logit(LOG_INFO, "DNS worker IPC uses %s",
+		sockType == SOCK_SEQPACKET ? "SOCK_SEQPACKET" : "SOCK_STREAM");
     }
     if (fds[0] > MAXFDS || fds[1] > MAXFDS) {
 	logit(LOG_ERR, "pipe desc > MAXFDS: %d/%d/%d", fds[0], fds[1], MAXFDS);
