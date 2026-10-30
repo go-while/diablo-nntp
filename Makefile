@@ -44,7 +44,7 @@ ifeq ($(filter clean distclean,$(MAKECMDGOALS)),)
 $(error config.mk not found: run ./configure first (see INSTALL))
 endif
 endif
-include config.mk
+-include config.mk
 
 # Platform-specific settings
 
