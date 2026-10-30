@@ -82,11 +82,14 @@ ifneq ($(RADCLI_PREFIX),)
 CPPFLAGS += -I$(RADCLI_PREFIX)/include
 LDFLAGS += -L$(RADCLI_PREFIX)/lib -Wl,-R,$(RADCLI_PREFIX)/lib
 endif
-# /etc/radcli on Debian, Ubuntu and Fedora; /usr/share/radcli on Arch; /usr/etc on openSUSE.
+# /etc/radcli on Debian, Ubuntu and Fedora, /usr/share/radcli on Arch; any other
+# */radcli/dictionary under the usual directories is found by the find.
 RADCLI_DICTIONARY := $(firstword $(wildcard /etc/radcli/dictionary \
     /usr/local/etc/radcli/dictionary /opt/local/etc/radcli/dictionary \
     /usr/share/radcli/dictionary /usr/local/share/radcli/dictionary \
-    /usr/etc/radcli/dictionary))
+    /usr/etc/radcli/dictionary) \
+    $(shell find /etc /usr/etc /usr/local/etc /opt/local/etc /usr/share /usr/local/share \
+    -maxdepth 3 -path '*/radcli/dictionary' 2>/dev/null))
 ifneq ($(RADCLI_DICTIONARY),)
 CPPFLAGS += -DRADCLI_DICTIONARY=\"$(RADCLI_DICTIONARY)\"
 endif

@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -100,9 +102,10 @@ func (f *fakeRadius) answer(p []byte) []byte {
 		}
 	}
 	if wantMA {
-		// Message-Authenticator (BlastRADIUS): HMAC-MD5 over the reply with the request's
-		// authenticator in the header and zeros in the attribute itself
-		attrs = append(attrs, 80, 18, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+		// Message-Authenticator (BlastRADIUS), which radcli 1.4 and later wants as the first
+		// attribute: HMAC-MD5 over the reply with the request's authenticator in the header
+		// and zeros in the attribute itself
+		attrs = append([]byte{80, 18, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, attrs...)
 	}
 	n := 20 + len(attrs)
 	resp := append([]byte{code, id, byte(n >> 8), byte(n)}, reqAuth...)
@@ -110,7 +113,7 @@ func (f *fakeRadius) answer(p []byte) []byte {
 	if wantMA {
 		mac := hmac.New(md5.New, []byte(f.secret))
 		mac.Write(resp)
-		copy(resp[n-16:], mac.Sum(nil))
+		copy(resp[22:38], mac.Sum(nil))
 	}
 	sum := md5.Sum(append(append([]byte(nil), resp...), f.secret...))
 	copy(resp[4:20], sum[:])
@@ -279,13 +282,13 @@ func TestReaderRadiusNativeConfig(t *testing.T) {
 	if !ok || !radcli {
 		t.Skip("dreaderd is not built with the radcli adapter (RADIUS_RADCLI)")
 	}
+	// the dictionary of the radcli package: /etc/radcli on Debian, Ubuntu and Fedora,
+	// /usr/share/radcli on Arch, elsewhere on others
 	dict := ""
-	for _, d := range []string{"/etc/radcli/dictionary", "/usr/local/etc/radcli/dictionary",
-		"/usr/share/radcli/dictionary", "/usr/local/share/radcli/dictionary", "/usr/etc/radcli/dictionary"} {
-		if _, err := os.Stat(d); err == nil {
-			dict = d
-			break
-		}
+	out, _ := exec.Command("find", "/etc", "/usr/etc", "/usr/local/etc", "/opt/local/etc",
+		"/usr/share", "/usr/local/share", "-maxdepth", "3", "-path", "*/radcli/dictionary").Output()
+	if f := strings.Fields(string(out)); len(f) > 0 {
+		dict = f[0]
 	}
 	if dict == "" {
 		t.Skip("no radcli dictionary found")
