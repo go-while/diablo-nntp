@@ -89,6 +89,9 @@ endif
 
 ifeq ($(UNAME_S),Linux)
 CPPFLAGS += -D_FILE_OFFSET_BITS=64
+ifeq ($(RADIUS_ENABLED),1)
+LDLIBS += -lradius
+endif
 # libdb-devel supplies libdb.so and the Berkeley DB 1.85 dbopen() shim.
 # Neither feature is required when both DB_ENABLED and REJECT_DB are off.
 ifeq ($(DB185_REQUIRED),1)

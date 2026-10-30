@@ -81,7 +81,8 @@
 /*
  * Enable RADIUS authentication.  Works on FreeBSD or similar libradius
  * (radlib.h; libradius on SmartOS).  Off by default: Linux has no BSD
- * libradius.  To use it, change the #undef below to #define.
+ * libradius.  To use it, run ./configure (it turns this on where radlib.h
+ * and libradius are found) or change the #undef below to #define.
  */
 
 #undef	RADIUS_ENABLED

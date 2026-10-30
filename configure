@@ -1,11 +1,12 @@
 #!/bin/sh
-# configure: detect Perl and LDAP support and set PERL_ENABLED and LDAP_ENABLED in
-# lib/vendor.h before the build.
+# configure: detect Perl, LDAP and RADIUS support and set PERL_ENABLED, LDAP_ENABLED and
+# RADIUS_ENABLED in lib/vendor.h before the build.
 #
 #   ./configure                  turn an option on when the build host can build it;
 #                                what is not found is left as it is in lib/vendor.h
-#   ./configure --with-perl      turn the option on without looking (also --with-ldap)
-#   ./configure --without-perl   turn the option off (also --without-ldap)
+#   ./configure --with-perl      turn the option on without looking (also --with-ldap,
+#                                --with-radius)
+#   ./configure --without-perl   turn the option off (also --without-ldap, --without-radius)
 #   ./configure -n               only report, change nothing
 #
 # CC and PERL in the environment name the compiler and the perl to probe.
@@ -16,6 +17,7 @@ PERL=${PERL:-perl}
 vendor=lib/vendor.h
 perl_mode=auto
 ldap_mode=auto
+radius_mode=auto
 dry=0
 
 while [ $# -gt 0 ]; do
@@ -24,8 +26,10 @@ while [ $# -gt 0 ]; do
 	--without-perl) perl_mode=off ;;
 	--with-ldap) ldap_mode=on ;;
 	--without-ldap) ldap_mode=off ;;
+	--with-radius) radius_mode=on ;;
+	--without-radius) radius_mode=off ;;
 	-n|--dry-run) dry=1 ;;
-	-h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+	-h|--help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
 	*) echo "configure: unknown option $1" >&2; exit 2 ;;
     esac
     shift
@@ -75,6 +79,38 @@ EOT
     return 1
 }
 
+# can_build_radius: radlib.h and libradius (FreeBSD base, libradius on SmartOS)
+can_build_radius() {
+    cat > "$tmp/r.c" <<'EOT'
+#include <sys/types.h>
+#if defined(__sun)
+#include "compat/smartos_radlib.h"
+#endif
+#include <radlib.h>
+#if defined(__sun)
+/* libradius calls srandomdev(), which illumos lacks; compat/srandomdev.c supplies it */
+void srandomdev(void) { }
+#endif
+int main(void) { struct rad_handle *h = rad_auth_open(); return h == 0; }
+EOT
+    for p in "" /usr/local /opt/local /opt/ooce; do
+	if [ -z "$p" ]; then
+	    flags="-I."
+	else
+	    [ -f "$p/include/radlib.h" ] || continue
+	    flags="-I. -I$p/include -L$p/lib"
+	fi
+	# libradius needs MD5 from libmd on FreeBSD and SmartOS, and the socket libraries on SmartOS
+	for libs in "-lradius" "-lradius -lmd" "-lradius -lmd -lnsl -lsocket"; do
+	    # shellcheck disable=SC2086
+	    if $CC $flags -o "$tmp/r" "$tmp/r.c" $libs >/dev/null 2>&1; then
+		return 0
+	    fi
+	done
+    done
+    return 1
+}
+
 # set_option NAME on|off: make lib/vendor.h say #define or #undef for NAME
 set_option() {
     name=$1
@@ -116,3 +152,4 @@ handle() {
 
 handle PERL_ENABLED "$perl_mode" can_build_perl
 handle LDAP_ENABLED "$ldap_mode" can_build_ldap
+handle RADIUS_ENABLED "$radius_mode" can_build_radius
