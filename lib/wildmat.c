@@ -128,9 +128,11 @@ DoMatch(register char *text, register char *p)
 		    matched = TRUE;
 	    for (last = *p; *++p && *p != ']'; last = *p)
 		/* This next line requires a good C compiler. */
-		if (*p == '-' && p[1] != ']'
+		if (*p == '-' && p[1] != ']' && p[1] != '\0'
 		    ? *text <= *++p && *text >= last : *text == *p)
 		    matched = TRUE;
+	    if (*p == '\0')
+		return FALSE;
 	    if (matched == reverse)
 		return FALSE;
 	    continue;
