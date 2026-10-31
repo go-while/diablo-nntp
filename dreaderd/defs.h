@@ -168,6 +168,14 @@ typedef struct AuthDef {		/* Define an authentication type */
     int au_Ident;
 } AuthDef;
 
+#define MAXPROXYFROM	8
+
+typedef struct ProxyFrom {		/* trusted proxy address or network	*/
+    int pf_Family;			/* AF_INET or AF_INET6			*/
+    unsigned char pf_Addr[16];
+    int pf_Bits;			/* prefix length			*/
+} ProxyFrom;
+
 typedef struct ReaderDef {		/* Define a reader group	*/
     char rd_Name[DEFNAMELEN];
     char rd_Auth[DEFNAMELEN];
@@ -217,6 +225,8 @@ typedef struct ReaderDef {		/* Define a reader group	*/
     int rd_XzverLevel;
     int rd_RequireGroupCmd;
     int rd_AddCanLockUser;		/* CANLOCK_USER_*: user in the Cancel-Lock key */
+    int rd_NProxyFrom;			/* proxyfrom entries; 0 = any peer */
+    ProxyFrom rd_ProxyFrom[MAXPROXYFROM];
 } ReaderDef;
 
 #define CANLOCK_USER_NAME	0	/* the AUTHINFO user (default) */

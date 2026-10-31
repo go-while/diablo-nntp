@@ -462,3 +462,14 @@ access	jane@*.example.com	rp
 # Our feed machine gets a special process
 access	feed.example.com	feed
 
+# Readers behind a proxy: "useproxied yes" (first line "proxied ip:port") and "haproxy yes"
+# (PROXY protocol v1) take the client address from the first line the client sends. Any
+# client that matches the readerdef's access line can send it, so also list the proxy
+# addresses with proxyfrom (an address or address/bits, repeated up to 8 times): other peers
+# are refused with 400. Without proxyfrom a notice is logged at start.
+#
+# readerdef proxied
+#     useproxied yes
+#     proxyfrom 192.0.2.10
+#     proxyfrom 2001:db8::/32
+# end
