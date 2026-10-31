@@ -5,9 +5,9 @@
  * This header file is available for you to specify custom parameters to
  * diablo.
  *
- * WARNING!  Diablo does not use make depend, so any changes you make to
- * this or any other header file should be followed by a complete
- * recompile.  e.g. 'xmake clean; xmake'
+ * The maintained make builds generate header dependencies for incremental
+ * recompilation. See README.md for feature prerequisites and clean-build
+ * requirements when changing toolchains, libraries or build overrides.
  */
 
 /*

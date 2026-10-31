@@ -109,7 +109,11 @@ The installer creates dbin, adm, log, run, dqueue, spool, spool/news,
 spool/group, spool/cache, man and samples under /news, owned by news.
 The home is /news; another PREFIX doesn't change where the programs
 look for their files at run time (use -C or DIABLO_CONFIG_PATH).
-"make bininstall" replaces only the programs.
+"make bininstall" also updates samples and manual pages and installs the
+maintenance scripts. A differing existing adm file is kept and the new
+version written alongside it as .new. Unlike install, bininstall does not
+create missing configuration files or dactive.kp; both modes migrate old
+configuration symlinks to real copies where applicable.
 
 Directories that should be separately mounted partitions for a real
 feed: /news/spool/news (feeder articles), /news/spool/group (reader
@@ -154,7 +158,14 @@ a reader.  It runs dspoolout, the expire and the log and history trims.
 
 Start and stop the daemons with /news/adm/diablo-ctl. To customize its
 settings, copy /news/samples/adm/diablo-ctl.conf to /news/diablo-ctl.conf
-and edit it; the script reads that optional file from the Diablo home:
+and edit it; the script reads that optional file from the Diablo home.
+
+The sample controller options contain example hostnames and ports. Replace
+them for your site: in particular, its feeder -P 435 overrides the combined
+sample's feederbindport 120. Ensure the reader's dserver.hosts and the
+actual feeder and reader ports agree.
+
+For example:
 
 	/news/adm/diablo-ctl start
 	/news/adm/diablo-ctl status
@@ -214,7 +225,10 @@ Here's a checklist for once you have Diablo running:
   8 or 16 million, see adm/biweekly.atrim and the manual page to diload for
   more information.
 
-* When running Diablo in a reader configuration, you need to periodically
-  (like once a month) clean dactive.kp.  This is not yet automated... you
-  have to shut the whole diablo system down and do 'dkp -t dactive.kp'.
+* Periodically trim the active file. The sample biweekly.atrim runs dkp -t
+  on the server active file while holding the same lock as hourly.expire;
+  review its schedule and whether that file is used by your site. The
+  optional DIABLO_DKP_TRIM=yes setting in diablo-ctl trims and sorts the
+  site's active file before start only when neither site daemon is running.
+  See samples/adm/diablo-ctl.conf for its conditions.
 
