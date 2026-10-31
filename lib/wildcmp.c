@@ -21,40 +21,47 @@ Prototype int WildCaseCmp(const char *w, const char *s);
 int
 WildCmp(const char *w, const char *s)
 {
+    const char *sw = NULL;	/* pattern after the last '*' */
+    const char *ss = NULL;	/* where that '*' currently ends in s */
+
     /*
-     * skip fixed portion
+     * Only the most recent '*' needs to be retried (any earlier one could
+     * be satisfied by it), so the work is bounded by strlen(w) * strlen(s).
      */
-  
+
     for (;;) {
 	switch(*w) {
 	case '*':
 	    if (w[1] == 0)	/* optimize wild* case */
 		return(0);
-	    {
-		int i;
-		int l = strlen(s);
-
-		for (i = 0; i <= l; ++i) {
-		    if (WildCmp(w + 1, s + i) == 0)
-			return(0);
-		}
-	    }
-	    return(-1);
+	    sw = ++w;
+	    ss = s;
+	    continue;
 	case '?':
-	    if (*s == 0)
-		return(-1);
-	    ++w;
-	    ++s;
+	    if (*s != 0) {
+		++w;
+		++s;
+		continue;
+	    }
 	    break;
 	default:
-	    if (*w != *s)
-		return(-1);
-	    if (*w == 0)	/* terminator */
-		return(0);
-	    ++w;
-	    ++s;
+	    if (*w == *s) {
+		if (*w == 0)	/* terminator */
+		    return(0);
+		++w;
+		++s;
+		continue;
+	    }
 	    break;
 	}
+
+	/*
+	 * mismatch, let the last '*' absorb one more character
+	 */
+	if (sw == NULL || *ss == 0)
+	    return(-1);
+	s = ++ss;
+	w = sw;
     }
     /* not reached */
     return(-1);
@@ -68,44 +75,48 @@ WildCmp(const char *w, const char *s)
 int
 WildCaseCmp(const char *w, const char *s)
 {
+    const char *sw = NULL;	/* pattern after the last '*' */
+    const char *ss = NULL;	/* where that '*' currently ends in s */
+
     /*
-     * skip fixed portion
+     * Only the most recent '*' needs to be retried (any earlier one could
+     * be satisfied by it), so the work is bounded by strlen(w) * strlen(s).
      */
-  
+
     for (;;) {
 	switch(*w) {
 	case '*':
 	    if (w[1] == 0)	/* optimize wild* case */
 		return(0);
-	    {
-		int i;
-		int l = strlen(s);
-
-		for (i = 0; i <= l; ++i) {
-		    if (WildCaseCmp(w + 1, s + i) == 0)
-			return(0);
-		}
-	    }
-	    return(-1);
+	    sw = ++w;
+	    ss = s;
+	    continue;
 	case '?':
-	    if (*s == 0)
-		return(-1);
-	    ++w;
-	    ++s;
+	    if (*s != 0) {
+		++w;
+		++s;
+		continue;
+	    }
 	    break;
 	default:
-	    if (*w != *s) {
-		if (tolower(*w) != tolower(*s))
-		    return(-1);
+	    if (tolower((unsigned char)*w) == tolower((unsigned char)*s)) {
+		if (*w == 0)	/* terminator */
+		    return(0);
+		++w;
+		++s;
+		continue;
 	    }
-	    if (*w == 0)	/* terminator */
-		return(0);
-	    ++w;
-	    ++s;
 	    break;
 	}
+
+	/*
+	 * mismatch, let the last '*' absorb one more character
+	 */
+	if (sw == NULL || *ss == 0)
+	    return(-1);
+	s = ++ss;
+	w = sw;
     }
     /* not reached */
     return(-1);
 }
-

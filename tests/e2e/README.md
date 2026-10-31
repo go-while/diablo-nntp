@@ -164,6 +164,7 @@ test fails.
 | `TestCachedLFSeparator` | dreaderd | D-113: HEAD and BODY of an article in the reader cache whose header/body separator is a bare LF (the cache file is rewritten with LF line ends) have the same lines as for the CRLF original. **Fails** on main: HEAD printed the whole article, BODY nothing |
 | `TestDcancelFailedRewriteKeepsHistory` | diablo, dcancel | D-108: a spool rewrite that stops at a damaged third article leaves the history on the old file: the second article is still read with its own text. **Fails** on main before this fix: ARTICLE returned the cancelled first article |
 | `TestDsyncgroupsBlankNewsgroupLine`, `TestDsyncgroupsShortActiveLine`, `TestDsyncgroupsPeerClosesAtQuit` | dsyncgroups | D-109: a blank LIST NEWSGROUPS line with `-w`, and a blank or short LIST ACTIVE line (with and without `-w`), are skipped, and a peer that closes instead of answering QUIT gives an error with an empty reply and exit 1. **Fail** on main before this fix: SIGSEGV, or the earlier reply printed from an unset pointer |
+| `TestReaderListWildcardLinear` | dreaderd | `LIST ACTIVE` with a 45-character `*?` pattern against a 56-character group name is answered at once and a second client is served meanwhile; ordinary `*` and `?` patterns still match as before. **Fails** on main: the reader stalls |
 
 ## Running
 
