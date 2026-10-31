@@ -555,7 +555,8 @@ WriteOverview(Connection *conn, ArtNumAss *an, const char *group, const char *xr
     artno_t artNo = 0;
     const char *body;
     char *xtmp = NULL;
-    int xtmpLen = 16 + strlen(conn->co_Auth.dr_VServerDef->vs_ClusterName);
+    const char *xrefhost = DOpts.ReaderXRefHost ? DOpts.ReaderXRefHost : "";
+    int xtmpLen = strlen("Xref: ") + strlen(xrefhost) + strlen("\r\n") + 1;
     char logbuf[1024];
     int err = 0;
 
@@ -569,7 +570,8 @@ WriteOverview(Connection *conn, ArtNumAss *an, const char *group, const char *xr
 	    if (scan->an_GroupName == group) {
 		artNo = scan->an_ArtNo;
 	    }
-	    xtmpLen += scan->an_GroupLen + 15;
+	    /* ' ' + group + ':' + the most a %lld can print */
+	    xtmpLen += 1 + scan->an_GroupLen + 1 + 20;
 	}
     }
 
@@ -655,7 +657,7 @@ WriteOverview(Connection *conn, ArtNumAss *an, const char *group, const char *xr
 	    int soff;
 	    
 	    xtmp = zalloc(&conn->co_MemPool, xtmpLen);
-	    sprintf(xtmp, "Xref: %s", DOpts.ReaderXRefHost);
+	    sprintf(xtmp, "Xref: %s", xrefhost);
 	    soff = strlen(xtmp);
 		
 	    for (scan = an; scan; scan = scan->an_Next) {
