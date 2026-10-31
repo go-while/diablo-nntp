@@ -2088,7 +2088,15 @@ DoSession(int fd, int count)
 		xfprintf(fo, "238 %s\r\n", msgid);
 	    }
 	} else if (ReadOnlyCxn && (strcasecmp(cmd, "takethis") == 0)) {
+	    const char *msgid = MsgId(strtok(NULL, "\r\n"), NULL);
+
 	    xfprintf(fo, "480 Read-only connection.\r\n");
+	    fflush(fo);
+	    /*
+	     * The article follows the command; read and discard it, or
+	     * its lines would be taken for commands.
+	     */
+	    LoadArticle(bi, msgid, 1, headerOnly, NULL, NULL);
 	} else if (strcasecmp(cmd, "takethis") == 0) {
 	    const char *msgidbuf = "";
 	    const char *msgarg = strtok(NULL, "\r\n");
