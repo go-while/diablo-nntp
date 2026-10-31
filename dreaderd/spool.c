@@ -393,7 +393,7 @@ NNSpoolResponse2(Connection *conn)
 	    ptr = buf + 5;
 	    while (isspace((int)*ptr))
 		ptr++;
-	    while (!isspace((int)*ptr))
+	    while (*ptr && !isspace((int)*ptr))
 		ptr++;
 	    while (isspace((int)*ptr))
 		ptr++;
@@ -402,8 +402,13 @@ NNSpoolResponse2(Connection *conn)
 		int e;
 
 		l = (buf + l) - ptr + 1;
+		if (l < 0)
+		    l = 0;
 		sprintf(line, "Xref: %s ", vserver);
 		e = strlen(line);
+		/* the header comes from the spool server: cut it to the buffer, as cache.c does */
+		if (l > (int)sizeof(line) - 100)
+		    l = (int)sizeof(line) - 100;
 		memcpy(&line[e], ptr, l);
 		line[e + l] = '\0';
 		strcat(line, "\r\n");
@@ -441,8 +446,13 @@ NNSpoolResponse2(Connection *conn)
 		int e;
 
 		l = (buf + l) - ptr + 1;
+		if (l < 0)
+		    l = 0;
 		sprintf(line, "Path: %s!", vserver);
 		e = strlen(line);
+		/* the header comes from the spool server: cut it to the buffer, as cache.c does */
+		if (l > (int)sizeof(line) - 100)
+		    l = (int)sizeof(line) - 100;
 		memcpy(&line[e], ptr, l);
 		line[e + l] = '\0';
 		strcat(line, "\r\n");
