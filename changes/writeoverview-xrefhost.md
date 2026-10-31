@@ -1,0 +1,1 @@
+- dreaderd: WriteOverview() now sizes the synthetic Xref line from the `readerxrefhost` it actually writes (not the <=63-byte vserver cluster name), and counts the full 64-bit article number per group; a feed article without an Xref: can no longer overflow the connection pool when readerxrefhost is long.
