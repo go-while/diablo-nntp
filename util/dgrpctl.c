@@ -671,6 +671,42 @@ GrpCtlAdjust(int ac, char **av, int pos)
 }
 
 /*
+ * Read one whole line of any length from f into a malloc'd buffer (with its
+ * newline, if any).  Returns NULL at end of file or on a read error.
+ */
+
+#define MAXDESCLEN	255
+
+static char *
+ReadWholeLine(FILE *f)
+{
+    char *line = NULL;
+    size_t len = 0;
+    size_t cap = 0;
+    char chunk[256];
+
+    while (fgets(chunk, sizeof(chunk), f) != NULL) {
+	size_t n = strlen(chunk);
+
+	if (len + n + 1 > cap) {
+	    char *nl;
+
+	    cap = (len + n + 1) * 2;
+	    if ((nl = (char *)realloc(line, cap)) == NULL) {
+		free(line);
+		return(NULL);
+	    }
+	    line = nl;
+	}
+	memcpy(line + len, chunk, n + 1);
+	len += n;
+	if (n > 0 && chunk[n - 1] == '\n')
+	    break;
+    }
+    return(line);
+}
+
+/*
  * CHECKGROUPS -
  */
 
@@ -680,7 +716,7 @@ GrpCtlCheckGroups(int ac, char **av, int pos)
     char *filename;
     int exec = 0;
     FILE *f;
-    char buf[128];
+    char *buf = NULL;		/* the current line of any length */
     const char *rec;
     int recLen;
     GrpList *grpList = NULL;
@@ -704,7 +740,7 @@ GrpCtlCheckGroups(int ac, char **av, int pos)
 	    return(NULL);
 	}
     }
-    while (fgets(buf, sizeof(buf), f) != NULL) {
+    while (free(buf), (buf = ReadWholeLine(f)) != NULL) {
 	char *newsgroup;
 	char *description = NULL;
 	char *flags = "y";
@@ -712,6 +748,8 @@ GrpCtlCheckGroups(int ac, char **av, int pos)
 	if ((newsgroup = strtok(buf, " \t\r\n")) == NULL)
 	    continue;
 	if (ValidGroupName(newsgroup) < 0)              /* valid group name */
+	    continue;
+	if (strlen(newsgroup) >= MAXGNAME)              /* fits the buffers below */
 	    continue;
 	if (strchr(newsgroup, '.') == NULL)             /* sanity check */
 	    continue;
@@ -732,6 +770,13 @@ GrpCtlCheckGroups(int ac, char **av, int pos)
 	 * clean up the description
 	 */
 	SanitizeDescString(description);
+	/*
+	 * A line is no longer cut at 127 bytes, but a description stays
+	 * within the 255 bytes GrpCtlNewGroup() takes, which is what the
+	 * buffers that read it back (groupinfo) are sized for.
+	 */
+	if (strlen(description) > MAXDESCLEN)
+	    description[MAXDESCLEN] = 0;
 	{
 	    int l = strlen(description);
 	    while (*description == ' ' || *description == '\t') {
@@ -794,11 +839,7 @@ GrpCtlCheckGroups(int ac, char **av, int pos)
 		needflags = 1;
 
 	    p = KPDBGetFieldDecode(rec, recLen, "GD", NULL, NULL);
-	    if (p != NULL)
-		strcpy(buf, p);
-	    else
-		buf[0] = 0;
-	    if (p == NULL || strcmp(buf, description) != 0)
+	    if (p == NULL || strcmp(p, description) != 0)
 		needdesc = 1;
 
 	    if (needflags || needdesc) {
@@ -822,6 +863,11 @@ GrpCtlCheckGroups(int ac, char **av, int pos)
 	    }
 	    KPDBUnlock(KDBActive, rec);
 	}
+    }
+    if (hierarchy == NULL) {
+	/* no usable group in the list: nothing to check for deleted groups */
+	printf(">> checkgroups: no valid group in the list, nothing to check\n");
+	return(NULL);
     }
 	{
 	    int recLen;
