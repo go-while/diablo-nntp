@@ -350,7 +350,7 @@ ExecuteControl(Connection *conn, const char *ctlMsg, const char *art, int artLen
 Control *
 ParseControl(Connection *conn, const char *cmd, const char *from, const char *newsgroup)
 {
-    FILE *fi = fopen(PatLibExpand(DControlCtlPat), "r");
+    FILE *fi;
     char buf[256];
     Control *ctl = NULL;
 
@@ -365,9 +365,14 @@ ParseControl(Connection *conn, const char *cmd, const char *from, const char *ne
 
     FreeControl(conn);
 
-    if (fi == NULL)
-	return(NULL);
+    /*
+     * Check From: before opening dcontrol.ctl: returning without the
+     * fclose() leaked one descriptor per control article without From:
+     * (GHSA-qjg5-xp53-hj7h).
+     */
     if (from == NULL)
+	return(NULL);
+    if ((fi = fopen(PatLibExpand(DControlCtlPat), "r")) == NULL)
 	return(NULL);
 
     while (fgets(buf, sizeof(buf), fi) != NULL) {
