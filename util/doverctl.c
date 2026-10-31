@@ -179,8 +179,8 @@ main(int ac, char **av)
      * we are in serious trouble
      */
     if (Action & ACT_CONVERT) {
-	char srcHashStr[64];
-	char dstHashStr[64];
+	char srcHashStr[256];	/* GetHash() needs about 150 */
+	char dstHashStr[256];
 	bcopy(&DstHash, &DOpts.ReaderGroupHashMethod, sizeof(DstHash));
 	printf("Converting from %s to %s\n", GetHash(&SrcHash, srcHashStr),
 					GetHash(&DstHash, dstHashStr));
