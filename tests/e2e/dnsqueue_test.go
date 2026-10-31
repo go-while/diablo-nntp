@@ -14,6 +14,11 @@ import (
 // all send AUTHINFO PASS together, and returns the first reply code of each login ("281",
 // "400", ...), or an error text where the connection failed.
 func authBurst(t *testing.T, addr string, n int) []string {
+	return authBurstWith(t, addr, n, func(int) string { return "fredspass" })
+}
+
+// authBurstWith is authBurst with a per-connection password.
+func authBurstWith(t *testing.T, addr string, n int, pass func(i int) string) []string {
 	t.Helper()
 	res := make([]string, n)
 	conns := make([]net.Conn, n)
@@ -54,7 +59,7 @@ func authBurst(t *testing.T, addr string, n int) []string {
 		if res[i] != "" {
 			return
 		}
-		fmt.Fprintf(conns[i], "AUTHINFO PASS fredspass\r\n")
+		fmt.Fprintf(conns[i], "AUTHINFO PASS %s\r\n", pass(i))
 		res[i] = line(i)
 		fmt.Fprintf(conns[i], "QUIT\r\n")
 	})
@@ -105,6 +110,41 @@ func TestReaderDNSQueueLimit(t *testing.T) {
 	// some get 400.
 	if ok < 9 || busy == 0 {
 		t.Errorf("%d logins succeeded and %d got 400, want at least 9 and at least 1", ok, busy)
+	}
+	c := s.Reader(t)
+	expect(t, c, 381, "AUTHINFO USER fred")
+	expect(t, c, 281, "AUTHINFO PASS fredspass")
+	expect(t, c, 205, "QUIT")
+}
+
+// TestReaderDNSQueueAuthPairing: the DNS/auth worker IPC must keep each request and reply
+// together.  One worker serves bursts in which every other login uses the right password;
+// each connection must get the answer for its own AUTHINFO PASS (281 or 481).  A
+// desynchronised stream socketpair (the FreeBSD 0/40 stall) either pairs a reply with the
+// wrong connection or stops serving altogether, and both show up here.
+func TestReaderDNSQueueAuthPairing(t *testing.T) {
+	_, spool := spoolStore(t)
+	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: AuthReaderAccess,
+		Config: map[string]string{"readerthreads": "64"}})
+	// Eight at a time fits the D-51 queue (4 * readerdns + 4 with readerdns 1), so
+	// none is turned away with 400 and every connection gets a verdict.
+	for round := 0; round < 5; round++ {
+		res := authBurstWith(t, s.Addr, 8, func(i int) string {
+			if i%2 == 0 {
+				return "fredspass"
+			}
+			return "wrongpass"
+		})
+		for i, r := range res {
+			want := "481"
+			if i%2 == 0 {
+				want = "281"
+			}
+			if !strings.HasPrefix(r, want) {
+				t.Errorf("round %d login %d: got %q, want %s for its own AUTHINFO PASS",
+					round, i, r, want)
+			}
+		}
 	}
 	c := s.Reader(t)
 	expect(t, c, 381, "AUTHINFO USER fred")
