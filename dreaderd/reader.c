@@ -1263,7 +1263,10 @@ NNCommand2(Connection *conn)
       *pt++ = '\0';
       ptr += 8;
 
-      bzero((void *)&sin, sizeof(&sin));
+      bzero((void *)&sin, sizeof(sin));
+#if HAS_SA_LEN
+      sin.sin_len = sizeof(sin);
+#endif
       sin.sin_family = AF_INET;
       sin.sin_port = htons(atoi(pt));
       sin.sin_addr.s_addr = inet_addr(ptr);
