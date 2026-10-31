@@ -141,6 +141,7 @@ test fails.
 | `TestInstallConvertsConfigSymlinks` | install-portable.sh | a config symlink into `samples/` left by an earlier install becomes a real file with the content in use, before `samples/` is replaced; with install and with bininstall |
 | `TestAdmHourlyExpire` | adm/hourly.expire, dexpire | the script expires an article older than `keeptime` |
 | `TestAdmDailyAtrim` | adm/daily.atrim, adm/rot | the script rotates the logs |
+| `TestAdmDailyAtrimDaemonLogs` | adm/daily.atrim | the logs the daemons write themselves (general, incoming, drincoming, path, article) are rotated too |
 | `TestAdmBiweeklyAtrim` | adm/biweekly.atrim, dhisexpire | the script trims the history while diablo runs; the stored article stays in history |
 | `TestAdmReaderScripts` | adm/daily.reader, adm/weekly.reader | both scripts run on a reader site. The adm tests are skipped while `samples/adm` still holds the csh scripts |
 | `TestAdmExitStatus` | adm/hourly.expire, daily.reader, weekly.reader, daily.atrim, biweekly.atrim | a job that fails (a stand-in `dexpire`, `dexpireover`, `rot`, `dkp` or `dhisexpire` with a nonzero exit) makes its script exit with that status, and the END line says it (D-135, D-137); before, the END message hid it and the script exited 0 |
