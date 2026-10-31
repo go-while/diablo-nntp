@@ -691,9 +691,16 @@ CtlCancel(Connection *conn, Control *ctl, const char **cmd, const char *art, con
      * its Cancel-Lock, see readercanlock), then cancel in every group.
      */
 
+    /*
+     * A cancel is identified by its Control: message-id, but the target is
+     * found by scanning the overview of the groups named in the article.  The
+     * header check normally guarantees a Newsgroups: header, but we do not
+     * index by message-id: with no groups there is nothing to scan, so this is
+     * a safe no-op (not a NULL walk).
+     */
     ptr = groups;
 
-    while (*ptr) {
+    while (ptr != NULL && *ptr) {
 	int l;
 	char c;
 	OverInfo *ov;
@@ -741,7 +748,7 @@ CtlCancel(Connection *conn, Control *ctl, const char **cmd, const char *art, con
 	logit((isValidCancel > 0) ? LOG_INFO : LOG_NOTICE,
 	    "cancel %s: %s, %d item(s)", cmd[1], why, (isValidCancel > 0) ? count : 0);
     if (DebugOpt)
-	printf("CtlCancel %s: %s, %d items found: %s\n", cmd[1], why, count, groups);
+	printf("CtlCancel %s: %s, %d items found: %s\n", cmd[1], why, count, safestr(groups, ""));
     if (ctl->ct_LogFo) {
 	fprintf(ctl->ct_LogFo, ">> control cancel, %d items found, %s\n",
 	    count, why);
