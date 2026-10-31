@@ -51,7 +51,8 @@ parsedate(char *d)
 	ti.tm_year -= 1900;
     }
     ti.tm_hour = strtol(d, &d, 10);
-    d++;
+    if (*d)			/* skip the ':' only if hh was present and more follows */
+	d++;
     ti.tm_min = strtol(d, &d, 10);
     if (ti.tm_mday && ti.tm_mon >= 0 && ti.tm_year)
 	return(mktime(&ti));
