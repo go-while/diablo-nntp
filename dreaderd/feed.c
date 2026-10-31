@@ -153,7 +153,7 @@ NNTPPost(Connection *conn, char **pptr)
     char *rdesc;
 
     if (conn->co_Auth.dr_Flags & DF_POST) {
-	conn->co_Flags &= ~(COF_IHAVE|COF_POST);
+	conn->co_Flags &= ~(COF_IHAVE|COF_POST|COF_POSTTOOBIG);
 	conn->co_Flags |= COF_POST;
 	GenerateMessageID(conn);
 #ifdef POST_FORCEMSGID
@@ -200,7 +200,18 @@ NNAcceptArticle(Connection *conn)
     conn->co_Func = NNAcceptArticle;
     conn->co_State = "accart";
 
+    /*
+     * a line too long is dropped, not buffered, and the article refused
+     * once it is complete, the connection stays open.
+     */
+    conn->co_RMBuf.mh_SkipLong = 1;
+
     while (--maxl > 0 && (len = MBReadLine(&conn->co_RMBuf, &buf)) > 0) {
+	if (conn->co_RMBuf.mh_LongLine) {
+	    conn->co_RMBuf.mh_LongLine = 0;
+	    conn->co_Flags |= COF_POSTTOOBIG;
+	    continue;
+	}
 	/*
 	 * expected EOF, ".\r\n", but we also allow ".\n" because some
 	 * idiotic newsreaders (like old versions of netscape) don't do the
@@ -218,6 +229,7 @@ NNAcceptArticle(Connection *conn)
 		NNFeedOverview(conn);
 	    }
 	    conn->co_Flags &= ~COF_MAYNOTCLOSE;
+	    conn->co_RMBuf.mh_SkipLong = 0;
 	    return;
 	}
 
@@ -275,6 +287,9 @@ NNAcceptArticle(Connection *conn)
 
 	if (DOpts.ReaderMaxArtSize > 0 && conn->co_ArtBuf.mh_Bytes > DOpts.ReaderMaxArtSize)
 	    conn->co_Flags |= COF_POSTTOOBIG;
+
+	else if (conn->co_Flags & COF_POSTTOOBIG)
+	    ;
 
 	else if ((conn->co_Flags & COF_INHEADER) || (conn->co_Flags & (COF_POST|COF_WASCONTROL))) {
 	    if (len > 0 && bareLF) {

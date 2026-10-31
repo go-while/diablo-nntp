@@ -581,6 +581,7 @@ InitConnection(ForkDesc *desc, DnsRes *dres)
 	conn->co_ClientGroupByteCount = 0.0;
 	conn->co_ClientGroupArticleCount = 0;
 	conn->co_ClientGroupCount = conn->co_ClientPostCount = 0;
+	conn->co_RMBuf.mh_MaxLine = CLIENT_MAXLINE;
     }
 
     return(conn);
@@ -1162,6 +1163,8 @@ NNCommand2(Connection *conn)
      */
 
     if (len < 0 || conn->co_TMBuf.mh_WError) {
+	if (conn->co_RMBuf.mh_RError)
+	    MBLogPrintf(conn, &conn->co_TMBuf, "500 Line too long\r\n");
 	NNTerminate(conn);
 	return;
     }
