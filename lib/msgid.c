@@ -53,7 +53,7 @@ MsgId(const char *s, const char **badmsgid)
      */
 
     for (i = 1; s[i] && s[i] != '>'; ++i) {
-	if (s[i] == '<' || s[i] == '\t' || s[i] == ' ' || *s == '\r' || *s == '\n') {
+	if (s[i] == '<' || s[i] == '\t' || s[i] == ' ' || s[i] == '\r' || s[i] == '\n') {
 	    if (badmsgid)
 		*badmsgid = s;
 	    return(badId);
