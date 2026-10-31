@@ -275,6 +275,8 @@ GrpCtlGroupInfo(char *group)
 	a = strtoll(KPDBGetField(rec, recLen, "NX", NULL, "0"), NULL, 10);
 	printf("NX=%010lld ", a);
 	flags = KPDBGetField(rec, recLen, "S", (int *)&flen, "n");
+	if (flen >= sizeof(buf))
+	    flen = sizeof(buf) - 1;
 	bcopy(flags, buf, flen);
 	buf[flen] = 0;
 	printf("flag=%s ", buf);
@@ -285,6 +287,8 @@ GrpCtlGroupInfo(char *group)
 	n = strtol(KPDBGetField(rec, recLen, "LMTS", NULL, "0"), NULL, 16);
 	printf("  LMTS=%u=%s", n, ctime((const time_t *)&n));
 	flags = KPDBGetField(rec, recLen, "GD", (int *)&flen, "?");
+	if (flen >= sizeof(buf))
+	    flen = sizeof(buf) - 1;
 	bcopy(flags, buf, flen);
 	buf[flen] = 0;
 	printf("  GD=%s\n", buf);
@@ -384,6 +388,8 @@ GrpCtlListActive(char *match)
 		ne = strtoll(KPDBGetField(rec, recLen, "NE", NULL, "0"), NULL, 10);
 		nb = strtoll(KPDBGetField(rec, recLen, "NB", NULL, "0"), NULL, 10);
 		printf("%s %010lld %010lld ", grpbuf, ne, nb);
+		if (flen >= sizeof(grpbuf))
+		    flen = sizeof(grpbuf) - 1;
 		bcopy(flags, grpbuf, flen);
 		grpbuf[flen] = 0;
 		printf("%s\n", grpbuf);
@@ -511,7 +517,7 @@ GrpCtlNewGroup(int ac, char **av, int pos)
 		moderator = NULL;
 	}
 	if (av[pos])
-	    strcpy(description, av[pos]);
+	    snprintf(description, sizeof(description), "%s", av[pos]);
     }
 
     if (ValidGroupName(group) < 0) {
@@ -833,11 +839,15 @@ GrpCtlCheckGroups(int ac, char **av, int pos)
 	    int needdesc = 0;
 
 	    p = KPDBGetField(rec, recLen, "S", (int *)&plen, "n");
+	    if (plen >= sizeof(buf))
+		plen = sizeof(buf) - 1;
 	    bcopy(p, buf, plen);
 	    buf[plen] = 0;
 	    if (strcmp(buf, flags) != 0)
 		needflags = 1;
 
+	    p = KPDBGetFieldDecode(rec, recLen, "GD", NULL, NULL);
+	    /* compare the whole decoded description: no copy, so no truncation */
 	    p = KPDBGetFieldDecode(rec, recLen, "GD", NULL, NULL);
 	    if (p == NULL || strcmp(p, description) != 0)
 		needdesc = 1;
