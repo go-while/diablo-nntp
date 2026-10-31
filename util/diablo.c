@@ -845,7 +845,7 @@ DiabloServer(int lfd)
 
 	snprintf(PidFile, sizeof(PidFile), "%s/diablo.pid", PatExpand(LogHomePat));
 	remove(PidFile);
-	if ((pf = fopen(PidFile, "w")) != NULL) {
+	if ((pf = PrivateFOpen(PidFile, "w", 0644)) != NULL) {
 	    fprintf(pf, "%d\n", (int)getpid());
 	    if (fclose(pf) != 0)
 		logit(LOG_ERR, "unable to write %s: %s", PidFile, strerror(errno));
@@ -861,6 +861,7 @@ DiabloServer(int lfd)
 
     {
 	struct sockaddr_un soun;
+	const char *sockpath;
 
 	memset(&soun, 0, sizeof(soun));
 
@@ -870,7 +871,12 @@ DiabloServer(int lfd)
 	}
 	soun.sun_family = AF_UNIX;
 
-	sprintf(soun.sun_path, "%s", PatRunExpand(DiabloSocketPat));
+	sockpath = PatRunExpand(DiabloSocketPat);
+	if (strlen(sockpath) >= sizeof(soun.sun_path)) {
+	    fprintf(stderr, "socket path too long: %s\n", sockpath);
+	    exit(1);
+	}
+	snprintf(soun.sun_path, sizeof(soun.sun_path), "%s", sockpath);
 	remove(soun.sun_path);
 	if (bind(ufd, (struct sockaddr *)&soun, offsetof(struct sockaddr_un, sun_path[strlen(soun.sun_path)+1])) < 0) {
 	    perror("udom-bind");

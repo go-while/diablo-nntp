@@ -401,7 +401,7 @@ dbg_dump(int sig)
 
     snprintf(fn, sizeof(fn), "/news/run/dump.%ld.%ld",
 			(long)getpid(), (long)time(NULL));
-    fd = open(fn, O_CREAT|O_WRONLY|O_TRUNC, 0666);
+    fd = open(fn, O_CREAT|O_WRONLY|O_EXCL, 0600);
     if (fd < 0)
 	return;
 

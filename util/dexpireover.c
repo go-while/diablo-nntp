@@ -2471,7 +2471,7 @@ x64read(int d, void *buf, long long nbytes)
 void dumpoh(OverHead *oh, char *filename)
 {
     FILE *fp;
-    if (! ((fp = fopen(filename, "w")))) {
+    if (! ((fp = PrivateFOpen(filename, "w", 0640)))) {
 	fprintf(stderr, "failed to open %s\n", filename);
 	return;
     }
@@ -2488,7 +2488,7 @@ void dumpovmap(OverArt *oa, long long n, char *filename)
     int nulrun = 0;
     FILE *fp;
 
-    if (! ((fp = fopen(filename, "w")))) {
+    if (! ((fp = PrivateFOpen(filename, "w", 0640)))) {
 	fprintf(stderr, "failed to open %s\n", filename);
 	return;
     }

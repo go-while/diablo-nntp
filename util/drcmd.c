@@ -28,6 +28,7 @@ main(int ac, char **av)
     {
 	struct sockaddr_un soun;
 	int ufd;
+	const char *sockpath;
 
 	memset(&soun, 0, sizeof(soun));
 
@@ -36,7 +37,12 @@ main(int ac, char **av)
 	    exit(1);
 	}
 	soun.sun_family = AF_UNIX;
-	sprintf(soun.sun_path, "%s", PatRunExpand(DReaderSocketPat));
+	sockpath = PatRunExpand(DReaderSocketPat);
+	if (strlen(sockpath) >= sizeof(soun.sun_path)) {
+	    fprintf(stderr, "socket path too long: %s\n", sockpath);
+	    exit(1);
+	}
+	snprintf(soun.sun_path, sizeof(soun.sun_path), "%s", sockpath);
 
 	if (connect(ufd, (struct sockaddr *)&soun, offsetof(struct sockaddr_un, sun_path[strlen(soun.sun_path)+1])) < 0) {
 	    perror("udom-connect");

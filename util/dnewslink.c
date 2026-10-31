@@ -50,6 +50,25 @@
 #define NDEBUG
 #include <assert.h>
 
+/*
+ * Rewrite the batch queue in place: fopen(path, "w") would create it 0666
+ * (world-writable under the usual umask), and PrivateFOpen() unlinks, which
+ * would lose the shared queue.  A private mode with O_TRUNC keeps the file.
+ */
+static FILE *
+rewriteBatchFile(const char *path)
+{
+    int fd = open(path, O_WRONLY|O_CREAT|O_TRUNC, 0640);
+    FILE *fo;
+
+    if (fd < 0)
+	return(NULL);
+    fo = fdopen(fd, "w");
+    if (fo == NULL)
+	close(fd);
+    return(fo);
+}
+
 #define T_ACCEPTED	1
 #define T_REFUSED	2
 #define T_REJECTED	3
@@ -1163,7 +1182,7 @@ main(int ac, char **av)
 
 			if (RealTimeOpt == 0) {
 			    if (fo == NULL)
-				fo = fopen(path, "w");
+				fo = rewriteBatchFile(path);
 			    if (fo != NULL) {
 				/*
 				 * The entry in buf may be one of the pending
@@ -1279,7 +1298,7 @@ main(int ac, char **av)
 	    if (RealTimeOpt == 0) {
 		if (StreamPend) {
 		    if (fo == NULL)
-			fo = fopen(path, "w");
+			fo = rewriteBatchFile(path);
 		    if (fo) {
 			(void)RefilePendingStreams(fo);
 		    } else {
@@ -1292,7 +1311,7 @@ main(int ac, char **av)
 		 * yet go back into the queue with the unsent ones.
 		 */
 		if (deferbegin < deferend && fo == NULL) {
-		    fo = fopen(path, "w");
+		    fo = rewriteBatchFile(path);
 		    if (fo == NULL)
 			keepOld = 1;
 		}
@@ -1326,7 +1345,7 @@ main(int ac, char **av)
 		    int writeFailed = 0;
 
 		    if (fo == NULL)
-			fo = fopen(path, "w");
+			fo = rewriteBatchFile(path);
 		    if (fo == NULL) {
 			writeFailed = 1;
 		    } else {
@@ -3850,12 +3869,22 @@ cdmap(const char *path, off_t off, int *psize, int cSize, int *multiArtFile)
 	    if (gzf == NULL)
 		return(NULL);
 
-	    ptr = (char *)malloc(tah.ArtLen + tah.HeadLen + 2);
-	    if (ptr == NULL) {
-		logit(LOG_CRIT, "Unable to malloc %d bytes for article (%s)\n",
-				tah.ArtLen + tah.HeadLen + 2, strerror(errno));
+	    if (tah.HeadLen > sizeof(tah) || tah.ArtLen > (1U << 30)) {
+		logit(LOG_CRIT, "Bad article header length (%d/%d)\n",
+				(int)tah.HeadLen, (int)tah.ArtLen);
 		gzclose(gzf);
 		return(NULL);
+	    }
+	    {
+		size_t need = (size_t)tah.ArtLen + (size_t)tah.HeadLen + 2;
+
+		ptr = (char *)malloc(need);
+		if (ptr == NULL) {
+		    logit(LOG_CRIT, "Unable to malloc %lu bytes for article (%s)\n",
+				(unsigned long)need, strerror(errno));
+		    gzclose(gzf);
+		    return(NULL);
+		}
 	    }
 	    p = ptr;
 	    bcopy(&tah, p, tah.HeadLen);
@@ -3929,7 +3958,7 @@ doArtLog(const char *class, char *msgid, char *message, const char *stage, const
 	 */
 	if (Logfd == NULL) {
 	    char logfname[PATH_MAX];
-	    sprintf(logfname, "%s/feedlog.%s", PatExpand(LogHomePat), HostName);
+	    snprintf(logfname, sizeof(logfname), "%s/feedlog.%s", PatExpand(LogHomePat), HostName);
 	    Logfd = PrivateFOpen(logfname, "a", 0640);
 	    if (Logfd == NULL)
 	        return;

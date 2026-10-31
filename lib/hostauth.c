@@ -135,7 +135,7 @@ LoadHostAccess(time_t t, int force, int rebuildtime)
 
 	snprintf(buf, sizeof(buf), "%s.new", PatDbExpand(DHostsCachePat));
 
-	fo = fopen(buf, "w");
+	fo = PrivateFOpen(buf, "w", 0640);
 	if (fo == NULL) {
 	    if (t != 0)
 		logit(LOG_CRIT, "%s: %s", buf, strerror(errno));
@@ -327,7 +327,7 @@ loadDiabloHosts(FILE *fo, int t, int *count)
 	if (strlen(s) > 255 || strlen(l) > 255)
 	    continue;
 
-	strcpy(HA.label, l);
+	diablo_strlcpy(HA.label, l, sizeof(HA.label), sizeof(HA.label));
 	if (convHost(s, &HA, fo))
 	    (*count)++;
 	bzero(&HA, sizeof(HA));

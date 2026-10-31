@@ -1030,7 +1030,7 @@ updateHistory(void)
     if (WriteHashesToFileOpt == 1) {
 	const char *filename = PatDbExpand(DExpireOverListPat);
 
-	DExpOverList = fopen(filename, "a");
+	DExpOverList = PrivateFOpen(filename, "a", 0640);
 	if (DExpOverList == NULL)
 	    fprintf(stderr, "Error opening %s: %s\n", filename,
 						      strerror(errno));

@@ -87,6 +87,7 @@ main(int ac, char **av)
 	    char *buf = malloc(strlen(fileName) + 32);
 	    FILE *fi;
 	    FILE *fo;
+	    int tfd;
 
 	    if (hflock(fd, 0, XLOCK_EX|XLOCK_NB) < 0) {
 		printf("Unable to exclusively lock %s, someone else is using it\n", fileName);
@@ -96,9 +97,12 @@ main(int ac, char **av)
 		printf("File was ripped out from under us, exiting\n");
 		exit(1);
 	    }
-	    sprintf(buf, "%s.tmp%d", fileName, (int)getpid());
+	    snprintf(buf, strlen(fileName) + 32, "%s.tmp%d", fileName, (int)getpid());
 	    fi = fdopen(fd, "r");
-	    fo = fopen(buf, "w");
+	    tfd = open(buf, O_WRONLY|O_CREAT|O_EXCL, 0640);
+	    fo = (tfd >= 0) ? fdopen(tfd, "w") : NULL;
+	    if (tfd >= 0 && fo == NULL)
+		close(tfd);
 	    if (fo) {
 		char tmp[1024];
 		int lnl = 1;

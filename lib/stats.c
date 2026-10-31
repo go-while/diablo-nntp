@@ -97,7 +97,7 @@ FeedStatsFindSlot(char *hostname)
     if (!found) {
 	bzero(&fs, sizeof(fs));
 	fs.region = count;
-	strcpy(fs.hostname, hostname);
+	diablo_strlcpy(fs.hostname, hostname, sizeof(fs.hostname), sizeof(fs.hostname));
 	lseek(FSSFd, count * sizeof(FeedStats), SEEK_SET);
 	if (WriteAll(FSSFd, &fs, sizeof(fs)) < 0)
 	    logit(LOG_ERR, "feed stats: write failed: %s", strerror(errno));

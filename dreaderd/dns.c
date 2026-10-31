@@ -3042,7 +3042,8 @@ InstallAccessCache(void) {
 			strncpy(vserver.vs_HostName, DOpts.ReaderHostName,
 					sizeof(vserver.vs_HostName) - 1);
 		    if (!*vserver.vs_ClusterName)
-			strcpy(vserver.vs_ClusterName, vserver.vs_HostName);
+			diablo_strlcpy(vserver.vs_ClusterName, vserver.vs_HostName,
+					sizeof(vserver.vs_ClusterName), sizeof(vserver.vs_ClusterName));
 		    {
 			int i, j;
 
