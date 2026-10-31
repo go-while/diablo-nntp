@@ -889,7 +889,7 @@ main(int ac, char **av)
 
 	    ThisReaderFork = getReaderForkSlot();
 	    FeedOnlyServer = 0;
-	    pid = ForkPipe(&fd, ReaderTask, "reader", SOCK_STREAM);
+	    pid = ForkPipe(&fd, ReaderTask, "reader", SOCK_SEQPACKET);
 	    FeedOnlyServer = -1;
 	    if (pid < 0)
 		break;
@@ -908,7 +908,7 @@ main(int ac, char **av)
 
 	    ThisReaderFork = getReaderForkSlot();
 	    FeedOnlyServer = 1;
-	    pid = ForkPipe(&fd, ReaderTask, "feed", SOCK_STREAM);
+	    pid = ForkPipe(&fd, ReaderTask, "feed", SOCK_SEQPACKET);
 	    FeedOnlyServer = -1;
 	    if (pid < 0)
 		break;
@@ -1073,35 +1073,36 @@ main(int ac, char **av)
 				int n;
 				int recv_fd;
 
-				n = RecvMsg(desc->d_Fd, &recv_fd, &dres);
-				if (n != sizeof(dres))
-				    break;
-				if (dres.dr_ResultFlags == DR_SERVER_STATS) {
-				    TotalSpoolArticles += dres.dr_ArtCount;
-				    TotalSpoolBytes += dres.dr_ByteCount;
-				} else {
-#ifdef	INET6
-				    struct sockaddr_storage rsin;
-				    bzero((void *)&rsin, sizeof(rsin));
-
-				    memcpy(&rsin, &dres.dr_Addr,
-					    sizeof(struct sockaddr_storage));
-#else
-				    struct sockaddr_in rsin;
-
-				    bzero(&rsin, sizeof(rsin));
-				    memcpy(&rsin, &dres.dr_Addr, sizeof(rsin));
-#endif
-				    if (dres.dr_ResultFlags == DR_REQUIRE_DNS) {
-					SendDns(recv_fd, &rsin, &dres);
+				while ((n = RecvMsg(desc->d_Fd, &recv_fd, &dres)) == sizeof(dres)) {
+				    if (dres.dr_ResultFlags == DR_SERVER_STATS) {
+					if (recv_fd >= 0)
+					    close(recv_fd);
+					TotalSpoolArticles += dres.dr_ArtCount;
+					TotalSpoolBytes += dres.dr_ByteCount;
 				    } else {
-					dres.dr_ResultFlags = DR_SESSEXIT_RPT;
-					SendDns(recv_fd, &rsin, &dres);
-					close(recv_fd);
+#ifdef	INET6
+					struct sockaddr_storage rsin;
+					bzero((void *)&rsin, sizeof(rsin));
+
+					memcpy(&rsin, &dres.dr_Addr,
+						sizeof(struct sockaddr_storage));
+#else
+					struct sockaddr_in rsin;
+
+					bzero(&rsin, sizeof(rsin));
+					memcpy(&rsin, &dres.dr_Addr, sizeof(rsin));
+#endif
+					if (dres.dr_ResultFlags == DR_REQUIRE_DNS) {
+					    SendDns(recv_fd, &rsin, &dres);
+					} else {
+					    dres.dr_ResultFlags = DR_SESSEXIT_RPT;
+					    SendDns(recv_fd, &rsin, &dres);
+					    close(recv_fd);
+					}
+					--NumActive;
+					--desc->d_Count;
+					deleteDnsResHash(&dres, desc);
 				    }
-				    --NumActive;
-				    --desc->d_Count;
-				    deleteDnsResHash(&dres, desc);
 				}
 			    }
 			    break;
@@ -1751,6 +1752,27 @@ ForkPipe(int *pfd, void (*task)(int fd, const char *id), const char *description
 	close(fds[0]);
 	close(fds[1]);
 	return((pid_t)-1);
+    }
+
+    /*
+     * Raise the IPC socketpair buffers above FreeBSD's 8 KiB AF_UNIX default
+     * so a readerthreads-sized burst of DnsRes messages does not stall.
+     */
+    {
+	int i;
+	int opt;
+
+	for (i = 0; i < 2; ++i) {
+	    for (opt = 0; opt < 2; ++opt) {
+		int name = (opt == 0) ? SO_SNDBUF : SO_RCVBUF;
+		int sz = 256 * 1024;
+
+		if (setsockopt(fds[i], SOL_SOCKET, name, &sz, sizeof(sz)) < 0) {
+		    sz = 64 * 1024;
+		    (void)setsockopt(fds[i], SOL_SOCKET, name, &sz, sizeof(sz));
+		}
+	    }
+	}
     }
 
     *pfd = fds[0];

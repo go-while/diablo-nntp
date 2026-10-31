@@ -24,7 +24,6 @@ SendMsg(int to_fd, int send_fd, DnsRes *dres)
     char tbuf[CMSG_SPACE(sizeof(int))];
     struct cmsghdr *cmsg;
     int res = 0;
-    int sent = 0;
          
     bzero(&msg, sizeof(msg));
 
@@ -63,23 +62,44 @@ SendMsg(int to_fd, int send_fd, DnsRes *dres)
 #endif
      
     /*
-     * Send the message.  This should never fail.  If it does, try to core
-     * the reader subprocess.  Certainly kill it.
+     * Send the complete fixed-size message.  On SOCK_SEQPACKET each sendmsg()
+     * is atomic; on the SOCK_STREAM fallback a short write can send the first
+     * part (with the descriptor) and need another sendmsg() without control
+     * data for the tail.  Wait with poll() on EAGAIN/ENOBUFS instead of
+     * spinning at 100% CPU while the peer drains the socketpair.
      */
         
     if (DebugOpt)
       printf("SendMsg() pid= %d fd=%d size=%d\n", (int)getpid(), send_fd, (int)sizeof(DnsRes));
-    while (!sent) {
+    while (iov.iov_len > 0) {
       res = sendmsg(to_fd, &msg, 0);
-      sent = 1;
-      if (res < 0) {
-          if (errno == EAGAIN)
-              sent = 0;
-          else
-              logit(LOG_ERR, "sendmsg error (%s)", strerror(errno));
+      if (res > 0) {
+          iov.iov_base = (char *)iov.iov_base + res;
+          iov.iov_len -= (size_t)res;
+          msg.msg_control = NULL;
+          msg.msg_controllen = 0;
+          continue;
       }
+      if (res == 0) {
+          errno = EIO;
+          logit(LOG_ERR, "sendmsg error (%s)", strerror(errno));
+          return(-1);
+      }
+      if (errno == EINTR)
+          continue;
+      if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS) {
+          struct pollfd pfd;
+
+          pfd.fd = to_fd;
+          pfd.events = POLLOUT;
+          pfd.revents = 0;
+          (void)poll(&pfd, 1, 50);
+          continue;
+      }
+      logit(LOG_ERR, "sendmsg error (%s)", strerror(errno));
+      return(-1);
     }
-    return(res);
+    return((int)sizeof(DnsRes));
 }
 
 
@@ -108,36 +128,81 @@ RecvMsg(int from_fd, int *recv_fd, DnsRes *dres)
     errno = 0;
 
     /*
-     * receive message w/ file descriptor   
+     * Receive message w/ optional file descriptor.  Do not pass MSG_EOR (it
+     * is an output flag, not a recvmsg flag).
      */
 
-    result = recvmsg(from_fd, &msg, MSG_EOR|MSG_WAITALL);
+    for (;;) {
+	result = recvmsg(from_fd, &msg, 0);
+	if (result < 0 && errno == EINTR)
+	    continue;
+	break;
+    }
     if (result <= 0) {
-	if (result < 0 && errno != EAGAIN)
+	if (result < 0 && errno != EAGAIN && errno != EWOULDBLOCK)
 		logit(LOG_ERR, "recvmsg error (%s)", strerror(errno));
 	return(result);
     }
 
-    if (msg.msg_flags & MSG_CTRUNC) {
-	logit(LOG_ERR, "recvmsg control message truncated");
-	return(-1);
-    }
     if (msg.msg_controllen) {
-	if ((cmsg = CMSG_FIRSTHDR(&msg))) {
-            if (cmsg->cmsg_level != SOL_SOCKET || cmsg->cmsg_type != SCM_RIGHTS ||
-                cmsg->cmsg_len < CMSG_LEN(sizeof(*recv_fd))) {
-	        logit(LOG_ERR, "recvmsg got invalid control message %d", cmsg->cmsg_type);
-	        return(-1);
-	    }
+	if ((cmsg = CMSG_FIRSTHDR(&msg)) != NULL &&
+	    cmsg->cmsg_level == SOL_SOCKET &&
+	    cmsg->cmsg_type == SCM_RIGHTS &&
+	    cmsg->cmsg_len >= CMSG_LEN(sizeof(*recv_fd))) {
 	    memcpy(recv_fd, CMSG_DATA(cmsg), sizeof(*recv_fd));
-	    if (DebugOpt && errno != EAGAIN)
-	        printf("RecvMsg() pid=%d fd=%d size=%d\n",
-					(int)getpid(), *recv_fd, result);
-	} else {
-	    logit(LOG_ERR, "recvmsg CMSG_FIRSTHDR null, msg_flags=%d", msg.msg_flags);
-	    return -1;
+	} else if ((msg.msg_flags & MSG_CTRUNC) == 0) {
+	    logit(LOG_ERR, "recvmsg got invalid control message (controllen=%u flags=%d)",
+		    (unsigned)msg.msg_controllen, msg.msg_flags);
+	    return(-1);
 	}
     }
+    if (msg.msg_flags & (MSG_CTRUNC | MSG_TRUNC)) {
+	logit(LOG_ERR, "recvmsg message truncated (flags=%d)", msg.msg_flags);
+	if (*recv_fd >= 0) {
+	    close(*recv_fd);
+	    *recv_fd = -1;
+	}
+	return(-1);
+    }
+
+    /*
+     * On the SOCK_STREAM fallback a nonblocking recvmsg() may return only the
+     * first part of the DnsRes structure; finish reading the rest so the
+     * stream stays aligned and the extracted descriptor is not dropped.
+     */
+    while ((size_t)result < sizeof(DnsRes)) {
+	ssize_t n = read(from_fd, (char *)dres + result,
+			 sizeof(DnsRes) - (size_t)result);
+
+	if (n > 0) {
+	    result += (int)n;
+	    continue;
+	}
+	if (n < 0 && errno == EINTR)
+	    continue;
+	if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+	    struct pollfd pfd;
+
+	    pfd.fd = from_fd;
+	    pfd.events = POLLIN;
+	    pfd.revents = 0;
+	    (void)poll(&pfd, 1, 50);
+	    continue;
+	}
+	if (n == 0)
+	    errno = EPIPE;
+	else
+	    logit(LOG_ERR, "recvmsg error (%s)", strerror(errno));
+	if (*recv_fd >= 0) {
+	    close(*recv_fd);
+	    *recv_fd = -1;
+	}
+	return(-1);
+    }
+
+    if (DebugOpt && *recv_fd >= 0)
+	printf("RecvMsg() pid=%d fd=%d size=%d\n",
+				(int)getpid(), *recv_fd, result);
     return(result);
 }
 

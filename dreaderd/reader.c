@@ -450,7 +450,7 @@ HandleReaderMsg(ForkDesc *desc)
     int recv_fd;
     DnsRes  dres;
 
-    if ((r = RecvMsg(desc->d_Fd, &recv_fd, &dres)) == sizeof(DnsRes)) {
+    while ((r = RecvMsg(desc->d_Fd, &recv_fd, &dres)) == sizeof(DnsRes)) {
 	if (recv_fd >= MAXFDS) {
 	    logit(LOG_WARNING, "fd too large %d/%d, increase MAXFDS for select. Closing fd", recv_fd, MAXFDS);
 	    /*
@@ -513,6 +513,7 @@ HandleReaderMsg(ForkDesc *desc)
 		printf("recvmsg(): EOF1\n");
 	    DelThread(desc);
 	    TerminatePending = 1;
+	    return;
 	}
     }
 
