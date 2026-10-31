@@ -195,6 +195,7 @@ NNAcceptArticle(Connection *conn)
     char *buf;
     int len = 0;
     int maxl = 1000;
+    int bareLF;
 
     conn->co_Func = NNAcceptArticle;
     conn->co_State = "accart";
@@ -238,6 +239,9 @@ NNAcceptArticle(Connection *conn)
 	 * control message ?
 	 */
 
+	bareLF = ((conn->co_Flags & (COF_POST|COF_INHEADER)) == (COF_POST|COF_INHEADER) &&
+		    (len == 1 || buf[len-2] != '\r'));
+
 	if (conn->co_Flags & COF_INHEADER) {
 	    char ch = tolower(*buf);
 	    if (strcmp(buf, "\r") == 0 || len == 1) {	/* CRLF or LF only */
@@ -273,8 +277,17 @@ NNAcceptArticle(Connection *conn)
 	    conn->co_Flags |= COF_POSTTOOBIG;
 
 	else if ((conn->co_Flags & COF_INHEADER) || (conn->co_Flags & (COF_POST|COF_WASCONTROL))) {
-	    if (len > 0)
+	    if (len > 0 && bareLF) {
+		/*
+		 * a header line ended by LF alone is stored with CR LF, so
+		 * the checks on the posted article see each line on its own
+		 */
+		MBWrite(&conn->co_ArtBuf, buf, len - 1);
+		buf = "\r\n";
+		len = 2;
+	    } else if (len > 0) {
 		buf[len-1] = '\n';
+	    }
 	    MBWrite(&conn->co_ArtBuf, buf, len);
 	}
     }
