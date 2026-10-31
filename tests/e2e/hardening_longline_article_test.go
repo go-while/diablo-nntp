@@ -79,11 +79,34 @@ func TestReaderCommandLongLine(t *testing.T) {
 	s := NewReaderSite(t, ReaderOptions{Spool: spool})
 	c := s.Reader(t)
 
-	send(t, c, "X"+longLine+"\r\n")
-	status(t, c, 500, "command line over the limit")
-	if code, line, err := c.ReadStatus(); err == nil {
-		t.Fatalf("after the 500: %d %q, want the connection closed", code, line)
-	} else if ne, ok := err.(net.Error); ok && ne.Timeout() {
-		t.Fatal("connection still open after the 500")
+	// A server is allowed to close as soon as it has seen the oversized line.
+	// On systems with smaller TCP buffers this can interrupt the 2 MiB write.
+	writeErr := c.Send("X" + longLine + "\r\n")
+	if writeErr != nil {
+		t.Logf("oversize command write: %v", writeErr)
+	}
+	code, line, err := c.ReadStatus()
+	if err == nil {
+		if code != 500 {
+			t.Fatalf("command line over the limit: got %q, want 500", line)
+		}
+		if !strings.Contains(strings.ToLower(line), "line too long") {
+			t.Fatalf("command line over the limit: got %q, want line too long", line)
+		}
+		if code, line, err := c.ReadStatus(); err == nil {
+			t.Fatalf("after the 500: %d %q, want the connection closed", code, line)
+		} else if ne, ok := err.(net.Error); ok && ne.Timeout() {
+			t.Fatal("connection still open after the 500")
+		}
+		return
+	}
+	if ne, ok := err.(net.Error); ok && ne.Timeout() {
+		t.Fatal("connection still open after the oversized command")
+	}
+	// A close/reset before the 500 is also valid: the limit was enforced
+	// while the client was still writing.  Verify that it was the line limit,
+	// rather than an unrelated reader failure.  Needs a FreeBSD/illumos CI run.
+	if !strings.Contains(s.Proc.Stderr(), "MBReadLine line longer than") {
+		t.Fatalf("oversized command closed without enforcing the line limit: %v", err)
 	}
 }
