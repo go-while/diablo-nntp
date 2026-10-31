@@ -367,10 +367,19 @@ DumpTrace(int fd, int hsize, int rsize)
 void
 DumpChain(int fd, int hsize, int rsize, hash_t *hv)
 {
-    uint32 *Ary = calloc(hsize, sizeof(uint32));
+    uint32 *Ary;
     uint32 off;
 
-    if (read(fd, Ary, hsize * sizeof(uint32)) != hsize * sizeof(uint32)) {
+    if (hsize <= 0 || hsize > (1 << 26)) {
+	fprintf(stderr, "Bad hash size %d\n", hsize);
+	return;
+    }
+    Ary = calloc((size_t)hsize, sizeof(uint32));
+    if (Ary == NULL) {
+	fprintf(stderr, "Unable to allocate hash table array\n");
+	exit(1);
+    }
+    if (read(fd, Ary, (size_t)hsize * sizeof(uint32)) != (size_t)hsize * sizeof(uint32)) {
 	fprintf(stderr, "Unable to read hash table array\n");
 	exit(1);
     }

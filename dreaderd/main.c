@@ -828,7 +828,17 @@ main(int ac, char **av)
     bzero(&GlobalBan, sizeof(GlobalBan));
 #endif
 
+    if (DOpts.ReaderForks < 0 || DOpts.ReaderForks > 1024 ||
+	DOpts.ReaderFeedForks < 0 || DOpts.ReaderFeedForks > 1024
+    ) {
+	fprintf(stderr, "readerforks/readerfeedforks outside 0..1024\n");
+	exit(1);
+    }
     ReaderPids = malloc((DOpts.ReaderForks + DOpts.ReaderFeedForks) * sizeof(pid_t));
+    if (ReaderPids == NULL) {
+	perror("malloc ReaderPids");
+	exit(1);
+    }
     bzero(ReaderPids, (DOpts.ReaderForks + DOpts.ReaderFeedForks) * sizeof(pid_t));
 
     /*
@@ -836,6 +846,7 @@ main(int ac, char **av)
      */
     {
         struct sockaddr_un soun;
+        const char *sockpath;
 
         bzero(&soun, sizeof(soun));
 
@@ -845,7 +856,12 @@ main(int ac, char **av)
         }
         soun.sun_family = AF_UNIX;
 
-        sprintf(soun.sun_path, "%s", PatRunExpand(DReaderSocketPat));
+        sockpath = PatRunExpand(DReaderSocketPat);
+        if (strlen(sockpath) >= sizeof(soun.sun_path)) {
+            fprintf(stderr, "socket path too long: %s\n", sockpath);
+            exit(1);
+        }
+        snprintf(soun.sun_path, sizeof(soun.sun_path), "%s", sockpath);
         remove(soun.sun_path);
         if (bind(ufd, (struct sockaddr *)&soun,
 			offsetof(struct sockaddr_un,

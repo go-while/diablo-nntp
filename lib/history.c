@@ -307,6 +307,13 @@ HistoryOpen(const char *fileName, int hflags)
      */
 
     HSize = HHead.hashSize;
+    if (HSize == 0 || (HSize & (HSize - 1)) != 0 ||
+	fstat(fd, &st) != 0 || st.st_size < HHead.headSize ||
+	(off_t)HSize * (off_t)sizeof(HistIndex) > st.st_size - HHead.headSize
+    ) {
+	logit(LOG_CRIT, "Invalid history hash size %u", (unsigned)HSize);
+	exit(1);
+    }
     HMask = HSize - 1;
 
     /*

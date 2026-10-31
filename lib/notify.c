@@ -50,11 +50,11 @@ CloseNotify(int *NotifyFd, int *NotifyLockFd, char *l)
 {
     char path[PATH_MAX];
     if (*NotifyFd != -1) {
-	sprintf(path, "%s.%s", PatRunExpand(DFeedNotifySocketPat), l);
+	snprintf(path, sizeof(path), "%s.%s", PatRunExpand(DFeedNotifySocketPat), l);
 	remove(path);
 	close(*NotifyFd);
 	*NotifyFd = -1;
-	sprintf(path, "%s.%s", PatRunExpand(DFeedNotifyLockPat), l);
+	snprintf(path, sizeof(path), "%s.%s", PatRunExpand(DFeedNotifyLockPat), l);
 	remove(path);
 	xflock(*NotifyLockFd, XLOCK_UN);
 	close(*NotifyLockFd);
@@ -139,6 +139,7 @@ RegisterNotify(char *notify, int status)
 {
     struct sockaddr_un soun;
     int ufd;
+    const char *sockpath;
     FILE *fo;
 
     memset(&soun, 0, sizeof(soun));
@@ -149,7 +150,13 @@ RegisterNotify(char *notify, int status)
 	return(0);
     }
     soun.sun_family = AF_UNIX;
-    sprintf(soun.sun_path, "%s", PatRunExpand(DiabloSocketPat));
+    sockpath = PatRunExpand(DiabloSocketPat);
+    if (strlen(sockpath) >= sizeof(soun.sun_path)) {
+	logit(LOG_ERR, "notify socket path too long: %s", sockpath);
+	close(ufd);
+	return(0);
+    }
+    snprintf(soun.sun_path, sizeof(soun.sun_path), "%s", sockpath);
     if (connect(ufd, (struct sockaddr *)&soun, offsetof(struct sockaddr_un, sun_path[strlen(soun.sun_path)+1])) < 0) {
 	if (NotifyConnectFailCount++ % 100 == 1)
 	    logit(LOG_ERR, "Cannot connect to notify server: %s",
@@ -177,7 +184,9 @@ int
 OpenFeedNotify(char *l)
 {
     struct sockaddr_un soun;
+    const char *sockpath;
     int fd;
+    int n;
 
     if ((fd = socket(AF_UNIX, SOCK_DGRAM, 0)) < 0) {
 	    logit(LOG_ERR, "Cannot obtain notify socket (%s)", strerror(errno));
@@ -191,7 +200,13 @@ OpenFeedNotify(char *l)
     }
     bzero(&soun, sizeof(soun));
     soun.sun_family = AF_UNIX;
-    sprintf(soun.sun_path, "%s.%s", PatRunExpand(DFeedNotifySocketPat), l);
+    sockpath = PatRunExpand(DFeedNotifySocketPat);
+    n = snprintf(soun.sun_path, sizeof(soun.sun_path), "%s.%s", sockpath, l);
+    if (n < 0 || (size_t)n >= sizeof(soun.sun_path)) {
+	logit(LOG_ERR, "notify socket path too long: %s.%s", sockpath, l);
+	close(fd);
+	return(-1);
+    }
     if (connect(fd, (struct sockaddr *)&soun, sizeof(soun)) < 0) {
 	if (errno != ENOENT) {
 	    logit(LOG_ERR, "Cannot connect to notify socket at %s (%s)",

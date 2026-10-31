@@ -246,12 +246,22 @@ MapArticle(int fd, char *fname, char **base, History *h, int *extra, int *artSiz
 	    fprintf(LogFo, "Error opening compressed article\n");
 	    return(-1);
 	}
-	*base = (char *)malloc(tah.ArtLen + tah.HeadLen + 2);
-	if (*base == NULL) {
-	    fprintf(LogFo, "Unable to malloc %d bytes for article (%s)\n",
-				tah.ArtLen + tah.HeadLen + 2, strerror(errno));
+	if (tah.HeadLen > sizeof(tah) || tah.ArtLen > (1U << 30)) {
+	    fprintf(LogFo, "Bad article header length (%d/%d)\n",
+				(int)tah.HeadLen, (int)tah.ArtLen);
 	    gzclose(gzf);
 	    return(-1);
+	}
+	{
+	    size_t need = (size_t)tah.ArtLen + (size_t)tah.HeadLen + 2;
+
+	    *base = (char *)malloc(need);
+	    if (*base == NULL) {
+		fprintf(LogFo, "Unable to malloc %lu bytes for article (%s)\n",
+				(unsigned long)need, strerror(errno));
+		gzclose(gzf);
+		return(-1);
+	    }
 	}
 	p = *base;
 	*p++ = 0;

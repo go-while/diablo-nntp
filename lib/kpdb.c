@@ -909,7 +909,7 @@ KPDBWrite(KPDB *kpdb, const char *key, const char *tok, const char *data, int lo
 	} else {
 	    int l = 20 + strlen(key) + strlen(tok) + dataLen;
 	    char *p = zalloc(&SysMemPool, l);
-	    sprintf(p, "+00000000.0000:%s %s=%s\n", key, tok, data);
+	    snprintf(p, l, "+00000000.0000:%s %s=%s\n", key, tok, data);
 	    if (KPDBWriteAt(kpdb->kp_Fd, p, strlen(p), nlockoff) < 0) {
 		writeError = errno;
 		failedOp = "new record append";

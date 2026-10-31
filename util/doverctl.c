@@ -301,8 +301,8 @@ ConvertHash(const char *group, GroupHashType *srcHash, GroupHashType *dstHash, i
 	return;
     }
 
-    strcpy(path1, GFName(group, GRPFTYPE_OVER, 0, 1, iter, srcHash));
-    strcpy(path2, GFName(group, GRPFTYPE_OVER, 0, 1, iter, dstHash));
+    snprintf(path1, sizeof(path1), "%s", GFName(group, GRPFTYPE_OVER, 0, 1, iter, srcHash));
+    snprintf(path2, sizeof(path2), "%s", GFName(group, GRPFTYPE_OVER, 0, 1, iter, dstHash));
     strcpy(dir, path2);
 
     if (DebugOpt > 1)
@@ -325,8 +325,8 @@ ConvertHash(const char *group, GroupHashType *srcHash, GroupHashType *dstHash, i
 	if (artBase == prevArtBase)
 	    continue;
 	prevArtBase = artBase;
-	strcpy(path1, GFName(group, GRPFTYPE_DATA, artBase, 1, iter, srcHash));
-	strcpy(path2, GFName(group, GRPFTYPE_DATA, artBase, 1, iter, dstHash));
+	snprintf(path1, sizeof(path1), "%s", GFName(group, GRPFTYPE_DATA, artBase, 1, iter, srcHash));
+	snprintf(path2, sizeof(path2), "%s", GFName(group, GRPFTYPE_DATA, artBase, 1, iter, dstHash));
 	/* a data file is either plain or compressed (.gz) */
 	for (variant = 0; variant < 2; variant++) {
 	    char src[PATH_MAX];
