@@ -1,0 +1,1 @@
+- dreaderd: CtlCancel() no longer walks a NULL group list; a cancel with no groups is a safe no-op (nothing to scan, since overview is not indexed by message-id).  Defense in depth: the required-Newsgroups check in NNFeedOverview refuses such a control article with 437 before the cancel runs today, so this does not change any reachable behaviour.
