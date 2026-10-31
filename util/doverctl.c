@@ -303,7 +303,7 @@ ConvertHash(const char *group, GroupHashType *srcHash, GroupHashType *dstHash, i
 
     snprintf(path1, sizeof(path1), "%s", GFName(group, GRPFTYPE_OVER, 0, 1, iter, srcHash));
     snprintf(path2, sizeof(path2), "%s", GFName(group, GRPFTYPE_OVER, 0, 1, iter, dstHash));
-    strcpy(dir, path2);
+    snprintf(dir, sizeof(dir), "%s", path2);
 
     if (DebugOpt > 1)
 	printf("Converting %s -> %s\n", path1, path2);
@@ -314,8 +314,8 @@ ConvertHash(const char *group, GroupHashType *srcHash, GroupHashType *dstHash, i
     }
     /* the entry count is read from the old file, before it moves */
     dataEntriesMask = getDataEntries(path1) - 1;
-    strcpy(ovSrc, path1);
-    strcpy(ovDst, path2);
+    snprintf(ovSrc, sizeof(ovSrc), "%s", path1);
+    snprintf(ovDst, sizeof(ovDst), "%s", path2);
     MakeGroupDirectory(dir);
     prevArtBase = -1;
     for (artNo = begNo; artNo <= endNo; artNo++) {
