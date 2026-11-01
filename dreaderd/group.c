@@ -948,22 +948,33 @@ again:
 								group, path);
 		r = -1;
 	    }
+	    if (r == 0 &&
+		(off_t)st.st_size - (off_t)oh.oh_HeadSize < (off_t)sizeof(OverArt)) {
+		/* header present but no room for even one OverArt: treat as a
+		 * new/empty file so it is re-initialised, instead of computing
+		 * ov_MaxArts 0 and taking a modulo by zero in GetOverArt(). */
+		r = -1;
+	    }
 	    if (r != 0) {
 		hflock(ov->ov_OFd, 0, XLOCK_EX);
 		/*
 		 * we have to test again after we got the lock in case
-		 * another process had a lock and adjusted the file.
+		 * another process had a lock and adjusted the file.  Use the
+		 * size as it is now, not the stale fstat from before the lock.
 		 */
+		if (fstat(ov->ov_OFd, &st) < 0)
+		    st.st_size = 0;
 		lseek(ov->ov_OFd, 0L, 0);
 		if (read(ov->ov_OFd, &oh, sizeof(oh)) != sizeof(oh) ||
-		    oh.oh_ByteOrder != OH_BYTEORDER
+		    oh.oh_ByteOrder != OH_BYTEORDER ||
+		    (off_t)st.st_size - (off_t)oh.oh_HeadSize < (off_t)sizeof(OverArt)
 		) {
 
 		    /*
 		     * If 'aInitArts' option not given in expireCtl
 		     */
 
-		    if (save.oe_InitArts == 0)
+		    if (save.oe_InitArts <= 0)
 			save.oe_InitArts = DEFARTSINGROUP;
 
 		    if (ftruncate(ov->ov_OFd, 0) < 0) {
