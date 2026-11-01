@@ -177,6 +177,7 @@ func TestArticleTypes(t *testing.T) {
 		{"uuencode ending on the 9th line", nil, append([]string{"begin 644 a.bin"}, atLines(9, 60, uuAlphabet, "M")...), atBinary | atUUencode, ""},
 		{"base64 ending on the 9th line", nil, atLines(9, 64, b64Alphabet, ""), atBinary | atBase64, ""},
 		{"empty body lines", nil, []string{"", "text", "", ""}, atDefault, ""},
+		{"base64 CTE, empty body", []string{"Content-Transfer-Encoding: base64"}, nil, atBinary | atBase64, "the deferred base64 CTE must clear the default bit like the other binary paths"},
 		{"folded multipart Content-Type", []string{"Mime-Version: 1.0", "Content-Type:", " multipart/mixed; boundary=XX"}, []string{"--XX", "--XX--"}, atMIME, "misdetection: the value on the next line is not seen; should add atMultipart"},
 		// PGP: every armor form, short (4 lines) and the size of an RSA-4096 signature or key
 		// (12 lines of 64 characters, which more than 8 in a row make a base64 binary).

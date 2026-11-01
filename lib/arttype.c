@@ -372,7 +372,7 @@ int classifyLineAsTypes(char *buf, int len)
 
 	if (ptr[len - 1] == '\n')
 	    len--;
-	if (ptr[len - 1] == '\r')
+	if (len > 0 && ptr[len - 1] == '\r')
 	    len--;
 
 	/* UUENCODE-specific checks:  UUENCODE data is well-behaved */
@@ -568,8 +568,10 @@ ArticleType(char *line, int len, int inheader)
      */
     if (CTEBase64 && (len == 0 || (len == 1 && *line == '\r'))) {
 	CTEBase64 = 0;
-	if (!CTText)
+	if (!CTText) {
 	    Type |= ARTTYPE_BASE64 | ARTTYPE_BINARY;
+	    Type &= ~ARTTYPE_DEFAULT;
+	}
     }
     /*
      * If we have found a binary, just keep it that way - saves CPU
