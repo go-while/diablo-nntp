@@ -131,6 +131,7 @@ test fails.
 | `TestNewsgroupsEmptyEntryNotCounted` | diablo | the empty entry does not count as a group for `maxcross` |
 | `TestPEMArticleNotRejectedAsBinary` | diablo | an article with a PEM certificate, private key or public key (14 to 25 lines) passes the sample `IFILTER`; a 120-line block is beyond the armor limit and still refused |
 | `TestBase64TextNotRejectedAsBinary` | diablo | a short `text/plain` article with a base64 `Content-Transfer-Encoding` passes the sample `IFILTER`, a base64 image is refused |
+| `TestChecksumListNotRejectedAsBinary` | diablo | an article listing SHA-256 digests (8, 9 and 20 lines of 64 hex characters) passes the sample `IFILTER`; 12 base64 lines to the same group are still refused |
 | `TestControlDuplicateHeadersRefused` | dreaderd | a control message with two Control: headers is not executed, and the refusal is logged; one with a single Control: is (dcontrol.ctl `newgroup:*:*:doit`) |
 | `TestReaderAccessCachePrivate` | dreaderd | the caches compiled from dreader.access (`cache.authdef` holds the `authdef` passwords) are mode 0600 under umask 022, also when older caches and a stale `.new` were 0644; AUTHINFO with the cached user and password still works. **Fails** on main before GHSA-5cwh-wc3c-f5w5: the caches followed the umask (0644) |
 | `TestGroupNameSlashRefused` | dgrpctl | a group name with `/` is refused (`Illegal newsgroup name`) and not created; a name with `+`, `-` and digits still is. **Fails** on main before GHSA-5cwh-wc3c-f5w5 |
