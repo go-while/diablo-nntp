@@ -2797,6 +2797,7 @@ SendArticle(const char *data, int fsize, FILE *fo, int doHead, int doBody)
 #define	LAERR_ARTHASBARECR	0x400000
 #define	LAERR_UNAPPROVED	0x800000	/* moderated group, no Approved: */
 #define	LAERR_DISTTAB		0x1000000	/* TAB in Distribution: header */
+#define	LAERR_BADDATE		0x2000000
 
 int
 LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *rejBuf, char *artType)
@@ -3422,17 +3423,21 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 	    artError |= LAERR_NOGROUPS;
 
 	/*
-	 * If the messsage is too old, reject it.
-	 *
-	 * XXX reject the article if parsedate doesn't have
-	 * a clue ?
+	 * Reject an article outside the age window.  In strict date mode,
+	 * reject an unreadable date too; in lax mode, treat it as arrival time.
 	 */
-	if (!artError && hdrDate && dateBuf[0]) {
-	    time_t tart = parsedate(dateBuf);
+	if (!artError && hdrDate && DOpts.FeederMaxAcceptAge > 0) {
+	    time_t tart = dateBuf[0] ? parsedate(dateBuf) : (time_t)-1;
 
-	    if (tart != (time_t)-1) {
-		int32 dt = t - tart;
-		if (dt > DOpts.FeederMaxAcceptAge || dt < -DOpts.FeederMaxAcceptAge)
+	    if (tart == (time_t)-1) {
+		if (DOpts.FeederStrictDate)
+		    artError |= LAERR_BADDATE;
+		else
+		    tart = t;
+	    }
+	    if (!artError && tart != (time_t)-1) {
+		long long dt = (long long)t - (long long)tart;
+		if (dt > DOpts.FeederMaxAcceptAge || dt < -(long long)DOpts.FeederMaxAcceptAge)
 		    artError |= LAERR_TOOOLD;
 	    }
 	}
@@ -3675,6 +3680,11 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		DoArtStats(STATS_REJECTED, STATS_REJ_MSGIDMIS, size);
 		DEBUGLOG(msgid, "MsgIdMismatch");
 		SETREJECT("MsgIdMismatch");
+	    } else if (artError & LAERR_BADDATE) {
+		(void)PreCommit(msgid, PC_DELCOMM);
+		DoArtStats(STATS_REJECTED, STATS_REJ_TOOOLD, size);
+		DEBUGLOG(msgid, "BadDate");
+		SETREJECT("BadDate");
 	    } else if (artError & LAERR_TOOOLD) {
 		DoArtStats(STATS_REJECTED, STATS_REJ_TOOOLD, size);
 		DEBUGLOG(msgid, "TooOld");
