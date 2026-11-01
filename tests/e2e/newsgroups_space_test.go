@@ -131,3 +131,36 @@ func TestNewsgroupsEmptyEntryNotCounted(t *testing.T) {
 		}
 	}
 }
+
+// TestNewsgroupsEmptyEntryActive: an empty entry in the Newsgroups: list must not stop the active
+// and moderated-group scan either. InActive() and FirstModeratedGroup() walk the list themselves
+// and broke on an empty entry, so a group listed after one ("a,,b") was never looked up: an
+// article kept only by that later group was dropped, and a moderated group hidden behind an empty
+// entry let an unapproved article through.
+func TestNewsgroupsEmptyEntryActive(t *testing.T) {
+	s := NewSite(t, SiteOptions{
+		Config: map[string]string{
+			"active":     "on",
+			"activedrop": "yes",
+			"xrefhost":   PathHost,
+		},
+		Setup: func(tb testing.TB, s *Site) {
+			s.WriteFile(tb, "dactive.kp", "")
+			s.Run(tb, "dgrpctl", "-s", "newgroup", ModGroup, "m")
+			s.Run(tb, "dgrpctl", "-s", "newgroup", OpenGroup, "y")
+		},
+	})
+	for _, c := range []struct {
+		groups string
+		want   string
+	}{
+		{"e2e.nogroup,," + OpenGroup, "235"}, // the active group after an empty entry: still kept
+		{",," + OpenGroup, "235"},            // leading empty entries, then the active group
+		{OpenGroup + ",," + ModGroup, "437"}, // a moderated group after an empty entry: unapproved
+	} {
+		line := offerGroups(t, s, c.groups)
+		if !strings.HasPrefix(line, c.want) {
+			t.Errorf("IHAVE with Newsgroups: %q: %q, want %s", c.groups, line, c.want)
+		}
+	}
+}

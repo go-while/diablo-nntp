@@ -47,8 +47,11 @@ InActive(const char *nglist)
 	int i;
 	for (i = 0; p[i] && p[i] != ',' && p[i] != ' ' && p[i] != '\t'; ++i)
 	    ;
-	if (i == 0)
-	    break;
+	if (i == 0) {
+	    /* empty entry (',,' or a leading comma): skip it, don't stop */
+	    ++p;
+	    continue;
+	}
 	if (i < sizeof(group)) {
 	    const char *rec;
 	    int recLen;
@@ -93,8 +96,11 @@ GenerateXRef(Buffer *b, const char *nglist, const char *npName, const char *ctl)
 	    ++p;
 	for (i = 0; p[i] && p[i] != ',' && p[i] != ' ' && p[i] != '\t'; ++i)
 	    ;
-	if (i == 0)
-	    break;
+	if (i == 0) {
+	    /* empty entry (',,' or a leading comma): skip it, don't stop */
+	    ++p;
+	    continue;
+	}
 	if (i < sizeof(group)) {
 	    const char *rec;
 	    int recLen;
@@ -212,8 +218,11 @@ FirstModeratedGroup(const char *nglist, char *buf, int bufLen)
 	int i;
 	for (i = 0; p[i] && p[i] != ',' && p[i] != ' ' && p[i] != '\t'; ++i)
 	    ;
-	if (i == 0)
-	    break;
+	if (i == 0) {
+	    /* empty entry (',,' or a leading comma): skip it, don't stop */
+	    ++p;
+	    continue;
+	}
 
 	if (i < sizeof(group)) {
 	    const char *rec;
