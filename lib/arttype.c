@@ -552,6 +552,26 @@ lineHas(const char *line, int len, const char *needle)
     return(0);
 }
 
+/*
+ * len-bounded prefix tests.  A match requires the whole literal to fit
+ * within the len bytes we were handed, so a line shorter than the literal
+ * can never match by reading into whatever follows it in the buffer: an
+ * article line is length-delimited, not NUL-terminated (see util/diablo.c).
+ */
+static int
+hdrPrefix(const char *s, int len, const char *lit)
+{
+    int n = (int)strlen(lit);
+    return (len >= n && strncasecmp(s, lit, n) == 0);
+}
+
+static int
+linePrefix(const char *s, int len, const char *lit)
+{
+    int n = (int)strlen(lit);
+    return (len >= n && strncmp(s, lit, n) == 0);
+}
+
 int
 ArticleType(char *line, int len, int inheader)
 {
@@ -579,20 +599,24 @@ ArticleType(char *line, int len, int inheader)
     if (Type & ARTTYPE_BINARY)
 	return(Type);
 
+    /* an empty line carries no type to classify (and must not be read) */
+    if (len <= 0)
+	return(Type);
+
     ptr = line;
 
     /*
      * Do some checks that could apply to headers and or body
      */
     first = tolower(*ptr);
-    if (first == 'c' && tolower(*(ptr + 1)) == 'o') {
+    if (len >= 2 && first == 'c' && tolower(ptr[1]) == 'o') {
 	const char *cv = NULL;	/* the value of a Content-Type: header */
 	const char *ce = NULL;	/* the value of a Content-Transfer-Encoding: header */
 
 	/* white space after the colon is optional ("Content-Type:text/html") */
-	if (! strncasecmp(ptr, "Content-Type:", 13))
+	if (hdrPrefix(ptr, len, "Content-Type:"))
 	    cv = ptr + 13;
-	else if (! strncasecmp(ptr, "Content-transfer-encoding:", 26))
+	else if (hdrPrefix(ptr, len, "Content-transfer-encoding:"))
 	    ce = ptr + 26;
 	if (cv != NULL) {
 	    while (cv < ptr + len && (*cv == ' ' || *cv == '\t'))
@@ -604,74 +628,79 @@ ArticleType(char *line, int len, int inheader)
 	}
 
 	if (cv != NULL) {
+	    int cvlen = len - (int)(cv - ptr);
+
 	    Type |= ARTTYPE_MIME;
-	    CTText = (strncasecmp(cv, "text/", 5) == 0);
-	    if (! strncasecmp(cv, "text/html", 9))
+	    CTText = hdrPrefix(cv, cvlen, "text/");
+	    if (hdrPrefix(cv, cvlen, "text/html"))
 		Type |= ARTTYPE_HTML;
-	    if (! strncasecmp(cv, "multipart", 9))
+	    if (hdrPrefix(cv, cvlen, "multipart"))
 		Type |= ARTTYPE_MULTIPART;
-	    if (! strncasecmp(cv, "application/postscript", 22))
+	    if (hdrPrefix(cv, cvlen, "application/postscript"))
 		Type |= ARTTYPE_PS;
-	    if (! strncasecmp(cv, "application/mac-binhex40", 24))
+	    if (hdrPrefix(cv, cvlen, "application/mac-binhex40"))
 		BinHex = 1;
 	    /*
 	     * PGP/MIME (RFC 3156): application/pgp-encrypted, -signature and
 	     * -keys parts are PGP data.  In an encrypted article the encrypted
 	     * data is an octet-stream part, which is not a binary posting.
 	     */
-	    if (! strncasecmp(cv, "application/pgp-", 16))
+	    if (hdrPrefix(cv, cvlen, "application/pgp-"))
 		Type |= ARTTYPE_PGPMESSAGE;
-	    if (! strncasecmp(cv, "multipart/", 10) &&
-		    (lineHas(cv, len - (int)(cv - ptr), "application/pgp-encrypted") ||
-		     lineHas(cv, len - (int)(cv - ptr), "application/pgp-signature")))
+	    if (hdrPrefix(cv, cvlen, "multipart/") &&
+		    (lineHas(cv, cvlen, "application/pgp-encrypted") ||
+		     lineHas(cv, cvlen, "application/pgp-signature")))
 		Type |= ARTTYPE_PGPMESSAGE;
-	    if (! strncasecmp(cv, "application/pgp-encrypted", 25) ||
-		    (! strncasecmp(cv, "multipart/encrypted", 19) &&
-		     lineHas(cv, len - (int)(cv - ptr), "application/pgp-encrypted")))
+	    if (hdrPrefix(cv, cvlen, "application/pgp-encrypted") ||
+		    (hdrPrefix(cv, cvlen, "multipart/encrypted") &&
+		     lineHas(cv, cvlen, "application/pgp-encrypted")))
 		PGPMime = 1;
-	    if (! strncasecmp(cv, "application/octet-stream", 24) && !PGPMime)
+	    if (hdrPrefix(cv, cvlen, "application/octet-stream") && !PGPMime)
 		Type |= ARTTYPE_BINARY;
-	    if (! strncasecmp(cv, "message/partial", 15))
+	    if (hdrPrefix(cv, cvlen, "message/partial"))
 		Type |= ARTTYPE_PARTIAL;
 	}
 	if (ce != NULL) {
-	    if (! strncasecmp(ce, "base64", 6))
+	    int celen = len - (int)(ce - ptr);
+
+	    if (hdrPrefix(ce, celen, "base64"))
 		CTEBase64 = 1;
-	    if (! strncasecmp(ce, "X-Bommanews", 11))
+	    if (hdrPrefix(ce, celen, "X-Bommanews"))
 		Type |= ARTTYPE_BOMMANEWS | ARTTYPE_BINARY;
-	    if (! strncasecmp(ce, "X-UnidataEncoding", 17))
+	    if (hdrPrefix(ce, celen, "X-UnidataEncoding"))
 		Type |= ARTTYPE_UNIDATA | ARTTYPE_BINARY;
 	}
     }
-    if (first == '(' && strncasecmp(ptr, "(This file must be converted with BinHex 4.0)", 33) == 0)
+    if (first == '(' && len >= 33 &&
+	    strncasecmp(ptr, "(This file must be converted with BinHex 4.0)", 33) == 0)
 	BinHex = 1;
 
-    if (first == '=' && strncasecmp(ptr, "=ybegin part=", 13) == 0)
+    if (first == '=' && hdrPrefix(ptr, len, "=ybegin part="))
 	Type |= ARTTYPE_BINARY|ARTTYPE_PARTIAL|ARTTYPE_YENC;
-    if (first == '=' && strncasecmp(ptr, "=ybegin line=", 13) == 0)
+    if (first == '=' && hdrPrefix(ptr, len, "=ybegin line="))
 	Type |= ARTTYPE_BINARY|ARTTYPE_YENC;
 
     if (inheader) {
-	if (first == 'c' && tolower(*(ptr + 1)) == 'o') {
-	    if (! strncasecmp(ptr, "Control: ", 9))
+	if (len >= 2 && first == 'c' && tolower(ptr[1]) == 'o') {
+	    if (hdrPrefix(ptr, len, "Control: "))
 		Type |= ARTTYPE_CONTROL;
-	    if (! strncasecmp(ptr, "Control: cancel ", 16))
+	    if (hdrPrefix(ptr, len, "Control: cancel "))
 		Type |= ARTTYPE_CANCEL;
 	}
-	if (first == 'm' && strncasecmp(ptr, "Mime-Version: ", 14) == 0)
+	if (first == 'm' && hdrPrefix(ptr, len, "Mime-Version: "))
 		Type |= ARTTYPE_MIME;
     } else {
 	int linetype;
 
 	/* A MIME boundary starts a part: its Content-Type is not known yet */
-	if (ptr[0] == '-' && ptr[1] == '-')
+	if (len >= 2 && ptr[0] == '-' && ptr[1] == '-')
 	    CTText = 0;
 
 	/* Get quoted UUencode, etc. */
 	if (*ptr == '>') {
 	    ptr++;
 	    len--;
-	    if (*ptr == ' ') {
+	    if (len > 0 && *ptr == ' ') {
 		ptr++;
 		len--;
 	    }
@@ -696,17 +725,17 @@ ArticleType(char *line, int len, int inheader)
 	 * hide behind a "BEGIN" line.
 	 */
 	if (Armor > 0) {
-	    if (strncmp(ptr, "-----END ", 9) == 0)
+	    if (linePrefix(ptr, len, "-----END "))
 		Armor = 0;
 	    else
 		--Armor;
 	    linetype = 0;
 	} else {
 	    linetype = classifyLineAsTypes(ptr, len);
-	    if (*ptr == '-' && strncmp(ptr, "-----BEGIN ", 11) == 0) {
+	    if (len > 0 && *ptr == '-' && linePrefix(ptr, len, "-----BEGIN ")) {
 		/* PGP in any armor form: message (also a part), signed
 		 * message, signature, public or private key block */
-		if (strncmp(ptr + 11, "PGP ", 4) == 0)
+		if (linePrefix(ptr + 11, len - 11, "PGP "))
 		    Type |= ARTTYPE_PGPMESSAGE;
 		Armor = ARMOR_MAX;
 	    }
