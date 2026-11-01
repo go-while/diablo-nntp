@@ -695,7 +695,7 @@ scanDirectory(const char *dirpath, char *dirname, int *level)
 	     */
 	    if (strncmp(den2->d_name, ".data.", 6) == 0 ||
 		strncmp(den2->d_name, ".d.", 3) == 0 ||
-		sscanf(den2->d_name, ".%[^.]s.%d.d.", tbuf, &tint) == 2) {
+		sscanf(den2->d_name, ".%23[^.]s.%d.d.", tbuf, &tint) == 2) {
 		DeleteJunkFile(path, den2->d_name);
 		continue;
 	    }
