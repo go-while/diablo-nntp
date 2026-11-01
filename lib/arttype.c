@@ -47,6 +47,9 @@ Prototype int ArtTypeConv(char *t);
 Prototype int ArtTypeMatch(int articletype, ArtTypeList *acctypes);
 Prototype int ArticleType(char *line, int len, int inheader);
 
+#define	ARMOR_MAX	100	/* lines of one armored block (PGP, PEM) that are not counted */
+
+static int lineHas(const char *line, int len, const char *needle);
 int isBinHexLine(char *line, int len, int firstline);
 int isUuencodedLine(char *buf, int len);
 
@@ -57,6 +60,10 @@ int Type = ARTTYPE_DEFAULT;
 int UUencode = 0;
 int BinHex = 0;
 int Base64 = 0;
+int PGPMime = 0;	/* in a PGP/MIME encrypted article: its octet-stream part is not a binary */
+int CTText = 0;	/* the last Content-Type seen is text/ */
+int CTEBase64 = 0;	/* a base64 Content-Transfer-Encoding is waiting for the end of its header block */
+int Armor = 0;	/* lines left to skip in an ASCII-armored block (PGP, PEM), 0 = not in one */
 
 /*
  * Extensible content type classification system
@@ -358,10 +365,14 @@ int classifyLineAsTypes(char *buf, int len)
 {
 	register unsigned int istype = 0x00, isnttype = 0xff;
 	register char *ptr = buf;
+	int nonhex = 0;
+
+	if (len <= 0)
+	    return(0);
 
 	if (ptr[len - 1] == '\n')
 	    len--;
-	if (ptr[len - 1] == '\r')
+	if (len > 0 && ptr[len - 1] == '\r')
 	    len--;
 
 	/* UUENCODE-specific checks:  UUENCODE data is well-behaved */
@@ -409,6 +420,9 @@ int classifyLineAsTypes(char *buf, int len)
 		 * If the character might legitimately be part of one
 		 * of the component bit types, set that(those) bits
 		 */
+		if (!((*ptr >= '0' && *ptr <= '9') || (*ptr >= 'a' && *ptr <= 'f') ||
+					(*ptr >= 'A' && *ptr <= 'F')))
+		    nonhex = 1;
 		istype |= charactermap[(unsigned char)*ptr];
 
 		/*
@@ -419,6 +433,15 @@ int classifyLineAsTypes(char *buf, int len)
 		ptr++;
 		len--;
 	}
+
+	/*
+	 * A line of nothing but hex digits is a checksum or a hex dump, not
+	 * encoded data: a SHA-256 digest is 64 hex characters, so nine of them
+	 * in a list were taken for base64 (or BinHex) and the article for a
+	 * binary.  Encoded binary data is never made of hex digits alone.
+	 */
+	if (!nonhex)
+	    return(0);
 
 	/*
 	 * Now, what we have is istype, which contains a possible list of
@@ -437,6 +460,10 @@ InitArticleType(void)
     UUencode = 0;
     BinHex = 0;
     Base64 = 0;
+    Armor = 0;
+    PGPMime = 0;
+    CTText = 0;
+    CTEBase64 = 0;
 }
 
 int
@@ -508,6 +535,23 @@ ArtTypeMatch(int articletype, ArtTypeList *acctypes)
     return(res);
 }
 
+/*
+ * Does the line (len bytes, not necessarily NUL terminated) contain
+ * needle, ignoring case?
+ */
+static int
+lineHas(const char *line, int len, const char *needle)
+{
+    int n = strlen(needle);
+    int i;
+
+    for (i = 0; i + n <= len; ++i) {
+	if (strncasecmp(line + i, needle, n) == 0)
+	    return(1);
+    }
+    return(0);
+}
+
 int
 ArticleType(char *line, int len, int inheader)
 {
@@ -516,6 +560,19 @@ ArticleType(char *line, int len, int inheader)
 
     if (Type != ARTTYPE_DEFAULT)
 	Type = Type & ~ARTTYPE_DEFAULT;
+    /*
+     * The blank line at the end of a header block (of the article or of a
+     * MIME part) settles a base64 Content-Transfer-Encoding: the part is a
+     * binary unless its Content-Type is text/ (non-ASCII text is sent this
+     * way).  The two headers can come in either order.
+     */
+    if (CTEBase64 && (len == 0 || (len == 1 && *line == '\r'))) {
+	CTEBase64 = 0;
+	if (!CTText) {
+	    Type |= ARTTYPE_BASE64 | ARTTYPE_BINARY;
+	    Type &= ~ARTTYPE_DEFAULT;
+	}
+    }
     /*
      * If we have found a binary, just keep it that way - saves CPU
      */
@@ -528,27 +585,63 @@ ArticleType(char *line, int len, int inheader)
      * Do some checks that could apply to headers and or body
      */
     first = tolower(*ptr);
-    if (first == 'c' && tolower(*(ptr + 1) == 'o')) {
-	if (! strncasecmp(ptr, "Content-Type: text/html", 23))
-	    Type |= ARTTYPE_HTML;
-	if (! strncasecmp(ptr, "Content-Type: ", 14))
+    if (first == 'c' && tolower(*(ptr + 1)) == 'o') {
+	const char *cv = NULL;	/* the value of a Content-Type: header */
+	const char *ce = NULL;	/* the value of a Content-Transfer-Encoding: header */
+
+	/* white space after the colon is optional ("Content-Type:text/html") */
+	if (! strncasecmp(ptr, "Content-Type:", 13))
+	    cv = ptr + 13;
+	else if (! strncasecmp(ptr, "Content-transfer-encoding:", 26))
+	    ce = ptr + 26;
+	if (cv != NULL) {
+	    while (cv < ptr + len && (*cv == ' ' || *cv == '\t'))
+		++cv;
+	}
+	if (ce != NULL) {
+	    while (ce < ptr + len && (*ce == ' ' || *ce == '\t'))
+		++ce;
+	}
+
+	if (cv != NULL) {
 	    Type |= ARTTYPE_MIME;
-	if (! strncasecmp(ptr, "Content-Type: multipart", 23))
-	    Type |= ARTTYPE_MULTIPART;
-	if (! strncasecmp(ptr, "Content-transfer-encoding: base64", 33))
-	    Type |= ARTTYPE_BASE64 | ARTTYPE_BINARY;
-	if (! strncasecmp(ptr, "Content-transfer-encoding: X-Bommanews", 38))
-	    Type |= ARTTYPE_BOMMANEWS | ARTTYPE_BINARY;
-	if (! strncasecmp(ptr, "Content-transfer-encoding: X-UnidataEncoding", 44))
-	    Type |= ARTTYPE_UNIDATA | ARTTYPE_BINARY;
-	if (! strncasecmp(ptr, "Content-Type: application/postscript", 36))
-	    Type |= ARTTYPE_PS;
-	if (! strncasecmp(ptr, "Content-Type: application/mac-binhex40", 38))
-	    BinHex = 1;
-	if (! strncasecmp(ptr, "Content-Type: application/octet-stream", 38))
-	    Type |= ARTTYPE_BINARY;
-	if (! strncasecmp(ptr, "Content-Type: message/partial", 29))
-	    Type |= ARTTYPE_PARTIAL;
+	    CTText = (strncasecmp(cv, "text/", 5) == 0);
+	    if (! strncasecmp(cv, "text/html", 9))
+		Type |= ARTTYPE_HTML;
+	    if (! strncasecmp(cv, "multipart", 9))
+		Type |= ARTTYPE_MULTIPART;
+	    if (! strncasecmp(cv, "application/postscript", 22))
+		Type |= ARTTYPE_PS;
+	    if (! strncasecmp(cv, "application/mac-binhex40", 24))
+		BinHex = 1;
+	    /*
+	     * PGP/MIME (RFC 3156): application/pgp-encrypted, -signature and
+	     * -keys parts are PGP data.  In an encrypted article the encrypted
+	     * data is an octet-stream part, which is not a binary posting.
+	     */
+	    if (! strncasecmp(cv, "application/pgp-", 16))
+		Type |= ARTTYPE_PGPMESSAGE;
+	    if (! strncasecmp(cv, "multipart/", 10) &&
+		    (lineHas(cv, len - (int)(cv - ptr), "application/pgp-encrypted") ||
+		     lineHas(cv, len - (int)(cv - ptr), "application/pgp-signature")))
+		Type |= ARTTYPE_PGPMESSAGE;
+	    if (! strncasecmp(cv, "application/pgp-encrypted", 25) ||
+		    (! strncasecmp(cv, "multipart/encrypted", 19) &&
+		     lineHas(cv, len - (int)(cv - ptr), "application/pgp-encrypted")))
+		PGPMime = 1;
+	    if (! strncasecmp(cv, "application/octet-stream", 24) && !PGPMime)
+		Type |= ARTTYPE_BINARY;
+	    if (! strncasecmp(cv, "message/partial", 15))
+		Type |= ARTTYPE_PARTIAL;
+	}
+	if (ce != NULL) {
+	    if (! strncasecmp(ce, "base64", 6))
+		CTEBase64 = 1;
+	    if (! strncasecmp(ce, "X-Bommanews", 11))
+		Type |= ARTTYPE_BOMMANEWS | ARTTYPE_BINARY;
+	    if (! strncasecmp(ce, "X-UnidataEncoding", 17))
+		Type |= ARTTYPE_UNIDATA | ARTTYPE_BINARY;
+	}
     }
     if (first == '(' && strncasecmp(ptr, "(This file must be converted with BinHex 4.0)", 33) == 0)
 	BinHex = 1;
@@ -559,7 +652,7 @@ ArticleType(char *line, int len, int inheader)
 	Type |= ARTTYPE_BINARY|ARTTYPE_YENC;
 
     if (inheader) {
-	if (first == 'c' && tolower(*(ptr + 1) == 'o')) {
+	if (first == 'c' && tolower(*(ptr + 1)) == 'o') {
 	    if (! strncasecmp(ptr, "Control: ", 9))
 		Type |= ARTTYPE_CONTROL;
 	    if (! strncasecmp(ptr, "Control: cancel ", 16))
@@ -569,6 +662,10 @@ ArticleType(char *line, int len, int inheader)
 		Type |= ARTTYPE_MIME;
     } else {
 	int linetype;
+
+	/* A MIME boundary starts a part: its Content-Type is not known yet */
+	if (ptr[0] == '-' && ptr[1] == '-')
+	    CTText = 0;
 
 	/* Get quoted UUencode, etc. */
 	if (*ptr == '>') {
@@ -588,7 +685,32 @@ ArticleType(char *line, int len, int inheader)
 	 * eat CPU for the entire binary.
 	 */
 
-	linetype = classifyLineAsTypes(ptr, len);
+	/*
+	 * The lines of an ASCII-armored block, a PGP signature, key or message
+	 * or a PEM certificate or key (-----BEGIN label----- to -----END
+	 * label-----), are base64 text of 64 characters, not a binary posting:
+	 * do not count them as base64 or the other encodings.  The signature of
+	 * an RSA-4096 key has 12 lines and a certificate more, so a signed text
+	 * article or a post with a certificate was taken for a binary.  The
+	 * skipping is bounded by ARMOR_MAX lines so that a long binary can't
+	 * hide behind a "BEGIN" line.
+	 */
+	if (Armor > 0) {
+	    if (strncmp(ptr, "-----END ", 9) == 0)
+		Armor = 0;
+	    else
+		--Armor;
+	    linetype = 0;
+	} else {
+	    linetype = classifyLineAsTypes(ptr, len);
+	    if (*ptr == '-' && strncmp(ptr, "-----BEGIN ", 11) == 0) {
+		/* PGP in any armor form: message (also a part), signed
+		 * message, signature, public or private key block */
+		if (strncmp(ptr + 11, "PGP ", 4) == 0)
+		    Type |= ARTTYPE_PGPMESSAGE;
+		Armor = ARMOR_MAX;
+	    }
+	}
 
 	if (linetype & UUE) {
 	    Base64 = 0;
@@ -596,6 +718,7 @@ ArticleType(char *line, int len, int inheader)
 	    UUencode++;
 	    if (UUencode > 8) {
 		Type |= ARTTYPE_UUENCODE | ARTTYPE_BINARY;
+		Type &= ~ARTTYPE_DEFAULT;
 		return(Type);
 	    }
 	} else if (linetype & BHX) {
@@ -604,6 +727,7 @@ ArticleType(char *line, int len, int inheader)
 	    BinHex++;
 	    if (BinHex > 8) {
 		Type |= ARTTYPE_BINHEX | ARTTYPE_BINARY;
+		Type &= ~ARTTYPE_DEFAULT;
 		return(Type);
 	    }
 	} else if (linetype & B64) {
@@ -612,12 +736,10 @@ ArticleType(char *line, int len, int inheader)
 	    Base64++;
 	    if (Base64 > 8) {
 		Type |= ARTTYPE_BASE64 | ARTTYPE_BINARY;
+		Type &= ~ARTTYPE_DEFAULT;
 		return(Type);
 	    }
 	} else {
-	    if (*ptr == '-' &&
-			strncmp(ptr, "-----BEGIN PGP MESSAGE-----", 27) == 0)
-		Type |= ARTTYPE_PGPMESSAGE;
 	    UUencode = 0;
 	    Base64 = 0;
 	    BinHex = 0;
