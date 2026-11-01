@@ -181,6 +181,15 @@ cdcache(const char *path)
 
     ++p;
 
+    /*
+     * If the directory part is longer than the cache, skip the chdir
+     * shortcut and open the path as given instead of overflowing DirCache.
+     * Diablo's spool paths are absolute, so the whole path opens the same
+     * file - the same fallback the chdir failure below takes.
+     */
+    if ((size_t)(p - path) >= sizeof(DirCache))
+	return(path);
+
     if (strncmp(DirCache, path, p - path) != 0 || DirCache[p - path] != 0) {
         bcopy(path, DirCache, p - path);
         DirCache[p - path] = 0;
