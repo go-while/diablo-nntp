@@ -240,7 +240,17 @@ Reject articles that contain a NUL byte (rejectartswithnul).
 Reject articles whose Date: is more than maxage in the past or the
 future.  The value is in days, or with s, m, h or d appended.  Same as
 feedermaxacceptage in diablo.config; the default is the remember time.
-A value of 0 turns the check off.
+A value of 0 (or a negative value) turns the check off.
+With a positive age limit,
+.B strictdate yes
+in diablo.config rejects an unreadable Date; the default,
+.BR "strictdate no" ,
+accepts it without an age check.  Exactly one Date header is still required.
+The option accepts yes/no, on/off, or 1/0; invalid values are configuration errors.
+The Date's time zone is applied; a Date without a zone is interpreted in the
+server's local time zone, and an unknown named zone is treated as UTC.
+A date with no time is interpreted as local midnight.
+If a numeric offset follows a named zone, the numeric offset takes precedence.
 .PP
 .B \-b fd
 .PP

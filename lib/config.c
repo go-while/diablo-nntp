@@ -123,6 +123,7 @@ initDOpts(void)
     DOpts.ReaderIdentTimeout = 10;
     DOpts.RememberSecs = 14 * 24 * 60 * 60;
     DOpts.FeederMaxAcceptAge = DOpts.RememberSecs;
+    DOpts.FeederStrictDate = 0;
     DOpts.HostCacheRebuildTime = 60 * 60;
     DOpts.DisplayAdminVersion = 1;
     DOpts.FeederRTStats = RTSTATS_NONE;
@@ -544,6 +545,18 @@ SetCommand(FILE *fo, char *cmd, char *opt, int *cmdErr)
 		DOpts.FeederMaxAcceptAge = TimeSpec(opt, "d");
 		optErr = 0;
 	    }
+    } else if (strcasecmp(cmd, "strictdate") == 0) {
+	    if (opt && (strcasecmp(opt, "yes") == 0 ||
+		    strcasecmp(opt, "on") == 0 || strcmp(opt, "1") == 0)) {
+		DOpts.FeederStrictDate = 1;
+		optErr = 0;
+	    } else if (opt && (strcasecmp(opt, "no") == 0 ||
+		    strcasecmp(opt, "off") == 0 || strcmp(opt, "0") == 0)) {
+		DOpts.FeederStrictDate = 0;
+		optErr = 0;
+	    } else if (fo != NULL) {
+		fprintf(fo, "strictdate requires yes/no, on/off, or 1/0\n");
+	    }
     } else if (strcasecmp(cmd, "maxconnect") == 0) {
 	    if (opt) {
 		DOpts.MaxPerRemote = strtol(opt, NULL, 0);
@@ -894,6 +907,8 @@ dumpConfigFeeder(FILE *fo, char *cmd)
 	fprintf(fo, "remember: %d\n", DOpts.RememberSecs / 24 / 60 / 60);
     if (cmd == NULL || strcasecmp(cmd, "feedermaxacceptage") == 0)
 	fprintf(fo, "feedermaxacceptage: %d\n", DOpts.FeederMaxAcceptAge);
+    if (cmd == NULL || strcasecmp(cmd, "strictdate") == 0)
+	fprintf(fo, "strictdate: %s\n", DOpts.FeederStrictDate ? "yes" : "no");
     if (cmd == NULL || strcasecmp(cmd, "maxconnect") == 0)
 	fprintf(fo, "maxconnect: %d\n", DOpts.MaxPerRemote);
     if (cmd == NULL || strcasecmp(cmd, "hostcacherebuildtime") == 0)

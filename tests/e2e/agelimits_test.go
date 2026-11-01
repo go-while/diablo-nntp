@@ -13,6 +13,11 @@ import (
 // offerDated offers the site an article whose Date: is date and returns the final status of the
 // IHAVE: 235 accepted, 437 rejected.
 func offerDated(t *testing.T, s *Site, date string) int {
+	code, _ := offerDatedReply(t, s, date)
+	return code
+}
+
+func offerDatedReply(t *testing.T, s *Site, date string) (int, string) {
 	t.Helper()
 	a := newArticle(msgID(t), "e2e.test", "dated "+date, "body of an article")
 	for i, l := range a {
@@ -32,7 +37,7 @@ func offerDated(t *testing.T, s *Site, date string) int {
 	if code != 235 && code != 437 {
 		t.Fatalf("IHAVE with Date %q: %d %q, want 235 or 437", date, code, line)
 	}
-	return code
+	return code, line
 }
 
 // TestFeederMaxAcceptAge: the age limit for incoming articles. By default (the harness has
@@ -79,6 +84,43 @@ func TestFeederMaxAcceptAge(t *testing.T) {
 			// not parseable: not checked
 			if code := offerDated(t, s, "2001-01-01"); code != 235 {
 				t.Errorf("an article with the unparseable Date 2001-01-01: %d, want 235", code)
+			}
+		})
+	}
+}
+
+// TestFeederStrictDate exercises both parsing policies and the disabled age check.
+func TestFeederStrictDate(t *testing.T) {
+	now := time.Now().UTC().Format("Mon, 02 Jan 2006 15:04:05 -0700")
+	old := "Mon, 01 Jan 1900 12:00:00 +0000"
+	for _, tc := range []struct {
+		name, directives string
+		bad, empty, old  int
+	}{
+		{"default lax", "feedermaxacceptage 1d", 235, 235, 437},
+		{"explicit lax", "feedermaxacceptage 1d\nstrictdate no", 235, 235, 437},
+		{"strict", "feedermaxacceptage 1d\nstrictdate yes", 437, 437, 437},
+		{"strict without age limit", "feedermaxacceptage 0\nstrictdate yes", 235, 235, 235},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := NewSite(t, SiteOptions{Config: map[string]string{"remember": "7\n" + tc.directives}})
+			for _, date := range []struct {
+				value string
+				want  int
+			}{
+				{now, 235},
+				{"banana", tc.bad},
+				{"31 Feb 2001 12:00:00 GMT", tc.bad},
+				{"", tc.empty},
+				{old, tc.old},
+			} {
+				got, line := offerDatedReply(t, s, date.value)
+				if got != date.want {
+					t.Errorf("Date %q: got %d, want %d", date.value, got, date.want)
+				}
+				if tc.name == "strict" && date.value == "banana" && !strings.Contains(line, "BadDate") {
+					t.Errorf("Date %q: reply %q does not identify BadDate", date.value, line)
+				}
 			}
 		})
 	}
