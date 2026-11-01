@@ -473,6 +473,14 @@ ParseControl(Connection *conn, const char *cmd, const char *from, const char *ne
 		    fflush(ctl->ct_LogFo);
 		    hflock(fileno(ctl->ct_LogFo), 0, XLOCK_UN);
 		    fclose(ctl->ct_LogFo);
+		    /*
+		     * Forget the closed handle now: if the reopen below fails
+		     * (fd < 0) ct_LogFo would otherwise stay pointing at a
+		     * closed FILE*, which the temp-file fallback test, every
+		     * later fprintf(), and FreeControl's fclose() would all
+		     * use/close again.
+		     */
+		    ctl->ct_LogFo = NULL;
 		}
 
 		if (logFile[0] == '/')

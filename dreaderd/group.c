@@ -869,6 +869,12 @@ GetOverInfo(const char *group)
 	}
 	ov = zalloc(&SysMemPool, sizeof(OverInfo));
 	ov->ov_Group = zallocStr(&SysMemPool, group);
+	/*
+	 * zalloc() zeroed ov, so ov_OFd is 0 (stdin) until it is opened
+	 * below.  Mark it closed now so an early FreeOverInfo() on an error
+	 * path does not close(0).
+	 */
+	ov->ov_OFd = -1;
 	GetOverExpire(group, &save);
 	ov->ov_LimitSecs = save.oe_LimitDays * 24.0 * 60.0 * 60.0;
 
@@ -876,6 +882,7 @@ GetOverInfo(const char *group)
 	    const char *rec;
 	    int recLen;
 	    if ((rec = KPDBReadRecord(KDBActive, group, KP_LOCK, &recLen)) == NULL) {
+		FreeOverInfo(ov);
 		return(NULL);
 	    }
 	    iter = strtol(KPDBGetField(rec, recLen, "ITER", NULL, "0"), NULL, 10);
@@ -964,6 +971,7 @@ again:
 			    group, strerror(errno));
 			hflock(ov->ov_OFd, 0, XLOCK_UN);
 			FreeOverInfo(ov);
+			zfree(&SysMemPool, path, pathSize);
 			return(NULL);
 		    }
 		    st.st_size = sizeof(oh) + sizeof(OverArt) * save.oe_InitArts;
@@ -982,6 +990,7 @@ again:
 			    group, strerror(errno));
 			hflock(ov->ov_OFd, 0, XLOCK_UN);
 			FreeOverInfo(ov);
+			zfree(&SysMemPool, path, pathSize);
 			return(NULL);
 		    }
 		}
