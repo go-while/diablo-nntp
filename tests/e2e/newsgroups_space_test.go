@@ -81,3 +81,53 @@ func TestNewsgroupsSpaceActive(t *testing.T) {
 		}
 	}
 }
+
+// TestNewsgroupsEmptyEntry: an empty entry in the Newsgroups: list (a trailing comma, which
+// posting tools write, or ",,") is not a group and is ignored, as INN's NGsplit does. Before, it
+// was matched as the empty name, which "addgroup *" matches and "delgroup *.bina*" does not, so
+// the sample IFILTER rejected a binary article that ends in a comma; and it counted as a group
+// for maxcross.
+func TestNewsgroupsEmptyEntry(t *testing.T) {
+	s := NewSite(t, SiteOptions{
+		Newsfeeds: DefaultNewsfeeds + "label IFILTER\n    addgroup *\n    delgroup *.bina*\nend\n",
+	})
+	for _, c := range []struct {
+		groups string
+		want   string
+	}{
+		{"alt.binaries.nzb,alt.binaries.ftd", "235"},
+		{"alt.binaries.nzb,alt.binaries.ftd,", "235"},  // trailing comma
+		{"alt.binaries.nzb,,alt.binaries.ftd", "235"},  // empty entry in the middle
+		{"alt.binaries.nzb, alt.binaries.ftd,", "235"}, // after a space
+		{",alt.binaries.nzb", "235"},                   // leading comma
+		{"alt.binaries.nzb,", "235"},                   // one group and a comma
+		{"e2e.drop,", "437"},                           // not a binary group: still filtered
+		{"e2e.drop,,alt.binaries.nzb", "437"},          // a filtered group among empty entries
+	} {
+		line := offerGroups(t, s, c.groups)
+		if !strings.HasPrefix(line, c.want) {
+			t.Errorf("IHAVE with Newsgroups: %q: %q, want %s", c.groups, line, c.want)
+		}
+	}
+}
+
+// TestNewsgroupsEmptyEntryNotCounted: an empty entry does not count as a group for maxcross.
+// IFILTER with "maxcross 2" rejects an article of at most two groups.
+func TestNewsgroupsEmptyEntryNotCounted(t *testing.T) {
+	s := NewSite(t, SiteOptions{
+		Newsfeeds: DefaultNewsfeeds + "label IFILTER\n    addgroup *\n    maxcross 2\nend\n",
+	})
+	for _, c := range []struct {
+		groups string
+		want   string
+	}{
+		{"e2e.a,e2e.b", "437"},       // two groups: matched, rejected
+		{"e2e.a,e2e.b,", "437"},      // the trailing comma is not a third group
+		{"e2e.a,e2e.b,e2e.c", "235"}, // three groups: over maxcross, not matched
+	} {
+		line := offerGroups(t, s, c.groups)
+		if !strings.HasPrefix(line, c.want) {
+			t.Errorf("IHAVE with Newsgroups: %q: %q, want %s", c.groups, line, c.want)
+		}
+	}
+}
