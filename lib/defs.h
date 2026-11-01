@@ -236,6 +236,7 @@ struct DiabloOpts {
     int ReaderDetailLog;
     int RememberSecs;
     int FeederMaxAcceptAge;
+    int FeederStrictDate;
     int MaxPerRemote;
     int HostCacheRebuildTime;
     int DisplayAdminVersion;
