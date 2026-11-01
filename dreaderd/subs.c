@@ -260,10 +260,10 @@ SetTimeRestrict(TimeRestrict *tr, const char *yymmdd, const char *hhmmss, const 
         int dt =
             (lt.tm_sec + lt.tm_min * 60 + lt.tm_hour * (60 * 60)) -
             (gt.tm_sec + gt.tm_min * 60 + gt.tm_hour * (60 * 60));
-        if (lt.tm_mday > gt.tm_mday)
-            dt += 24 * 60 * 60;
-        if (lt.tm_mday < gt.tm_mday)
-            dt -= 24 * 60 * 60;
+        if (lt.tm_year != gt.tm_year)
+            dt += (lt.tm_year > gt.tm_year) ? 24 * 60 * 60 : -24 * 60 * 60;
+        else if (lt.tm_yday != gt.tm_yday)
+            dt += (lt.tm_yday > gt.tm_yday) ? 24 * 60 * 60 : -24 * 60 * 60;
         t += dt;
     }
     tr->tr_Time = t;
