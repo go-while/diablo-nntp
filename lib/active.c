@@ -65,6 +65,8 @@ InActive(const char *nglist)
 	if (*p != ',')
 	    break;
 	++p;
+	while (*p == ' ' || *p == '\t')
+	    ++p;
     }
     return(found);
 }
@@ -238,6 +240,8 @@ FirstModeratedGroup(const char *nglist, char *buf, int bufLen)
 	if (*p != ',')
 	    break;
 	++p;
+	while (*p == ' ' || *p == '\t')
+	    ++p;
     }
 
     return foundModerated;

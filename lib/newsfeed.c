@@ -520,6 +520,8 @@ feedQueryGroups(NewsFeed *feed, const char *nglist)
 
 	if (*p == ',')
 	    ++p;
+	while (*p == ' ' || *p == '\t')
+	    ++p;
 
 	for (l = 0; l < MAXGNAME - 1 && p[l] && p[l] != ',' && p[l] != ' ' && p[l] != '\t' && p[l] != '\n' && p[l] != '\r'; ++l)
 	    ;
@@ -677,6 +679,8 @@ cbFilterRequireGroups(Node *node, const void *data, int *pabort, int def)
 	    char group[MAXGNAME];
 
 	    if (*p == ',')
+		++p;
+	    while (*p == ' ' || *p == '\t')
 		++p;
 
 	    for (l = 0; l < MAXGNAME - 1 && p[l] && p[l] != ',' && p[l] != ' ' && p[l] != '\t' && p[l] != '\n' && p[l] != '\r'; ++l)
@@ -1008,6 +1012,8 @@ filterQueryGroups(NewsFeed *feed, const char *nglist)
 	char group[MAXGNAME];
 
 	if (*p == ',')
+	    ++p;
+	while (*p == ' ' || *p == '\t')
 	    ++p;
 	for (l = 0; l < MAXGNAME - 1 && p[l] && p[l] != ',' && p[l] != ' ' && p[l] != '\t' && p[l] != '\n' && p[l] != '\r'; ++l)
 	    ;
