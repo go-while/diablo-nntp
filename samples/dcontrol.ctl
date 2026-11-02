@@ -6,7 +6,13 @@
 ##
 ##  Format:
 ##	<message>:<from>:<newsgroups>:<action>[=log][,<action>[=log]]*
-##  The last match found is used.
+##  The last match found is used.  Several lines can match one message, and
+##  the last "=log" among the matching lines decides where the message is logged
+##  (a line without "=log" keeps the log of the line before it).  Put a catch-all
+##  line such as "all:*:*:log=control.log" before the lines of the message types,
+##  never after them, or it replaces their log.  The <newsgroups> pattern is only
+##  tested for newgroup and rmgroup, so a line with a group pattern matches every
+##  other message type whatever the pattern says.
 ##	<message>	Control message or "all" if it applies
 ##			to all control messages.
 ##	<from>		Pattern that must match the From line.
@@ -66,10 +72,6 @@ newgroup:*:*:log=newgroup.other
 rmgroup:*:*:log=rmgroup.other
 
 ##	LOCAL HIERARCHIES
-
-##	BEST (Best Internet Communications [duh])
-#all:news@bofh.noc.best.net:best.*:mail
-all:*@*:best.*:log=control.log
 
 ## BIG 8  comp, humanities, misc, news, rec, sci, soc, talk
 # *PGP*   See comment at top of file.
