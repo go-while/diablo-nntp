@@ -237,6 +237,7 @@ test fails.
 | `TestPostBareLFHeaders`, `TestPostBareLFAccepted` | dreaderd | a POST header refused with CR LF line ends (`X-Trace`, `NNTP-Posting-Host`, `Control` with `controlpost no`) is refused with 441 when the lines end in LF alone; a post with LF-only line ends in headers and body is still accepted and passed on with its headers on separate lines and the body unchanged. `TestPostBareLFHeaders` **fails** on main before this fix: the LF-only header lines were not checked |
 | `TestReaderLongLineClosed`, `TestReaderLongLineAtLimit` | dreaderd | a client line is limited to 1 MiB, newline included: 4 MiB sent without a line end close the connection (and the reader still serves others); a command line of exactly 1 MiB gets a 5xx reply and the connection stays usable, one byte more closes it. **Fails** on main before this fix: the data was buffered without limit |
 | `TestMessageIDHashUnchanged` | diablo, dilookup | the Message-ID hash (`lib/hash.c`) stored in dhistory and computed by dilookup is the same as before it was rewritten in unsigned arithmetic, for `hash prime`, `crc` and `ocrc` (Message-IDs with high-bit bytes and of 255 characters included): a change would make every stored article unfindable |
+| `TestFeederOutqRunning` | diablo | OUTQ from a peer reports its label's queue backlog, the queued articles, and as running only the queue file a dnewslink (here the test) holds a write lock on. **Fails** on main: the probe took the lock on a read-only descriptor, which always fails, so every file counted as running |
 
 ## Running
 
