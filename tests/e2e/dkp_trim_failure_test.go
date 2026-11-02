@@ -29,20 +29,30 @@ int rename(const char *a, const char *b) {
 }
 
 // Fail a read after the first buffered chunk. The trim must not install the
-// partial copy even when its temporary-file writes all succeeded.
+// partial copy even when its temporary-file writes all succeeded. The input
+// stream dkp gets from fdopen() is replaced by one whose second read fails, so
+// the injection does not depend on which stdio call dkp reads with.
 func TestDKPTrimReadFailure(t *testing.T) {
 	testDKPTrimFailure(t, `#define _GNU_SOURCE
 #include <dlfcn.h>
+#include <errno.h>
 #include <stdio.h>
+#include <sys/types.h>
 #include <unistd.h>
-char *fgets(char *s, int n, FILE *stream) {
-    static char *(*real_fgets)(char *, int, FILE *);
-    static int first = 1;
-    char *r;
-    if (!real_fgets) real_fgets = dlsym(RTLD_NEXT, "fgets");
-    r = real_fgets(s, n, stream);
-    if (first && r) { first = 0; close(fileno(stream)); }
-    return r;
+static ssize_t rd(void *c, char *buf, size_t n) {
+    static int calls;
+    if (calls++ > 0) { errno = EIO; return -1; }
+    return read((int)(long)c, buf, n < 512 ? n : 512);
+}
+static int cl(void *c) { return close((int)(long)c); }
+FILE *fdopen(int fd, const char *mode) {
+    static FILE *(*real_fdopen)(int, const char *);
+    if (!real_fdopen) real_fdopen = (FILE *(*)(int, const char *))dlsym(RTLD_NEXT, "fdopen");
+    if (mode[0] == 'r') {
+        cookie_io_functions_t io = { rd, NULL, NULL, cl };
+        return fopencookie((void *)(long)fd, mode, io);
+    }
+    return real_fdopen(fd, mode);
 }
 `)
 }

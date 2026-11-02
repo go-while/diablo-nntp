@@ -121,23 +121,25 @@ main(int ac, char **av)
 		errno = error;
 	    }
 	    if (fo) {
-		char tmp[1024];
-		int lnl = 1;
-		int skip = 0;
+		int c;
+		int bol = 1;	/* at the start of a record */
+		int skip = 0;	/* the current record is deleted */
 
-		while (fgets(tmp, sizeof(tmp), fi) != NULL) {
-		    int l = strlen(tmp);
-		    if (lnl)
-			skip = (tmp[0] == '-');
-		    if (!skip)
-			fputs(tmp, fo);
-		    if (l == 0 || tmp[l-1] != '\n')
-			lnl = 0;
-		    else
-			lnl = 1;
+		/*
+		 * Copy byte by byte: a record of any length is dropped up to
+		 * and including its newline, and a NUL byte (a torn write)
+		 * neither ends nor truncates a record, as it did with fgets()
+		 * and strlen().
+		 */
+		while ((c = getc(fi)) != EOF) {
+		    if (bol)
+			skip = (c == '-');
+		    if (!skip && putc(c, fo) == EOF)
+			break;
+		    bol = (c == '\n');
 		}
 		if (ferror(fi)) {
-		    fprintf(stderr, "Error reading %s\n", fileName);
+		    fprintf(stderr, "Error reading %s: %s\n", fileName, strerror(errno));
 		    failed = 1;
 		}
 		if (ferror(fo)) {
