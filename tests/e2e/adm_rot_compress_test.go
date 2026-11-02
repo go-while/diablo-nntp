@@ -426,3 +426,43 @@ func TestAdmRotCompressGrows(t *testing.T) {
 		t.Errorf("f.1.Z missing or f.1 left plain")
 	}
 }
+
+// TestAdmRotCompressMode: the compressed copy keeps the mode of the log, as the rename of a plain
+// copy does, whatever the umask of rot: 0600 and 0640 under umask 022, 0644 under umask 077. Before,
+// the copy was made with the umask (0600 -> 0644 under 022, 0644 -> 0600 under 077).
+func TestAdmRotCompressMode(t *testing.T) {
+	if _, err := exec.LookPath("gzip"); err != nil {
+		t.Skip("no gzip")
+	}
+	rot := filepath.Join(admSource(t), "rot")
+	for _, c := range []struct {
+		mode  os.FileMode
+		umask string
+	}{{0o600, "022"}, {0o640, "022"}, {0o644, "077"}} {
+		dir := t.TempDir()
+		f := filepath.Join(dir, "f")
+		for _, day := range []string{"one\n", "two\n"} {
+			rotWrite(t, f, day)
+			if err := os.Chmod(f, c.mode); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command("/bin/sh", "-c", "umask "+c.umask+"; exec /bin/sh \"$0\" \"$@\"", rot, "3", "f")
+			cmd.Dir = dir
+			cmd.Env = append(os.Environ(), "ROT_CONF="+filepath.Join(dir, "rot.conf.test"))
+			rotWrite(t, filepath.Join(dir, "rot.conf.test"), "compress gzip\n")
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("mode %o, umask %s: %v\n%s", c.mode, c.umask, err, out)
+			}
+		}
+		fi, err := os.Stat(f + ".1.gz")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := fi.Mode().Perm(); got != c.mode {
+			t.Errorf("log of mode %o, umask %s: f.1.gz has mode %o, want %o", c.mode, c.umask, got, c.mode)
+		}
+		if got := rotGunzip(t, f+".1.gz"); got != "one\n" {
+			t.Errorf("f.1.gz = %q, want one", got)
+		}
+	}
+}

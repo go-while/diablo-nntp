@@ -198,15 +198,62 @@ mvall() {
     done
 }
 
+# lsmode <file>: print the permission bits of <file> as a chmod argument (u=rw,g=r,o=),
+# from the first field of "ls -ld", which POSIX specifies (there is no portable stat).
+# s and t count as x, S and T as nothing: a setuid, setgid or sticky bit on a log is not
+# worth carrying over.  ACLs and extended attributes are not carried over either.
+lsmode() {
+    l=$(ls -ld -- "$1") || return 1
+    p=${l%% *}
+    p=${p#?}
+    m=
+    for who in u g o; do
+	bits=
+	for want in r w x; do
+	    c=${p%"${p#?}"}
+	    p=${p#?}
+	    case $want$c in
+		rr|ww|xx|xs|xt) bits=$bits$want ;;
+		r-|w-|x-|xS|xT) ;;
+		*) return 1 ;;
+	    esac
+	done
+	m=$m${m:+,}$who=$bits
+    done
+    echo "$m"
+}
+
+# lsowner <file>: set uid and gid to the numeric owner and group of <file> ("ls -ln")
+lsowner() {
+    set -- $(ls -ln -- "$1") || return 1
+    [ $# -ge 4 ] || return 1
+    uid=$3
+    gid=$4
+}
+
 # squeeze <file>: compress <file> into <file><csfx> and remove it; when that fails
 # <file> stays as it is.  The compressor's own messages go to standard error, which
-# cron mails.
+# cron mails.  The compressed copy keeps the mode of <file>, as the rename of a plain
+# copy does: it is written under umask 077, so that it is never wider than its
+# owner while it is written, and then gets the bits of <file> ("cp -p" first would
+# copy the whole log once more).  The owner and the group are copied when rot can
+# (as root); otherwise the copy is rot's own, as the log was.
 squeeze() {
     set -f
-    if $ccmd < "$1" > "$1$csfx.tmp"; then
-	if mv -f "$1$csfx.tmp" "$1$csfx"; then
-	    rm -f "$1" || rc=1
+    rm -f "$1$csfx.tmp"
+    if ( umask 077; $ccmd < "$1" > "$1$csfx.tmp" ); then
+	if lsowner "$1"; then
+	    chown "$uid:$gid" "$1$csfx.tmp" 2>/dev/null
+	fi
+	if m=$(lsmode "$1") && chmod "$m" "$1$csfx.tmp"; then
+	    if mv -f "$1$csfx.tmp" "$1$csfx"; then
+		rm -f "$1" || rc=1
+	    else
+		rm -f "$1$csfx.tmp"
+		rc=1
+	    fi
 	else
+	    echo "rot: cannot give $1$csfx.tmp the mode of $1; left uncompressed" >&2
 	    rm -f "$1$csfx.tmp"
 	    rc=1
 	fi
