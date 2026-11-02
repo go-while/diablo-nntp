@@ -440,8 +440,14 @@ typedef struct DirectFileAccess {
     int		dfa_Size;
     char	dfa_Buffer[4096];
     char	dfa_Field[MAX_HDR_CC];
-    char	dfa_InHdr;
-    char	dfa_LF;
+    /*
+     * Parser states: both hold the negative codes above (INBODY ...
+     * WRDDEL) and are compared with < 0, so they must be signed.  Plain
+     * char is unsigned on arm64, ppc and s390x, where NNCopyLocalArticle
+     * never matched those cases and rejected every local article.
+     */
+    signed char	dfa_InHdr;
+    signed char	dfa_LF;
     char	dfa_Flag;
     struct DirectFileAccess *dfa_Next;
 } DirectFileAccess;
