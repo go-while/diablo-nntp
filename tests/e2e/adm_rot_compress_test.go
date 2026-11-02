@@ -351,3 +351,72 @@ func TestAdmRotKeepLowered(t *testing.T) {
 		}
 	}
 }
+
+// TestAdmRotCompressLast: the copies are compressed after every file has been rotated, so a live
+// log is not held up by the compression of the logs before it; and the compressor's own messages
+// reach standard error (cron mails them) when it fails. Before, f.1 was compressed before g was
+// renamed, and the compressor's standard error went to /dev/null.
+func TestAdmRotCompressLast(t *testing.T) {
+	dir := t.TempDir()
+	path := func(n string) string { return filepath.Join(dir, n) }
+	bin := t.TempDir()
+	// the "compressor" notes whether g has been rotated already, then copies its input
+	check := filepath.Join(bin, "check")
+	rotWrite(t, check, "#!/bin/sh\nif [ \"$(cat g.0 2>/dev/null)\" = \"g new\" ]; then echo yes >> order; else echo no >> order; fi\ncat\n")
+	warn := filepath.Join(bin, "warn")
+	rotWrite(t, warn, "#!/bin/sh\necho 'warn: no space left on device' >&2\nexit 1\n")
+	for _, p := range []string{check, warn} {
+		if err := os.Chmod(p, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	conf := "compress check\nmethod check .chk " + check + "\n"
+	for _, v := range []string{"old", "new"} {
+		rotWrite(t, path("f"), "f "+v+"\n")
+		rotWrite(t, path("g"), "g "+v+"\n")
+		if out, code := rotRun(t, dir, conf, "2", "f", "g"); code != 0 {
+			t.Fatalf("rot 2 f g (%s): exit %d, output %q", v, code, out)
+		}
+	}
+	if b, _ := os.ReadFile(path("order")); string(b) != "yes\nyes\n" {
+		t.Errorf("g rotated before each compression: %q, want yes twice", b)
+	}
+	if b, _ := os.ReadFile(path("f.1.chk")); string(b) != "f old\n" {
+		t.Errorf("f.1.chk = %q, want f old", b)
+	}
+
+	conf = "compress warn\nmethod warn .w " + warn + "\n"
+	rotWrite(t, path("f"), "f newer\n")
+	if out, code := rotRun(t, dir, conf, "2", "f"); code != 1 || !strings.Contains(out, "no space left on device") || !strings.Contains(out, "left uncompressed") {
+		t.Errorf("failing compressor: exit %d, output %q; want 1, its message and rot's", code, out)
+	}
+	if b, _ := os.ReadFile(path("f.1")); string(b) != "f new\n" {
+		t.Errorf("f.1 = %q, want f new (plain)", b)
+	}
+	if fileExists(path("f.1.w")) || fileExists(path("f.1.w.tmp")) {
+		t.Errorf("a half-made f.1.w is left")
+	}
+}
+
+// TestAdmRotCompressGrows: the built-in compress method runs "compress -f -c". ncompress and the BSD
+// compress exit 2 without -f when the output is not smaller than the input (an empty or a small log),
+// and the BSD one also refuses to write to an existing output file then; rot took that for a failure
+// and left the copy plain every day. A stand-in compress that behaves so checks the flag.
+func TestAdmRotCompressGrows(t *testing.T) {
+	bin := t.TempDir()
+	rotWrite(t, filepath.Join(bin, "compress"), "#!/bin/sh\ncat\ncase \" $* \" in *\" -f \"*) exit 0 ;; esac\nexit 2\n")
+	if err := os.Chmod(filepath.Join(bin, "compress"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	dir := t.TempDir()
+	for _, c := range []string{"", "x\n"} {
+		rotWrite(t, filepath.Join(dir, "f"), c)
+		if out, code := rotRun(t, dir, "compress compress\n", "2", "f"); code != 0 {
+			t.Fatalf("rot 2 f with compress: exit %d, output %q", code, out)
+		}
+	}
+	if !fileExists(filepath.Join(dir, "f.1.Z")) || fileExists(filepath.Join(dir, "f.1")) {
+		t.Errorf("f.1.Z missing or f.1 left plain")
+	}
+}
