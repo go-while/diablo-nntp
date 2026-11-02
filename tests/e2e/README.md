@@ -266,21 +266,22 @@ The tests need a system where 127.0.0.2 can be used as a source address.
 Linux routes all of 127.0.0.0/8 to the loopback interface. Elsewhere add the
 address first:
 
-- FreeBSD and macOS: `ifconfig lo0 alias 127.0.0.2/32`
+- FreeBSD, OpenBSD, NetBSD and macOS: `ifconfig lo0 alias 127.0.0.2/32`
 - illumos (SmartOS, OmniOS): `ipadm create-addr -T static -a 127.0.0.2/32 lo0/e2e`
 
 `TestDnewslinkConnlife` reads `/proc` and is skipped off Linux.
 
 `ci/build-on-host` installs the build packages (apt, dnf, zypper, pacman, apk,
-emerge, or `pkg` on FreeBSD and illumos/OmniOS), creates the `news` user, turns
+emerge, `pkg` on FreeBSD and illumos/OmniOS, `pkg_add` on OpenBSD, `pkgin` on
+NetBSD), creates the `news` user, turns
 RADIUS off and builds; run it as root from the top of a throwaway copy of the
-source tree. On FreeBSD and illumos it installs gmake (and gcc on illumos) and
+source tree. On FreeBSD, illumos, OpenBSD and NetBSD it installs gmake (and gcc on illumos) and
 builds with gmake; libcanlock and Berkeley DB are used only where a package and
 its headers are present, off otherwise. The test binary can be built elsewhere
 with `CGO_ENABLED=0 go test -c` and copied to a machine without Go.
 `.github/workflows/ci-matrix.yml` does the same across a broad matrix on
 GitHub's runners (Ubuntu x64 and arm64, a libcanlock-less build, eight distro
-containers, FreeBSD and illumos).
+containers, FreeBSD, and best effort illumos, OpenBSD and NetBSD).
 
 ### One distro container, locally
 
