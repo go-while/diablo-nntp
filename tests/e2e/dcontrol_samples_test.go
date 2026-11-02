@@ -194,13 +194,92 @@ func dcontrolFromMatches(pat, from string) bool {
 	return len(pat) <= 128 && dcontrolWild(fmt.Sprintf("*<%s>*|* %s|%s *", pat, pat, pat), from)
 }
 
+// dcontrolWildMeet returns a string both WildCmp patterns match (no '|'), if there is one: a
+// breadth-first walk over pairs of positions in the two patterns.
+func dcontrolWildMeet(p, q string) (string, bool) {
+	type state struct{ i, j int }
+	type step struct {
+		prev state
+		c    byte // 0: a '*' matched nothing
+	}
+	seen := map[state]step{{0, 0}: {}}
+	queue := []state{{0, 0}}
+	add := func(from, to state, c byte) {
+		if _, ok := seen[to]; !ok {
+			seen[to] = step{from, c}
+			queue = append(queue, to)
+		}
+	}
+	for len(queue) > 0 {
+		st := queue[0]
+		queue = queue[1:]
+		if st.i == len(p) && st.j == len(q) {
+			var b []byte
+			for cur := st; cur != (state{0, 0}); cur = seen[cur].prev {
+				if c := seen[cur].c; c != 0 {
+					b = append([]byte{c}, b...)
+				}
+			}
+			return string(b), true
+		}
+		if st.i < len(p) && p[st.i] == '*' {
+			add(st, state{st.i + 1, st.j}, 0)
+		}
+		if st.j < len(q) && q[st.j] == '*' {
+			add(st, state{st.i, st.j + 1}, 0)
+		}
+		if st.i == len(p) || st.j == len(q) {
+			continue
+		}
+		// one character both can take: a literal of either side, else any
+		var cands []byte
+		for _, c := range []byte{p[st.i], q[st.j]} {
+			if c != '*' && c != '?' {
+				cands = append(cands, c)
+			}
+		}
+		if len(cands) == 0 {
+			cands = []byte{'x'}
+		}
+		for _, c := range cands {
+			ni, nj := st.i, st.j
+			switch p[st.i] {
+			case '*':
+			case '?':
+				ni++
+			default:
+				if p[st.i] != c {
+					continue
+				}
+				ni++
+			}
+			switch q[st.j] {
+			case '*':
+			case '?':
+				nj++
+			default:
+				if q[st.j] != c {
+					continue
+				}
+				nj++
+			}
+			if ni != st.i || nj != st.j {
+				add(st, state{ni, nj}, c)
+			}
+		}
+	}
+	return "", false
+}
+
 // TestDcontrolSamplesCheckgroupsSender: the Syntax test finds a second checkgroups line with the
 // same <from>; this one also finds a sender matched by the <from> of another line, a wildcard
-// (eric@cirr.com by eric@*cirr.com). For the sender of every checkgroups rule (a '*' or '?' of its
-// <from> read as "x"), the last rule it matches with ParseControl's From test must have the
-// hierarchies of all the rules it matches with the same action, or its checkgroups for the others
-// changes nothing. Rules with another action (signed and unsigned) cannot be joined and are not
-// compared.
+// (eric@cirr.com by eric@*cirr.com). The senders tried are the <from> of every checkgroups rule
+// with each '*' and '?' read as "x", and for every two rules an address both their <from> match
+// (a*@h and *b@h both match ab@h). For each, the last rule it matches with ParseControl's From
+// test must cover the hierarchies of all the rules it matches with the same action, or its
+// checkgroups for the others changes nothing; a hierarchy is covered when the last rule lists it
+// or has a pattern that matches it (review.* covers review.narrow.*). Rules with another action
+// (signed and unsigned) cannot be joined and are not compared.
 func TestDcontrolSamplesCheckgroupsSender(t *testing.T) {
 	type rule struct {
 		line                 int
@@ -215,9 +294,25 @@ func TestDcontrolSamplesCheckgroupsSender(t *testing.T) {
 			}
 			rules = append(rules, rule{n + 1, f[1], f[2], f[3]})
 		}
+		senders := map[string]bool{}
+		for i, r := range rules {
+			senders[strings.NewReplacer("*", "x", "?", "x").Replace(r.from)] = true
+			for _, o := range rules[i+1:] {
+				if o.action != r.action {
+					continue
+				}
+				for _, a := range strings.Split(r.from, "|") {
+					for _, b := range strings.Split(o.from, "|") {
+						if w, ok := dcontrolWildMeet(a, b); ok {
+							senders[w] = true
+						}
+					}
+				}
+			}
+		}
 		reported := map[string]bool{}
-		for _, r := range rules {
-			from := "E2E <" + strings.NewReplacer("*", "x", "?", "x").Replace(r.from) + ">"
+		for sender := range senders {
+			from := "E2E <" + sender + ">"
 			var match []rule
 			for _, o := range rules {
 				if dcontrolFromMatches(o.from, from) {
@@ -225,20 +320,16 @@ func TestDcontrolSamplesCheckgroupsSender(t *testing.T) {
 				}
 			}
 			if len(match) == 0 {
-				t.Errorf("%s:%d: no checkgroups rule matches its own sender %s", name, r.line, from)
+				t.Errorf("%s: no checkgroups rule matches the sender %s it was made from", name, from)
 				continue
 			}
 			last := match[len(match)-1]
-			have := map[string]bool{}
-			for _, g := range strings.Split(last.groups, "|") {
-				have[g] = true
-			}
 			for _, m := range match {
 				if m.action != last.action {
 					continue
 				}
 				for _, g := range strings.Split(m.groups, "|") {
-					if key := fmt.Sprint(from, m.line, g); !have[g] && !reported[key] {
+					if key := fmt.Sprint(from, m.line, g); !dcontrolWild(last.groups, g) && !reported[key] {
 						reported[key] = true
 						t.Errorf("%s:%d: a checkgroups from %s for %s is limited to %s by line %d",
 							name, m.line, from, g, last.groups, last.line)
