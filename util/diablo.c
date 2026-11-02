@@ -1868,6 +1868,7 @@ DoSession(int fd, int count)
 		break;
     }
     if (HostStats != NULL) {
+	LockFeedRegion(HostStats, XLOCK_EX, FSTATS_IN);
 	++HostStats->RecStats.ConnectCnt;
 	if (HostStats->RecStats.TimeStart == 0)
 	    HostStats->RecStats.TimeStart = time(NULL);

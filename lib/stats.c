@@ -111,28 +111,50 @@ FeedStatsFindSlot(char *hostname)
 /*
  * LockFeedRegion - lock a region of the mmaped file so that we
  *	can safely update the values
+ *
+ *	The lock is in the host's own record (Stats->region is its index in
+ *	the file), one per stats type.  It used to be the offset of the
+ *	stats inside the struct, i.e. in the dummy first record, so all
+ *	hosts shared one lock per type.
  */
 void
 LockFeedRegion(FeedStats *Stats, int locktype, int stype)
 {
+    off_t base;
+
     if (Stats->region > 0) {
+	base = (off_t)Stats->region * sizeof(FeedStats);
 	switch (stype) {
 	case FSTATS_IN:
 	case FSTATS_INDETAIL:
-	    hflock(FSSFd, (int)((char *)&Stats->RecStats - (char *)Stats),
-								locktype);
+	    hflock(FSSFd, base + offsetof(FeedStats, RecStats), locktype);
 	    break;
 	case FSTATS_OUT:
-	    hflock(FSSFd, (int)((char *)&Stats->SentStats - (char *)Stats),
-								locktype);
+	    hflock(FSSFd, base + offsetof(FeedStats, SentStats), locktype);
 	    break;
 	case FSTATS_SPOOL:
 	case FSTATS_SPOOLDETAIL:
-	    hflock(FSSFd, (int)((char *)&Stats->SpoolStats - (char *)Stats),
-								locktype);
+	    hflock(FSSFd, base + offsetof(FeedStats, SpoolStats), locktype);
 	    break;
 	}
     }
+}
+
+/*
+ * LockFeedRecord - read-lock (or unlock) a whole record, which covers
+ *	the record's FSTATS_* locks: no writer is half way through an
+ *	update of the record while it is held.
+ */
+static int
+LockFeedRecord(int fd, int count, int locktype)
+{
+    struct flock fl = { 0 };
+
+    fl.l_type = (locktype == XLOCK_UN) ? F_UNLCK : F_RDLCK;
+    fl.l_whence = SEEK_SET;
+    fl.l_start = (off_t)count * sizeof(FeedStats);
+    fl.l_len = sizeof(FeedStats);
+    return(fcntl(fd, F_SETLKW, &fl));
 }
 
 /*
@@ -618,7 +640,8 @@ FeedStatsSnapShot(FILE *fo, char *hostname, char *ext)
 	return;
     }
     while (res > 0) {
-	hflock(oldf, count * sizeof(fs), XLOCK_EX);
+	/* oldf is read-only: a shared lock (an exclusive one fails). */
+	LockFeedRecord(oldf, count, XLOCK_SH);
 	res = read(oldf, &fs, sizeof(fs));
 	if (res == sizeof(fs) &&
 		(hostname == NULL || strcmp(fs.hostname, hostname) == 0)) {
@@ -628,7 +651,7 @@ FeedStatsSnapShot(FILE *fo, char *hostname, char *ext)
 		res = 0;
 	    }
 	}
-	hflock(oldf, count * sizeof(fs), XLOCK_UN);
+	LockFeedRecord(oldf, count, XLOCK_UN);
 	if (res == -1)
 	    fprintf(fo, "Error reading feeder stats file (%s)\n",
 							strerror(errno));
