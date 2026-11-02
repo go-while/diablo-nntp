@@ -275,6 +275,16 @@ func TestArticleTypes(t *testing.T) {
 		// Double encoding: the decoded lines get the checks of unencoded text.
 		{"base64 of a uuencoded file", hdr64("text/plain"), b64Wrap(joined(append([]string{"begin 644 a.bin"}, atLines(12, 60, uuAlphabet, "M")...)), 76), atMIME | atBinary | atBase64 | atUUencode, ""},
 		{"base64 of base64 data", hdr64("text/plain"), b64Wrap(joined(atLines(12, 76, b64Alphabet, "")), 76), atMIME | atBinary | atBase64, ""},
+		// The last decoded line has no newline: it gets the per-line checks at the end of the
+		// article (ArticleTypeEnd), as at a MIME boundary and as unencoded.
+		{"base64 text, last line a pgp marker without newline", hdr64("text/plain"), b64Wrap([]byte("Hello.\n-----BEGIN PGP MESSAGE-----"), 76), atMIME | atPGP, ""},
+		{"base64 text, last line a pgp marker", hdr64("text/plain"), b64Wrap([]byte("Hello.\n-----BEGIN PGP MESSAGE-----\n"), 76), atMIME | atPGP, ""},
+		{"base64 text part, last line a pgp marker without newline", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=XX"},
+			append(append([]string{"--XX", "Content-Type: text/plain", "Content-Transfer-Encoding: base64", ""}, b64Wrap([]byte("Hello.\n-----BEGIN PGP MESSAGE-----"), 76)...), "--XX--"), atMIME | atMultipart | atPGP, ""},
+		{"pgp marker last, unencoded", nil, []string{"Hello.", "-----BEGIN PGP MESSAGE-----"}, atPGP, ""},
+		{"base64 of a uuencoded file, last line without newline", hdr64("text/plain"), b64Wrap([]byte(strings.Join(append([]string{"begin 644 a.bin"}, atLines(9, 60, uuAlphabet, "M")...), "\n")), 76), atMIME | atBinary | atBase64 | atUUencode, "the 9th uuencode line is the last"},
+		{"uuencode, 9th line last, unencoded", nil, append([]string{"begin 644 a.bin"}, atLines(9, 60, uuAlphabet, "M")...), atBinary | atUUencode, ""},
+		{"base64 text, last line with a control byte without newline", hdr64("text/plain"), b64Wrap([]byte("Hello.\nbye\x01"), 76), atMIME | atBinary | atBase64, ""},
 		// MIME parts.
 		{"base64 text part in multipart", []string{"Mime-Version: 1.0", "Content-Type: multipart/alternative; boundary=XX"},
 			append(append([]string{"--XX", "Content-Type: text/plain; charset=UTF-8", "Content-Transfer-Encoding: base64", ""}, b64Text(30)...), "--XX--"), atMIME | atMultipart, ""},
@@ -575,6 +585,7 @@ func TestBase64TextNotRejectedAsBinary(t *testing.T) {
 		{"base64 random data in text/plain", text, b64Wrap(randBytes(1140, 9), 76), "437"},
 		{"base64 random data in text/plain, one long line", text, b64Wrap(randBytes(12000, 10), 20000), "437"},
 		{"uuencode under a base64 text header", text, append([]string{"begin 644 a.bin"}, atLines(12, 60, uuAlphabet, "M")...), "437"},
+		{"base64 of a uuencoded file, last line without newline", text, b64Wrap([]byte(strings.Join(append([]string{"begin 644 a.bin"}, atLines(9, 60, uuAlphabet, "M")...), "\n")), 76), "437"},
 	} {
 		if line := offerHeaders(t, s, "comp.test", c.extra, c.body); !strings.HasPrefix(line, c.want) {
 			t.Errorf("IHAVE with %s: %q, want %s", c.name, line, c.want)

@@ -281,6 +281,7 @@ LoadArt(void)
 	}
 
     }
+    arttype = ArticleTypeEnd();	/* the last decoded line of a base64 text part */
     sprintf(buf, "%d", npath);
     NumPath = strdup(buf);
     sprintf(buf, "%d", size);

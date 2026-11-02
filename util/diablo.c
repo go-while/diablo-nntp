@@ -2990,6 +2990,9 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 						strncmp(p, ".\n", 2) == 0))) {
 		if (inHeader)
 		    artError |= LAERR_NOHDREND;
+		/* the last decoded line of a base64 text part */
+		if (DOpts.FeederArtTypes && artType != NULL)
+		    arttype = ArticleTypeEnd();
 		if (DOpts.WireFormat && buffer != NULL &&
 						!skipHeader && !artError)
 		    bwrite(buffer, p, bytes);

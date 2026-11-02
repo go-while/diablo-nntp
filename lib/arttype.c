@@ -46,6 +46,7 @@ Prototype void InitArticleType(void);
 Prototype int ArtTypeConv(char *t);
 Prototype int ArtTypeMatch(int articletype, ArtTypeList *acctypes);
 Prototype int ArticleType(char *line, int len, int inheader);
+Prototype int ArticleTypeEnd(void);
 
 #define	ARMOR_MAX	100	/* lines of one armored block (PGP, PEM) that are not counted */
 
@@ -864,6 +865,21 @@ b64Decode(const char *buf, int len)
     B64Pad = pad;
     DLineLen = dlen;
     return(unclean);
+}
+
+/*
+ * The end of the article (after its last line, before the "." line).  A
+ * base64 text part can end with a decoded line that has no newline: it
+ * gets the per-line checks here, as at a MIME boundary.  Returns the type.
+ */
+int
+ArticleTypeEnd(void)
+{
+    if (B64Part)
+	b64End();
+    if (Type != ARTTYPE_DEFAULT)
+	Type = Type & ~ARTTYPE_DEFAULT;
+    return(Type);
 }
 
 int
