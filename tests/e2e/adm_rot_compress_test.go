@@ -119,7 +119,9 @@ func TestAdmRotMethods(t *testing.T) {
 	// own method: tr as the "compressor", suffix .up
 	up := "keep 3\ncompress upper\nmethod upper .up tr a-z A-Z\n"
 	rotWrite(t, path("f"), "one\n")
-	rot(up, "3")
+	if out, code := rot(up, "3"); code != 0 {
+		t.Fatalf("first rotation: exit %d, output %q", code, out)
+	}
 	rotWrite(t, path("f"), "two\n")
 	if out, code := rot(up, "3"); code != 0 {
 		t.Fatalf("own method: exit %d, output %q", code, out)
@@ -142,7 +144,9 @@ func TestAdmRotMethods(t *testing.T) {
 	// the old .up copy is dropped at the end of the line, whatever the method
 	for _, c := range []string{"four\n", "five\n"} {
 		rotWrite(t, path("f"), c)
-		rot(gz, "3")
+		if out, code := rot(gz, "3"); code != 0 {
+			t.Fatalf("rotation of %q: exit %d, output %q", c, code, out)
+		}
 	}
 	if fileExists(path("f.4.up")) || fileExists(path("f.3.up")) || fileExists(path("f.2.up")) {
 		t.Errorf("an .up copy outlived the count of 3")
@@ -151,7 +155,9 @@ func TestAdmRotMethods(t *testing.T) {
 	// a method that fails: the copy stays plain, exit 1
 	bad := "compress broken\nmethod broken .bad false\n"
 	rotWrite(t, path("f"), "six\n")
-	rot(bad, "3")
+	if out, code := rot(bad, "3"); code != 1 { // the f.0 of five fails too
+		t.Fatalf("rotation of six: exit %d, output %q; want 1", code, out)
+	}
 	rotWrite(t, path("f"), "seven\n")
 	out, code := rot(bad, "3")
 	if code != 1 || !strings.Contains(out, "left uncompressed") {
