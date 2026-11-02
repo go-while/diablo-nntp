@@ -36,6 +36,7 @@ static void FindGroupDir(const char *group, char *path, size_t pathsize);
 Prototype int ExtractGroupHashInfo(const char *name, char *Hash, artno_t *artBase, int *iter);
 Prototype char *GetHash(GroupHashType *Hash, char *hashStr);
 Prototype void SetCacheHash(struct CacheHash_t* ch, const char *group, int iter, GroupHashType *method);
+Prototype int CacheHashEqual(const struct CacheHash_t *a, const struct CacheHash_t *b);
 
 #define P1	7834891
 #define P2	6017489
@@ -524,6 +525,8 @@ GFName(const char *group, int gftype, artno_t artBase, int wantdir, int iter, Gr
 void
 SetCacheHash(struct CacheHash_t* ch, const char *group, int iter, GroupHashType *method)
 {
+    /* Clear the padding after iter too: the key is stored in cache.hits. */
+    memset(ch, 0, sizeof(*ch));
     ch->iter = iter;
     switch (method->gh_type) {
 	case HASHGRP_CRC: {
@@ -541,6 +544,17 @@ SetCacheHash(struct CacheHash_t* ch, const char *group, int iter, GroupHashType 
 	    break;
 	}
     }
+}
+
+/*
+ * CacheHashEqual() - compare two cache.hits keys field by field.  Not
+ * memcmp(): struct CacheHash_t has padding after iter, and entries written
+ * before SetCacheHash() cleared it hold whatever was on the stack there.
+ */
+int
+CacheHashEqual(const struct CacheHash_t *a, const struct CacheHash_t *b)
+{
+    return(a->h1 == b->h1 && a->h2 == b->h2 && a->iter == b->iter);
 }
 
 static void
