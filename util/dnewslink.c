@@ -288,6 +288,7 @@ char *HostName = NULL;
 char *OutboundIpName = NULL;
 char *BatchFileCtl = NULL;
 char CurrentBatchFile[1024];
+#define QLINESIZE	1024	/* a queue line, as read into the batch loop's buf */
 char LastErrBuf[256];
 int CBFIndex;
 int BatchSeq = -1;
@@ -700,9 +701,17 @@ main(int ac, char **av)
 	TheirMsTotal = 0;
 	MsCountTotal = 0;
 
-	snprintf(CurrentBatchFile, sizeof(CurrentBatchFile) - 32, DQueueHomePat, NewsHome);
-	strcat(CurrentBatchFile, "/");
-	CBFIndex = strlen(CurrentBatchFile);
+	/*
+	 * path_dqueue is a path pattern, expanded like everywhere else
+	 * (it used to be the format string of this snprintf, so a '%' in
+	 * it other than the one %s misread the arguments).
+	 */
+	CBFIndex = snprintf(CurrentBatchFile, sizeof(CurrentBatchFile), "%s/",
+						PatExpand(DQueueHomePat));
+	if (CBFIndex < 0 || CBFIndex >= (int)sizeof(CurrentBatchFile) - 32) {
+	    dl_logit("queue directory path too long: %.64s...", PatExpand(DQueueHomePat));
+	    exit(1);
+	}
 
 	if (ExpandBatchFile(CurrentBatchFile + CBFIndex,
 	    sizeof(CurrentBatchFile) - CBFIndex, BatchFileCtl, BatchSeq) < 0) {
@@ -801,9 +810,9 @@ main(int ac, char **av)
 		ProcessStarted = monotonicSeconds();
 	}
 	if (cfd >= 0) {
-	    char buf[1024];
-	    char relPath[1024];
-	    char msgId[1024];
+	    char buf[QLINESIZE];
+	    char relPath[QLINESIZE];
+	    char msgId[QLINESIZE];
 	    /* A queue pathname plus the four-character ".tmp" suffix. */
 	    char path[sizeof(CurrentBatchFile) + sizeof(".tmp")];
 	    off_t fileOff = 0;
@@ -2540,7 +2549,8 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 		    snprintf(cst, sizeof(cst), " C%d", s->st_CompSize);
 		else
 		    cst[0] = 0;
-		sprintf(buf,"%s %s %lld,%d %c%s\n", s->st_RelPath, s->st_MsgId,
+		/* buf is the caller's queue line buffer (QLINESIZE) */
+		snprintf(buf, QLINESIZE, "%s %s %lld,%d %c%s\n", s->st_RelPath, s->st_MsgId,
 			(long long)s->st_Off, s->st_Size,
 			HeaderOnlyFeed ? 'H' : ' ', cst);
 		break;

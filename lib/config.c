@@ -186,8 +186,18 @@ LoadDiabloConfig(int ac, char **av)
 
     initDOpts();
 
+    /*
+     * PatSubst() cuts a result that does not fit; the name (from
+     * DIABLO_CONFIG_PATH or -C) would then be another file.  A name that
+     * fills the buffer is taken as cut, and not opened.
+     */
     PatSubst(configPath, sizeof(configPath), diabloConfig, NewsHome);
-    if ((fi = xfopen("r", "%s", configPath)) != NULL) {
+    if (strlen(configPath) >= sizeof(configPath) - 1) {
+	fi = NULL;
+	errno = ENAMETOOLONG;
+    } else
+	fi = xfopen("r", "%s", configPath);
+    if (fi != NULL) {
 	int tooLong;
 
 	while (ConfigGets(buf, sizeof(buf), fi, &tooLong) != NULL) {

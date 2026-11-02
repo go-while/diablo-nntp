@@ -38,6 +38,18 @@ int spool_file(char *spoolFile, int pass, NewslinkInfo *li, int flags);
 DNode *FindNode(char *name);
 void AddNode(char *name);
 
+/*
+ * NewsHome plus a relative name ("dbin/dnewslink"); -1 if it does not fit,
+ * so a cut name is never run.
+ */
+static int
+NewsPath(char *buf, size_t size, const char *rel)
+{
+    int n = snprintf(buf, size, "%s/%s", NewsHome, rel);
+
+    return((n < 0 || (size_t)n >= size) ? -1 : 0);
+}
+
 int VerboseOpt;
 int ForReal = 1;
 int Quiet;
@@ -91,6 +103,10 @@ main(int ac, char **av)
 		case 'B':
 		    if (*ptr == 0)
 			ptr = av[++i];
+		    if (ptr == NULL) {
+			fprintf(stderr, "dspoolout: -B requires an address\n");
+			exit(1);
+		    }
 		    OutboundIpStr = malloc(strlen(ptr) + 8);
 		    sprintf(OutboundIpStr, "-B%s", ptr);
 		    break;
@@ -276,10 +292,11 @@ processDnewsfeeds(const char *qFile)
 	    ++count;
 	}
 	if (pass == 1) {
-	    char sysline[256];
+	    char sysline[PATH_MAX];
 
-	    snprintf(sysline, sizeof(sysline), "%s/dbin/dicmd flush", NewsHome);
-	    if (ForReal && system(sysline) != 0)
+	    if (NewsPath(sysline, sizeof(sysline), "dbin/dicmd flush") < 0)
+		printf("dicmd flush skipped: path_home too long\n");
+	    else if (ForReal && system(sysline) != 0)
 		printf("%s failed\n", sysline);
 	}
     }
@@ -501,10 +518,11 @@ processDspoolout(const char *fname, char *qFile)
 	    fprintf(stderr, "Unable to open %s\n", fname);
 	}
 	if (pass == 1) {
-	    char sysline[256];
+	    char sysline[PATH_MAX];
 
-	    snprintf(sysline, sizeof(sysline), "%s/dbin/dicmd flush", NewsHome);
-	    if (system(sysline) != 0)
+	    if (NewsPath(sysline, sizeof(sysline), "dbin/dicmd flush") < 0)
+		printf("dicmd flush skipped: path_home too long\n");
+	    else if (system(sysline) != 0)
 		printf("%s failed\n", sysline);
 	}
     }
@@ -519,8 +537,8 @@ processDspoolout(const char *fname, char *qFile)
 int
 spool_file(char *spoolFile, int pass, NewslinkInfo *li, int flags)
 {
-    char seqFile[256];
-    char newFile[256];
+    char seqFile[PATH_MAX];
+    char newFile[PATH_MAX];
     char obIpBuf[256];
     char *outboundIpStr = OutboundIpStr;
     int begSeq = 0;
@@ -541,6 +559,18 @@ spool_file(char *spoolFile, int pass, NewslinkInfo *li, int flags)
     if (VerboseOpt)
 	printf("spool_file(%s, %d, %s, %d)\n",
 			spoolFile, pass, li->li_HostName, flags);
+
+    /*
+     * The queue file names below are the label plus ".S" and a sequence
+     * number, and "." plus the label plus ".seq".  A label too long for
+     * them is skipped (it could not name a file anyway), rather than
+     * overrunning the buffers or working on a cut name.
+     */
+    if (strlen(spoolFile) + 16 >= sizeof(newFile)) {
+	fprintf(stderr, "dspoolout: label too long for a queue file name: %.64s...\n",
+			spoolFile);
+	return(flags);
+    }
     /*
      * Initialize rx/txBufSizeStr
      */
@@ -615,7 +645,7 @@ spool_file(char *spoolFile, int pass, NewslinkInfo *li, int flags)
      */
 
     while (begSeq < endSeq) {
-	sprintf(newFile, "%s.S%05d", spoolFile, begSeq);
+	snprintf(newFile, sizeof(newFile), "%s.S%05d", spoolFile, begSeq);
 	if (li->li_MaxQueueFile > 0 && begSeq < endSeq - li->li_MaxQueueFile)
 	    remove(newFile);
 	if (stat(newFile, &st) == 0)
@@ -635,7 +665,7 @@ spool_file(char *spoolFile, int pass, NewslinkInfo *li, int flags)
 	    struct stat st;
 
 	    while (tries > 0) {
-		sprintf(newFile, "%s.S%05d", spoolFile, endSeq);
+		snprintf(newFile, sizeof(newFile), "%s.S%05d", spoolFile, endSeq);
 		if (stat(newFile, &st) < 0)
 		    break;
 		--tries;
@@ -762,12 +792,12 @@ spool_file(char *spoolFile, int pass, NewslinkInfo *li, int flags)
 	    }
 
 
-	    sprintf(newFile, "%s.S%05d", spoolFile, use);
+	    snprintf(newFile, sizeof(newFile), "%s.S%05d", spoolFile, use);
 
 	    if ((fd = open(newFile, O_RDWR)) >= 0) {
 		if (xflock(fd, XLOCK_EX|XLOCK_NB) == 0) {
 		    char seqName[64];
-		    char templateFile[256];
+		    char templateFile[2 * PATH_MAX];	/* every % doubled */
 
 		    xflock(fd, XLOCK_UN);
 
@@ -813,7 +843,7 @@ spool_file(char *spoolFile, int pass, NewslinkInfo *li, int flags)
 				maxStreamStr
 			    );
 		    if (ForReal && fork() == 0) {
-			char binPath[128];
+			char binPath[PATH_MAX];
 
 			if (li->li_StartDelay > 0) {
 			    if (xflock(fd, XLOCK_EX|XLOCK_NB) == 0) {
@@ -833,7 +863,10 @@ spool_file(char *spoolFile, int pass, NewslinkInfo *li, int flags)
 			 * Do not pass a second open queue handle to dnewslink.
 			 */
 			close(fd);
-			snprintf(binPath, sizeof(binPath), "%s/dbin/dnewslink", NewsHome);
+			if (NewsPath(binPath, sizeof(binPath), "dbin/dnewslink") < 0) {
+			    fprintf(stderr, "dspoolout: path_home too long to run dnewslink\n");
+			    exit(1);
+			}
 
 			    execl(binPath, "dnewslink",
 				"-h", li->li_HostName,
@@ -915,7 +948,7 @@ spool_file(char *spoolFile, int pass, NewslinkInfo *li, int flags)
 				maxStreamStr
 			    );
 		    if (ForReal && fork() == 0) {
-			char binPath[128];
+			char binPath[PATH_MAX];
 
 			if (li->li_StartDelay > 0)
 			    sleep(li->li_StartDelay);
@@ -927,7 +960,10 @@ spool_file(char *spoolFile, int pass, NewslinkInfo *li, int flags)
 			 * Do not pass a second open queue handle to dnewslink.
 			 */
 			close(fd);
-			snprintf(binPath, sizeof(binPath), "%s/dbin/dnewslink", NewsHome);
+			if (NewsPath(binPath, sizeof(binPath), "dbin/dnewslink") < 0) {
+			    fprintf(stderr, "dspoolout: path_home too long to run dnewslink\n");
+			    exit(1);
+			}
 
 			    /*
 			     * realtime option is '-r'.  If a delay of -1
