@@ -33,6 +33,9 @@ LN=ln
 #
 # Anything below here does NOT need changing!
 #
+# perl (#!/usr/bin/env perl) may be in /usr/local/bin (FreeBSD) or
+# /opt/local/bin (pkgsrc, SmartOS), which are not in cron's PATH.
+PATH=$PATH:/usr/local/bin:/opt/local/bin; export PATH
 DATE=${1:-`date +%Y%m%d`}
 LOGFILE=$LOGDIR/news.notice
 WWWFILE=$WWWDIR/$DATE.html

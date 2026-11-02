@@ -13,7 +13,9 @@ To use:
 1. copy feeder-stats.pl & diablo-stats.sh (or cyclone-stats.sh if you are
    running Cyclone) to your bin directory
 2. edit diablo-stats.sh (or cyclone-stats.sh) to match your site requirements
-3. check that feeder-stats.pl '#!/path/perl' points to your copy of Perl5
+3. the scripts start with '#!/usr/bin/env perl', so perl (5) must be in the
+   PATH; diablo-stats.sh and cyclone-stats.sh add /usr/local/bin and
+   /opt/local/bin to it for cron
 4. if you want graphs (PNG-format) you'll need the Chart and GD perl modules:
    http://www.perl.com/CPAN/modules/by-module/GD/
    http://www.perl.com/CPAN/modules/by-module/Chart/
