@@ -520,6 +520,8 @@ KPDBLock(KPDB *kpdb, const char *rec)
 void 
 KPDBUnlock(KPDB *kpdb, const char *rec)
 {
+    if (rec == NULL)		/* no record found, so none locked */
+	return;
     hflock(kpdb->kp_Fd, rec - kpdb->kp_MapBase, XLOCK_UN);
 }
 
@@ -1024,7 +1026,10 @@ int
 KPDBLookup(KPDB *kpdb, const char *key, int lockMe, int forceCheck)
 {
     int l = strlen(key);
-    int found = -1;
+    int found;
+
+again:
+    found = -1;
 
     /*
      * Optimize cache hit
@@ -1118,12 +1123,34 @@ KPDBLookup(KPDB *kpdb, const char *key, int lockMe, int forceCheck)
 	if (aval != kpdb->kp_AppendSeq) {
 	    kpdb->kp_AppendSeq = aval;
 	    KPDBReSize(kpdb);	/* PRIOR DATA POINTERS BECOME INVALID */
-	    return(KPDBLookup(kpdb, key, lockMe, -1));
+	    /* search the new map; the lock, if asked for, is taken below */
+	    found = KPDBLookup(kpdb, key, 0, -1);
 	}
     }
 
     if (found == 0 && lockMe == KP_LOCK) {
-	hflock(kpdb->kp_Fd, kpdb->kp_Cache - kpdb->kp_MapBase, XLOCK_EX);
+	off_t lockoff = kpdb->kp_Cache - kpdb->kp_MapBase;
+
+	hflock(kpdb->kp_Fd, lockoff, XLOCK_EX);
+
+	/*
+	 * While we waited for the lock, another process may have replaced
+	 * the record (a write that changes its length appends a new copy
+	 * and marks this one deleted) or deleted it.  The fields of a
+	 * deleted copy are stale: a caller that reads NX and writes NX+1
+	 * would hand out a number already used.  Release it and look again,
+	 * forcing the check for a grown database, as a replacement bumped
+	 * the append sequence.  Every search path accepts only a '+' record,
+	 * so every pass follows a write that some other process completed,
+	 * and this loop does not spin.
+	 */
+	if (kpdb->kp_Cache[0] != '+') {
+	    hflock(kpdb->kp_Fd, lockoff, XLOCK_UN);
+	    kpdb->kp_Cache = NULL;
+	    kpdb->kp_CacheLen = 0;
+	    forceCheck = 1;
+	    goto again;
+	}
     }
     return(found);
 }
@@ -1228,7 +1255,11 @@ KPDBLookupBinary(
 		    if (DebugOpt > 8)
 			printf("G\n");
 		    doLeft = 1;
-		} else if (p[-KEY_OFF] == '-') {	/* deleted record */
+		} else if (p[-KEY_OFF] != '+') {
+		    /*
+		     * deleted record, or a damaged status byte: not live,
+		     * as the cache and the sequential search also require
+		     */
 		    doLeft = 1;
 		    doRight = 1;
 		} else {

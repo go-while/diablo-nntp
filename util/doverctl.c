@@ -664,6 +664,14 @@ ProcessFile(const char *dirPath, const char *name)
 	int recLen;
 	const char *rec = KPDBReadRecord(KDBActive, group->gr_GroupName,
                                                         KP_LOCK, &recLen);
+
+	/* the group left the active file after the scan began: skip it */
+	if (rec == NULL) {
+	    if (VerboseOpt)
+		printf("group %s no longer in the active file, skipping %s\n",
+		    group->gr_GroupName, path);
+	    return;
+	}
 	/*
 	 * Refresh the EndNo
 	 */
