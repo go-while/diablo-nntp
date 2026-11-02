@@ -612,6 +612,46 @@ func TestAdmHistbackup(t *testing.T) {
 	}
 }
 
+// TestAdmHistbackupLongPath: a path_dumphist longer than 127 bytes runs as configured.  diablo
+// expanded the path_* settings into 128-byte buffers and cut them to fit, so the command it ran
+// named a different file and no snapshot appeared.  The script is reached through symlinks in a
+// deep directory (adm for the script, dbin beside it for the binaries it looks for), padded so
+// the path is 180 bytes: past the old cut, and the config line stays under its 255 limit.
+func TestAdmHistbackupLongPath(t *testing.T) {
+	const want = 180
+	b := bin(t)
+	base := t.TempDir()
+	pad := want - len(base) - len("/adm/dumphist") - 2 // two more separators
+	if pad < 20 {
+		t.Skipf("temporary directory %s is too long to build a %d-byte path", base, want)
+	}
+	long := filepath.Join(base, strings.Repeat("d", pad/2), strings.Repeat("e", pad-pad/2))
+	if err := os.MkdirAll(long, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, target := range map[string]string{
+		"adm":  filepath.Join(b, "..", "samples", "adm"),
+		"dbin": b,
+	} {
+		if err := os.Symlink(target, filepath.Join(long, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dump := filepath.Join(long, "adm", "dumphist")
+	if len(dump) != want {
+		t.Fatalf("path_dumphist is %d bytes, want %d", len(dump), want)
+	}
+	s := NewSite(t, SiteOptions{Config: map[string]string{"path_dumphist": dump}})
+	s.WriteFile(t, "dhistory", "a history")
+	if out, code := admScript(t, s, "histbackup"); code != 0 {
+		t.Fatalf("histbackup with a %d-byte path_dumphist: exit %d\n%s", len(dump), code, out)
+	}
+	waitFor(t, testkit.Deadline(), "dhistory.snp", func() bool {
+		_, err := os.Stat(filepath.Join(s.Dir, "dhistory.snp"))
+		return err == nil
+	})
+}
+
 // TestAdmActsync: usage, and nothing to do on a host that is one of the active file servers.
 func TestAdmActsync(t *testing.T) {
 	s := NewSite(t, SiteOptions{NoStart: true})

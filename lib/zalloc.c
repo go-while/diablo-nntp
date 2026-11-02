@@ -175,7 +175,7 @@ zallocStrTrim2(MemPool **pmp, int trimwsafter, const char *s, int l)
 {
     char *r = NULL;
     int i, n, doit;
-    int trimws = 0;
+    int trimws;
 
     while (l && (*s == ' ' || *s == '\t')) {
 	++s;
@@ -195,6 +195,12 @@ zallocStrTrim2(MemPool **pmp, int trimwsafter, const char *s, int l)
 	    r = zalloc(pmp, n + 1);
 	    n = 0;
 	}
+	/*
+	 * Both passes start in the same state.  Start of value counts as
+	 * "after the separator": whitespace behind a leading line fold
+	 * ("Newsgroups:\r\n\tfoo") is trimmed like other leading whitespace.
+	 */
+	trimws = 1;
 	for (i = 0; i < l; i++) {
 	    /* skip cr and lf */
 	    if (s[i] == '\r' || s[i] == '\n')

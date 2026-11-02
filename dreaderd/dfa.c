@@ -51,6 +51,7 @@ NewDFA(Connection *conn, int lf, int offset, int size)
 {
     ServReq *sreq = conn->co_SReq;
     DirectFileAccess* el=NULL;
+    struct stat st;
 
 #if USE_AIO
     if (!sig_aio) {
@@ -83,9 +84,19 @@ NewDFA(Connection *conn, int lf, int offset, int size)
     }
 
     if (!el) return NULL ;
-    /* check end of article */
-    if (lseek(lf, offset+size-1, SEEK_SET)!=(offset+size-1)) {
-      logit(LOG_ERR, "NewDFA : cannot seek to the end of article");
+    /*
+     * Check that the whole article is in the file.  This used to lseek() to
+     * its last byte, but lseek() past the end of a file succeeds, so a spool
+     * file that ends early (data lost in a crash: the spool is not fsync'ed)
+     * got through, and the client was left waiting for the rest of a body
+     * that had already started.  Once the response has started there is no
+     * clean way to fail it, so refuse the file here and let the caller fall
+     * back to fetching the article from the spool server.
+     */
+    if (offset < 0 || size < 0 || fstat(lf, &st) != 0 ||
+        st.st_size < (off_t)offset + (off_t)size) {
+      logit(LOG_ERR, "NewDFA : spool file ends before the end of article %s",
+          sreq->sr_MsgId);
       el->dfa_Next = dfa_Trash;
       dfa_Trash = el;
       return NULL ;

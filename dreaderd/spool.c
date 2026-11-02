@@ -151,18 +151,65 @@ NNGetLocal1(Connection *conn)
 		}
 	    }
 
+	    /*
+	     * The filename comes from the spool server's whereis reply and is
+	     * handed to open() below, so its name is checked first.  This is
+	     * lexical containment of the name a backend may ask for, not a full
+	     * filesystem sandbox: a backend trusted to serve the local spool can
+	     * still point open() through a symlink it plants inside the spool
+	     * tree, so the spool tree itself remains a trust boundary (true
+	     * containment would need openat()/O_NOFOLLOW resolution and is left
+	     * as a follow-up).  The name checks:
+	     *
+	     *  - localspool must be an absolute path.  An empty or relative
+	     *    value cannot contain a relative reply: "%s/%s" with an empty
+	     *    root turns a relative name into an absolute one.
+	     *  - localspool "/" is the documented full-path mode, where the
+	     *    operator has declared this backend's absolute replies trusted,
+	     *    so the name is used as given and is not contained.
+	     *  - under a real spool directory the reply is relative to it and
+	     *    must stay inside by name: no leading "/" and no ".." component.
+	     *
+	     * A refused reply falls through to the normal article fetch below.
+	     */
+	    if (filename != NULL) {
+		const char *root = conn->co_Desc->d_LocalSpool;
+
+		if (root == NULL || root[0] != '/') {
+		    logit(LOG_ERR,
+			"NNGetLocal1 : localspool is not an absolute path, refusing local fetch from %s",
+			conn->co_Desc->d_Id);
+		    filename = NULL;
+		} else if (strcmp(root, "/") != 0 &&
+			   (filename[0] == '/' || strstr(filename, "..") != NULL)) {
+		    logit(LOG_ERR,
+			"NNGetLocal1 : refusing spool path with traversal from %s: %s",
+			conn->co_Desc->d_Id, filename);
+		    filename = NULL;
+		}
+	    }
+
 	    if (filename != NULL && offset >= 0 && size >= 0) {
 		int lf;
+		int n;
 		static char filepath[PATH_MAX];
 		if (DebugOpt)
 		    printf("NNGetLocal1 : whereis returned file %s offset %ld size %ld\n",
 						filename, offset, size);
 		if (strcmp(conn->co_Desc->d_LocalSpool, "/") == 0)
-		    snprintf(filepath, sizeof(filepath), "%s", filename);
+		    n = snprintf(filepath, sizeof(filepath), "%s", filename);
 		else
-		    snprintf(filepath, sizeof(filepath), "%s/%s",
+		    n = snprintf(filepath, sizeof(filepath), "%s/%s",
 					conn->co_Desc->d_LocalSpool, filename);
-		lf = open(filepath, O_RDONLY);
+		if (n < 0 || n >= (int)sizeof(filepath)) {
+		    /* a truncated path would name a different file: refuse it */
+		    logit(LOG_ERR,
+			"NNGetLocal1 : spool path too long, refusing fetch from %s",
+			conn->co_Desc->d_Id);
+		    lf = -1;
+		} else {
+		    lf = open(filepath, O_RDONLY);
+		}
 		if (lf >= 0 && NewDFA(conn, lf, offset, size)) {
 		    NNSendLocalArticle(conn);
 		} else {

@@ -103,8 +103,14 @@ diablo_strlcpynl2(char *d, int trimwsafter, const char *s, int ssize, int dsize)
     }
 }
 
-static char PatPath1[128];
-static char PatPath2[128];
+/*
+ * These hold the expanded path_* settings.  They were 128 bytes, and
+ * PatSubst() truncates to fit, so a longer path silently named a different
+ * file (a dumphist command cut mid-path, for one).  Callers that copy the
+ * result into a buffer of their own bound that copy.
+ */
+static char PatPath1[PATH_MAX];
+static char PatPath2[PATH_MAX];
 
 /*
  * PatSubst() - expand a path pattern from diablo.config (path_*), the

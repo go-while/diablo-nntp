@@ -479,8 +479,7 @@ HistoryLookup(const char *msgid, History *nh)
 	    off = (off_t)HEntryOff + (off_t)index * sizeof(History);
 	else 
 	    off = index;
-	lseek(HFd, off, 0);
-	if (read(HFd, &h, sizeof(h)) != sizeof(h)) {
+	if (pread(HFd, &h, sizeof(h), off) != sizeof(h)) {
 	    if ((LoggedDHistCorrupt & 1) == 0 || DebugOpt) {
 		LoggedDHistCorrupt |= 1;
 		logit(LOG_ERR, "dhistory file corrupted on lookup @ %d->%d chain %d  offset %ld  msgid %s  counter=%d",
@@ -545,8 +544,7 @@ HistoryLookupByHash(hash_t hv, History *h)
 	    off = (off_t)HEntryOff + (off_t)index * sizeof(History);
 	else 
 	    off = index;
-	lseek(HFd, off, 0);
-	if (read(HFd, h, sizeof(*h)) != sizeof(*h)) {
+	if (pread(HFd, h, sizeof(*h), off) != sizeof(*h)) {
 	    if ((LoggedDHistCorrupt & 1) == 0 || DebugOpt) {
 		LoggedDHistCorrupt |= 1;
 		logit(LOG_ERR, "dhistory file corrupted on lookup");
@@ -588,8 +586,7 @@ HistoryPosLookupByHash(hash_t hv, History *h)
 	    off = (off_t)HEntryOff + (off_t)index * sizeof(History);
 	else 
 	    off = index;
-	lseek(HFd, off, 0);
-	if (read(HFd, h, sizeof(*h)) != sizeof(*h)) {
+	if (pread(HFd, h, sizeof(*h), off) != sizeof(*h)) {
 	    if ((LoggedDHistCorrupt & 1) == 0 || DebugOpt) {
 		LoggedDHistCorrupt |= 1;
 		logit(LOG_ERR, "dhistory file corrupted on lookup");
@@ -668,8 +665,7 @@ HistoryAdd(const char *msgid, History *h)
 		off = (off_t)HEntryOff + (off_t)index * sizeof(History);
 	    else
 		off = index;
-	    lseek(HFd, off, 0);
-	    if (read(HFd, &ht, sizeof(ht)) != sizeof(ht)) {
+	    if (pread(HFd, &ht, sizeof(ht), off) != sizeof(ht)) {
 		if ((LoggedDHistCorrupt & 2) == 0 || DebugOpt) {
 		    LoggedDHistCorrupt |= 2;
 		    logit(LOG_ERR, "dhistory file corrupted @ %u (%s)",

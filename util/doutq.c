@@ -97,7 +97,7 @@ main(int ac, char **av)
 void
 ScanSeq(char *name, char *host, int m)
 {
-    char path[256];
+    char path[PATH_MAX];
     int i;
     int b;
     int e;
@@ -108,7 +108,11 @@ ScanSeq(char *name, char *host, int m)
 	return;
     }
 
-    snprintf(path, sizeof(path), "%s/.%s.seq", PatExpand(DQueueHomePat), name);
+    if (snprintf(path, sizeof(path), "%s/.%s.seq", PatExpand(DQueueHomePat),
+	name) >= (int)sizeof(path)) {
+	printf("%-10s queue path too long\n", name);
+	return;
+    }
     {
 	int fd;
 	if ((fd = open(path, O_RDONLY)) < 0) {
@@ -136,7 +140,9 @@ ScanSeq(char *name, char *host, int m)
     for (i = b; i <= e; ++i) {
 	int fd;
 
-	snprintf(path, sizeof(path), "%s/%s.S%05d", PatExpand(DQueueHomePat), name, i);
+	if (snprintf(path, sizeof(path), "%s/%s.S%05d", PatExpand(DQueueHomePat),
+	    name, i) >= (int)sizeof(path))
+	    break;
 	if ((fd = open(path, O_RDWR)) >= 0) {
 	    if (xflock(fd, XLOCK_EX|XLOCK_NB) < 0) {
 		printf("%05d ", i);

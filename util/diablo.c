@@ -546,7 +546,7 @@ sigAlrm(int sigNo)
  *		    and forks off children.
  */
 
-static char PidFile[1024];
+static char PidFile[PATH_MAX];
 
 void
 DiabloServer(int lfd)
@@ -843,15 +843,20 @@ DiabloServer(int lfd)
     {
 	FILE *pf;
 
-	snprintf(PidFile, sizeof(PidFile), "%s/diablo.pid", PatExpand(LogHomePat));
-	remove(PidFile);
-	if ((pf = PrivateFOpen(PidFile, "w", 0644)) != NULL) {
-	    fprintf(pf, "%d\n", (int)getpid());
-	    if (fclose(pf) != 0)
-		logit(LOG_ERR, "unable to write %s: %s", PidFile, strerror(errno));
-	} else {
-	    logit(LOG_ERR, "unable to create %s: %s", PidFile, strerror(errno));
+	if (snprintf(PidFile, sizeof(PidFile), "%s/diablo.pid",
+	    PatExpand(LogHomePat)) >= (int)sizeof(PidFile)) {
+	    logit(LOG_ERR, "pid file path too long");
 	    PidFile[0] = 0;
+	} else {
+	    remove(PidFile);
+	    if ((pf = PrivateFOpen(PidFile, "w", 0644)) != NULL) {
+		fprintf(pf, "%d\n", (int)getpid());
+		if (fclose(pf) != 0)
+		    logit(LOG_ERR, "unable to write %s: %s", PidFile, strerror(errno));
+	    } else {
+		logit(LOG_ERR, "unable to create %s: %s", PidFile, strerror(errno));
+		PidFile[0] = 0;
+	    }
 	}
     }
 
@@ -2985,6 +2990,9 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 						strncmp(p, ".\n", 2) == 0))) {
 		if (inHeader)
 		    artError |= LAERR_NOHDREND;
+		/* the last decoded line of a base64 text part */
+		if (DOpts.FeederArtTypes && artType != NULL)
+		    arttype = ArticleTypeEnd();
 		if (DOpts.WireFormat && buffer != NULL &&
 						!skipHeader && !artError)
 		    bwrite(buffer, p, bytes);
@@ -3010,8 +3018,25 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 	    /*
 	     * See if we can categorise the article type
 	     */
-	    if (DOpts.FeederArtTypes && artType != NULL)
-		arttype = ArticleType(p, bytes - aflen, inHeader);
+	    if (DOpts.FeederArtTypes && artType != NULL) {
+		/*
+		 * The line without its end of line.  A piece of a long line
+		 * (the buffer was full, no newline yet) is passed whole: a
+		 * base64 text part is decoded across the pieces and must not
+		 * lose a character.
+		 */
+		int alen = bytes;
+
+		if (thisNl) {
+		    --alen;
+		    if (alen > 0 && p[alen - 1] == '\r')
+			--alen;
+		}
+		if (thisNl)
+		    arttype = ArticleType(p, alen, inHeader);
+		else
+		    arttype = ArticleTypePiece(p, alen, inHeader);
+	    }
 
 	    /*
 	     * Extract certain header information
@@ -3570,16 +3595,19 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 			logit(LOG_CRIT, "spool article header write failed: %s",
 							strerror(errno));
 		    bsetfd(buffer, artFd);
+		    /*
+		     * An uncompressed body stays buffered here and goes out
+		     * with the terminator below in one flush.  A compressed
+		     * one has to be flushed through gzip now, before the
+		     * terminator is written uncompressed.
+		     */
 #ifdef USE_ZLIB
-		    if (cfile != NULL)
-			bsetcompress(buffer, cfile);
-		    bflush(buffer);
 		    if (cfile != NULL) {
+			bsetcompress(buffer, cfile);
+			bflush(buffer);
 			gzclose(cfile);
 			bsetcompress(buffer, NULL);
 		    }
-#else
-		    bflush(buffer);
 #endif
 		} else {
 		    artError |= LAERR_IO;
@@ -4508,13 +4536,17 @@ FeedList(FILE *fo)
 void
 FeedCommit(FILE *fo)
 {
-    char path1[256+64];
-    char path2[256+64];
+    char path1[PATH_MAX];
+    char path2[PATH_MAX];
+    int n1, n2;
 
-    sprintf(path1, "%s/%s.new", PatExpand(FeedsHomePat), HLabel);
-    sprintf(path2, "%s/%s", PatExpand(FeedsHomePat), HLabel);
+    n1 = snprintf(path1, sizeof(path1), "%s/%s.new", PatExpand(FeedsHomePat), HLabel);
+    n2 = snprintf(path2, sizeof(path2), "%s/%s", PatExpand(FeedsHomePat), HLabel);
     fflush(Ft);
-    if (ferror(Ft)) {
+    if (n1 < 0 || n1 >= (int)sizeof(path1) || n2 < 0 || n2 >= (int)sizeof(path2)) {
+	/* a truncated name would rename or remove a different file */
+	xfprintf(fo, "490 feed file path too long\r\n");
+    } else if (ferror(Ft)) {
 	remove(path1);
 	xfprintf(fo, "490 file write failed\r\n");
     } else {

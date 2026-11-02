@@ -520,9 +520,14 @@ feedQueryGroups(NewsFeed *feed, const char *nglist)
 
 	if (*p == ',')
 	    ++p;
+	while (*p == ' ' || *p == '\t')
+	    ++p;
 
 	for (l = 0; l < MAXGNAME - 1 && p[l] && p[l] != ',' && p[l] != ' ' && p[l] != '\t' && p[l] != '\n' && p[l] != '\r'; ++l)
 	    ;
+	/* an empty entry (a trailing comma, ',,') is not a group: ignore it, as INN does */
+	if (l == 0)
+	    continue;
 
 	/*
 	 * r:
@@ -678,9 +683,14 @@ cbFilterRequireGroups(Node *node, const void *data, int *pabort, int def)
 
 	    if (*p == ',')
 		++p;
+	    while (*p == ' ' || *p == '\t')
+		++p;
 
 	    for (l = 0; l < MAXGNAME - 1 && p[l] && p[l] != ',' && p[l] != ' ' && p[l] != '\t' && p[l] != '\n' && p[l] != '\r'; ++l)
 		;
+	    /* an empty entry (a trailing comma, ',,') is not a group: ignore it, as INN does */
+	    if (l == 0)
+		continue;
 	    strncpy(group, p, l);
 	    group[l] = 0;
 	    if (WildCmp(node->no_Name, group) == 0) {
@@ -1009,8 +1019,13 @@ filterQueryGroups(NewsFeed *feed, const char *nglist)
 
 	if (*p == ',')
 	    ++p;
+	while (*p == ' ' || *p == '\t')
+	    ++p;
 	for (l = 0; l < MAXGNAME - 1 && p[l] && p[l] != ',' && p[l] != ' ' && p[l] != '\t' && p[l] != '\n' && p[l] != '\r'; ++l)
 	    ;
+	/* an empty entry (a trailing comma, ',,') is not a group: ignore it, as INN does */
+	if (l == 0)
+	    continue;
 	strncpy(group, p, l);
 	group[l] = 0;
 
