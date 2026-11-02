@@ -88,6 +88,23 @@ int Armor = 0;	/* lines left to skip in an ASCII-armored block (PGP, PEM), 0 = n
 static int CTSeen = 0;	/* a Content-Type was seen in this header block */
 static int CTEQP = 0;	/* a quoted-printable Content-Transfer-Encoding is waiting for the end of its header block */
 static int QPPart = 0;	/* in the body of a part declared quoted-printable */
+
+/*
+ * Where a part's headers are.  A header block is the article's headers, or
+ * the lines after a "--boundary" line of a multipart article up to the
+ * next blank line, the boundary being one given in a Content-Type of a
+ * header block.  Only a header block's encoding starts the decoding of a
+ * base64 text part or makes a part quoted-printable: a body that quotes
+ * "Content-Transfer-Encoding: base64" in its text is not a MIME part.
+ */
+#define	BND_MAX		70	/* the longest boundary (RFC 2046) */
+#define	BND_NUM		4	/* boundaries remembered (nested multiparts) */
+
+static int HdrBlock = 1;	/* in a header block */
+static int CTCont = 0;	/* the last header line was a Content-Type: its continuation may hold the boundary */
+static char Bnd[BND_NUM][BND_MAX];
+static int BndLen[BND_NUM];
+static int BndNext = 0;
 static int B64Part = 0;	/* in the body of a base64 text part */
 static int B64Bits;	/* bits of the current group not yet decoded */
 static int B64NBits;	/* how many */
@@ -506,6 +523,10 @@ InitArticleType(void)
     B64Part = 0;
     CTEQP = 0;
     QPPart = 0;
+    HdrBlock = 1;
+    CTCont = 0;
+    BndNext = 0;
+    memset(BndLen, 0, sizeof(BndLen));
 }
 
 int
@@ -612,6 +633,68 @@ linePrefix(const char *s, int len, const char *lit)
 {
     int n = (int)strlen(lit);
     return (len >= n && strncmp(s, lit, n) == 0);
+}
+
+/*
+ * Remember the boundary="..." parameter of a Content-Type header line (or
+ * of its continuation), quoted or not.  One longer than BND_MAX is not a
+ * valid boundary and is not remembered.
+ */
+static void
+bndCapture(const char *p, int len)
+{
+    int i, n;
+
+    for (i = 0; i + 9 <= len; i++) {
+	if (strncasecmp(p + i, "boundary=", 9) == 0 &&
+		(i == 0 || p[i - 1] == ';' || p[i - 1] == ' ' || p[i - 1] == '\t'))
+	    break;
+    }
+    if (i + 9 > len)
+	return;
+    p += i + 9;
+    len -= i + 9;
+    if (len > 0 && *p == '"') {
+	++p;
+	--len;
+	for (n = 0; n < len && p[n] != '"'; n++)
+	    ;
+    } else {
+	for (n = 0; n < len && p[n] != ';' && p[n] != ' ' && p[n] != '\t' &&
+						p[n] != '\r' && p[n] != '\n'; n++)
+	    ;
+    }
+    if (n < 1 || n > BND_MAX)
+	return;
+    memcpy(Bnd[BndNext], p, n);
+    BndLen[BndNext] = n;
+    BndNext = (BndNext + 1) % BND_NUM;
+}
+
+/*
+ * Is this line (after its "--") a boundary we know?  Returns 1 for one
+ * that starts a part, 2 for the closing one ("--boundary--").
+ */
+static int
+bndMatch(const char *p, int len)
+{
+    int i, n, k;
+
+    for (i = 0; i < BND_NUM; i++) {
+	n = BndLen[i];
+	if (n == 0 || len < n || memcmp(p, Bnd[i], n) != 0)
+	    continue;
+	if (len >= n + 2 && p[n] == '-' && p[n + 1] == '-')
+	    return(2);
+	/* only white space may follow (RFC 2046) */
+	for (k = n; k < len; k++) {
+	    if (p[k] != ' ' && p[k] != '\t' && p[k] != '\r')
+		break;
+	}
+	if (k == len)
+	    return(1);
+    }
+    return(0);
 }
 
 /*
@@ -926,20 +1009,26 @@ ArticleType(char *line, int len, int inheader)
      * binary unless its Content-Type is text/ (non-ASCII text is sent this
      * way).  The two headers can come in either order.
      */
-    if (CTEBase64 && (len == 0 || (len == 1 && *line == '\r'))) {
-	CTEBase64 = 0;
-	if (CTText || (!CTSeen && B64_NOCTYPE_IS_TEXT)) {
-	    /* a text part: decode it (b64Decode) */
-	    b64Start();
-	} else {
-	    Type |= ARTTYPE_BASE64 | ARTTYPE_BINARY;
-	    Type &= ~ARTTYPE_DEFAULT;
+    if (len == 0 || (len == 1 && *line == '\r')) {
+	if (CTEBase64) {
+	    CTEBase64 = 0;
+	    if (HdrBlock && (CTText || (!CTSeen && B64_NOCTYPE_IS_TEXT))) {
+		/* a text part: decode it (b64Decode) */
+		b64Start();
+	    } else if (!CTText) {
+		/* (outside a header block as before: binary unless text/) */
+		Type |= ARTTYPE_BASE64 | ARTTYPE_BINARY;
+		Type &= ~ARTTYPE_DEFAULT;
+	    }
 	}
-    }
-    /* the same for a quoted-printable one (qpLine) */
-    if (CTEQP && (len == 0 || (len == 1 && *line == '\r'))) {
-	CTEQP = 0;
-	QPPart = 1;
+	/* the same for a quoted-printable one (qpLine) */
+	if (CTEQP) {
+	    CTEQP = 0;
+	    if (HdrBlock)
+		QPPart = 1;
+	}
+	HdrBlock = 0;
+	CTCont = 0;
     }
     /*
      * If we have found a binary, just keep it that way - saves CPU
@@ -952,6 +1041,14 @@ ArticleType(char *line, int len, int inheader)
 	return(Type);
 
     ptr = line;
+
+    /* a folded Content-Type header: the boundary on a continuation line */
+    if (CTCont) {
+	if (HdrBlock && (*ptr == ' ' || *ptr == '\t'))
+	    bndCapture(ptr, len);
+	else
+	    CTCont = 0;
+    }
 
     /*
      * Do some checks that could apply to headers and or body
@@ -981,6 +1078,10 @@ ArticleType(char *line, int len, int inheader)
 	    Type |= ARTTYPE_MIME;
 	    CTSeen = 1;
 	    CTText = hdrPrefix(cv, cvlen, "text/");
+	    if (HdrBlock) {
+		bndCapture(cv, cvlen);
+		CTCont = 1;
+	    }
 	    if (hdrPrefix(cv, cvlen, "text/html"))
 		Type |= ARTTYPE_HTML;
 	    if (hdrPrefix(cv, cvlen, "multipart"))
@@ -1047,6 +1148,8 @@ ArticleType(char *line, int len, int inheader)
 	    CTSeen = 0;
 	    CTEQP = 0;
 	    QPPart = 0;
+	    if (bndMatch(ptr + 2, len - 2) == 1)
+		HdrBlock = 1;	/* the headers of a part follow */
 	    if (B64Part) {
 		b64End();
 		if (Type & ARTTYPE_BINARY)

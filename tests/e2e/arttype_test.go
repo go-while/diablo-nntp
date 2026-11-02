@@ -287,6 +287,19 @@ func TestArticleTypes(t *testing.T) {
 		{"base64 of a uuencoded file, last line without newline", hdr64("text/plain"), b64Wrap([]byte(strings.Join(append([]string{"begin 644 a.bin"}, atLines(9, 60, uuAlphabet, "M")...), "\n")), 76), atMIME | atBinary | atBase64 | atUUencode, "the 9th uuencode line is the last"},
 		{"uuencode, 9th line last, unencoded", nil, append([]string{"begin 644 a.bin"}, atLines(9, 60, uuAlphabet, "M")...), atBinary | atUUencode, ""},
 		{"base64 text, last line with a control byte without newline", hdr64("text/plain"), b64Wrap([]byte("Hello.\nbye\x01"), 76), atMIME | atBinary | atBase64, ""},
+		// A body that quotes MIME headers in its text has no MIME parts: only the article's
+		// headers, or the lines after a "--boundary" of a multipart article (boundary from a
+		// Content-Type), are a part's headers.
+		{"text quoting a base64 encoding header", []string{"Mime-Version: 1.0", "Content-Type: text/plain; charset=UTF-8"},
+			[]string{"The gateway adds this header:", "Content-Transfer-Encoding: base64", "", "and then the body is ordinary text that is not encoded at all, as you see here."}, atMIME, ""},
+		{"text part quoting a base64 encoding header", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=XX"},
+			[]string{"--XX", "Content-Type: text/plain", "", "The mail had these headers:", "Content-Type: text/plain", "Content-Transfer-Encoding: base64", "", "and its body was ordinary text, not encoded at all.", "--XX--"}, atMIME | atMultipart, ""},
+		{"text quoting a quoted-printable encoding header", []string{"Mime-Version: 1.0", "Content-Type: text/plain; charset=UTF-8"},
+			append([]string{"Content-Transfer-Encoding: quoted-printable", ""}, edit(atLines(12, 75, b64Alphabet, ""), func(l string) string { return l + "=" })...), atMIME | atBinary | atBase64, "not a declaration: the soft line breaks alone do not make the lines quoted-printable"},
+		{"base64 text part, folded quoted boundary", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed;", "\tboundary=\"=_a b\""},
+			append(append([]string{"--=_a b", "Content-Type: text/plain; charset=UTF-8", "Content-Transfer-Encoding: base64", ""}, b64Text(30)...), "--=_a b--"), atMIME | atMultipart, ""},
+		{"base64 image part, folded quoted boundary", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed;", "\tboundary=\"=_a b\""},
+			append(append([]string{"--=_a b", "Content-Type: image/png", "Content-Transfer-Encoding: base64", ""}, b64...), "--=_a b--"), atMIME | atMultipart | atBinary | atBase64, ""},
 		// MIME parts.
 		{"base64 text part in multipart", []string{"Mime-Version: 1.0", "Content-Type: multipart/alternative; boundary=XX"},
 			append(append([]string{"--XX", "Content-Type: text/plain; charset=UTF-8", "Content-Transfer-Encoding: base64", ""}, b64Text(30)...), "--XX--"), atMIME | atMultipart, ""},
@@ -587,6 +600,7 @@ func TestBase64TextNotRejectedAsBinary(t *testing.T) {
 		{"base64 random data in text/plain", text, b64Wrap(randBytes(1140, 9), 76), "437"},
 		{"base64 random data in text/plain, one long line", text, b64Wrap(randBytes(12000, 10), 20000), "437"},
 		{"uuencode under a base64 text header", text, append([]string{"begin 644 a.bin"}, atLines(12, 60, uuAlphabet, "M")...), "437"},
+		{"text quoting a base64 encoding header", []string{"Mime-Version: 1.0", "Content-Type: text/plain; charset=UTF-8"}, []string{"The gateway adds this header:", "Content-Transfer-Encoding: base64", "", "and then the body is ordinary text that is not encoded at all, as you see here."}, "235"},
 		{"base64 of a uuencoded file, last line without newline", text, b64Wrap([]byte(strings.Join(append([]string{"begin 644 a.bin"}, atLines(9, 60, uuAlphabet, "M")...), "\n")), 76), "437"},
 	} {
 		if line := offerHeaders(t, s, "comp.test", c.extra, c.body); !strings.HasPrefix(line, c.want) {
