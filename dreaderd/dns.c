@@ -1311,27 +1311,48 @@ LDAPAuthenticate(char *user, char *pass, char *realm, char *conf)
      * fields into the search URL
      */
     {
+	/*
+	 * Each $USER$ adds up to 63 bytes, so the template (up to 254)
+	 * can expand past url: refuse the login rather than overrun it.
+	 */
 	char *src = confst;
-	char *dst = url;
+	size_t used = 0;
+	int tooLong = 0;
 
-	while (*src) {
+	while (*src && !tooLong) {
+	    const char *ins = NULL;
+
 	    if (user && strncmp(src, "$USER$", 6) == 0) {
 		src += 6;
-		strcpy(dst, user);
-		dst += strlen(user);
+		ins = user;
 	    } else if  (pass && strncmp(src, "$PASSWD$", 8) == 0) {
 		src += 8;
-		strcpy(dst, pass);
-		dst += strlen(pass);
+		ins = pass;
 	    } else if  (realm && strncmp(src, "$REALM$", 7) == 0) {
 		src += 7;
-		strcpy(dst, realm);
-		dst += strlen(realm);
+		ins = realm;
+	    }
+	    if (ins != NULL) {
+		size_t l = strlen(ins);
+
+		if (l >= sizeof(url) - used)
+		    tooLong = 1;
+		else {
+		    memcpy(url + used, ins, l);
+		    used += l;
+		}
+	    } else if (used + 1 >= sizeof(url)) {
+		tooLong = 1;
 	    } else {
-		*dst++ = *src++;
+		url[used++] = *src++;
 	    }
 	}
-	*dst = 0;
+	url[used] = 0;
+	if (tooLong) {
+	    logit(LOG_ERR, "LDAP search URL too long after substitution: %s\n", confst);
+	    free(confst);
+	    return(NULL);
+	}
 	if (DebugOpt)
 	    printf("URL: %s\n", url);
     }
@@ -1461,7 +1482,39 @@ LDAPAuthenticate(char *user, char *pass, char *conf)
 	ld = NULL;
 	return(NULL);
     }
-    sprintf(filter, ludp->lud_filter, user);
+    /*
+     * The filter from dreader.access was the format string of a sprintf()
+     * with the user name as its only argument.  Expand it the same way by
+     * hand: "%%" is a '%', the first "%s" is the user; anything else (a
+     * second %s, %n, ...) read or wrote past the arguments: refuse it.
+     */
+    {
+	const char *src = ludp->lud_filter;
+	char *dst = filter;
+	int subst = 0;
+
+	while (*src) {
+	    if (src[0] != '%') {
+		*dst++ = *src++;
+	    } else if (src[1] == '%') {
+		*dst++ = '%';
+		src += 2;
+	    } else if (src[1] == 's' && !subst) {
+		strcpy(dst, user);
+		dst += strlen(user);
+		src += 2;
+		subst = 1;
+	    } else {
+		logit(LOG_ERR, "LDAP filter may hold one %%s and no other %% conversion: %s\n", conf);
+		free(filter);
+		ldap_unbind_s(ld);
+		ldap_free_urldesc(ludp);
+		ld = NULL;
+		return(NULL);
+	    }
+	}
+	*dst = 0;
+    }
 
     /* Perform the search */
     if ((rcode = ldap_search_s(ld, ludp->lud_dn, ludp->lud_scope, filter, ludp->lud_attrs, 0, &res)) != LDAP_SUCCESS) {
@@ -2780,8 +2833,14 @@ readAccessLine(FILE *af, char *fname, AccessDef *adef)
 	p = strchr(val, '\n');
 	if (p)
 	    *p = '\0';
-	strncpy(adef->ad_Reader, val, sizeof(adef->ad_Reader) - 1);
-	adef->ad_Reader[sizeof(adef->ad_Reader) - 1] = '\0';
+	/* not cut: a cut name is another readerdef, or none */
+	if (strlen(val) >= sizeof(adef->ad_Reader)) {
+	    logit(LOG_ERR, "%s: readerdef name too long in line %d",
+					fname, linecount);
+	    needread = 1;
+	    return(0);
+	}
+	strcpy(adef->ad_Reader, val);
     }
     p = strchr(opt, ',');
     if (p != NULL) {
@@ -2797,8 +2856,14 @@ readAccessLine(FILE *af, char *fname, AccessDef *adef)
 	char *q;
 	if (*opt && (q = strchr(opt, '@')) != NULL) {
 	    *q++ = '\0';
-	    strncpy(adef->ad_IdentUser, opt, sizeof(adef->ad_IdentUser) - 1);
-	    adef->ad_IdentUser[sizeof(adef->ad_IdentUser) - 1] = '\0';
+	    /* not cut: a cut ident user name would match another user */
+	    if (strlen(opt) >= sizeof(adef->ad_IdentUser)) {
+		logit(LOG_ERR, "%s: Bad length for ident user %s in line %d",
+					fname, opt, linecount);
+		needread = 1;
+		return(0);
+	    }
+	    strcpy(adef->ad_IdentUser, opt);
 	    opt = q;
 	}
     }
@@ -2960,6 +3025,37 @@ ProxyFromOk(const ReaderDef *rd, const struct sockaddr_storage *peer)
 	}
 	return(1);
     }
+    return(0);
+}
+
+/*
+ * accessValue() - copy a dreader.access value into its fixed-size field.
+ *
+ * These were strncpy()s that cut a long value without a word.  A cut
+ * name, path, address, password or host name is a different one (an auth
+ * file that is not there, a cluster name in Path: that is not ours), so a
+ * value that does not fit is refused (-1; the caller rejects the file and
+ * keeps the last good access tables, as for other errors).  Free text
+ * (mayCut: welcome, organization, comments, trailer) is still cut, with a
+ * warning.
+ */
+static int
+accessValue(char *dst, size_t size, const char *val, const char *opt, int linecount, int mayCut)
+{
+    size_t l = strlen(val);
+
+    if (l >= size) {
+	if (!mayCut) {
+	    logit(LOG_ERR, "dreader.access: value of %s in line %d is too long (at most %d characters)",
+				opt, linecount, (int)size - 1);
+	    return(-1);
+	}
+	logit(LOG_WARNING, "dreader.access: value of %s in line %d cut to %d characters",
+				opt, linecount, (int)size - 1);
+	l = size - 1;
+    }
+    memcpy(dst, val, l);
+    dst[l] = 0;
     return(0);
 }
 
@@ -3210,42 +3306,51 @@ InstallAccessCache(void) {
 	    case OPT_NONE: break;
 	    case OPT_VSERVER:
 		if (*val && strcmp(opt, "clustername") == 0) {
-		    strncpy(vserver.vs_ClusterName, val, sizeof(vserver.vs_ClusterName) - 1);
+		    if (accessValue(vserver.vs_ClusterName, sizeof(vserver.vs_ClusterName), val, opt, linecount, 0) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "hostname") == 0) {
-		    strncpy(vserver.vs_HostName, val, sizeof(vserver.vs_HostName) - 1);
+		    if (accessValue(vserver.vs_HostName, sizeof(vserver.vs_HostName), val, opt, linecount, 0) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "postpath") == 0) {
-		    strncpy(vserver.vs_PostPath, val, sizeof(vserver.vs_PostPath) - 1);
+		    if (accessValue(vserver.vs_PostPath, sizeof(vserver.vs_PostPath), val, opt, linecount, 0) < 0)
+			parseError = 1;
 		    if (strcmp(val, "0") == 0)
 			vserver.vs_PostPath[0] = 0;
 		    continue;
 		}
 		if (*val && strcmp(opt, "newsadmin") == 0) {
-		    strncpy(vserver.vs_NewsAdm, val, sizeof(vserver.vs_NewsAdm) - 1);
+		    if (accessValue(vserver.vs_NewsAdm, sizeof(vserver.vs_NewsAdm), val, opt, linecount, 0) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && ((strcmp(opt, "organisation") == 0) ||
 			(strcmp(opt, "organization") == 0))) {
-		    strncpy(vserver.vs_Org, val, sizeof(vserver.vs_Org) - 1);
+		    if (accessValue(vserver.vs_Org, sizeof(vserver.vs_Org), val, opt, linecount, 1) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "abuseto") == 0) {
-		    strncpy(vserver.vs_AbuseTo, val, sizeof(vserver.vs_AbuseTo) - 1);
+		    if (accessValue(vserver.vs_AbuseTo, sizeof(vserver.vs_AbuseTo), val, opt, linecount, 0) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "cryptpw") == 0) {
-		    strncpy(vserver.vs_CryptPw, val, sizeof(vserver.vs_CryptPw) - 1);
+		    if (accessValue(vserver.vs_CryptPw, sizeof(vserver.vs_CryptPw), val, opt, linecount, 0) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "accessfile") == 0) {
-		    strncpy(vserver.vs_AccessFile, val, sizeof(vserver.vs_AccessFile) - 1);
+		    if (accessValue(vserver.vs_AccessFile, sizeof(vserver.vs_AccessFile), val, opt, linecount, 0) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "welcome") == 0) {
-		    strncpy(vserver.vs_Welcome, val, sizeof(vserver.vs_Welcome) - 1);
+		    if (accessValue(vserver.vs_Welcome, sizeof(vserver.vs_Welcome), val, opt, linecount, 1) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "interface") == 0) {
@@ -3263,8 +3368,8 @@ InstallAccessCache(void) {
 			logit(LOG_ERR, "interface %s: invalid address\n", val);
 			continue;
 		    }
-		    strncpy(vserver.vs_Interface[ac], val,
-					sizeof(vserver.vs_Interface[0]) - 1);
+		    if (accessValue(vserver.vs_Interface[ac], sizeof(vserver.vs_Interface[0]), val, opt, linecount, 0) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "noxrefhostupdate") == 0) {
@@ -3297,11 +3402,13 @@ InstallAccessCache(void) {
 		    continue;
 		}
 		if (*val && strcmp(opt, "postcomments") == 0) {
-		    strncpy(vserver.vs_Comments, val, sizeof(vserver.vs_Comments) - 1);
+		    if (accessValue(vserver.vs_Comments, sizeof(vserver.vs_Comments), val, opt, linecount, 1) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "posttrailer") == 0) {
-		    strncpy(vserver.vs_PostTrailer, val, sizeof(vserver.vs_PostTrailer) - 1);
+		    if (accessValue(vserver.vs_PostTrailer, sizeof(vserver.vs_PostTrailer), val, opt, linecount, 1) < 0)
+			parseError = 1;
 		    continue;
 		}
 		logit(LOG_ERR, "dreader.access: Invalid vserverdef option : %s in line %d\n", opt, linecount);
@@ -3327,55 +3434,68 @@ InstallAccessCache(void) {
 		continue;
 	    case OPT_AUTH:
 		if (*val && strcmp(opt, "file") == 0) {
-		    strncpy(authdef.au_File, val, sizeof(authdef.au_File) - 1);
+		    if (accessValue(authdef.au_File, sizeof(authdef.au_File), val, opt, linecount, 0) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "cdb") == 0) {
-		    strncpy(authdef.au_Cdb, val, sizeof(authdef.au_Cdb) - 1);
+		    if (accessValue(authdef.au_Cdb, sizeof(authdef.au_Cdb), val, opt, linecount, 0) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "db") == 0) {
-		    strncpy(authdef.au_Db, val, sizeof(authdef.au_Db) - 1);
+		    if (accessValue(authdef.au_Db, sizeof(authdef.au_Db), val, opt, linecount, 0) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "external") == 0) {
-		    strncpy(authdef.au_External, val, sizeof(authdef.au_External) - 1);
+		    if (accessValue(authdef.au_External, sizeof(authdef.au_External), val, opt, linecount, 0) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "radius") == 0) {
-		    strncpy(authdef.au_Radius, val, sizeof(authdef.au_Radius) - 1);
+		    if (accessValue(authdef.au_Radius, sizeof(authdef.au_Radius), val, opt, linecount, 0) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "netremote") == 0) {
-		    strncpy(authdef.au_NetRemote, val, sizeof(authdef.au_NetRemote) - 1);
+		    if (accessValue(authdef.au_NetRemote, sizeof(authdef.au_NetRemote), val, opt, linecount, 0) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "ldap") == 0) {
-		    strncpy(authdef.au_LDAP, val, sizeof(authdef.au_LDAP) - 1);
+		    if (accessValue(authdef.au_LDAP, sizeof(authdef.au_LDAP), val, opt, linecount, 0) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "perl") == 0) {
-		    strncpy(authdef.au_Perl, val, sizeof(authdef.au_Perl) - 1);
+		    if (accessValue(authdef.au_Perl, sizeof(authdef.au_Perl), val, opt, linecount, 0) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "pam") == 0) {
-		    strncpy(authdef.au_PAM, val, sizeof(authdef.au_PAM) - 1);
+		    if (accessValue(authdef.au_PAM, sizeof(authdef.au_PAM), val, opt, linecount, 0) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "user") == 0) {
-		    strncpy(authdef.au_User, val, sizeof(authdef.au_User) - 1);
+		    if (accessValue(authdef.au_User, sizeof(authdef.au_User), val, opt, linecount, 0) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "pass") == 0) {
-		    strncpy(authdef.au_Pass, val, sizeof(authdef.au_Pass) - 1);
+		    if (accessValue(authdef.au_Pass, sizeof(authdef.au_Pass), val, opt, linecount, 0) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "addrealm") == 0) {
-		    strncpy(authdef.au_AddRealm, val, sizeof(authdef.au_AddRealm) - 1);
+		    if (accessValue(authdef.au_AddRealm, sizeof(authdef.au_AddRealm), val, opt, linecount, 0) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "realm") == 0) {
-		    strncpy(authdef.au_Realm, val, sizeof(authdef.au_Realm) - 1);
+		    if (accessValue(authdef.au_Realm, sizeof(authdef.au_Realm), val, opt, linecount, 0) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "ident") == 0) {
@@ -3391,27 +3511,34 @@ InstallAccessCache(void) {
 		continue;
 	    case OPT_READERGRP:
 		if (*val && strcmp(opt, "auth") == 0) {
-		    strncpy(readerdef.rd_Auth, val, sizeof(readerdef.rd_Auth) - 1);
+		    if (accessValue(readerdef.rd_Auth, sizeof(readerdef.rd_Auth), val, opt, linecount, 0) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "groups") == 0) {
-		    strncpy(readerdef.rd_Groups, val, sizeof(readerdef.rd_Groups) - 1);
+		    if (accessValue(readerdef.rd_Groups, sizeof(readerdef.rd_Groups), val, opt, linecount, 0) < 0)
+			parseError = 1;
 		    if (strcmp(readerdef.rd_ListGroups, "DEFAULT") == 0)
-			strncpy(readerdef.rd_ListGroups, val, sizeof(readerdef.rd_Groups) - 1);
+			if (accessValue(readerdef.rd_ListGroups, sizeof(readerdef.rd_Groups), val, opt, linecount, 0) < 0)
+			    parseError = 1;
 		    if (strcmp(readerdef.rd_PostGroups, "DEFAULT") == 0)
-			strncpy(readerdef.rd_PostGroups, val, sizeof(readerdef.rd_Groups) - 1);
+			if (accessValue(readerdef.rd_PostGroups, sizeof(readerdef.rd_Groups), val, opt, linecount, 0) < 0)
+			    parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "listgroups") == 0) {
-		    strncpy(readerdef.rd_ListGroups, val, sizeof(readerdef.rd_Groups) - 1);
+		    if (accessValue(readerdef.rd_ListGroups, sizeof(readerdef.rd_Groups), val, opt, linecount, 0) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "postgroups") == 0) {
-		    strncpy(readerdef.rd_PostGroups, val, sizeof(readerdef.rd_Groups) - 1);
+		    if (accessValue(readerdef.rd_PostGroups, sizeof(readerdef.rd_Groups), val, opt, linecount, 0) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "vserver") == 0) {
-		    strncpy(readerdef.rd_Vserver, val, sizeof(readerdef.rd_Vserver) - 1);
+		    if (accessValue(readerdef.rd_Vserver, sizeof(readerdef.rd_Vserver), val, opt, linecount, 0) < 0)
+			parseError = 1;
 		    continue;
 		}
 		if (*val && strcmp(opt, "read") == 0) {
@@ -3713,7 +3840,8 @@ InstallAccessCache(void) {
 	if (strcmp(opt, "vserverdef") == 0) {
 	    copt = OPT_VSERVER;
 	    bzero(&vserver, sizeof(vserver));
-	    strncpy(vserver.vs_Name, val, sizeof(vserver.vs_Name) - 1);
+	    if (accessValue(vserver.vs_Name, sizeof(vserver.vs_Name), val, opt, linecount, 0) < 0)
+		parseError = 1;
 	    continue;
 	}
 	if (strcmp(opt, "groupdef") == 0) {
@@ -3727,13 +3855,15 @@ InstallAccessCache(void) {
 	if (strcmp(opt, "authdef") == 0) {
 	    copt = OPT_AUTH;
 	    bzero(&authdef, sizeof(authdef));
-	    strncpy(authdef.au_Name, val, sizeof(authdef.au_Name) - 1);
+	    if (accessValue(authdef.au_Name, sizeof(authdef.au_Name), val, opt, linecount, 0) < 0)
+		parseError = 1;
 	    continue;
 	}
 	if (strcmp(opt, "readerdef") == 0) {
 	    copt = OPT_READERGRP;
 	    bzero(&readerdef, sizeof(readerdef));
-	    strncpy(readerdef.rd_Name, val, sizeof(readerdef.rd_Name) - 1);
+	    if (accessValue(readerdef.rd_Name, sizeof(readerdef.rd_Name), val, opt, linecount, 0) < 0)
+		parseError = 1;
 	    readerdef.rd_ControlPost = 1;
 	    readerdef.rd_GroupLog = 1;
 	    readerdef.rd_CheckPostGroups = 1;
@@ -3762,7 +3892,7 @@ InstallAccessCache(void) {
 	    }
 	    while (*p == ' ' || *p == '\t')
 		p++;
-	    if (!*p || strlen(p) > sizeof(accessdef.ad_Reader)) {
+	    if (!*p || strlen(p) >= sizeof(accessdef.ad_Reader)) {
 		logit(LOG_ERR, "dreader.access: Invalid readerdef for access %s in line %d", val, linecount);
 		continue;
 	    }
@@ -3777,8 +3907,9 @@ InstallAccessCache(void) {
 		char *pp = q;
 		if ((q = strchr(pp, '@')) != NULL) {
 		    *q++ = '\0';
-		    if (!*pp || strlen(pp) > sizeof(accessdef.ad_Pattern)) {
-			logit(LOG_ERR, "dreader.access: Bad length for ident user %s in line %d", q, linecount);
+		    /* ad_IdentUser is 16 bytes: a cut user name would match another user */
+		    if (!*pp || strlen(pp) >= sizeof(accessdef.ad_IdentUser)) {
+			logit(LOG_ERR, "dreader.access: Bad length for ident user %s in line %d", pp, linecount);
 			continue;
 		    }
 		    strncpy(accessdef.ad_IdentUser, pp,
@@ -3786,7 +3917,7 @@ InstallAccessCache(void) {
 		} else {
 		    q = pp;
 		}
-		if (!*q || strlen(q) > sizeof(accessdef.ad_Pattern)) {
+		if (!*q || strlen(q) >= sizeof(accessdef.ad_Pattern)) {
 		    logit(LOG_ERR, "dreader.access: Bad length for access %s in line %d", q, linecount);
 		    continue;
 		}
