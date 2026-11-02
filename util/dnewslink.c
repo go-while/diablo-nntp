@@ -50,6 +50,8 @@
 #define NDEBUG
 #include <assert.h>
 
+void dl_logit(const char *ctl, ...);
+
 /*
  * Rewrite a batch queue, or append pipe-mode leftovers to the existing queue.
  * A normal batch is rewritten to a separate temporary file; pipe mode writes
@@ -71,11 +73,20 @@ rewriteBatchFile(const char *path, int pipeMode)
 	    return(NULL);
 	if (!pipeMode)
 	    break;
-	if (xflock(fd, XLOCK_EX) < 0) {
-	    int error = errno;
-	    close(fd);
-	    errno = error;
-	    return(NULL);
+	/*
+	 * A batch worker holds this lock until it has renamed its rewrite
+	 * over the queue, a realtime worker for as long as it runs: say
+	 * why we stop here.
+	 */
+	if (xflock(fd, XLOCK_EX|XLOCK_NB) < 0) {
+	    if (tries == 0)
+		dl_logit("%s is locked by another dnewslink, waiting", path);
+	    if (xflock(fd, XLOCK_EX) < 0) {
+		int error = errno;
+		close(fd);
+		errno = error;
+		return(NULL);
+	    }
 	}
 	if (fstat(fd, &openst) != 0) {
 	    int error = errno;
@@ -104,6 +115,13 @@ rewriteBatchFile(const char *path, int pipeMode)
 	int error = errno;
 	close(fd);
 	errno = error;
+    } else if (pipeMode) {
+	/*
+	 * diablo appends to its queue files without this lock.  Write
+	 * each line with one write() so that O_APPEND keeps it whole
+	 * instead of a full buffer ending in the middle of a line.
+	 */
+	setvbuf(fo, NULL, _IOLBF, 0);
     }
     return(fo);
 }

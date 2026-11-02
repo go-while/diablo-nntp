@@ -118,7 +118,10 @@ This option has been depreciated.
 .PP
 This option specifies that the input is coming from a pipe rather then
 the batchfile (see -b option).  A batchfile must still be specified, but
-it will be used solely for the rewriting of defered lines.
+it will be used solely for the rewriting of defered lines.  These are
+appended to the batchfile under its lock; if another dnewslink holds the
+lock (a batch run of that file, or a realtime one for as long as it runs),
+dnewslink logs that and waits for it.
 
 .PP
 .B \-P port
