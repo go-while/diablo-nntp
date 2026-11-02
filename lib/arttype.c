@@ -62,7 +62,7 @@ int UUencode = 0;
 int BinHex = 0;
 int Base64 = 0;
 int PGPMime = 0;	/* in a PGP/MIME encrypted article: its octet-stream part is not a binary */
-int CTText = 0;	/* the last Content-Type seen is text/ */
+int CTText = 0;	/* the part's Content-Type is text/ */
 int CTEBase64 = 0;	/* a base64 Content-Transfer-Encoding is waiting for the end of its header block */
 int Armor = 0;	/* lines left to skip in an ASCII-armored block (PGP, PEM), 0 = not in one */
 
@@ -85,24 +85,36 @@ int Armor = 0;	/* lines left to skip in an ASCII-armored block (PGP, PEM), 0 = n
  */
 #define	DLINE_MAX	1024	/* a longer decoded line is checked by its start */
 
-static int CTSeen = 0;	/* a Content-Type was seen in this header block */
+static int CTSeen = 0;	/* the part has a Content-Type */
 static int CTEQP = 0;	/* a quoted-printable Content-Transfer-Encoding is waiting for the end of its header block */
 static int QPPart = 0;	/* in the body of a part declared quoted-printable */
 
 /*
  * Where a part's headers are.  A header block is the article's headers, or
- * the lines after a "--boundary" line of a multipart article up to the
- * next blank line, the boundary being one given in a Content-Type of a
- * header block.  Only a header block's encoding starts the decoding of a
- * base64 text part or makes a part quoted-printable: a body that quotes
- * "Content-Transfer-Encoding: base64" in its text is not a MIME part.
+ * the lines after a delimiter of a multipart we are in up to the next blank
+ * line, the boundary being the one a multipart Content-Type of a header
+ * block gave.  Only a header block says a part's type (CTText, CTSeen) and
+ * encoding (CTEBase64, CTEQP): a body that quotes "Content-Type:" or
+ * "Content-Transfer-Encoding: base64" in its text is not a MIME part.  A
+ * delimiter forgets all of it (partReset).
  */
 #define	BND_MAX		70	/* the longest boundary (RFC 2046) */
 #define	BND_NUM		4	/* multiparts nested deeper are not followed */
 
 static int HdrBlock = 1;	/* in a header block */
-static int CTCont = 0;	/* the last header line was a Content-Type: its continuation may hold the boundary */
-static int BndState = 0;	/* in a folded boundary parameter: 1 = '=' wanted, 2 = the value */
+
+/*
+ * The value of a Content-Type header of a header block, its folded lines
+ * unfolded, is gathered in CTBuf and read at the end of the header
+ * (ctFinish): a multipart's boundary parameter, found by a MIME parameter
+ * reader that skips quoted strings and comments (RFC 2045, RFC 822).
+ */
+#define	CTBUF_MAX	2048	/* a longer Content-Type gives no boundary */
+
+static char CTBuf[CTBUF_MAX];
+static int CTLen;
+static int CTTrunc;	/* CTBuf overflowed */
+static int CTCont = 0;	/* gathering a Content-Type header */
 
 /*
  * The boundaries of the multiparts we are in, innermost on top.  A
@@ -122,6 +134,7 @@ static int B64Pad;	/* 0, 1 = one '=' after two characters, 2 = group closed */
 static char DLine[DLINE_MAX];
 static int DLineLen;
 static int DecUUencode, DecBinHex, DecBase64, DecArmor;
+static int DLineCR;	/* the decoded line ended in CR: skip an LF after it */
 
 #define	B64_SPACE	(-1)	/* white space: skipped */
 #define	B64_EQ		(-2)	/* '=': padding */
@@ -534,7 +547,6 @@ InitArticleType(void)
     QPPart = 0;
     HdrBlock = 1;
     CTCont = 0;
-    BndState = 0;
     BndTop = 0;
 }
 
@@ -658,82 +670,146 @@ bndPush(const char *b, int n)
 }
 
 /*
- * Find the boundary parameter of a Content-Type header line, or go on
- * with it on a continuation line: boundary, optional white space, '=',
- * optional white space (each may be folded onto the next line), then a
- * token or a quoted string with quoted pairs (RFC 2045, RFC 822).  The
- * name is matched without case.  A value longer than BND_MAX (after
- * unquoting) is not a valid boundary and is not remembered.
+ * Gather the value of a Content-Type header (from its first line, more=0)
+ * or one of its continuation lines (more=1, kept with the white space it
+ * starts with, which is what unfolding leaves).
  */
 static void
-bndCapture(const char *p, int len)
+ctGather(const char *p, int len, int more)
 {
-    char v[BND_MAX];
-    int i = 0, n = 0;
-
     while (len > 0 && (p[len - 1] == '\n' || p[len - 1] == '\r'))
 	--len;
-    if (BndState == 0) {
-	for (i = 0; i + 8 <= len; i++) {
-	    if (strncasecmp(p + i, "boundary", 8) == 0 &&
-		    (i == 0 || p[i - 1] == ';' || p[i - 1] == ' ' ||
-							p[i - 1] == '\t')) {
-		int k = i + 8;
+    if (!more) {
+	CTLen = 0;
+	CTTrunc = 0;
+	CTCont = 1;
+    }
+    if (len > CTBUF_MAX - CTLen) {
+	CTTrunc = 1;
+	len = CTBUF_MAX - CTLen;
+    }
+    memcpy(CTBuf + CTLen, p, len);
+    CTLen += len;
+}
 
-		while (k < len && (p[k] == ' ' || p[k] == '\t'))
-		    ++k;
-		if (k == len || p[k] == '=')
-		    break;
+/*
+ * Skip white space and comments ("(...)", nested, with quoted pairs).
+ */
+static const char *
+mimeSkip(const char *p, const char *e)
+{
+    int depth;
+
+    for (;;) {
+	while (p < e && (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n'))
+	    ++p;
+	if (p >= e || *p != '(')
+	    return(p);
+	for (depth = 0; p < e; ++p) {
+	    if (*p == '\\' && p + 1 < e)
+		++p;
+	    else if (*p == '(')
+		++depth;
+	    else if (*p == ')' && --depth == 0) {
+		++p;
+		break;
 	    }
 	}
-	if (i + 8 > len)
+    }
+}
+
+/*
+ * Go to the next ';' that is not in a quoted string or a comment.
+ */
+static const char *
+mimeNextParam(const char *p, const char *e)
+{
+    while (p < e && *p != ';') {
+	if (*p == '"') {
+	    for (++p; p < e && *p != '"'; ++p) {
+		if (*p == '\\' && p + 1 < e)
+		    ++p;
+	    }
+	    if (p < e)
+		++p;
+	} else if (*p == '(') {
+	    p = mimeSkip(p, e);
+	} else {
+	    ++p;
+	}
+    }
+    return(p);
+}
+
+/*
+ * The end of a gathered Content-Type header.  Its type gives CTText.  For
+ * a multipart, the first boundary parameter is pushed: the attribute is
+ * matched without case, white space and comments may stand around '=',
+ * and the value is a token or a quoted string with quoted pairs.  A value
+ * longer than BND_MAX after unquoting is not a valid boundary (RFC 2046).
+ * Nothing is pushed from a Content-Type longer than CTBUF_MAX.
+ */
+static void
+ctFinish(void)
+{
+    const char *p = CTBuf, *e = CTBuf + CTLen, *a;
+    char v[BND_MAX];
+    int n, alen, ok;
+
+    CTCont = 0;
+    p = mimeSkip(p, e);
+    CTText = (e - p >= 5 && strncasecmp(p, "text/", 5) == 0);
+    if (CTTrunc || e - p < 10 || strncasecmp(p, "multipart/", 10) != 0)
+	return;
+    for (;;) {
+	p = mimeNextParam(p, e);
+	if (p >= e)
 	    return;
-	i += 8;
-	BndState = 1;
-    }
-    while (i < len && (p[i] == ' ' || p[i] == '\t'))
-	++i;
-    if (BndState == 1) {
-	if (i == len)
-	    return;			/* '=' on the next line */
-	if (p[i] != '=') {
-	    BndState = 0;
+	p = mimeSkip(p + 1, e);
+	for (a = p; p < e && *p != '=' && *p != ';' && *p != '(' &&
+		*p != ' ' && *p != '\t' && *p != '"'; ++p)
+	    ;
+	alen = (int)(p - a);
+	p = mimeSkip(p, e);
+	if (p >= e || *p != '=')
+	    continue;
+	p = mimeSkip(p + 1, e);
+	n = 0;
+	ok = 1;
+	if (p < e && *p == '"') {
+	    for (++p; p < e && *p != '"'; ++p) {
+		if (*p == '\\' && p + 1 < e)
+		    ++p;		/* quoted pair */
+		if (n < BND_MAX)
+		    v[n] = *p;
+		++n;
+	    }
+	    if (p >= e)
+		ok = 0;			/* no closing quote */
+	    else
+		++p;
+	} else {
+	    for (; p < e && *p != ';' && *p != '(' && *p != ' ' &&
+						*p != '\t'; ++p) {
+		if (n < BND_MAX)
+		    v[n] = *p;
+		++n;
+	    }
+	}
+	if (alen == 8 && strncasecmp(a, "boundary", 8) == 0) {
+	    if (ok && n >= 1 && n <= BND_MAX)
+		bndPush(v, n);
 	    return;
 	}
-	BndState = 2;
-	++i;
-	while (i < len && (p[i] == ' ' || p[i] == '\t'))
-	    ++i;
     }
-    if (i == len)
-	return;				/* the value on the next line */
-    BndState = 0;
-    if (p[i] == '"') {
-	for (++i; i < len && p[i] != '"'; i++) {
-	    if (p[i] == '\\' && i + 1 < len)
-		++i;			/* quoted pair */
-	    if (n == BND_MAX)
-		return;			/* too long */
-	    v[n++] = p[i];
-	}
-	if (i == len)
-	    return;			/* no closing quote */
-    } else {
-	for (; i < len && p[i] != ';' && p[i] != ' ' && p[i] != '\t'; i++) {
-	    if (n == BND_MAX)
-		return;
-	    v[n++] = p[i];
-	}
-    }
-    bndPush(v, n);
 }
 
 /*
  * Is this line (after its "--") the delimiter of a multipart we are in,
  * innermost first?  Returns 1 for one that starts a part, 2 for the
  * closing one ("--boundary--"), which pops that multipart and any left
- * open inside it, 0 for none.  A part of an outer multipart also ends the
- * ones inside it.
+ * open inside it, 0 for none.  Only white space may follow either.  A
+ * part of an outer multipart also ends the ones inside it.
  */
 static int
 bndMatch(const char *p, int len)
@@ -744,36 +820,56 @@ bndMatch(const char *p, int len)
 	n = BndLen[i];
 	if (len < n || memcmp(p, Bnd[i], n) != 0)
 	    continue;
+	k = n;
+	if (len >= n + 2 && p[n] == '-' && p[n + 1] == '-')
+	    k = n + 2;
+	/* only white space may follow (RFC 2046) */
+	while (k < len && (p[k] == ' ' || p[k] == '\t' || p[k] == '\r'))
+	    ++k;
+	if (k < len)
+	    continue;
 	if (len >= n + 2 && p[n] == '-' && p[n + 1] == '-') {
 	    BndTop = i;
 	    return(2);
 	}
-	/* only white space may follow (RFC 2046) */
-	for (k = n; k < len; k++) {
-	    if (p[k] != ' ' && p[k] != '\t' && p[k] != '\r')
-		break;
-	}
-	if (k == len) {
-	    BndTop = i + 1;
-	    return(1);
-	}
+	BndTop = i + 1;
+	return(1);
     }
     return(0);
 }
 
 /*
  * Is this line quoted-printable rather than base64?  Every '=' must start
- * an =HH escape (two upper-case hex digits, RFC 2045) or be the soft line
- * break at the end; base64 has '=' only as padding at the end of the data,
+ * an =HH escape (two hex digits: RFC 2045 says upper case, decoders take
+ * lower case too) or be the soft line break at the end; base64 has '=' only as padding at the end of the data,
  * and "==" or "=x" is not quoted-printable.  In a part declared
  * quoted-printable one such '=' is enough.  Without the declaration the
  * escapes must make up at least half of the line: the lines that look like
  * base64 are those without spaces, which in quoted-printable means text
  * in a non-Latin script, nearly all escapes (a line of Chinese in UTF-8 is
  * 25 escapes and a soft line break).  A stray '=' in base64 data, or a
- * few escapes in it, do not make it quoted-printable.
+ * few escapes in it, do not make it quoted-printable, and neither does an
+ * escape of a byte that is not text (NOTTEXT).
  */
-#define	QPHEX(c)	(((c) >= '0' && (c) <= '9') || ((c) >= 'A' && (c) <= 'F'))
+#define	QPHEX(c)	(((c) >= '0' && (c) <= '9') || ((c) >= 'A' && (c) <= 'F') || \
+			 ((c) >= 'a' && (c) <= 'f'))
+#define	QPVAL(c)	((c) <= '9' ? (c) - '0' : ((c) & ~0x20) - 'A' + 10)
+
+/*
+ * Is a byte not text: NUL, DEL or a control character other than TAB, LF,
+ * FF, CR and ESC (ESC for ISO-2022)?  The rule for decoded base64 and
+ * quoted-printable text.
+ */
+#define	NOTTEXT(b)	(((b) < 0x20 && (b) != '\t' && (b) != '\n' && \
+			  (b) != '\f' && (b) != '\r' && (b) != 0x1b) || (b) == 0x7f)
+
+/*
+ * May a line of this part be taken for quoted-printable text?  Only in a
+ * text/ part, or one without a Content-Type (B64_NOCTYPE_IS_TEXT): in an
+ * image or application part quoted-printable-shaped lines still count as
+ * base64 lines.
+ */
+#define	QPTEXT()	(CTText || (!CTSeen && B64_NOCTYPE_IS_TEXT))
 
 static int
 qpLine(const char *p, int len, int declared)
@@ -791,7 +887,8 @@ qpLine(const char *p, int len, int declared)
 	    soft = 1;		/* soft line break */
 	    break;
 	}
-	if (i + 2 >= len || !QPHEX(p[i + 1]) || !QPHEX(p[i + 2]))
+	if (i + 2 >= len || !QPHEX(p[i + 1]) || !QPHEX(p[i + 2]) ||
+		NOTTEXT(QPVAL(p[i + 1]) * 16 + QPVAL(p[i + 2])))
 	    return(0);
 	esc++;
 	i += 2;
@@ -799,6 +896,24 @@ qpLine(const char *p, int len, int declared)
     if (declared)
 	return(esc > 0 || soft);
     return(esc * 3 * 2 >= len);
+}
+
+/*
+ * Has a line of a part declared quoted-printable text an escape of a byte
+ * that is not text (=00 to =1F but =09, =0A, =0C, =0D and =1B; =7F)?
+ * Then the part is a binary, as decoded base64 text is (b64Decode).
+ */
+static int
+qpBad(const char *p, int len)
+{
+    int i;
+
+    for (i = 0; i + 2 < len; i++) {
+	if (p[i] == '=' && QPHEX(p[i + 1]) && QPHEX(p[i + 2]) &&
+		NOTTEXT(QPVAL(p[i + 1]) * 16 + QPVAL(p[i + 2])))
+	    return(1);
+    }
+    return(0);
 }
 
 /*
@@ -870,7 +985,7 @@ bodyLineTypes(char *ptr, int len, int *uu, int *bh, int *b64, int *armor)
 	 * text in a non-Latin script (=E5=9C=A8..., 76 characters with a
 	 * soft line break) is made of base64 characters too (qpLine)
 	 */
-	if ((linetype & B64) && qpLine(ptr, len, QPPart))
+	if ((linetype & B64) && QPTEXT() && qpLine(ptr, len, QPPart))
 	    linetype &= ~B64;
 
 	if (len > 0 && *ptr == '-' && linePrefix(ptr, len, "-----BEGIN ")) {
@@ -956,6 +1071,7 @@ b64Start(void)
     B64Part = 1;
     B64Bits = B64NBits = B64Quad = B64Pad = 0;
     DLineLen = 0;
+    DLineCR = 0;
     DecUUencode = DecBinHex = DecBase64 = DecArmor = 0;
 }
 
@@ -989,7 +1105,7 @@ static int
 b64Decode(const char *buf, int len)
 {
     int bits = B64Bits, nbits = B64NBits, quad = B64Quad, pad = B64Pad;
-    int dlen = DLineLen;
+    int dlen = DLineLen, cr = DLineCR;
     int i, v, b;
     int unclean = 0;
 
@@ -1022,18 +1138,23 @@ b64Decode(const char *buf, int len)
 	b = (bits >> nbits) & 0xff;
 	bits &= (1 << nbits) - 1;
 
-	if ((b < 0x20 && b != '\t' && b != '\n' && b != '\f' && b != '\r' &&
-						b != 0x1b) || b == 0x7f) {
+	if (NOTTEXT(b)) {
 	    Type |= ARTTYPE_BASE64 | ARTTYPE_BINARY;
 	    Type &= ~ARTTYPE_DEFAULT;
 	    break;
 	}
-	if (b == '\n') {
+	/* a decoded line ends at LF, CR or CRLF */
+	if (b == '\n' && cr) {
+	    cr = 0;
+	} else if (b == '\n' || b == '\r') {
+	    cr = (b == '\r');
 	    if (decodedLineTypes(DLine, dlen))
 		break;
 	    dlen = 0;
-	} else if (dlen < DLINE_MAX) {
-	    DLine[dlen++] = b;
+	} else {
+	    cr = 0;
+	    if (dlen < DLINE_MAX)
+		DLine[dlen++] = b;
 	}
     }
     B64Bits = bits;
@@ -1041,7 +1162,26 @@ b64Decode(const char *buf, int len)
     B64Quad = quad;
     B64Pad = pad;
     DLineLen = dlen;
+    DLineCR = cr;
     return(unclean);
+}
+
+/*
+ * A delimiter line ends a part: what its headers said (type, pending
+ * encodings, a base64 text part being decoded, a quoted-printable
+ * declaration) is forgotten before the next part's headers.
+ */
+static void
+partReset(void)
+{
+    if (B64Part)
+	b64End();
+    CTText = 0;
+    CTSeen = 0;
+    CTEBase64 = 0;
+    CTEQP = 0;
+    QPPart = 0;
+    CTCont = 0;
 }
 
 /*
@@ -1074,25 +1214,23 @@ ArticleType(char *line, int len, int inheader)
      * way).  The two headers can come in either order.
      */
     if (len == 0 || (len == 1 && *line == '\r')) {
-	if (CTEBase64) {
-	    CTEBase64 = 0;
-	    if (HdrBlock && (CTText || (!CTSeen && B64_NOCTYPE_IS_TEXT))) {
+	if (CTCont)
+	    ctFinish();
+	if (HdrBlock && CTEBase64) {
+	    if (CTText || (!CTSeen && B64_NOCTYPE_IS_TEXT)) {
 		/* a text part: decode it (b64Decode) */
 		b64Start();
-	    } else if (!CTText) {
-		/* (outside a header block as before: binary unless text/) */
+	    } else {
 		Type |= ARTTYPE_BASE64 | ARTTYPE_BINARY;
 		Type &= ~ARTTYPE_DEFAULT;
 	    }
 	}
 	/* the same for a quoted-printable one (qpLine) */
-	if (CTEQP) {
-	    CTEQP = 0;
-	    if (HdrBlock)
-		QPPart = 1;
-	}
+	if (HdrBlock && CTEQP)
+	    QPPart = 1;
+	CTEBase64 = 0;
+	CTEQP = 0;
 	HdrBlock = 0;
-	CTCont = BndState = 0;
     }
     /*
      * If we have found a binary, just keep it that way - saves CPU
@@ -1106,12 +1244,12 @@ ArticleType(char *line, int len, int inheader)
 
     ptr = line;
 
-    /* a folded Content-Type header: the boundary on a continuation line */
+    /* a folded Content-Type header goes on, or it is done */
     if (CTCont) {
 	if (HdrBlock && (*ptr == ' ' || *ptr == '\t'))
-	    bndCapture(ptr, len);
+	    ctGather(ptr, len, 1);
 	else
-	    CTCont = BndState = 0;
+	    ctFinish();
     }
 
     /*
@@ -1140,12 +1278,14 @@ ArticleType(char *line, int len, int inheader)
 	    int cvlen = len - (int)(cv - ptr);
 
 	    Type |= ARTTYPE_MIME;
-	    CTSeen = 1;
-	    CTText = hdrPrefix(cv, cvlen, "text/");
+	    /*
+	     * In a header block: the part's type (CTSeen, CTText) and,
+	     * from the whole header, its boundary (ctFinish)
+	     */
 	    if (HdrBlock) {
-		BndState = 0;
-		bndCapture(cv, cvlen);
-		CTCont = 1;
+		CTSeen = 1;
+		CTText = hdrPrefix(cv, cvlen, "text/");
+		ctGather(cv, cvlen, 0);
 	    }
 	    if (hdrPrefix(cv, cvlen, "text/html"))
 		Type |= ARTTYPE_HTML;
@@ -1178,9 +1318,10 @@ ArticleType(char *line, int len, int inheader)
 	if (ce != NULL) {
 	    int celen = len - (int)(ce - ptr);
 
-	    if (hdrPrefix(ce, celen, "base64"))
+	    /* a part's encoding is in its header block, not in its text */
+	    if (HdrBlock && hdrPrefix(ce, celen, "base64"))
 		CTEBase64 = 1;
-	    if (hdrPrefix(ce, celen, "quoted-printable"))
+	    if (HdrBlock && hdrPrefix(ce, celen, "quoted-printable"))
 		CTEQP = 1;
 	    if (hdrPrefix(ce, celen, "X-Bommanews"))
 		Type |= ARTTYPE_BOMMANEWS | ARTTYPE_BINARY;
@@ -1204,30 +1345,48 @@ ArticleType(char *line, int len, int inheader)
 	if (first == 'm' && hdrPrefix(ptr, len, "Mime-Version: "))
 		Type |= ARTTYPE_MIME;
     } else {
+	int dl = 0;
+
 	/*
-	 * A MIME boundary starts a part: its Content-Type is not known yet,
-	 * and it ends a base64 text part or a quoted-printable one
+	 * A delimiter of a multipart we are in ends the part (and, closing,
+	 * the multipart); an opening one starts the headers of the next
+	 * part.  Other lines that start with "--" are text.
 	 */
-	if (len >= 2 && ptr[0] == '-' && ptr[1] == '-') {
-	    CTText = 0;
-	    CTSeen = 0;
-	    CTEQP = 0;
-	    QPPart = 0;
-	    if (bndMatch(ptr + 2, len - 2) == 1)
-		HdrBlock = 1;	/* the headers of a part follow */
-	    if (B64Part) {
+	if (len >= 2 && ptr[0] == '-' && ptr[1] == '-')
+	    dl = bndMatch(ptr + 2, len - 2);
+	if (dl) {
+	    partReset();
+	    HdrBlock = (dl == 1);
+	    if (Type & ARTTYPE_BINARY)
+		return(Type);
+	} else if (B64Part) {
+	    int k = 3;
+
+	    /*
+	     * A signature separator ("-- ") after base64 text: base64 has no
+	     * '-', so the encoded text is over, and the signature is checked
+	     * as it is, not decoded.  Any other line with '-' (a bare "--",
+	     * "---") is decoded on, its '-' skipped as decoders do.
+	     */
+	    while (k < len && (ptr[k] == ' ' || ptr[k] == '\t' || ptr[k] == '\r'))
+		++k;
+	    if (len >= 3 && ptr[0] == '-' && ptr[1] == '-' && ptr[2] == ' ' &&
+								k == len) {
 		b64End();
 		if (Type & ARTTYPE_BINARY)
 		    return(Type);
-	    }
-	} else if (B64Part) {
-	    /*
-	     * The body of a base64 text part is decoded, not counted as
-	     * base64 lines.  A line with characters that are not base64 also
-	     * gets the checks of a line as it came.
-	     */
-	    if (!b64Decode(ptr, len) || (Type & ARTTYPE_BINARY))
+	    } else if (!b64Decode(ptr, len) || (Type & ARTTYPE_BINARY)) {
+		/*
+		 * The body of a base64 text part is decoded, not counted
+		 * as base64 lines.  A line with characters that are not
+		 * base64 also gets the checks of a line as it came.
+		 */
 		return(Type);
+	    }
+	} else if (QPPart && QPTEXT() && qpBad(ptr, len)) {
+	    Type |= ARTTYPE_BINARY;
+	    Type &= ~ARTTYPE_DEFAULT;
+	    return(Type);
 	}
 
 	if (bodyLineTypes(ptr, len, &UUencode, &BinHex, &Base64, &Armor))

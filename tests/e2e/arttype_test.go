@@ -2,7 +2,7 @@ package e2e
 
 import (
 	"crypto/sha256"
-	_ "embed"
+	"embed"
 	"encoding/base64"
 	"fmt"
 	"math/rand"
@@ -164,6 +164,11 @@ func mpPart(b string, parts ...[]string) []string {
 	return append([]string{"Content-Type: multipart/mixed; boundary=" + b, ""}, mpBody(b, parts...)...)
 }
 
+// proseQuotingPart is a text body that quotes a MIME part with boundary b as an example.
+func proseQuotingPart(b string) []string {
+	return []string{"Here is a MIME example:", "--" + b, "Content-Type: text/plain", "Content-Transfer-Encoding: base64", "", "This is ordinary explanatory prose, not an encoded part."}
+}
+
 // atArticle builds an article with the usual headers, extra headers and a body.
 func atArticle(extra []string, body []string) []string {
 	a := newArticle("<arttype@e2e.test>", "e2e.test", "article type")
@@ -270,7 +275,7 @@ func TestArticleTypes(t *testing.T) {
 		// long line is by diablo's (about 4 KiB): the pieces decode as one stream.
 		{"base64 text, one line in pieces", hdr64("text/plain"), b64Wrap(patchText(60000), 80000), atMIME, ""},
 		{"base64 random data, one line in pieces", hdr64("text/plain"), b64Wrap(randBytes(60000, 7), 80000), atMIME | atBinary | atBase64, ""},
-		{"base64 text, then a plain signature", hdr64("text/plain"), append(b64Text(30), "-- ", "Max"), atMIME, "a '--' line ends the part: what follows is not decoded"},
+		{"base64 text, then a plain signature", hdr64("text/plain"), append(b64Text(30), "-- ", "Max"), atMIME, "a \"-- \" signature separator ends the decoding: the signature is not decoded"},
 		{"base64 text, two padded streams", hdr64("text/plain"), append(b64Text(5), b64Text(5)...), atMIME, ""},
 		{"base64 signed text", hdr64("text/plain"), b64Wrap(joined(append([]string{"-----BEGIN PGP SIGNED MESSAGE-----", "Hash: SHA512", "", "Signed text."}, pgp("SIGNATURE", 12)...)), 76), atMIME | atPGP, "the decoded lines get the armor rule of unencoded text"},
 		// RFC 2045: a body without a Content-Type is text/plain. B64_NOCTYPE_IS_TEXT in
@@ -343,6 +348,38 @@ func TestArticleTypes(t *testing.T) {
 			mpBody("B1", mpPart("B2", mpPart("B3", mpPart("B4", mpPart("B5", append([]string{"Content-Type: image/png", "Content-Transfer-Encoding: base64", ""}, b64...)))))), atMIME | atMultipart | atBinary | atBase64, ""},
 		{"epilogue quoting a part after the closing delimiter", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=XX"},
 			append(mpBody("XX", []string{"Content-Type: text/plain", "", "Hello."}), "--XX", "Content-Type: text/plain", "Content-Transfer-Encoding: base64", "", "and here the epilogue goes on in plain words, not encoded at all."), atMIME | atMultipart, "after --XX-- the boundary is closed"},
+		// MIME parameters are read as such: "boundary=" in another parameter's quoted value
+		// is not one, and a boundary parameter counts only on a multipart.
+		{"text with a quoted name holding boundary=", []string{"Mime-Version: 1.0", "Content-Type: text/plain; name=\"guide boundary=OUT example.txt\""}, proseQuotingPart("OUT"), atMIME, ""},
+		{"text with a boundary parameter", []string{"Mime-Version: 1.0", "Content-Type: text/plain; boundary=OUT"}, proseQuotingPart("OUT"), atMIME, ""},
+		{"multipart, a quoted name holding boundary= first", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; name=\"guide boundary=WRONG note.txt\"; boundary=RIGHT"}, mpBody("RIGHT", b64TextPart()), atMIME | atMultipart, ""},
+		{"multipart, a quoted notice before the boundary", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; name=\"notice boundary=other\"; boundary=right"}, mpBody("right", b64TextPart()), atMIME | atMultipart, ""},
+		{"boundary folded inside its quoted value", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=\"part", " one\""}, mpBody("part one", b64TextPart()), atMIME | atMultipart, ""},
+		// A part's encoding comes from its header block: an encoding header quoted at the end
+		// of a text part does not carry over to the next part.
+		{"encoding header quoted at the end of a text part", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=OUT"},
+			mpBody("OUT", []string{"Content-Type: text/plain; charset=UTF-8", "", "Here is an example header:", "Content-Transfer-Encoding: base64"},
+				[]string{"Content-Type: text/plain; charset=UTF-8", "", "This is ordinary second-part prose that was not sent as base64."}), atMIME | atMultipart, ""},
+		// Only a delimiter of a multipart we are in ends a part; other lines that start with
+		// "--" are text.
+		{"quoted-printable part with a --- line", hdrQP, append([]string{"A text section follows:", "---"}, qpFew(12)...), atMIME, ""},
+		{"quoted-printable part with a -- section line", hdrQP, append([]string{"-- section 2"}, qpFew(12)...), atMIME, ""},
+		{"base64 text with a bare -- line in it", hdr64("text/plain; charset=UTF-8"), append(append(append([]string{}, b64Text(30)[:4]...), "--"), b64Text(30)[4:]...), atMIME, "decoders skip the '-'; only \"-- \" is a signature separator"},
+		{"line starting with a closing delimiter", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=XX"},
+			mpBody("XX", []string{"Content-Type: text/plain", "", "The next line is not a delimiter:", "--XX--not the end"}, b64TextPart()), atMIME | atMultipart, ""},
+		{"multipart closed inside a part's headers", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=XX"},
+			[]string{"--XX", "Content-Type: text/plain", "--XX--", "Content-Transfer-Encoding: base64", "", "and the epilogue goes on in plain words, not encoded at all."}, atMIME | atMultipart, "the closing delimiter ends the header block too"},
+		// Quoted-printable lines are not base64 lines only in a text part: in an image or an
+		// application part they count, declared or not. In a quoted-printable text part an
+		// escape of a byte that is not text makes a binary, as in a base64 one.
+		{"quoted-printable lines in image/png", []string{"Mime-Version: 1.0", "Content-Type: image/png"}, qpLines(12), atMIME | atBinary | atBase64, ""},
+		{"quoted-printable lines in image/png, declared", []string{"Mime-Version: 1.0", "Content-Type: image/png", "Content-Transfer-Encoding: quoted-printable"}, qpLines(12), atMIME | atBinary | atBase64, ""},
+		{"quoted-printable lines in application/octet-stream", []string{"Mime-Version: 1.0", "Content-Type: application/octet-stream"}, qpLines(12), atMIME | atBinary, ""},
+		{"quoted-printable lines in application/octet-stream, declared", []string{"Mime-Version: 1.0", "Content-Type: application/octet-stream", "Content-Transfer-Encoding: quoted-printable"}, qpLines(12), atMIME | atBinary, ""},
+		{"quoted-printable text with =00", hdrQP, []string{"Hello=00world, a NUL byte", "and more text"}, atMIME | atBinary, ""},
+		{"quoted-printable text with =7F", hdrQP, []string{"Hello=7Fworld, a DEL byte"}, atMIME | atBinary, ""},
+		{"quoted-printable text with =0C and =1B", hdrQP, []string{"Page one=0C", "=1B$B$3$s$K$A$O=1B(B"}, atMIME, "FF and ESC (ISO-2022-JP) are text"},
+		{"quoted-printable lines escaping NUL, not declared", nil, edit(qpLines(12), func(l string) string { return "=00" + l[3:] }), atBinary | atBase64, "not text: the lines count as base64"},
 		// MIME parts.
 		{"base64 text part in multipart", []string{"Mime-Version: 1.0", "Content-Type: multipart/alternative; boundary=XX"},
 			append(append([]string{"--XX", "Content-Type: text/plain; charset=UTF-8", "Content-Transfer-Encoding: base64", ""}, b64Text(30)...), "--XX--"), atMIME | atMultipart, ""},
@@ -439,6 +476,67 @@ func TestArticleTypeBase64FlowedReply(t *testing.T) {
 	lines := strings.Split(strings.TrimRight(base64FlowedReply, "\n"), "\n")
 	if got := artTypeOf(t, s, lines); got != atMIME {
 		t.Errorf("ArtType 0x%06x, want 0x%06x (MIME only)", got, atMIME)
+	}
+}
+
+//go:embed testdata/arttype/review-246
+var review246 embed.FS
+
+// review246Article returns a sample article of testdata/arttype/review-246 as lines, and its
+// MIME headers and body apart (for offerHeaders).
+func review246Article(t *testing.T, name string) (lines, mime, body []string) {
+	t.Helper()
+	b, err := review246.ReadFile("testdata/arttype/review-246/" + name + ".txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines = strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+	for i, l := range lines {
+		if l == "" {
+			for _, h := range lines[:i] {
+				if strings.HasPrefix(h, "Mime-Version:") || strings.HasPrefix(h, "Content-") {
+					mime = append(mime, h)
+				}
+			}
+			return lines, mime, lines[i+1:]
+		}
+	}
+	t.Fatalf("%s: no blank line after the headers", name)
+	return
+}
+
+// TestArticleTypeReviewSamples: the binary samples of a review of #246 (DeepSeek), in
+// testdata/arttype/review-246, are binaries:
+//   - quoted-printable whose escapes decode to control bytes, in a text part (NUL in each
+//     line, all escapes) or in an image, PDF, zip or MPEG part, declared or not
+//   - base64 of quoted-printable binary, base64 of BinHex and of uuencode with CR line ends
+//   - a base64 text part whose encoding header is only quoted in a preamble, at the end of
+//     the previous part, or after the multipart was closed, and a boundary given on
+//     text/plain: none of them is a part's header, so the base64 is not decoded
+func TestArticleTypeReviewSamples(t *testing.T) {
+	s := NewSite(t, SiteOptions{Newsfeeds: GlobalLabel, NoStart: true})
+	for name, want := range map[string]int{
+		"qp-declared-text-allescapes":     atMIME | atBinary,
+		"qp-declared-text-one-per-line":   atMIME | atBinary,
+		"qp-declared-image-allescapes":    atMIME | atBinary | atBase64,
+		"qp-declared-image-one-per-line":  atMIME | atBinary | atBase64,
+		"qp-declared-image-png-binary":    atMIME | atBinary | atBase64,
+		"qp-declared-pdf-binary":          atMIME | atBinary | atBase64,
+		"qp-declared-zip-binary":          atMIME | atBinary | atBase64,
+		"qp-declared-mpeg-binary":         atMIME | atBinary | atBase64,
+		"qp-undeclared-allescapes":        atBinary | atBase64,
+		"b64-of-qp-binary":                atMIME | atBinary | atBase64,
+		"b64-of-binhex-cr":                atMIME | atBinary | atBase64 | atBinHex,
+		"b64-of-uue-cr":                   atMIME | atBinary | atBase64 | atUUencode,
+		"state-stale-cte-across-boundary": atMIME | atMultipart | atBinary | atBase64,
+		"prose-cte-in-part-then-boundary": atMIME | atMultipart | atBinary | atBase64,
+		"closing-in-header-block":         atMIME | atMultipart | atBinary | atBase64,
+		"boundary-on-text-plain":          atMIME | atBinary | atBase64,
+	} {
+		lines, _, _ := review246Article(t, name)
+		if got := artTypeOf(t, s, lines); got != want {
+			t.Errorf("%s: ArtType 0x%06x, want 0x%06x", name, got, want)
+		}
 	}
 }
 
@@ -670,6 +768,14 @@ func TestBase64TextNotRejectedAsBinary(t *testing.T) {
 		{"text quoting a base64 encoding header", []string{"Mime-Version: 1.0", "Content-Type: text/plain; charset=UTF-8"}, []string{"The gateway adds this header:", "Content-Transfer-Encoding: base64", "", "and then the body is ordinary text that is not encoded at all, as you see here."}, "235"},
 		{"base64 text part, boundary = \"XX\"", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary = \"XX\""}, mpBody("XX", b64TextPart()), "235"},
 		{"base64 text part, boundary with a quoted pair", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=\"part\\+one\""}, mpBody("part+one", b64TextPart()), "235"},
+		{"text with a quoted name holding boundary=", []string{"Mime-Version: 1.0", "Content-Type: text/plain; name=\"guide boundary=OUT example.txt\""}, proseQuotingPart("OUT"), "235"},
+		{"base64 text part, a quoted name holding boundary= first", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; name=\"guide boundary=WRONG note.txt\"; boundary=RIGHT"}, mpBody("RIGHT", b64TextPart()), "235"},
+		{"base64 text part, boundary folded inside its quoted value", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=\"part", " one\""}, mpBody("part one", b64TextPart()), "235"},
+		{"encoding header quoted at the end of a text part", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=OUT"},
+			mpBody("OUT", []string{"Content-Type: text/plain; charset=UTF-8", "", "Here is an example header:", "Content-Transfer-Encoding: base64"},
+				[]string{"Content-Type: text/plain; charset=UTF-8", "", "This is ordinary second-part prose that was not sent as base64."}), "235"},
+		{"base64 text part after a line starting with the closing delimiter", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=XX"},
+			mpBody("XX", []string{"Content-Type: text/plain", "", "--XX--not the end"}, b64TextPart()), "235"},
 		{"base64 text part after four nested multipart siblings", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=XX"},
 			mpBody("XX", mpPart("Y1", []string{"", "a"}), mpPart("Y2", []string{"", "b"}), mpPart("Y3", []string{"", "c"}), mpPart("Y4", []string{"", "d"}), b64TextPart()), "235"},
 		{"base64 of a uuencoded file, last line without newline", text, b64Wrap([]byte(strings.Join(append([]string{"begin 644 a.bin"}, atLines(9, 60, uuAlphabet, "M")...), "\n")), 76), "437"},
@@ -697,9 +803,18 @@ func TestQuotedPrintableNotRejectedAsBinary(t *testing.T) {
 		{"quoted-printable Chinese", hdrQP, qpLines(40), "235"},
 		{"quoted-printable Chinese without headers", nil, qpLines(40), "235"},
 		{"base64 with a stray '='", nil, edit(b64, func(l string) string { return l[:30] + "=" + l[30:] }), "437"},
+		{"quoted-printable with a --- line", hdrQP, append([]string{"A text section follows:", "---"}, qpFew(12)...), "235"},
+		{"quoted-printable lines in image/png, declared", []string{"Mime-Version: 1.0", "Content-Type: image/png", "Content-Transfer-Encoding: quoted-printable"}, qpLines(12), "437"},
 	} {
 		if line := offerHeaders(t, s, "talk.test", c.extra, c.body); !strings.HasPrefix(line, c.want) {
 			t.Errorf("IHAVE with %s: %q, want %s", c.name, line, c.want)
+		}
+	}
+	// Binary samples of the review of #246 are refused too.
+	for _, name := range []string{"qp-declared-text-one-per-line", "qp-declared-image-png-binary", "b64-of-qp-binary", "b64-of-uue-cr", "state-stale-cte-across-boundary"} {
+		_, mime, body := review246Article(t, name)
+		if line := offerHeaders(t, s, "talk.test", mime, body); !strings.HasPrefix(line, "437") {
+			t.Errorf("IHAVE with %s: %q, want 437", name, line)
 		}
 	}
 }
