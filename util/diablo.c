@@ -81,11 +81,7 @@ void DoStats(FILE *fo, int dt, int raw);
 int LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *refBuf, char *artType);
 int SendArticle(const char *data, int fsize, FILE *fo, int doHead, int doBody);
 void ArticleFileInit(void);
-#ifdef USE_ZLIB
-int ArticleFile(History *h, off_t *pbpos, int clvl, gzFile *cfile);
-#else
-int ArticleFile(History *h, off_t *pbpos, int clvl, char **cfile);
-#endif
+int ArticleFile(History *h, off_t *pbpos);
 void ArticleFileCloseAll(void);
 void ArticleFileCacheFlush(time_t t);
 void ArticleFileClose(int i);
@@ -2861,6 +2857,7 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 	int haveApproved = 0;
 	int bytes;
 	int compressedSize = -1;
+	int zstore = 0;		/* the article went to the spool gzipped */
 #ifdef LOG_FEED_SUPERCEDES
 	int lncount = -1;
 #endif
@@ -3550,22 +3547,20 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 	    }
 	    h.gmt = SpoolDirTime();
 	    if (spool <= 100) {
-#ifdef USE_ZLIB
-		gzFile cfile = NULL;
-#else
-		char *cfile = NULL;
-#endif
 		h.exp = spool + 100;
 		h.bsize = bsize(buffer) + sizeof(artHdr);
-		artFd = ArticleFile(&h, &bpos, CompressLvl, &cfile);
+		artFd = ArticleFile(&h, &bpos);
 		if (artFd >= 0) {
+#ifdef USE_ZLIB
+		    zstore = (CompressLvl >= 0 && CompressLvl <= 9);
+#endif
 		    h.bsize = bsize(buffer) + sizeof(artHdr);
 		    artHdr.Magic1 = STORE_MAGIC1;
 		    artHdr.Magic2 = STORE_MAGIC2;
 		    artHdr.Version = STOREAPI_REVISION;
 		    artHdr.StoreType = (DOpts.WireFormat ?
 					STORETYPE_WIRE : STORETYPE_TEXT);
-		    if (cfile != NULL)
+		    if (zstore)
 			artHdr.StoreType |= STORETYPE_GZIP;
 		    artHdr.HeadLen = sizeof(SpoolArtHdr);
 		    artHdr.ArtHdrLen = headerLen;
@@ -3578,16 +3573,15 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		    /*
 		     * An uncompressed body stays buffered here and goes out
 		     * with the terminator below in one flush.  A compressed
-		     * one has to be flushed through gzip now, before the
-		     * terminator is written uncompressed.
+		     * one is written as one gzip member now, before the
+		     * terminator is written uncompressed.  It is compressed
+		     * in memory and written through artFd: no other
+		     * descriptor for the spool file may be closed while we
+		     * hold the lock on it (see ArticleOpen()).
 		     */
 #ifdef USE_ZLIB
-		    if (cfile != NULL) {
-			bsetcompress(buffer, cfile);
-			bflush(buffer);
-			gzclose(cfile);
-			bsetcompress(buffer, NULL);
-		    }
+		    if (zstore)
+			bflushgz(buffer, CompressLvl);
 #endif
 		} else {
 		    artError |= LAERR_IO;
@@ -3609,7 +3603,7 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 	     */
 	    h.boffset = (uint32)bpos;
 #ifdef USE_ZLIB
-	    if (CompressLvl >= 0 && CompressLvl <= 9) {
+	    if (zstore) {
 		off_t filePos;
 
 		compressedSize = btell(buffer) - bpos;
@@ -4663,6 +4657,14 @@ countFds(fd_set *rfds)
  *		   and lseek's the descriptor to the start position for the
  *		   next article write.  The file is exclusively locked.
  *
+ *		   The lock is all that keeps another feeder process from
+ *		   appending to the same file (each keeps its own append
+ *		   offset).  POSIX releases a process's fcntl locks on a
+ *		   file when it closes ANY descriptor for that file, so
+ *		   while the file is in the cache, this process must not
+ *		   open and close it again, nor close a dup() of af_Fd:
+ *		   ArticleOpen() reads such a file through af_Fd.
+ *
  *		   NOTE!  We never create 'older' directories.  This could
  *		   lead to an offset,size being stored for a message, the
  *		   spool file getting deleted, then the spool file getting
@@ -4703,12 +4705,31 @@ ArticleFileInit(void)
     AFFlushTime = time(NULL);
 }
 
+/*
+ * ArticleFileCached() - the cached append descriptor of the file at path,
+ * matched by inode, or -1.  stat() opens no descriptor, so it cannot
+ * release a lock.
+ */
+static int
+ArticleFileCached(const char *path)
+{
+    struct stat ps;
+    int i;
+
+    if (stat(path, &ps) != 0)
+	return(-1);
+    for (i = 0; i < AFNum; ++i) {
+	struct stat st;
+
+	if (AFAry[i].af_Fd >= 0 && fstat(AFAry[i].af_Fd, &st) == 0 &&
+	    st.st_dev == ps.st_dev && st.st_ino == ps.st_ino)
+	    return(AFAry[i].af_Fd);
+    }
+    return(-1);
+}
+
 int
-#ifdef USE_ZLIB
-ArticleFile(History *h, off_t *pbpos, int clvl, gzFile *cfile)
-#else
-ArticleFile(History *h, off_t *pbpos, int clvl, char **cfile)
-#endif
+ArticleFile(History *h, off_t *pbpos)
 {
     AFCache	*af = NULL;
     int		rfd = -1;
@@ -4786,6 +4807,18 @@ ArticleFile(History *h, off_t *pbpos, int clvl, char **cfile)
 
 	    h->iter = af->af_Iter;
 	    ArticleFileName(path, sizeof(path), h, ARTFILE_FILE);
+
+	    /*
+	     * Skip a file we already have open in the cache (a full one,
+	     * or the same B.<iter> under another slot).  Opening it again
+	     * would succeed, as fcntl locks never conflict within one
+	     * process, and closing the new descriptor would drop the lock
+	     * the cached entry still relies on.
+	     */
+	    if (ArticleFileCached(path) >= 0) {
+		++af->af_Iter;
+		continue;
+	    }
 
 	    if ((af->af_Fd = open(cdcache(path), O_RDWR|O_CREAT, 0644)) >= 0) {
 		struct stat st;
@@ -4870,17 +4903,6 @@ ArticleFile(History *h, off_t *pbpos, int clvl, char **cfile)
     if ((rfd = af->af_Fd) >= 0) {
 	*pbpos = af->af_AppendOff;
 	lseek(rfd, af->af_AppendOff, 0);
-
-#ifdef USE_ZLIB
-	if (clvl >= 0 && clvl <= 9) {
-	    char mode[10];
-
-	    snprintf(mode, sizeof(mode), "ab%d", clvl);
-	    *cfile = gzdopen(dup(rfd), mode);
-	    if (*cfile == NULL)
-		logit(LOG_ERR, "Unable to gzdopen - not compressing");
-	}
-#endif
 	h->iter = af->af_Iter;
 	if (af != &AFAry[0]) {
 	    AFCache tmp = *af;
@@ -4961,6 +4983,64 @@ ArticleFileSetSize(int artFd)
     af->af_AppendOff = bpos;
 }
 
+#ifdef USE_ZLIB
+/*
+ * SpoolGunzip() - inflate the gzip member at off in fd into buf, which it
+ * must fill exactly: len bytes, ending with the member's trailer (CRC and
+ * length checked by zlib).  Anything else (bad data or checksum, a member
+ * longer or shorter than len, a truncated member) is an error.  What
+ * follows the member (the terminator, the next article) is not read
+ * beyond the input buffer and not looked at.
+ *
+ * It reads with pread(), leaving fd and its offset alone: gzdopen(dup(fd))
+ * would close a descriptor for the file at gzclose(), and that drops our
+ * lock on it when it is the spool file we are appending to.
+ */
+static int
+SpoolGunzip(int fd, off_t off, char *buf, int len)
+{
+    z_stream z;
+    char ibuf[16384];
+    int zr;
+
+    bzero(&z, sizeof(z));
+    if (inflateInit2(&z, MAX_WBITS + 16) != Z_OK)
+	return(-1);
+    z.next_out = (Bytef *)buf;
+    z.avail_out = len;
+    for (;;) {
+	if (z.avail_in == 0) {
+	    ssize_t n = pread(fd, ibuf, sizeof(ibuf), off);
+
+	    if (n < 0 && errno == EINTR)
+		continue;
+	    if (n <= 0) {
+		zr = Z_BUF_ERROR;	/* read error or truncated member */
+		break;
+	    }
+	    off += n;
+	    z.next_in = (Bytef *)ibuf;
+	    z.avail_in = n;
+	}
+	zr = inflate(&z, Z_NO_FLUSH);
+	if (zr == Z_STREAM_END)
+	    break;
+	if (zr == Z_OK || (zr == Z_BUF_ERROR && z.avail_in == 0))
+	    continue;		/* progress, or it needs more input */
+	/*
+	 * Z_DATA_ERROR (bad data, CRC or length), Z_MEM_ERROR, Z_NEED_DICT,
+	 * or Z_BUF_ERROR with input left: buf is full but the member is not
+	 * done (it is longer than len).
+	 */
+	break;
+    }
+    inflateEnd(&z);
+    if (zr != Z_STREAM_END || z.avail_out != 0)
+	return(-1);
+    return(0);
+}
+#endif
+
 int
 MapArticle(int fd, char *fname, char **base, History *h, int *extra, int *artSize, int *compressedFormat)
 {
@@ -4971,9 +5051,7 @@ MapArticle(int fd, char *fname, char **base, History *h, int *extra, int *artSiz
      * stored 
      */
 
-    lseek(fd, h->boffset, 0);
-    if (read(fd, &tah, sizeof(SpoolArtHdr)) != sizeof(SpoolArtHdr)) {
-        close(fd);
+    if (pread(fd, &tah, sizeof(SpoolArtHdr), h->boffset) != sizeof(SpoolArtHdr)) {
         logit(LOG_ERR, "Unable to read article header (%s)\n",
 							strerror(errno));
         return(-1);
@@ -4983,12 +5061,14 @@ MapArticle(int fd, char *fname, char **base, History *h, int *extra, int *artSiz
 
     if (*compressedFormat) {
 #ifdef USE_ZLIB
-	gzFile gzf;
 	char *p;
+	off_t zoff = h->boffset + sizeof(SpoolArtHdr);
+	int hashdr = 1;
 
 	if ((uint8)tah.Magic1 != STORE_MAGIC1 &&
 					(uint8)tah.Magic2 != STORE_MAGIC2) {
-	    lseek(fd, h->boffset, 0);
+	    hashdr = 0;
+	    zoff = h->boffset;
 	    tah.Magic1 = STORE_MAGIC1;
 	    tah.Magic2 = STORE_MAGIC2;
 	    tah.HeadLen = sizeof(tah);
@@ -4997,31 +5077,43 @@ MapArticle(int fd, char *fname, char **base, History *h, int *extra, int *artSiz
 	    tah.StoreLen = h->bsize;
 	    tah.StoreType = STORETYPE_GZIP;
 	}
-	gzf = gzdopen(dup(fd), "r");
-	if (gzf == NULL) {
-	    logit(LOG_ERR, "Error opening compressed article\n");
+
+	/*
+	 * The spool header is data from disk: check it before it sizes
+	 * the buffer the article is inflated into.  A stored article's
+	 * history size is its uncompressed length plus this header.
+	 */
+	if (tah.HeadLen != sizeof(SpoolArtHdr) ||
+	    tah.ArtLen == 0 || tah.ArtLen >= SPOOL_MAX_FILE_SIZE ||
+	    (hashdr && (size_t)tah.ArtLen + sizeof(SpoolArtHdr) !=
+						(size_t)(uint32)h->bsize)
+	) {
+	    logit(LOG_ERR, "corrupt spool header in %s@%d: headlen %d artlen %u, history size %d\n",
+		fname, (int)h->boffset, (int)tah.HeadLen,
+		(unsigned int)tah.ArtLen, (int)h->bsize);
 	    return(-1);
 	}
-    	*base = (char *)malloc(tah.ArtLen + tah.HeadLen + 2);
+    	*base = (char *)malloc((size_t)tah.ArtLen + sizeof(SpoolArtHdr) + 2);
 	if (*base == NULL) {
-	    logit(LOG_CRIT, "Unable to malloc %d bytes for article (%s)\n",
-				tah.ArtLen + tah.HeadLen + 2, strerror(errno));
-	    gzclose(gzf);
+	    logit(LOG_CRIT, "Unable to malloc %lu bytes for article (%s)\n",
+		(unsigned long)((size_t)tah.ArtLen + sizeof(SpoolArtHdr) + 2),
+		strerror(errno));
 	    return(-1);
 	}
 	p = *base;
 	bcopy(&tah, p, tah.HeadLen);
 	p += tah.HeadLen;
-	if (gzread(gzf, p, tah.ArtLen) != tah.ArtLen) {
-	    logit(LOG_ERR, "Error uncompressing article\n");
+	if (SpoolGunzip(fd, zoff, p, tah.ArtLen) < 0) {
+	    logit(LOG_ERR, "Error uncompressing article in %s@%d (artlen %u)\n",
+		fname, (int)h->boffset, (unsigned int)tah.ArtLen);
 	    free(*base);
+	    *base = NULL;
 	    return(-1);
 	}
 	
 	p[tah.ArtLen] = 0;
 	*artSize = tah.ArtLen + tah.HeadLen;
 	*compressedFormat = 1;
-	gzclose(gzf);
 #else
         logit(LOG_ERR, "Article was stored compressed and compression support has not been enabled\n");
 #endif
@@ -5072,6 +5164,7 @@ ArticleOpen(History *h, const char *msgid, char **pfi, int32 *rsize, int *pmart,
     if (pfi) {
 	char path[PATH_MAX];
 	int fd;
+	int keepfd = 0;
 
 	ArticleFileName(path, sizeof(path), h, ARTFILE_FILE);
 
@@ -5084,9 +5177,19 @@ ArticleOpen(History *h, const char *msgid, char **pfi, int32 *rsize, int *pmart,
 	*pmart = 1;
 
 	/*
-	 * get the file
+	 * get the file.  If it is a spool file this process has open for
+	 * appending, read it through that descriptor and do not close it:
+	 * closing any descriptor for the file would release our lock on
+	 * it, and another feeder process could then append to it too.
+	 * Locks are per process and file, so only that file matters.  It
+	 * is matched by inode: the same B.<iter> can be in the cache
+	 * under another slot (slots shorter than the 10 minutes of a
+	 * spool directory).
 	 */
-	if ((fd = cdopen(path, O_RDONLY, 0)) >= 0) {
+	fd = ArticleFileCached(path);
+	if (fd >= 0)
+	    keepfd = 1;
+	if (fd >= 0 || (fd = cdopen(path, O_RDONLY, 0)) >= 0) {
 	    r = MapArticle(fd, path, pfi, h, pmart, rsize, compressed);
 
 	    /*
@@ -5117,7 +5220,7 @@ ArticleOpen(History *h, const char *msgid, char **pfi, int32 *rsize, int *pmart,
 	    } 
 		
 	}
-	if (fd != -1)
+	if (fd != -1 && !keepfd)
 	    close(fd);
     }
    if (pfi && *pfi)

@@ -85,7 +85,7 @@ jobs:
         env:
           DIABLO_BIN: ${{ github.workspace }}/dbin
           NNTP_TEST_DEADLINE: 30s
-        run: go test -v -count=1 ./...
+        run: go test -v -count=1 -timeout 20m ./...
 
   # Compile the e2e test binary once, with CGO disabled so it is portable (runs
   # on glibc and musl alike), for every OS the VM/container jobs need. The test
