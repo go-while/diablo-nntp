@@ -467,7 +467,8 @@ addSpool(SpoolObject *so)
 	/*
 	 * The path of a spool is relative to path_spool unless it starts with
 	 * a '/'.  statfs() looks at the working directory of the program, which
-	 * is not the spool directory when dspool.ctl is read.
+	 * is not the spool directory in a program that reads dspool.ctl before
+	 * it changes to it (dexpire does).
 	 */
 	char full[PATH_MAX];
 	int n;

@@ -9,9 +9,9 @@ import (
 
 // TestSpoolDefaultWeightPath: a spool in dspool.ctl without "weight" gets the size of its file system as
 // its weight. addSpool() asked statfs about the spool's path as written in dspool.ctl (P.01), relative to
-// the working directory of the program (dexpire, diablo and dreaderd do not run in the spool directory
-// when they read dspool.ctl), so every program logged "unable to statfs P.01 (No such file or
-// directory)" for each spool, at every start, and the weight was 1 instead.
+// the working directory of the program. dexpire reads dspool.ctl before it changes to the spool directory
+// (diablo changes to it first, and dreaderd does not read dspool.ctl), so dexpire logged "unable to statfs
+// P.01 (No such file or directory)" for each spool, at every run, and the weight was 1 instead.
 func TestSpoolDefaultWeightPath(t *testing.T) {
 	s := NewSite(t, SiteOptions{
 		NoStart: true,
@@ -44,6 +44,12 @@ expire * binaries
 	})
 	out := s.Run(t, "dexpire", "-a", "-h0", "-v")
 	b, _ := os.ReadFile(filepath.Join(s.Dir, "log", "general.log"))
+	// both spools were looked at, not skipped
+	for _, want := range []string{"Spool Object: 01", "Spool Object: 02"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("dexpire -v does not mention %q:\n%s", want, out)
+		}
+	}
 	if strings.Contains(string(b), "unable to statfs") || strings.Contains(out, "unable to statfs") {
 		t.Errorf("dexpire could not statfs the spools:\n%s\n%s", b, out)
 	}
