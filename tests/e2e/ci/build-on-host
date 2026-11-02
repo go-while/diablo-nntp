@@ -6,8 +6,8 @@
 ##      tests/e2e/ci/build-on-host
 ##
 ##  Linux (apt, dnf, zypper, pacman, apk or emerge), FreeBSD and illumos
-##  (OmniOS) with pkg are supported; the package manager is chosen from the
-##  system.  This copy's lib/vendor.h is set by ./configure from the libraries the system
+##  (OmniOS) with pkg, OpenBSD with pkg_add and NetBSD with pkgin are
+##  supported; the package manager is chosen from the system.  This copy's lib/vendor.h is set by ./configure from the libraries the system
 ##  has: zlib, libcanlock, Berkeley DB (the 1.85 API, db_185.h; several distributions
 ##  dropped it), cdb, PAM, LDAP, Perl and RADIUS (radcli on Linux, libradius on FreeBSD).
 ##  The binaries end up in dbin/.  The news user and group are created when
@@ -189,7 +189,7 @@ fi
 
 MAKE=make; MAKEARGS=; CCBIN=cc
 
-else  # FreeBSD / illumos (OmniOS): pkg, gmake
+else  # FreeBSD / illumos (OmniOS) / OpenBSD / NetBSD: gmake
 
 # The GNU Makefile needs gmake here (base `make` is BSD make on FreeBSD).
 MAKE=gmake; MAKEARGS=
@@ -216,6 +216,29 @@ SunOS)
     # OmniOS: gcc and GNU make from pkg; the base has OpenSSL and zlib.
     pkg install -q developer/gcc13 developer/build/gnu-make || \
         pkg install developer/gcc13 developer/build/gnu-make || true
+    groupadd news 2>/dev/null || true
+    useradd -g news -d /var/tmp -s /bin/sh news 2>/dev/null || true
+    ;;
+OpenBSD)
+    echo "== OpenBSD $(uname -r)"
+    CCBIN=cc  # clang from base
+    # The base has the compiler, LibreSSL (libcrypto) and zlib; gmake is the
+    # only package the build needs.
+    pkg_add -I gmake >/dev/null 2>&1 || pkg_add -I gmake
+    groupadd news 2>/dev/null || true
+    useradd -g news -d /var/tmp -s /bin/sh news 2>/dev/null || true
+    ;;
+NetBSD)
+    echo "== NetBSD $(uname -r)"
+    CCBIN=cc  # gcc from base
+    # pkgsrc binaries live under /usr/pkg; the base has the compiler, OpenSSL
+    # and zlib, so gmake is the only package the build needs.
+    PATH=$PATH:/usr/pkg/bin:/usr/pkg/sbin; export PATH
+    if command -v pkgin >/dev/null 2>&1; then
+        pkgin -y install gmake >/dev/null 2>&1 || pkgin -y install gmake
+    else
+        pkg_add gmake >/dev/null 2>&1 || pkg_add gmake
+    fi
     groupadd news 2>/dev/null || true
     useradd -g news -d /var/tmp -s /bin/sh news 2>/dev/null || true
     ;;

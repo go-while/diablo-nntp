@@ -9,10 +9,12 @@ name: ci-matrix
 #   hosted      - native build+test on GitHub runners (incl. arm64 and a
 #                 libcanlock-less build so TestCancelLockWithoutLibcanlock runs)
 #   build-test-binary - compiles the pure-Go e2e test binary once, CGO off, for
-#                 linux/freebsd/illumos amd64, so no container or VM needs Go
+#                 linux/freebsd/illumos/openbsd/netbsd amd64, so no container
+#                 or VM needs Go
 #   containers  - Linux distro containers via `docker run` on an ubuntu host,
 #                 mirroring the VM runner (build as root, test as the news user)
-#   freebsd / illumos - BSD/illumos via vmactions VMs (best effort)
+#   freebsd / illumos / openbsd / netbsd - BSD/illumos via vmactions VMs
+#                 (illumos, openbsd and netbsd best effort)
 #
 # Actions are pinned to a full commit SHA (the tag is in the comment) so a moved
 # tag cannot change what runs. checkout uses persist-credentials: false so the
@@ -105,11 +107,11 @@ jobs:
           go-version-file: tests/e2e/go.mod
           cache-dependency-path: tests/e2e/go.sum
 
-      - name: Compile (linux, freebsd, illumos; amd64; CGO off)
+      - name: Compile (linux, freebsd, illumos, openbsd, netbsd; amd64; CGO off)
         working-directory: tests/e2e
         run: |
           set -eux
-          for os in linux freebsd illumos; do
+          for os in linux freebsd illumos openbsd netbsd; do
             CGO_ENABLED=0 GOOS="$os" GOARCH=amd64 go test -c -o "e2e.test.$os" ./...
           done
           ls -l e2e.test.*
@@ -280,3 +282,97 @@ jobs:
             cd tests/e2e
             # dbin is at the repo root ($root/dbin), two levels up from here.
             su news -c "DIABLO_BIN=$root/dbin NNTP_TEST_DEADLINE=30s ./e2e.test -test.v -test.count=1 -test.timeout=1200s"
+
+  # OpenBSD: best effort, same shape as FreeBSD via build-on-host (pkg_add
+  # gmake, create the news user, build with gmake and clang from base). The
+  # release is pinned so an action update cannot change the OS under test.
+  # Does not fail the workflow until it is green; reported either way.
+  openbsd:
+    name: openbsd
+    needs: build-test-binary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: e2e-test-binaries
+          path: tests/e2e
+
+      - name: Build and test on OpenBSD
+        uses: vmactions/openbsd-vm@5f7b2c933b8846a138361d6843c52af4bef5d945 # v1.4.8
+        with:
+          release: "7.9"
+          usesh: true
+          prepare: |
+            # Same 127.0.0.x client source addresses as the FreeBSD job needs.
+            for ip in 2 3 4 9 10; do ifconfig lo0 inet 127.0.0.$ip netmask 255.255.255.255 alias; done
+            # Local names so diablo's reverse PTR lookup of the peer stays local.
+            printf '%s\n' '127.0.0.2 peer.e2e.test' '127.0.0.3 peer3.e2e.test' \
+              '127.0.0.4 peer4.e2e.test' '127.0.0.9 peer9.e2e.test' \
+              '127.0.0.10 peer10.e2e.test' >> /etc/hosts
+          run: |
+            set -e
+            root=$(pwd)
+            cp tests/e2e/e2e.test.openbsd tests/e2e/e2e.test
+            chmod 755 tests/e2e/e2e.test
+            # build-on-host installs gmake, creates the news user, builds the
+            # optional features out and builds dbin with gmake and clang.
+            tests/e2e/ci/build-on-host
+            echo "=== build.log (last 20 lines) ==="; tail -20 build.log
+            ls dbin
+            chmod -R a+rX .
+            cd tests/e2e
+            # dbin is at the repo root ($root/dbin), two levels up from here.
+            su -m news -c "env DIABLO_BIN=$root/dbin NNTP_TEST_DEADLINE=30s ./e2e.test -test.v -test.count=1 -test.timeout=1200s"
+
+  # NetBSD: best effort, same shape as FreeBSD via build-on-host (pkgin install
+  # gmake, create the news user, build with gmake and gcc from base). The
+  # release is pinned so an action update cannot change the OS under test.
+  # Does not fail the workflow until it is green; reported either way.
+  netbsd:
+    name: netbsd
+    needs: build-test-binary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: e2e-test-binaries
+          path: tests/e2e
+
+      - name: Build and test on NetBSD
+        uses: vmactions/netbsd-vm@c8a0d7ddb84619a7a8cc4e652efa7950b3fd9f92 # v1.5.2
+        with:
+          release: "11.0"
+          usesh: true
+          prepare: |
+            # Same 127.0.0.x client source addresses as the FreeBSD job needs.
+            for ip in 2 3 4 9 10; do ifconfig lo0 inet 127.0.0.$ip netmask 255.255.255.255 alias; done
+            # Local names so diablo's reverse PTR lookup of the peer stays local.
+            printf '%s\n' '127.0.0.2 peer.e2e.test' '127.0.0.3 peer3.e2e.test' \
+              '127.0.0.4 peer4.e2e.test' '127.0.0.9 peer9.e2e.test' \
+              '127.0.0.10 peer10.e2e.test' >> /etc/hosts
+          run: |
+            set -e
+            root=$(pwd)
+            cp tests/e2e/e2e.test.netbsd tests/e2e/e2e.test
+            chmod 755 tests/e2e/e2e.test
+            # build-on-host installs gmake, creates the news user, builds the
+            # optional features out and builds dbin with gmake and gcc.
+            tests/e2e/ci/build-on-host
+            echo "=== build.log (last 20 lines) ==="; tail -20 build.log
+            ls dbin
+            chmod -R a+rX .
+            cd tests/e2e
+            # dbin is at the repo root ($root/dbin), two levels up from here.
+            su -m news -c "env DIABLO_BIN=$root/dbin NNTP_TEST_DEADLINE=30s ./e2e.test -test.v -test.count=1 -test.timeout=1200s"
