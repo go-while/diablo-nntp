@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"math/rand"
+	"mime/quotedprintable"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -112,23 +113,23 @@ func joined(l []string) []byte {
 	return []byte(strings.Join(l, "\n") + "\n")
 }
 
-// qpLines returns n lines of quoted-printable UTF-8 (Chinese text): 76 characters made of
-// =XX and a soft line break "=" at the end, like a mail client writes non-Latin text.
+// qpLines returns at least n lines of quoted-printable UTF-8 Chinese text as a mail client
+// writes it (mime/quotedprintable): =XX escapes in lines of up to 76 characters, each but the
+// last ending in a soft line break. The lines decode to the whole text, valid UTF-8.
 func qpLines(n int) []string {
-	var l []string
-	for i := 0; i < n; i++ {
+	runes := []rune("今天天气很好，我们一起去公园散步，然后在湖边的小茶馆喝茶聊天。")
+	for k := len(runes); ; k += len(runes) {
 		var b strings.Builder
-		for j := 0; b.Len() < 75; j++ {
-			c := []rune("在天安门屠杀现场我目睹了中国人民")[(i+j)%16]
-			for _, x := range []byte(string(c)) {
-				if b.Len()+3 <= 75 {
-					b.WriteString("=" + strings.ToUpper(strconv.FormatInt(int64(x), 16)))
-				}
-			}
+		w := quotedprintable.NewWriter(&b)
+		for i := 0; i < k; i++ {
+			w.Write([]byte(string(runes[i%len(runes)])))
 		}
-		l = append(l, b.String()+"=")
+		w.Close()
+		l := strings.Split(strings.TrimRight(b.String(), "\r\n"), "\r\n")
+		if len(l) >= n {
+			return l
+		}
 	}
-	return l
 }
 
 // hdrQP is the MIME headers of a quoted-printable UTF-8 text.
