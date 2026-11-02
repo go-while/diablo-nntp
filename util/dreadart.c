@@ -170,12 +170,23 @@ main(int ac, char **av)
 	    char *p = fname;
 	    History h = { 0 };
 
+	    char fmt[32];
+	    int n;
+
 	    *p = 0;
 	    if (*arg != '/') {
-		sprintf(p, "%s/", PatExpand(SpoolHomePat));
-		p += strlen(p);
+		n = snprintf(p, sizeof(fname), "%s/", PatExpand(SpoolHomePat));
+		/* leave room for at least one byte of file name below */
+		if (n < 0 || n >= (int)sizeof(fname) - 1) {
+		    fprintf(stderr, "spool path too long\n");
+		    exit(1);
+		}
+		p += n;
 	    }
-	    if (sscanf(arg, "%[^:]:%d,%d", p, &h.boffset, &h.bsize) == 3) {
+	    /* the file name goes into what is left of fname */
+	    snprintf(fmt, sizeof(fmt), "%%%d[^:]:%%d,%%d",
+		(int)(sizeof(fname) - (p - fname) - 1));
+	    if (sscanf(arg, fmt, p, &h.boffset, &h.bsize) == 3) {
 		DumpArticle(fname, &h, NULL);
 	    } else {
 		printf("Unknown argument: %s\n", arg);

@@ -28,12 +28,18 @@ int DDUseSyslog;
 int
 xopen(int modes, int perms, const char *ctl, ...)
 {
-    char path[1024];
+    char path[PATH_MAX];
     va_list va;
+    int n;
 
     va_start(va, ctl);
-    vsnprintf(path, sizeof(path), ctl, va);
+    n = vsnprintf(path, sizeof(path), ctl, va);
     va_end(va);
+    if (n < 0 || n >= (int)sizeof(path)) {
+	/* a truncated name would open a different file */
+	errno = ENAMETOOLONG;
+	return(-1);
+    }
     return(open(path, modes, perms));
 }
 
@@ -41,12 +47,17 @@ xopen(int modes, int perms, const char *ctl, ...)
 FILE *
 xfopen(const char *modes, const char *ctl, ...)
 {
-    char path[1024];
+    char path[PATH_MAX];
     va_list va;
+    int n;
 
     va_start(va, ctl);
-    vsnprintf(path, sizeof(path), ctl, va);
+    n = vsnprintf(path, sizeof(path), ctl, va);
     va_end(va);
+    if (n < 0 || n >= (int)sizeof(path)) {
+	errno = ENAMETOOLONG;
+	return(NULL);
+    }
     return(fopen(path, modes));
 }
 

@@ -546,7 +546,7 @@ sigAlrm(int sigNo)
  *		    and forks off children.
  */
 
-static char PidFile[1024];
+static char PidFile[PATH_MAX];
 
 void
 DiabloServer(int lfd)
@@ -843,15 +843,20 @@ DiabloServer(int lfd)
     {
 	FILE *pf;
 
-	snprintf(PidFile, sizeof(PidFile), "%s/diablo.pid", PatExpand(LogHomePat));
-	remove(PidFile);
-	if ((pf = PrivateFOpen(PidFile, "w", 0644)) != NULL) {
-	    fprintf(pf, "%d\n", (int)getpid());
-	    if (fclose(pf) != 0)
-		logit(LOG_ERR, "unable to write %s: %s", PidFile, strerror(errno));
-	} else {
-	    logit(LOG_ERR, "unable to create %s: %s", PidFile, strerror(errno));
+	if (snprintf(PidFile, sizeof(PidFile), "%s/diablo.pid",
+	    PatExpand(LogHomePat)) >= (int)sizeof(PidFile)) {
+	    logit(LOG_ERR, "pid file path too long");
 	    PidFile[0] = 0;
+	} else {
+	    remove(PidFile);
+	    if ((pf = PrivateFOpen(PidFile, "w", 0644)) != NULL) {
+		fprintf(pf, "%d\n", (int)getpid());
+		if (fclose(pf) != 0)
+		    logit(LOG_ERR, "unable to write %s: %s", PidFile, strerror(errno));
+	    } else {
+		logit(LOG_ERR, "unable to create %s: %s", PidFile, strerror(errno));
+		PidFile[0] = 0;
+	    }
 	}
     }
 
@@ -4508,13 +4513,17 @@ FeedList(FILE *fo)
 void
 FeedCommit(FILE *fo)
 {
-    char path1[256+64];
-    char path2[256+64];
+    char path1[PATH_MAX];
+    char path2[PATH_MAX];
+    int n1, n2;
 
-    sprintf(path1, "%s/%s.new", PatExpand(FeedsHomePat), HLabel);
-    sprintf(path2, "%s/%s", PatExpand(FeedsHomePat), HLabel);
+    n1 = snprintf(path1, sizeof(path1), "%s/%s.new", PatExpand(FeedsHomePat), HLabel);
+    n2 = snprintf(path2, sizeof(path2), "%s/%s", PatExpand(FeedsHomePat), HLabel);
     fflush(Ft);
-    if (ferror(Ft)) {
+    if (n1 < 0 || n1 >= (int)sizeof(path1) || n2 < 0 || n2 >= (int)sizeof(path2)) {
+	/* a truncated name would rename or remove a different file */
+	xfprintf(fo, "490 feed file path too long\r\n");
+    } else if (ferror(Ft)) {
 	remove(path1);
 	xfprintf(fo, "490 file write failed\r\n");
     } else {
