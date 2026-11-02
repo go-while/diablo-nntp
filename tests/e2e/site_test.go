@@ -73,6 +73,20 @@ func bin(tb testing.TB) string {
 	return b
 }
 
+// skipWithoutZlib skips a test of compression (compressed spool objects, MODE COMPRESS, dnewslink
+// -Z, XZVER, dexpireover -z) when the programs in DIABLO_BIN are built with ./configure
+// --without-zlib. The reply to MODE COMPRESS is in diablo only when it is built with USE_ZLIB.
+func skipWithoutZlib(tb testing.TB) {
+	tb.Helper()
+	b, err := os.ReadFile(filepath.Join(bin(tb), "diablo"))
+	if err != nil {
+		tb.Fatal(err)
+	}
+	if !bytes.Contains(b, []byte("207 Compression enabled")) {
+		tb.Skip("built without zlib (./configure --without-zlib)")
+	}
+}
+
 // GlobalLabel is the GLOBAL label of dnewsfeeds; every other label refers to it, and diablo
 // logs "grouplist GLOBAL does not exist" for each one when it is missing.
 const GlobalLabel = "label GLOBAL\nend\n"

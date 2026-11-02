@@ -168,7 +168,11 @@ void
 NNTPXZver(Connection *conn, char **pptr)
 {
     conn->co_ListStrict = 0;
+#ifdef USE_ZLIB
     if (conn->co_Auth.dr_ReaderDef->rd_XzverLevel < 0) {
+#else
+    if (1) {	/* built without zlib */
+#endif
 	MBLogPrintf(conn, &conn->co_TMBuf, "500 \"xzver\" not enabled\r\n");
 	NNCommand(conn);
 	return;
@@ -330,7 +334,9 @@ NNStartListOverview(Connection *conn, const char *hdr, const char *ran, const ch
 	  NNCommand(conn);
 	  return;
 	}
+#ifdef USE_ZLIB
 	MBLogPrintf(conn, &conn->co_TMBuf, "224 compressed data follows (zlib version %s)\r\n", zlibVersion());
+#endif
 	break;
     default:
 	MBLogPrintf(conn, &conn->co_TMBuf, "500 software error\r\n");

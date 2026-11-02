@@ -39,6 +39,7 @@ func descendantRSS(pid int) (max int) {
 // deflate stream) must not make the session grow without bound. Before the fix every
 // command allocated a new decompression state, about 22 KB each, and never freed it.
 func TestFeederModeCompressRepeated(t *testing.T) {
+	skipWithoutZlib(t)
 	s := NewSite(t, SiteOptions{})
 	p := s.Peer(t)
 	expect(t, p, 207, "MODE COMPRESS")

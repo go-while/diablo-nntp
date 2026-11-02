@@ -239,6 +239,7 @@ test fails.
 | `TestMessageIDHashUnchanged` | diablo, dilookup | the Message-ID hash (`lib/hash.c`) stored in dhistory and computed by dilookup is the same as before it was rewritten in unsigned arithmetic, for `hash prime`, `crc` and `ocrc` (Message-IDs with high-bit bytes and of 255 characters included): a change would make every stored article unfindable |
 | `TestFeederOutqRunning` | diablo | OUTQ from a peer reports its label's queue backlog, the queued articles, and as running only the queue file a dnewslink (here the test) holds a write lock on. **Fails** on main: the probe took the lock on a read-only descriptor, which always fails, so every file counted as running |
 | `TestDgrpctlGroupinfoTimes` | dgrpctl | `dgrpctl groupinfo` prints a new group's CTS as the creation time in seconds and as ctime text of the same year. **Fails** on main when built with `-fsanitize=address`: ctime read a 32-bit int as a 64-bit time_t (stack-buffer-overflow) |
+| `TestNoZlibCompressionOff` | diablo, dexpireover | only on a build with `./configure --without-zlib`: MODE COMPRESS gets 500 and the session goes on, `dexpireover -z` stops with "built without zlib". The compression tests (MODE COMPRESS, compressed spool, `dnewslink -Z`, `dexpireover -z`) skip on such a build |
 
 ## Running
 

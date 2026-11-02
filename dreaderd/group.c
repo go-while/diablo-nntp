@@ -1504,13 +1504,16 @@ MakeOverHFile(OverInfo *ov, artno_t artNo, int create)
     OverData **pod;
     OverData *od;
     int count = 0;
-    int hfd, tmpfd, zfd, gzflags;
+    int hfd;
+#ifdef USE_ZLIB
+    int tmpfd, zfd, gzflags;
     unsigned char *zmap, *tmpmap, *zpos;
     char tmpfile[256];
     struct stat st;
     unsigned long zlen;
     z_stream z;
     int code;
+#endif
 
     if (create)
 	create = O_CREAT;
@@ -1529,6 +1532,8 @@ MakeOverHFile(OverInfo *ov, artno_t artNo, int create)
 	*pod = od = zalloc(&SysMemPool, sizeof(OverData));
         errno = 0;
 	hfd = xopen(O_RDWR|create, 0644, "%s/%s", MyGroupHome, gfname);
+#ifdef USE_ZLIB
+	/* a data file dexpireover -z compressed (not without zlib) */
 	if (hfd < 0 && ! create) {
 	    zfd = xopen(O_RDONLY, 0644, "%s/%s.gz", MyGroupHome, gfname);
 	    if (! (zfd < 0)) {
@@ -1672,6 +1677,7 @@ MakeOverHFile(OverInfo *ov, artno_t artNo, int create)
 		}
 	    }
 	}
+#endif
 
 	od->od_HFd = hfd;
 

@@ -37,7 +37,6 @@
 #include <sys/stat.h>
 #include <limits.h>
 #include <fcntl.h>
-#include <zlib.h>
 #include <stdlib.h>
 
 #define	ZBUFFER		1048576
@@ -51,6 +50,27 @@
 
 Prototype int diablo_minigzip(char *file);
 Prototype int dominigzip(int ifd, int ofd, const char *outbase, uint32_t mtime, off_t *osize);
+
+#ifndef USE_ZLIB
+
+/*
+ * Built without zlib (./configure --without-zlib): nothing is compressed.
+ */
+int
+dominigzip(int ifd, int ofd, const char *outbase, uint32_t mtime, off_t *osizep)
+{
+	errno = ENOSYS;
+	return(-1);
+}
+
+int
+diablo_minigzip(char *file)
+{
+	errno = ENOSYS;
+	return(-1);
+}
+
+#else
 
 int
 dominigzip(int ifd, int ofd, const char *outbase, uint32_t mtime, off_t *osizep)
@@ -299,3 +319,4 @@ diablo_minigzip(char *file)
 	return(0);
 }
 
+#endif /* USE_ZLIB */

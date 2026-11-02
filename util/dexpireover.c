@@ -295,7 +295,12 @@ main(int ac, char **av)
 	    UseExpireByDays = (*ptr) ? strtol(ptr, NULL, 0) : 1;
 	    break;
 	case 'z':
+#ifdef USE_ZLIB
 	    CompressDataOpt = 1;
+#else
+	    fprintf(stderr, "-z: dexpireover was built without zlib\n");
+	    exit(1);
+#endif
 	    break;
 	/* Common options */
 	case 'C':           /* parsed by LoadDiabloConfig */
@@ -1626,11 +1631,13 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
     int rblt;
     long long n;
     int ok = 1;
+#ifdef USE_ZLIB
     int tmpfd, gzflags;
     unsigned char *zmap, *tmpmap, *zpos;
     unsigned long zlen;
     z_stream z;
     int code;
+#endif
 
     /*
      * If not for real, do not do anything
@@ -1772,8 +1779,10 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
 		} else {
 		    if (cfd >= 0) {
 			close(cfd);
+			cfd = -1;
 		    }
 
+#ifdef USE_ZLIB
 		    snprintf(path, sizeof(path), "%s/%s.gz", dirPath,
 					GFName(group->gr_GroupName,
 					GRPFTYPE_DATA, cacheArtBase, 0,
@@ -1884,6 +1893,7 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
 				tmpfile, strerror(errno));
 			}
 		    }
+#endif
 		}
 		if (cfd >= 0)
 		    close(cfd);

@@ -157,6 +157,7 @@ func TestFeederArticleKeepsSpoolLock(t *testing.T) {
 // closed a dup() of the spool descriptor (gzclose()), so the lock was gone after the first
 // article, before any ARTICLE.
 func TestFeederCompressedSpoolKeepsLock(t *testing.T) {
+	skipWithoutZlib(t)
 	testSpoolLockKept(t, compressedSpoolCtl, true)
 }
 
@@ -185,6 +186,7 @@ expire * trad
 // no check, so the buffer size wrapped (ArtLen 0xfffffff0 allocated 10 bytes and the
 // article was inflated into it) or HeadLen copied past the header.
 func TestFeederCorruptSpoolHeader(t *testing.T) {
+	skipWithoutZlib(t)
 	s := NewSite(t, SiteOptions{
 		SpoolCtl: compressedSpoolCtl,
 		Config:   map[string]string{"path_generallog": "@home@/log/general.log"},
@@ -370,6 +372,7 @@ expire * trad
 // article was served as soon as the output buffer was full, whatever inflate said about the
 // rest (found by the third review, GPT Terra).
 func TestFeederCorruptGzipData(t *testing.T) {
+	skipWithoutZlib(t)
 	s := NewSite(t, SiteOptions{
 		SpoolCtl: compressedSpoolCtl,
 		Config:   map[string]string{"path_generallog": "@home@/log/general.log"},

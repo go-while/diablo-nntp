@@ -7,7 +7,7 @@ CC ?= clang
 CPPFLAGS += -I. -DVERS=\"${VERS}\" -DSUBREV=\"${SUBREV}\" -DDEBUG_ZALLOC -DDEBUG_MBUF
 CFLAGS += -O2 -pipe -Wall -Wstrict-prototypes -fno-common -MMD -MP
 LDFLAGS += -Lobj
-LDLIBS += -lfilter -ldiablo -lm -lmd -lz -lcrypto
+LDLIBS += -lfilter -ldiablo -lm -lmd -lcrypto
 # The libraries behind the optional features are found by ./configure, which sets the options
 # in lib/vendor.h and writes their compiler and linker flags, and the programs they add
 # (OPTIONAL_PROGS), to config.mk.

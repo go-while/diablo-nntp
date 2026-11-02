@@ -194,6 +194,7 @@ func TestDoverctlCleanMisalignedData(t *testing.T) {
 // as a failure, not as "Compressed"; the plain file stays, and the exit status is 1. With -n
 // the files that would be compressed are counted separately.
 func TestDexpireoverCompressionFailure(t *testing.T) {
+	skipWithoutZlib(t)
 	st, spool := spoolStore(t)
 	s := NewReaderSite(t, ReaderOptions{Spool: spool, Files: map[string]string{"dexpire.ctl": "e2e.*:x30:Z0:F0\n"}})
 	feedReader(t, s, st, "e2e.test", newArticle(msgID(t), "e2e.test", "compress", "body"))
