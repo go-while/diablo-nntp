@@ -362,3 +362,104 @@ expire * trad
 	}
 	expect(t, c, 205, "QUIT")
 }
+
+// TestFeederCorruptGzipData: a compressed article must inflate to exactly its length and end
+// with its gzip trailer, whose CRC and length zlib checks. A flipped CRC or length byte, or
+// a member cut short at the end of the file, is refused with 430 and logged, and the
+// connection keeps serving the intact article next to it. **Fails** before this fix: the
+// article was served as soon as the output buffer was full, whatever inflate said about the
+// rest (found by the third review, GPT Terra).
+func TestFeederCorruptGzipData(t *testing.T) {
+	s := NewSite(t, SiteOptions{
+		SpoolCtl: compressedSpoolCtl,
+		Config:   map[string]string{"path_generallog": "@home@/log/general.log"},
+	})
+	c := s.Peer(t)
+	a, b := msgID(t), msgID(t)
+	aBody := []string{"body of a", strings.Repeat("hello world ", 50)}
+	bBody := []string{"body of b", strings.Repeat("goodbye world ", 50)}
+	spoolIhave(t, c, a, aBody...)
+	spoolIhave(t, c, b, bBody...)
+	expect(t, c, 205, "QUIT")
+	file := spoolFiles(t, s)[0]
+	waitFor(t, 10*time.Second, "the child to let go of the spool file", func() bool { return spoolLockPid(t, file) == 0 })
+
+	orig, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Each article: a 24-byte spool header, its gzip member, a NUL. StoreLen (offset 16 of
+	// the header) is header plus member, so the member's 8-byte trailer (CRC32, then the
+	// length) ends at StoreLen.
+	aEnd := int64(binary.NativeEndian.Uint32(orig[16:]))
+	if orig[24] != 0x1f || orig[25] != 0x8b || orig[aEnd] != 0 || orig[aEnd+1] != orig[0] {
+		t.Fatalf("unexpected spool layout: % x ... StoreLen %d", orig[:28], aEnd)
+	}
+	bOff := aEnd + 1
+	bEnd := bOff + int64(binary.NativeEndian.Uint32(orig[bOff+16:]))
+	if bEnd+1 != int64(len(orig)) || orig[bEnd] != 0 {
+		t.Fatalf("b's StoreLen does not end at the file's last byte (end %d, file %d)", bEnd, len(orig))
+	}
+
+	f, err := os.OpenFile(file, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	flip := func(off int64) func() {
+		return func() {
+			if _, err := f.WriteAt([]byte{orig[off] ^ 1}, off); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for _, tc := range []struct {
+		name     string
+		damage   func()
+		bad      string
+		good     string
+		goodBody []string
+	}{
+		{"a's CRC", flip(aEnd - 8), a, b, bBody},
+		{"a's length", flip(aEnd - 4), a, b, bBody},
+		{"b cut in its trailer", func() {
+			if err := f.Truncate(bEnd - 3); err != nil {
+				t.Fatal(err)
+			}
+		}, b, a, aBody},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.damage()
+			defer func() {
+				if _, err := f.WriteAt(orig, 0); err != nil {
+					t.Fatal(err)
+				}
+			}()
+			c := s.Peer(t)
+			code, line := c.Cmd("ARTICLE %s", tc.bad)
+			if code == 220 {
+				c.ReadDotLines()
+			}
+			if code != 430 {
+				t.Errorf("ARTICLE %s with %s damaged: got %q, want 430", tc.bad, tc.name, line)
+			}
+			if got := fetchBody(t, c, tc.good); got != nil && !slices.Equal(got, tc.goodBody) {
+				t.Errorf("ARTICLE %s next to the damaged one: body %q", tc.good, got)
+			}
+			expect(t, c, 205, "QUIT")
+			if log := s.ReadFile(t, "log/general.log"); !strings.Contains(log, "Error uncompressing article") {
+				t.Errorf("general.log has no \"Error uncompressing article\" line:\n%s", log)
+			}
+		})
+	}
+	c = s.Peer(t)
+	for _, x := range []struct {
+		id   string
+		body []string
+	}{{a, aBody}, {b, bBody}} {
+		if got := fetchBody(t, c, x.id); got != nil && !slices.Equal(got, x.body) {
+			t.Errorf("ARTICLE %s with the file restored: body %q", x.id, got)
+		}
+	}
+	expect(t, c, 205, "QUIT")
+}
