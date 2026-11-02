@@ -213,10 +213,20 @@ FeedWrite(int logIt,
 
     HM_MD5MessageID((mid_t)msgid, md5hash);
 
-    if ((ptr = strchr(npath, '!'))) {
-	snprintf(linebuf, ptr - npath + 1, "%s", npath);
-    } else {
-	snprintf(linebuf, sizeof(linebuf), "%s", npath);
+    /*
+     * The first Path: element (the feeding site) starts the log line.  It
+     * comes from the article, so it can be longer than linebuf (diablo
+     * reads header lines up to the size of its input buffer,
+     * "feederbuffersize"): cut it to fit, it is only logged.  The size
+     * passed to snprintf() used to be the element's length.
+     */
+    {
+	size_t l = (ptr = strchr(npath, '!')) ? (size_t)(ptr - npath) : strlen(npath);
+
+	if (l >= sizeof(linebuf))
+	    l = sizeof(linebuf) - 1;
+	memcpy(linebuf, npath, l);
+	linebuf[l] = 0;
     }
 
     linesiz = strlen(linebuf);
@@ -451,7 +461,8 @@ feedQuerySpamPaths(NewsFeed *feed, const char *npath, int size, const char *msgi
     const char *p;
     char *q;
     char *r;
-    char pat[MAXGNAME];
+    char *pat;
+    int ret = 0;
 
     if (*npath == 0)
 	 return(0);
@@ -466,7 +477,13 @@ feedQuerySpamPaths(NewsFeed *feed, const char *npath, int size, const char *msgi
     }
     if (r == NULL)
 	r = (char *)npath;
-    strcpy(pat, r);
+    /*
+     * The last two Path: elements come from the article and are not
+     * bounded here: copy them into a buffer of their own length (this was
+     * a MAXGNAME stack buffer, overrun by a long element).
+     */
+    if ((pat = strdup(r)) == NULL)
+	return(0);
     r = strchr(pat,'!');
     if (r != NULL) {
 	*r = 0;
@@ -485,13 +502,13 @@ feedQuerySpamPaths(NewsFeed *feed, const char *npath, int size, const char *msgi
      */
     if (feedSpamPathQuery(feed, pat) == 0) {
 	logit(LOG_DEBUG, "Spam Path A detect, %s %s", msgid, pat);
-	return(-1);
-    }
-    if (feedSpamPathQuery(feed, r) == 0) {
+	ret = -1;
+    } else if (feedSpamPathQuery(feed, r) == 0) {
 	logit(LOG_DEBUG, "Spam Path B detect, %s %s", msgid, r);
-	return(-1);
+	ret = -1;
     }
-    return(0);
+    free(pat);
+    return(ret);
 }
 
 
@@ -1358,7 +1375,7 @@ LoadNewsFeed(time_t t, int force, const char *hlabel)
 				strcmp(s2, "ESPAM") == 0 ||
 				strcmp(s2, "IFILTER") == 0
 			)) {
-			    char path[256];
+			    char path[PATH_MAX];
 
 			    nf = zalloc(&NFMemPool, sizeof(NewsFeed) + strlen(s2) + 1);
 			    nf->nf_Label = (char *)(nf + 1);
@@ -1376,8 +1393,10 @@ LoadNewsFeed(time_t t, int force, const char *hlabel)
 
 			    setLinkStart(&nf->nf_LinkInfo);
 
-			    snprintf(path, sizeof(path), "%s/%s", PatExpand(FeedsHomePat), s2);
-			    altFi = fopen(path, "r");
+			    /* a cut name would be another feed's file */
+			    if (snprintf(path, sizeof(path), "%s/%s", PatExpand(FeedsHomePat),
+					s2) < (int)sizeof(path))
+				altFi = fopen(path, "r");
 			    err = 0;
 			    if (strcmp(nf->nf_Label, "GLOBAL") == 0) {
 				NFGlob = nf;
