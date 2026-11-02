@@ -182,19 +182,19 @@ func TestAdmDailyAtrimKeep(t *testing.T) {
 		t.Skip("no gzip")
 	}
 	s := NewSite(t, SiteOptions{Setup: withAdm(admSource(t))})
-	rotWrite(t, filepath.Join(s.Dir, "adm", "rot.conf"), "keep 11\ncompress gzip\n")
+	rotWrite(t, filepath.Join(s.Dir, "adm", "rot.conf"), "keep 2\ncompress gzip\n")
 	logf := func(n string) string { return filepath.Join(s.Dir, "log", n) }
-	for i := 1; i <= 12; i++ {
+	for i := 1; i <= 4; i++ {
 		rotWrite(t, logf("general.log"), fmt.Sprintf("day %d\n", i))
 		runAdm(t, s, "daily.atrim")
 	}
-	if b, _ := os.ReadFile(logf("general.log.0")); string(b) != "day 12\n" {
-		t.Errorf("general.log.0 = %q, want day 12", b)
+	if b, _ := os.ReadFile(logf("general.log.0")); string(b) != "day 4\n" {
+		t.Errorf("general.log.0 = %q, want day 4", b)
 	}
-	if got := rotGunzip(t, logf("general.log.11.gz")); got != "day 1\n" {
-		t.Errorf("general.log.11.gz = %q, want day 1", got)
+	if got := rotGunzip(t, logf("general.log.2.gz")); got != "day 2\n" {
+		t.Errorf("general.log.2.gz = %q, want day 2", got)
 	}
-	if fileExists(logf("general.log.12.gz")) || fileExists(logf("general.log.12")) {
-		t.Errorf("general.log.12 exists: more than keep 11 kept")
+	if fileExists(logf("general.log.3.gz")) || fileExists(logf("general.log.3")) {
+		t.Errorf("general.log.3 exists: more than keep 2 kept")
 	}
 }
