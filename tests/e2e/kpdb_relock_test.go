@@ -89,13 +89,19 @@ func TestKPDBLockRelookup(t *testing.T) {
 			if err != nil {
 				t.Fatalf("driver %s: %v\n%s", tc.name, err, out)
 			}
+			// each line is one event of one process; their order between
+			// the processes is not checked
+			lines := map[string]bool{}
+			for _, l := range strings.Split(string(out), "\n") {
+				lines[l] = true
+			}
 			var problems []string
 			for _, w := range tc.want {
-				if !strings.Contains(string(out), w+"\n") {
+				if !lines[w] {
 					problems = append(problems, fmt.Sprintf("no %q", w))
 				}
 			}
-			if strings.Contains(string(out), "holds a deleted record") {
+			if lines["P2 holds a deleted record"] {
 				problems = append(problems, "P2 read the deleted copy")
 			}
 			if len(problems) > 0 {
@@ -211,6 +217,28 @@ hflock(int fd, off_t offset, int flags)
     return fcntl(fd, (flags & XLOCK_NB) ? F_SETLK : F_SETLKW, &fl);
 }
 
+/*
+ * Both processes write to the same pipe: write each line with one write(),
+ * which a pipe keeps whole (lines are far below PIPE_BUF), so the lines of
+ * P1 and P2 cannot run into each other.
+ */
+static void
+say(const char *fmt, ...)
+{
+    char buf[256];
+    va_list va;
+    int n;
+
+    va_start(va, fmt);
+    n = vsnprintf(buf, sizeof(buf), fmt, va);
+    va_end(va);
+    if (n < 0)
+	return;
+    if (n >= (int)sizeof(buf))
+	n = sizeof(buf) - 1;
+    (void)write(1, buf, n);
+}
+
 static const char *Key = "alt.test";
 
 /* GenerateXRef(): lock the record, n = NX+1 (or NE+1), write NX, unlock. */
@@ -224,17 +252,17 @@ allocNumber(KPDB *db, const char *who)
     char buf[32];
 
     if (rec == NULL) {
-	printf("%s no record\n", who);
+	say("%s no record\n", who);
 	return -1;
     }
     if (rec[0] != '+')
-	printf("%s holds a deleted record\n", who);
+	say("%s holds a deleted record\n", who);
     if ((f = KPDBGetField(rec, recLen, "NX", &len, NULL)) == NULL)
 	f = KPDBGetField(rec, recLen, "NE", &len, "0");
     n = strtoll(f, NULL, 10) + 1;
     snprintf(buf, sizeof(buf), "%010lld", n);
     KPDBWrite(db, Key, "NX", buf, KP_UNLOCK);
-    printf("%s assigned %lld\n", who, n);
+    say("%s assigned %lld\n", who, n);
     return n;
 }
 
@@ -242,7 +270,7 @@ static void
 lookupHung(int sig)
 {
     (void)sig;
-    printf("badstatus lookup did not return\n");
+    say("badstatus lookup did not return\n");
     _exit(1);
 }
 
@@ -274,9 +302,9 @@ badStatus(const char *path)
     rec = KPDBReadRecord(db, Key, KP_LOCK, &recLen);
     alarm(0);
     if (rec == NULL)
-	printf("badstatus no record\n");
+	say("badstatus no record\n");
     else
-	printf("badstatus found a record with status '%c'\n", rec[0]);
+	say("badstatus found a record with status '%c'\n", rec[0]);
     return 0;
 }
 
@@ -301,7 +329,6 @@ main(int ac, char **av)
 	del = 1;
     else if (strcmp(mode, "replace1") != 0 && strcmp(mode, "badstatus") != 0)
 	return 2;
-    setvbuf(stdout, NULL, _IONBF, 0);
 
     /* A group as the feeder sees it before its first article: no NX yet. */
     unlink(path);
@@ -334,7 +361,7 @@ main(int ac, char **av)
 	HookFd = hook[1];
 	allocNumber(d2, "P2");
 	if (Waits > 1)
-	    printf("P2 waited %d times\n", Waits);
+	    say("P2 waited %d times\n", Waits);
 	_exit(0);
     }
     close(go[0]);
@@ -358,12 +385,12 @@ main(int ac, char **av)
      */
     for (i = 1; i <= rounds; ++i) {
 	if (read(hook[0], &off, sizeof(off)) != sizeof(off)) {
-	    printf("P2 did not look again (round %d)\n", i);
+	    say("P2 did not look again (round %d)\n", i);
 	    break;
 	}
 	if (del) {
 	    KPDBDelete(db, Key);	/* we hold the lock; this releases it */
-	    printf("P1 deleted\n");
+	    say("P1 deleted\n");
 	} else if (i < rounds) {
 	    char tok[8];
 
@@ -373,13 +400,13 @@ main(int ac, char **av)
 	} else {
 	    /* the group's first NX: append path, then unlock */
 	    KPDBWrite(db, Key, "NX", "0000000001", KP_UNLOCK);
-	    printf("P1 assigned 1\n");
+	    say("P1 assigned 1\n");
 	}
     }
     if (i <= rounds && !del)
 	KPDBWrite(db, Key, "NX", "0000000001", KP_UNLOCK);
     if (waitpid(p2, &st, 0) != p2 || !WIFEXITED(st) || WEXITSTATUS(st) != 0) {
-	printf("P2 failed\n");
+	say("P2 failed\n");
 	return 1;
     }
     /* drain any later reports so a stale one cannot confuse the count */
@@ -407,9 +434,9 @@ main(int ac, char **av)
 	}
 	fclose(fp);
 	if (del)
-	    printf("final live=%d\n", live);
+	    say("final live=%d\n", live);
 	else
-	    printf("final NX=%s live=%d\n", nx, live);
+	    say("final NX=%s live=%d\n", nx, live);
     }
     return 0;
 }
