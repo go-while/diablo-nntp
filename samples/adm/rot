@@ -3,9 +3,9 @@
 # ROT <n> <file>... - rotate each file: file.<n-1> -> file.<n>, ...,
 # file.0 -> file.1, file -> file.0, so that file.0 to file.<n> are kept: n+1
 # old copies (rot 4 keeps file.0 to file.4; rot 0 only file.0).  Copies above
-# file.<n>, left by a larger n before, are removed.  Files that don't exist are
-# skipped.  n is digits, at most 9 of them; anything else is refused before any
-# file is touched.  Exit status: 0, 1 when a move, a removal or a compression
+# file.<n>, left by a larger n before, are removed up to file.9999; a dated name
+# such as file.20261101 is left alone.  Files that don't exist are skipped.  n is
+# digits, at most 9 of them; anything else is refused before any file is touched.  Exit status: 0, 1 when a move, a removal or a compression
 # failed, 2 for a usage or configuration error.
 #
 # ROT -k - check rot.conf and print its keep count (4 when it says nothing);
@@ -266,9 +266,12 @@ squeeze() {
 }
 
 # expire <file>: remove <file>.<N> and <file>.<N><suffix>, for each suffix rot knows,
-# when N is above n: the copies a larger n kept before.  Nothing else is removed:
-# not <file>.0<N>, not an unknown suffix, not a name that only begins like that.
+# when N is above n and at most maxkeep (9999): the copies a larger n kept before.
+# Nothing else is removed: not <file>.0<N>, not an unknown suffix, not a name that only
+# begins like that, and not a larger number such as a date (file.20261101), which is
+# the admin's own file.  With n at maxkeep or above, nothing is above n and in range.
 expire() {
+    [ "$n" -lt "$maxkeep" ] || return 0
     for c in "$1".[0-9]*; do
 	[ -f "$c" ] || continue		# also the pattern itself, when nothing matches
 	r=${c#"$1".}
@@ -283,8 +286,8 @@ expire() {
 		*) continue ;;
 	    esac
 	fi
-	# neither has leading zeros: the longer number is the larger
-	if [ "${#d}" -gt "${#n}" ] || { [ "${#d}" -eq "${#n}" ] && [ "$d" -gt "$n" ]; }; then
+	# no leading zeros, and no longer than maxkeep, so the shell can compare it
+	if [ "${#d}" -le "${#maxkeep}" ] && [ "$d" -gt "$n" ] && [ "$d" -le "$maxkeep" ]; then
 	    rm -f "$c" || rc=1
 	fi
     done
