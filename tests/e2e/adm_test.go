@@ -260,8 +260,9 @@ func TestAdmExitStatus(t *testing.T) {
 	})
 }
 
-// TestAdmRotArguments (D-136): a count that is not a number is refused before any file is moved,
-// leading zeros are decimal, and a move that fails makes rot fail.
+// TestAdmRotArguments (D-136): a count that is not a number, or is above 9999 (the limit of keep in
+// rot.conf), is refused before any file is moved, so rot 20261101 leaves an admin's dated
+// f.20261101 alone; 9999 is accepted; leading zeros are decimal, and a move that fails makes rot fail.
 func TestAdmRotArguments(t *testing.T) {
 	rot := filepath.Join(admSource(t), "rot")
 	run := func(dir string, args ...string) (string, int) {
@@ -270,6 +271,7 @@ func TestAdmRotArguments(t *testing.T) {
 		defer cancel()
 		cmd := exec.CommandContext(ctx, "/bin/sh", append([]string{rot}, args...)...)
 		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "ROT_CONF="+os.DevNull) // not the sample rot.conf
 		out, err := cmd.CombinedOutput()
 		code := 0
 		var ee *exec.ExitError
@@ -288,7 +290,8 @@ func TestAdmRotArguments(t *testing.T) {
 	}
 	write("f", "now")
 	write("f.0", "before")
-	for _, n := range []string{"", "x", "1x", "-1", "1.5", "1234567890"} {
+	write("f.20261101", "dated")
+	for _, n := range []string{"", "x", "1x", "-1", "1.5", "1234567890", "10000", "20261101", "000010000"} {
 		out, code := run(dir, n, "f")
 		if code != 2 {
 			t.Errorf("rot %q f: exit %d, output %q; want 2", n, code, out)
@@ -299,6 +302,24 @@ func TestAdmRotArguments(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(filepath.Join(dir, "f.0")); string(b) != "before" {
 		t.Errorf("f.0 after the refused counts: %q, want it untouched (it was replaced before)", b)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "f.20261101")); string(b) != "dated" {
+		t.Errorf("f.20261101 after the refused counts: %q, want it untouched", b)
+	}
+	// 9999 is accepted (a loop of shell builtins, about a second), and a dated file stays
+	big := t.TempDir()
+	for name, c := range map[string]string{"g": "now", "g.10000": "mine", "g.20261101": "dated"} {
+		if err := os.WriteFile(filepath.Join(big, name), []byte(c), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if out, code := run(big, "9999", "g"); code != 0 {
+		t.Errorf("rot 9999 g: exit %d, output %q; want 0", code, out)
+	}
+	for name, want := range map[string]string{"g.0": "now", "g.10000": "mine", "g.20261101": "dated"} {
+		if b, _ := os.ReadFile(filepath.Join(big, name)); string(b) != want {
+			t.Errorf("%s after rot 9999: %q, want %q", name, b, want)
+		}
 	}
 	if out, code := run(dir, "08", "f"); code != 0 {
 		t.Fatalf("rot 08 f: exit %d, output %q", code, out)
