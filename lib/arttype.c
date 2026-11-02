@@ -46,6 +46,7 @@ Prototype void InitArticleType(void);
 Prototype int ArtTypeConv(char *t);
 Prototype int ArtTypeMatch(int articletype, ArtTypeList *acctypes);
 Prototype int ArticleType(char *line, int len, int inheader);
+Prototype int ArticleTypePiece(char *line, int len, int inheader);
 Prototype int ArticleTypeEnd(void);
 
 #define	ARMOR_MAX	100	/* lines of one armored block (PGP, PEM) that are not counted */
@@ -88,6 +89,9 @@ int Armor = 0;	/* lines left to skip in an ASCII-armored block (PGP, PEM), 0 = n
 static int CTSeen = 0;	/* the part has a Content-Type */
 static int CTEQP = 0;	/* a quoted-printable Content-Transfer-Encoding is waiting for the end of its header block */
 static int QPPart = 0;	/* in the body of a part declared quoted-printable */
+static int QPEsc = 0;	/* an escape cut at the end of a piece: 1 = "=", 2 = "=H" */
+static int QPEscHi;	/* the H of "=H" */
+static int PieceMore = 0;	/* the last call was a piece: the line goes on */
 
 /*
  * Where a part's headers are.  A header block is the article's headers, or
@@ -558,6 +562,8 @@ InitArticleType(void)
     HdrBlock = 1;
     CTCont = 0;
     BndTop = 0;
+    QPEsc = 0;
+    PieceMore = 0;
 }
 
 int
@@ -911,17 +917,30 @@ qpLine(const char *p, int len, int declared)
 /*
  * Has a line of a part declared quoted-printable text an escape of a byte
  * that is not text (=00 to =1F but =09, =0A, =0C, =0D and =1B; =7F)?
- * Then the part is a binary, as decoded base64 text is (b64Decode).
+ * Then the part is a binary, as decoded base64 text is (b64Decode).  An
+ * escape cut at the end of a piece of a long line (ArticleTypePiece) is
+ * finished in the next piece (QPEsc).
  */
 static int
 qpBad(const char *p, int len)
 {
-    int i;
+    int i, c;
 
-    for (i = 0; i + 2 < len; i++) {
-	if (p[i] == '=' && QPHEX(p[i + 1]) && QPHEX(p[i + 2]) &&
-		NOTTEXT(QPVAL(p[i + 1]) * 16 + QPVAL(p[i + 2])))
-	    return(1);
+    for (i = 0; i < len; i++) {
+	c = (unsigned char)p[i];
+	if (QPEsc == 2) {
+	    QPEsc = 0;
+	    if (QPHEX(c) && NOTTEXT(QPEscHi * 16 + QPVAL(c)))
+		return(1);
+	} else if (QPEsc == 1) {
+	    QPEsc = 0;
+	    if (QPHEX(c)) {
+		QPEscHi = QPVAL(c);
+		QPEsc = 2;
+	    }
+	}
+	if (QPEsc == 0 && c == '=')
+	    QPEsc = 1;
     }
     return(0);
 }
@@ -1199,6 +1218,7 @@ partReset(void)
     CTEBase64 = 0;
     CTEQP = 0;
     QPPart = 0;
+    QPEsc = 0;
     CTCont = 0;
 }
 
@@ -1217,11 +1237,42 @@ ArticleTypeEnd(void)
     return(Type);
 }
 
+/*
+ * ArticleType() takes a whole line, without its end of line.  A line
+ * longer than the caller's buffer comes in pieces: each but the last
+ * through ArticleTypePiece(), the last through ArticleType().  Only state
+ * that runs along a line (a quoted-printable escape cut at a piece's end)
+ * needs to know; the base64 decoder goes on across lines anyway.
+ */
+static int articleType(char *line, int len, int inheader);
+
+int
+ArticleTypePiece(char *line, int len, int inheader)
+{
+    int t = articleType(line, len, inheader);
+
+    PieceMore = 1;
+    return(t);
+}
+
 int
 ArticleType(char *line, int len, int inheader)
 {
+    int t = articleType(line, len, inheader);
+
+    PieceMore = 0;
+    return(t);
+}
+
+static int
+articleType(char *line, int len, int inheader)
+{
     static char *ptr;
     static char first;
+
+    /* a new line: no escape is cut at its start */
+    if (!PieceMore)
+	QPEsc = 0;
 
     if (Type != ARTTYPE_DEFAULT)
 	Type = Type & ~ARTTYPE_DEFAULT;

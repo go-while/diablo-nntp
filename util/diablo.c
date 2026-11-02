@@ -3032,7 +3032,10 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		    if (alen > 0 && p[alen - 1] == '\r')
 			--alen;
 		}
-		arttype = ArticleType(p, alen, inHeader);
+		if (thisNl)
+		    arttype = ArticleType(p, alen, inHeader);
+		else
+		    arttype = ArticleTypePiece(p, alen, inHeader);
 	    }
 
 	    /*

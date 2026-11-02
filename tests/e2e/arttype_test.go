@@ -380,6 +380,11 @@ func TestArticleTypes(t *testing.T) {
 		{"quoted-printable text with =00", hdrQP, []string{"Hello=00world, a NUL byte", "and more text"}, atMIME | atBinary, ""},
 		{"quoted-printable text with =7F", hdrQP, []string{"Hello=7Fworld, a DEL byte"}, atMIME | atBinary, ""},
 		{"quoted-printable text with =0C and =1B", hdrQP, []string{"Page one=0C", "=1B$B$3$s$K$A$O=1B(B"}, atMIME, "FF and ESC (ISO-2022-JP) are text"},
+		// A line longer than dfeedtest's 64 KiB buffer comes in pieces: an escape cut at the end
+		// of one is finished in the next.
+		{"quoted-printable =00 cut after its =", hdrQP, []string{strings.Repeat("A", 65534) + "=00" + strings.Repeat("A", 100)}, atMIME | atBinary, ""},
+		{"quoted-printable =00 cut after its =0", hdrQP, []string{strings.Repeat("A", 65533) + "=00" + strings.Repeat("A", 100)}, atMIME | atBinary, ""},
+		{"quoted-printable text, an escape cut", hdrQP, []string{strings.Repeat("A", 65534) + "=C3=A4" + strings.Repeat("A", 100)}, atMIME, ""},
 		{"quoted-printable lines escaping NUL, not declared", nil, edit(qpLines(12), func(l string) string { return "=00" + l[3:] }), atBinary | atBase64, "not text: the lines count as base64"},
 		// MIME parts.
 		{"base64 text part in multipart", []string{"Mime-Version: 1.0", "Content-Type: multipart/alternative; boundary=XX"},
@@ -806,6 +811,13 @@ func TestQuotedPrintableNotRejectedAsBinary(t *testing.T) {
 		{"base64 with a stray '='", nil, edit(b64, func(l string) string { return l[:30] + "=" + l[30:] }), "437"},
 		{"quoted-printable with a --- line", hdrQP, append([]string{"A text section follows:", "---"}, qpFew(12)...), "235"},
 		{"quoted-printable lines in image/png, declared", []string{"Mime-Version: 1.0", "Content-Type: image/png", "Content-Transfer-Encoding: quoted-printable"}, qpLines(12), "437"},
+		// diablo reads a line longer than its buffer (about 4 KiB) in pieces: an escape cut
+		// at the end of one is finished in the next, wherever the cut falls.
+		{"quoted-printable text, a long line with escapes", hdrQP, []string{strings.Repeat("Stra=C3=9Fe ", 2000)}, "235"},
+		{"quoted-printable =00 at 4026 in a long line", hdrQP, []string{strings.Repeat("A", 4026) + "=00" + strings.Repeat("A", 6000)}, "437"},
+		{"quoted-printable =00 at 4027 in a long line", hdrQP, []string{strings.Repeat("A", 4027) + "=00" + strings.Repeat("A", 6000)}, "437"},
+		{"quoted-printable =00 at 4028 in a long line", hdrQP, []string{strings.Repeat("A", 4028) + "=00" + strings.Repeat("A", 6000)}, "437"},
+		{"quoted-printable =00 at 4029 in a long line", hdrQP, []string{strings.Repeat("A", 4029) + "=00" + strings.Repeat("A", 6000)}, "437"},
 	} {
 		if line := offerHeaders(t, s, "talk.test", c.extra, c.body); !strings.HasPrefix(line, c.want) {
 			t.Errorf("IHAVE with %s: %q, want %s", c.name, line, c.want)
