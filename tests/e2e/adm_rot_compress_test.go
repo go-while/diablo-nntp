@@ -198,3 +198,32 @@ func TestAdmDailyAtrimKeep(t *testing.T) {
 		t.Errorf("general.log.3 exists: more than keep 2 kept")
 	}
 }
+
+// TestAdmRotSample: the sample rot.conf, which the install copies next to rot, changes nothing
+// (4 copies, plain): its lines are comments, the examples too. Before, it asked for 14 copies and
+// gzip, so installing it changed the rotation of a site that had no rot.conf.
+func TestAdmRotSample(t *testing.T) {
+	sample := filepath.Join(admSource(t), "rot.conf")
+	b, err := os.ReadFile(sample)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, line := range strings.Split(string(b), "\n") {
+		if l := strings.TrimSpace(line); l != "" && !strings.HasPrefix(l, "#") {
+			t.Errorf("rot.conf:%d: %q is not a comment", i+1, line)
+		}
+	}
+	dir := t.TempDir()
+	if out, code := rotRun(t, dir, string(b), "-k"); code != 0 || strings.TrimSpace(out) != "4" {
+		t.Errorf("rot -k with the sample: exit %d, output %q; want 4", code, out)
+	}
+	for _, c := range []string{"one\n", "two\n"} {
+		rotWrite(t, filepath.Join(dir, "f"), c)
+		if out, code := rotRun(t, dir, string(b), "4", "f"); code != 0 {
+			t.Fatalf("rot 4 f with the sample: exit %d, output %q", code, out)
+		}
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "f.1")); string(b) != "one\n" {
+		t.Errorf("f.1 = %q, want one (plain)", b)
+	}
+}
