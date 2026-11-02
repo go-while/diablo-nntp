@@ -68,6 +68,14 @@ quickhash(const char *st)
     return(rval);
 }
 
+/*
+ * The CRC and hash arithmetic below is done in uint32 and stored back into
+ * the int32 fields of hash_t.  Shifting a signed int left into or past its
+ * sign bit is undefined in C; the unsigned form gives the same bits the
+ * compilers always produced, so hashes already on disk (dhistory, the
+ * overview index, the reader's group files) are unchanged.  Right shifts
+ * of the signed values are kept as they were.
+ */
 void
 crcinit(int method)
 {
@@ -76,19 +84,21 @@ crcinit(int method)
     for (i = 0; i < 256; ++i) {
         int j;
         int v = i;
-        hash_t hv = { 0, 0 };
+        uint32 h1 = 0;
+        uint32 h2 = 0;
 
         for (j = 0; j < 8; ++j, (v <<= 1)) {
             if (v & 0x80) {
-                hv.h1 ^= POLY1;
-                hv.h2 ^= (method == HASH_CRC) ? POLY2 : OPOLY2;
+                h1 ^= POLY1;
+                h2 ^= (method == HASH_CRC) ? POLY2 : OPOLY2;
             }
-            hv.h2 = (hv.h2 << 1);
-            if (hv.h1 & 0x80000000)
-                hv.h2 |= 1;
-            hv.h1 <<= 1;
+            h2 = (h2 << 1);
+            if (h1 & 0x80000000)
+                h2 |= 1;
+            h1 <<= 1;
         }
-        CrcXor[method][i] = hv;
+        CrcXor[method][i].h1 = (int32)h1;
+        CrcXor[method][i].h2 = (int32)h2;
     }
     DidCrcInit = 1;
 }
@@ -102,17 +112,17 @@ hhash(const char *msgid)
 	/*
 	 * HASH_CRC  - CRC64
 	 */
+	uint32 h1 = HINIT1;
+	uint32 h2 = HINIT2;
+
 	if (DidCrcInit == 0) {
 	    crcinit(HASH_CRC);
 	    crcinit(HASH_OCRC);
 	}
-	t.h1 = HINIT1;
-	t.h2 = HINIT2;
-	
 	while (*msgid) {
-	    int i = (t.h1 >> 24) & 255;
-	    t.h1 = (t.h1 << 8) ^ (int)((uint32)t.h2 >> 24) ^ CrcXor[DOpts.HashMethod][i].h1;
-	    t.h2 = (t.h2 << 8) ^ (uint8)*msgid ^ CrcXor[DOpts.HashMethod][i].h2;
+	    int i = (h1 >> 24) & 255;
+	    h1 = (h1 << 8) ^ (h2 >> 24) ^ (uint32)CrcXor[DOpts.HashMethod][i].h1;
+	    h2 = (h2 << 8) ^ (uint8)*msgid ^ (uint32)CrcXor[DOpts.HashMethod][i].h2;
 	    ++msgid;
 	}
 	/*
@@ -120,11 +130,13 @@ hhash(const char *msgid)
 	 * for me to change it now.  I should have XOR'd the 1 in, not OR'd
 	 * it when folding the bits.
 	 */
-	if (t.h1 & 0x80000000)
-	    t.h1 = (t.h1 & 0x7FFFFFFF) | 1;
-	if (t.h2 & 0x80000000)
-	    t.h2 = (t.h2 & 0x7FFFFFFF) | 1;
-	t.h1 |= 0x80000000;	/* indicate CRC64 hash */
+	if (h1 & 0x80000000)
+	    h1 = (h1 & 0x7FFFFFFF) | 1;
+	if (h2 & 0x80000000)
+	    h2 = (h2 & 0x7FFFFFFF) | 1;
+	h1 |= 0x80000000;	/* indicate CRC64 hash */
+	t.h1 = (int32)h1;
+	t.h2 = (int32)h2;
     } else {
 	/*
 	 * HASH_PRIME
@@ -136,11 +148,13 @@ hhash(const char *msgid)
 	while (*msgid) {
 	    h1 = h1 * *(const unsigned char *)msgid % P1;
 	    h2 = h2 * *(const unsigned char *)msgid % P2;
-	    hv = (hv << 5) ^ *(const unsigned char *)msgid ^ (hv >> 23);
+	    hv = (int)(((uint32)hv << 5) ^ *(const unsigned char *)msgid ^
+		(uint32)(hv >> 23));
 	    ++msgid;
 	}
-	t.h1 = (h1 ^ (hv << 14)) & 0x7FFFFFFF;	/* bit 31 reserved */
-	t.h2 = (h2 ^ (hv << 20)) & 0x7FFFFFFF;	/* bit 31 reserved */
+	/* bit 31 reserved */
+	t.h1 = (int32)(((uint32)h1 ^ ((uint32)hv << 14)) & 0x7FFFFFFF);
+	t.h2 = (int32)(((uint32)h2 ^ ((uint32)hv << 20)) & 0x7FFFFFFF);
     }
     return(t);
 }
@@ -154,8 +168,10 @@ void
 bhash(hash_t *h, const char *p, int len)
 {
     while (len) {
-	h->h1 += *(unsigned char *)p;	/* simple checksum */
-	h->h2 = (h->h2 << 5) ^ h->h1 ^ (h->h2 >> 27);
+	/* simple checksum; uint32 as in hhash() */
+	h->h1 = (int32)((uint32)h->h1 + *(const unsigned char *)p);
+	h->h2 = (int32)(((uint32)h->h2 << 5) ^ (uint32)h->h1 ^
+	    (uint32)(h->h2 >> 27));
 	++p;
 	--len;
     }
