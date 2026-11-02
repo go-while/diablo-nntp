@@ -275,6 +275,8 @@ func TestArticleTypes(t *testing.T) {
 		// Double encoding: the decoded lines get the checks of unencoded text.
 		{"base64 of a uuencoded file", hdr64("text/plain"), b64Wrap(joined(append([]string{"begin 644 a.bin"}, atLines(12, 60, uuAlphabet, "M")...)), 76), atMIME | atBinary | atBase64 | atUUencode, ""},
 		{"base64 of base64 data", hdr64("text/plain"), b64Wrap(joined(atLines(12, 76, b64Alphabet, "")), 76), atMIME | atBinary | atBase64, ""},
+		{"base64 of a yEnc block", hdr64("text/plain"), b64Wrap(joined(append(append([]string{"=ybegin line=128 size=384 name=a.bin"}, atLines(3, 128, b64Alphabet, "")...), "=yend size=384")), 76), atMIME | atBinary | atBase64 | atYenc, "the yEnc header is the first decoded line; the data has no control bytes"},
+		{"base64 of text, then a yEnc block", hdr64("text/plain"), b64Wrap(joined(append(append([]string{"Here is the file.", "", "=ybegin part=1 line=128 size=384 name=a.bin"}, atLines(3, 128, b64Alphabet, "")...), "=yend size=384")), 76), atMIME | atBinary | atBase64 | atYenc | atPartial, ""},
 		// The last decoded line has no newline: it gets the per-line checks at the end of the
 		// article (ArticleTypeEnd), as at a MIME boundary and as unencoded.
 		{"base64 text, last line a pgp marker without newline", hdr64("text/plain"), b64Wrap([]byte("Hello.\n-----BEGIN PGP MESSAGE-----"), 76), atMIME | atPGP, ""},

@@ -655,6 +655,22 @@ qpLine(const char *p, int len, int declared)
 }
 
 /*
+ * A yEnc header line: "=ybegin part=" or "=ybegin line=" (other keyword
+ * orders are not recognised).  For every line, and for the decoded lines
+ * of a base64 text part.
+ */
+static void
+yencLine(const char *ptr, int len)
+{
+    if (len > 0 && *ptr == '=') {
+	if (hdrPrefix(ptr, len, "=ybegin part="))
+	    Type |= ARTTYPE_BINARY|ARTTYPE_PARTIAL|ARTTYPE_YENC;
+	if (hdrPrefix(ptr, len, "=ybegin line="))
+	    Type |= ARTTYPE_BINARY|ARTTYPE_YENC;
+    }
+}
+
+/*
  * The per-line checks of a body line: runs of uuencode, BinHex and base64
  * lines, with ASCII-armored blocks not counted.  The counters are passed in
  * so that the decoded lines of a base64 text part are counted apart from
@@ -752,6 +768,25 @@ bodyLineTypes(char *ptr, int len, int *uu, int *bh, int *b64, int *armor)
 }
 
 /*
+ * A decoded line of a base64 text part: the yEnc header check and the
+ * per-line checks of a body line (bodyLineTypes), with the counters of the
+ * decoded text.  Returns 1 when the article is now a binary.
+ */
+static int
+decodedLineTypes(char *ptr, int len)
+{
+    yencLine(ptr, len);
+    if ((Type & ARTTYPE_BINARY) ||
+	    bodyLineTypes(ptr, len, &DecUUencode, &DecBinHex, &DecBase64,
+								&DecArmor)) {
+	Type |= ARTTYPE_BASE64;
+	Type &= ~ARTTYPE_DEFAULT;
+	return(1);
+    }
+    return(0);
+}
+
+/*
  * Start or end the body of a base64 text part.  At the end, a decoded line
  * without a newline is checked too.
  */
@@ -780,11 +815,8 @@ b64Start(void)
 static void
 b64End(void)
 {
-    if (B64Part && DLineLen > 0 && !(Type & ARTTYPE_BINARY)) {
-	if (bodyLineTypes(DLine, DLineLen, &DecUUencode, &DecBinHex,
-						&DecBase64, &DecArmor))
-	    Type |= ARTTYPE_BASE64;
-    }
+    if (B64Part && DLineLen > 0 && !(Type & ARTTYPE_BINARY))
+	(void)decodedLineTypes(DLine, DLineLen);
     B64Part = 0;
 }
 
@@ -793,9 +825,10 @@ b64End(void)
  * piece of one).  The part is a binary as soon as a decoded byte is not
  * text: NUL, DEL, or a control character other than TAB, LF, FF, CR and
  * ESC (ESC for ISO-2022).  Random data has one of those in all but about
- * 0.1% of its 57-byte lines.  Each decoded line also gets the per-line
- * checks (bodyLineTypes), so base64 of a uuencoded or base64 file is still
- * a binary, while a signed text sent as base64 is not.  Text in UTF-16 or
+ * 0.1% of its 57-byte lines.  Each decoded line also gets the yEnc header
+ * check and the per-line checks (decodedLineTypes), so base64 of a yEnc,
+ * uuencoded or base64 file is still a binary, while a signed text sent as
+ * base64 is not.  Text in UTF-16 or
  * UTF-32 has NULs and is taken for a binary.
  *
  * White space is skipped.  '=' after two or three characters of a group
@@ -849,11 +882,8 @@ b64Decode(const char *buf, int len)
 	    break;
 	}
 	if (b == '\n') {
-	    if (bodyLineTypes(DLine, dlen, &DecUUencode, &DecBinHex,
-						&DecBase64, &DecArmor)) {
-		Type |= ARTTYPE_BASE64;
+	    if (decodedLineTypes(DLine, dlen))
 		break;
-	    }
 	    dlen = 0;
 	} else if (dlen < DLINE_MAX) {
 	    DLine[dlen++] = b;
@@ -996,10 +1026,7 @@ ArticleType(char *line, int len, int inheader)
 	    strncasecmp(ptr, "(This file must be converted with BinHex 4.0)", 33) == 0)
 	BinHex = 1;
 
-    if (first == '=' && hdrPrefix(ptr, len, "=ybegin part="))
-	Type |= ARTTYPE_BINARY|ARTTYPE_PARTIAL|ARTTYPE_YENC;
-    if (first == '=' && hdrPrefix(ptr, len, "=ybegin line="))
-	Type |= ARTTYPE_BINARY|ARTTYPE_YENC;
+    yencLine(ptr, len);
 
     if (inheader) {
 	if (len >= 2 && first == 'c' && tolower(ptr[1]) == 'o') {
