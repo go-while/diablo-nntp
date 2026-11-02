@@ -3015,8 +3015,22 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 	    /*
 	     * See if we can categorise the article type
 	     */
-	    if (DOpts.FeederArtTypes && artType != NULL)
-		arttype = ArticleType(p, bytes - aflen, inHeader);
+	    if (DOpts.FeederArtTypes && artType != NULL) {
+		/*
+		 * The line without its end of line.  A piece of a long line
+		 * (the buffer was full, no newline yet) is passed whole: a
+		 * base64 text part is decoded across the pieces and must not
+		 * lose a character.
+		 */
+		int alen = bytes;
+
+		if (thisNl) {
+		    --alen;
+		    if (alen > 0 && p[alen - 1] == '\r')
+			--alen;
+		}
+		arttype = ArticleType(p, alen, inHeader);
+	    }
 
 	    /*
 	     * Extract certain header information

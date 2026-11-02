@@ -258,7 +258,9 @@ LoadArt(void)
 	if (strlen(buf) == 1)
 	    inHeader = 0;
 
-        arttype = ArticleType(buf, len - 1, inHeader);
+	/* a piece of a line longer than buf has no newline and is passed whole */
+	arttype = ArticleType(buf, (len > 0 && buf[len - 1] == '\n') ? len - 1 : len,
+								inHeader);
 
 	if (len < 2)
 	    continue;

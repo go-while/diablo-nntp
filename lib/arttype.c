@@ -66,6 +66,41 @@ int CTEBase64 = 0;	/* a base64 Content-Transfer-Encoding is waiting for the end 
 int Armor = 0;	/* lines left to skip in an ASCII-armored block (PGP, PEM), 0 = not in one */
 
 /*
+ * A base64 part with no Content-Type in its header block.  RFC 2045 makes
+ * its type text/plain, so it is decoded and checked like a text/ part.
+ * Set this to 0 to make such a part a binary at the end of its headers,
+ * as before.  (The one place that decides it; tests/e2e/arttype_test.go
+ * pins it in the "base64 text, no Content-Type" cases.)
+ */
+#define	B64_NOCTYPE_IS_TEXT	1
+
+/*
+ * A base64 text part is decoded instead of counting its lines as base64:
+ * see b64Decode().  The base64 group (B64Bits, B64NBits, B64Quad, B64Pad)
+ * carries across lines and calls, so the line width of the encoding or a
+ * line handed over in pieces does not change what it decodes to.  The
+ * decoded text is split into lines (DLine) and those get the same per-line
+ * checks as an unencoded body, with their own counters (Dec*).
+ */
+#define	DLINE_MAX	1024	/* a longer decoded line is checked by its start */
+
+static int CTSeen = 0;	/* a Content-Type was seen in this header block */
+static int B64Part = 0;	/* in the body of a base64 text part */
+static int B64Bits;	/* bits of the current group not yet decoded */
+static int B64NBits;	/* how many */
+static int B64Quad;	/* base64 characters in the current group, 0-3 */
+static int B64Pad;	/* 0, 1 = one '=' after two characters, 2 = group closed */
+static char DLine[DLINE_MAX];
+static int DLineLen;
+static int DecUUencode, DecBinHex, DecBase64, DecArmor;
+
+#define	B64_SPACE	(-1)	/* white space: skipped */
+#define	B64_EQ		(-2)	/* '=': padding */
+#define	B64_OTHER	(-3)	/* not base64: skipped, the line is also checked as it came */
+static signed char B64Val[256];	/* the value of a base64 character, or one of the above */
+static int B64ValSet = 0;
+
+/*
  * Extensible content type classification system
  *
  * (Derived from an earlier articletype.c, Copyright (C) 1998 Joe Greco
@@ -464,6 +499,8 @@ InitArticleType(void)
     PGPMime = 0;
     CTText = 0;
     CTEBase64 = 0;
+    CTSeen = 0;
+    B64Part = 0;
 }
 
 int
@@ -572,6 +609,210 @@ linePrefix(const char *s, int len, const char *lit)
     return (len >= n && strncmp(s, lit, n) == 0);
 }
 
+/*
+ * The per-line checks of a body line: runs of uuencode, BinHex and base64
+ * lines, with ASCII-armored blocks not counted.  The counters are passed in
+ * so that the decoded lines of a base64 text part are counted apart from
+ * the lines as they came.  Returns 1 when the article is now a binary.
+ */
+static int
+bodyLineTypes(char *ptr, int len, int *uu, int *bh, int *b64, int *armor)
+{
+    int linetype;
+
+    /* Get quoted UUencode, etc. */
+    if (len > 0 && *ptr == '>') {
+	ptr++;
+	len--;
+	if (len > 0 && *ptr == ' ') {
+	    ptr++;
+	    len--;
+	}
+    }
+
+    /*
+     * We look for binary formats first, since these eat
+     * up CPU like there is no tomorrow.  We may miss
+     * some flags if we detect a binary file, the
+     * alternative is to remove the return(Type)'s and
+     * eat CPU for the entire binary.
+     */
+
+    /*
+     * The lines of an ASCII-armored block, a PGP signature, key or message
+     * or a PEM certificate or key (-----BEGIN label----- to -----END
+     * label-----), are base64 text of 64 characters, not a binary posting:
+     * do not count them as base64 or the other encodings.  The signature of
+     * an RSA-4096 key has 12 lines and a certificate more, so a signed text
+     * article or a post with a certificate was taken for a binary.  The
+     * skipping is bounded by ARMOR_MAX lines so that a long binary can't
+     * hide behind a "BEGIN" line.
+     */
+    if (*armor > 0) {
+	if (linePrefix(ptr, len, "-----END "))
+	    *armor = 0;
+	else
+	    --*armor;
+	linetype = 0;
+    } else {
+	linetype = classifyLineAsTypes(ptr, len);
+	if (len > 0 && *ptr == '-' && linePrefix(ptr, len, "-----BEGIN ")) {
+	    /* PGP in any armor form: message (also a part), signed
+	     * message, signature, public or private key block */
+	    if (linePrefix(ptr + 11, len - 11, "PGP "))
+		Type |= ARTTYPE_PGPMESSAGE;
+	    *armor = ARMOR_MAX;
+	}
+    }
+
+    if (linetype & UUE) {
+	*b64 = 0;
+	*bh = 0;
+	if (++*uu > 8) {
+	    Type |= ARTTYPE_UUENCODE | ARTTYPE_BINARY;
+	    Type &= ~ARTTYPE_DEFAULT;
+	    return(1);
+	}
+    } else if (linetype & BHX) {
+	*uu = 0;
+	*b64 = 0;
+	if (++*bh > 8) {
+	    Type |= ARTTYPE_BINHEX | ARTTYPE_BINARY;
+	    Type &= ~ARTTYPE_DEFAULT;
+	    return(1);
+	}
+    } else if (linetype & B64) {
+	*uu = 0;
+	*bh = 0;
+	if (++*b64 > 8) {
+	    Type |= ARTTYPE_BASE64 | ARTTYPE_BINARY;
+	    Type &= ~ARTTYPE_DEFAULT;
+	    return(1);
+	}
+    } else {
+	*uu = 0;
+	*b64 = 0;
+	*bh = 0;
+    }
+    return(0);
+}
+
+/*
+ * Start or end the body of a base64 text part.  At the end, a decoded line
+ * without a newline is checked too.
+ */
+static void
+b64Start(void)
+{
+    if (!B64ValSet) {
+	static const char alpha[] =
+	    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+	int i;
+
+	for (i = 0; i < 256; i++)
+	    B64Val[i] = B64_OTHER;
+	for (i = 0; i < 64; i++)
+	    B64Val[(unsigned char)alpha[i]] = i;
+	B64Val[' '] = B64Val['\t'] = B64Val['\r'] = B64Val['\n'] = B64_SPACE;
+	B64Val['='] = B64_EQ;
+	B64ValSet = 1;
+    }
+    B64Part = 1;
+    B64Bits = B64NBits = B64Quad = B64Pad = 0;
+    DLineLen = 0;
+    DecUUencode = DecBinHex = DecBase64 = DecArmor = 0;
+}
+
+static void
+b64End(void)
+{
+    if (B64Part && DLineLen > 0 && !(Type & ARTTYPE_BINARY)) {
+	if (bodyLineTypes(DLine, DLineLen, &DecUUencode, &DecBinHex,
+						&DecBase64, &DecArmor))
+	    Type |= ARTTYPE_BASE64;
+    }
+    B64Part = 0;
+}
+
+/*
+ * Decode len bytes of the body of a base64 text part (a whole line or a
+ * piece of one).  The part is a binary as soon as a decoded byte is not
+ * text: NUL, DEL, or a control character other than TAB, LF, FF, CR and
+ * ESC (ESC for ISO-2022).  Random data has one of those in all but about
+ * 0.1% of its 57-byte lines.  Each decoded line also gets the per-line
+ * checks (bodyLineTypes), so base64 of a uuencoded or base64 file is still
+ * a binary, while a signed text sent as base64 is not.  Text in UTF-16 or
+ * UTF-32 has NULs and is taken for a binary.
+ *
+ * White space is skipped.  '=' after two or three characters of a group
+ * closes it; any other '=' is skipped.  Data after a closed group starts a
+ * new one and is decoded too, so nothing can hide behind padding.  Any
+ * other character that is not base64 is skipped as RFC 2045 decoders do;
+ * the return value is then 1, and the caller also gives the line as it came
+ * the per-line checks.
+ */
+static int
+b64Decode(const char *buf, int len)
+{
+    int bits = B64Bits, nbits = B64NBits, quad = B64Quad, pad = B64Pad;
+    int dlen = DLineLen;
+    int i, v, b;
+    int unclean = 0;
+
+    for (i = 0; i < len; i++) {
+	v = B64Val[(unsigned char)buf[i]];
+	if (v < 0) {
+	    if (v == B64_EQ) {
+		if (pad == 0 && quad == 2)
+		    pad = 1;
+		else if ((pad == 0 && quad == 3) || pad == 1) {
+		    pad = 2;
+		    bits = nbits = quad = 0;
+		}
+	    } else if (v == B64_OTHER) {
+		unclean = 1;
+	    }
+	    continue;		/* B64_SPACE and the rest are skipped */
+	}
+	if (pad) {
+	    /* data after padding: a new group */
+	    pad = 0;
+	    bits = nbits = quad = 0;
+	}
+	bits = (bits << 6) | v;
+	nbits += 6;
+	quad = (quad + 1) & 3;
+	if (nbits < 8)
+	    continue;
+	nbits -= 8;
+	b = (bits >> nbits) & 0xff;
+	bits &= (1 << nbits) - 1;
+
+	if ((b < 0x20 && b != '\t' && b != '\n' && b != '\f' && b != '\r' &&
+						b != 0x1b) || b == 0x7f) {
+	    Type |= ARTTYPE_BASE64 | ARTTYPE_BINARY;
+	    Type &= ~ARTTYPE_DEFAULT;
+	    break;
+	}
+	if (b == '\n') {
+	    if (bodyLineTypes(DLine, dlen, &DecUUencode, &DecBinHex,
+						&DecBase64, &DecArmor)) {
+		Type |= ARTTYPE_BASE64;
+		break;
+	    }
+	    dlen = 0;
+	} else if (dlen < DLINE_MAX) {
+	    DLine[dlen++] = b;
+	}
+    }
+    B64Bits = bits;
+    B64NBits = nbits;
+    B64Quad = quad;
+    B64Pad = pad;
+    DLineLen = dlen;
+    return(unclean);
+}
+
 int
 ArticleType(char *line, int len, int inheader)
 {
@@ -588,7 +829,10 @@ ArticleType(char *line, int len, int inheader)
      */
     if (CTEBase64 && (len == 0 || (len == 1 && *line == '\r'))) {
 	CTEBase64 = 0;
-	if (!CTText) {
+	if (CTText || (!CTSeen && B64_NOCTYPE_IS_TEXT)) {
+	    /* a text part: decode it (b64Decode) */
+	    b64Start();
+	} else {
 	    Type |= ARTTYPE_BASE64 | ARTTYPE_BINARY;
 	    Type &= ~ARTTYPE_DEFAULT;
 	}
@@ -631,6 +875,7 @@ ArticleType(char *line, int len, int inheader)
 	    int cvlen = len - (int)(cv - ptr);
 
 	    Type |= ARTTYPE_MIME;
+	    CTSeen = 1;
 	    CTText = hdrPrefix(cv, cvlen, "text/");
 	    if (hdrPrefix(cv, cvlen, "text/html"))
 		Type |= ARTTYPE_HTML;
@@ -690,89 +935,30 @@ ArticleType(char *line, int len, int inheader)
 	if (first == 'm' && hdrPrefix(ptr, len, "Mime-Version: "))
 		Type |= ARTTYPE_MIME;
     } else {
-	int linetype;
-
-	/* A MIME boundary starts a part: its Content-Type is not known yet */
-	if (len >= 2 && ptr[0] == '-' && ptr[1] == '-')
+	/*
+	 * A MIME boundary starts a part: its Content-Type is not known yet,
+	 * and it ends a base64 text part
+	 */
+	if (len >= 2 && ptr[0] == '-' && ptr[1] == '-') {
 	    CTText = 0;
-
-	/* Get quoted UUencode, etc. */
-	if (*ptr == '>') {
-	    ptr++;
-	    len--;
-	    if (len > 0 && *ptr == ' ') {
-		ptr++;
-		len--;
+	    CTSeen = 0;
+	    if (B64Part) {
+		b64End();
+		if (Type & ARTTYPE_BINARY)
+		    return(Type);
 	    }
+	} else if (B64Part) {
+	    /*
+	     * The body of a base64 text part is decoded, not counted as
+	     * base64 lines.  A line with characters that are not base64 also
+	     * gets the checks of a line as it came.
+	     */
+	    if (!b64Decode(ptr, len) || (Type & ARTTYPE_BINARY))
+		return(Type);
 	}
 
-	/*
-	 * We look for binary formats first, since these eat 
-	 * up CPU like there is no tomorrow.  We may miss 
-	 * some flags if we detect a binary file, the 
-	 * alternative is to remove the return(Type)'s and 
-	 * eat CPU for the entire binary.
-	 */
-
-	/*
-	 * The lines of an ASCII-armored block, a PGP signature, key or message
-	 * or a PEM certificate or key (-----BEGIN label----- to -----END
-	 * label-----), are base64 text of 64 characters, not a binary posting:
-	 * do not count them as base64 or the other encodings.  The signature of
-	 * an RSA-4096 key has 12 lines and a certificate more, so a signed text
-	 * article or a post with a certificate was taken for a binary.  The
-	 * skipping is bounded by ARMOR_MAX lines so that a long binary can't
-	 * hide behind a "BEGIN" line.
-	 */
-	if (Armor > 0) {
-	    if (linePrefix(ptr, len, "-----END "))
-		Armor = 0;
-	    else
-		--Armor;
-	    linetype = 0;
-	} else {
-	    linetype = classifyLineAsTypes(ptr, len);
-	    if (len > 0 && *ptr == '-' && linePrefix(ptr, len, "-----BEGIN ")) {
-		/* PGP in any armor form: message (also a part), signed
-		 * message, signature, public or private key block */
-		if (linePrefix(ptr + 11, len - 11, "PGP "))
-		    Type |= ARTTYPE_PGPMESSAGE;
-		Armor = ARMOR_MAX;
-	    }
-	}
-
-	if (linetype & UUE) {
-	    Base64 = 0;
-	    BinHex = 0;
-	    UUencode++;
-	    if (UUencode > 8) {
-		Type |= ARTTYPE_UUENCODE | ARTTYPE_BINARY;
-		Type &= ~ARTTYPE_DEFAULT;
-		return(Type);
-	    }
-	} else if (linetype & BHX) {
-	    UUencode = 0;
-	    Base64 = 0;
-	    BinHex++;
-	    if (BinHex > 8) {
-		Type |= ARTTYPE_BINHEX | ARTTYPE_BINARY;
-		Type &= ~ARTTYPE_DEFAULT;
-		return(Type);
-	    }
-	} else if (linetype & B64) {
-	    UUencode = 0;
-	    BinHex = 0;
-	    Base64++;
-	    if (Base64 > 8) {
-		Type |= ARTTYPE_BASE64 | ARTTYPE_BINARY;
-		Type &= ~ARTTYPE_DEFAULT;
-		return(Type);
-	    }
-	} else {
-	    UUencode = 0;
-	    Base64 = 0;
-	    BinHex = 0;
-	}
+	if (bodyLineTypes(ptr, len, &UUencode, &BinHex, &Base64, &Armor))
+	    return(Type);
     }
     if (Type != ARTTYPE_DEFAULT)
 	Type = Type & ~ARTTYPE_DEFAULT;

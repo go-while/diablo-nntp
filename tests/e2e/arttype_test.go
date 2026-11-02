@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/base64"
 	"fmt"
+	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -66,17 +67,49 @@ func hdr64(ctype string) []string {
 // b64Text returns n lines of base64 (76 characters, the last one shorter and padded) that
 // decode to a patch description with UTF-8 text in it.
 func b64Text(n int) []string {
+	return b64Wrap(patchText(n*57-5), 76)
+}
+
+// patchText returns n bytes of a patch description with UTF-8 text in it.
+func patchText(n int) []byte {
 	var text strings.Builder
-	for i := 0; text.Len() < n*57-5; i++ {
+	for i := 0; text.Len() < n; i++ {
 		text.WriteString("tcp: free saved_syn after an RCU grace period (caf\u00e9) " + strconv.Itoa(i) + "\n")
 	}
-	enc := base64.StdEncoding.EncodeToString([]byte(text.String()[:n*57-5]))
+	return []byte(text.String()[:n])
+}
+
+// b64Wrap returns data as one base64 stream in lines of w characters, the last one shorter
+// and padded.
+func b64Wrap(data []byte, w int) []string {
+	enc := base64.StdEncoding.EncodeToString(data)
 	var l []string
-	for len(enc) > 76 {
-		l = append(l, enc[:76])
-		enc = enc[76:]
+	for len(enc) > w {
+		l = append(l, enc[:w])
+		enc = enc[w:]
 	}
 	return append(l, enc)
+}
+
+// randBytes returns n bytes of random data, the same for the same seed.
+func randBytes(n int, seed int64) []byte {
+	b := make([]byte, n)
+	rand.New(rand.NewSource(seed)).Read(b)
+	return b
+}
+
+// edit returns the lines with f applied to each.
+func edit(l []string, f func(string) string) []string {
+	var e []string
+	for _, x := range l {
+		e = append(e, f(x))
+	}
+	return e
+}
+
+// joined returns the lines as one text with a newline after each.
+func joined(l []string) []byte {
+	return []byte(strings.Join(l, "\n") + "\n")
 }
 
 // atArticle builds an article with the usual headers, extra headers and a body.
@@ -164,18 +197,60 @@ func TestArticleTypes(t *testing.T) {
 		// "=ybegin line=" at the start.
 		{"yenc total= part= line=", nil, append(append([]string{"=ybegin total=2 part=1 line=128 size=768 name=a.bin", "=ypart begin=1 end=384"}, yenc...), "=yend size=384 part=1"), atDefault, "misdetection: not binary at all; should be atYenc | atBinary | atPartial"},
 		{"yenc size= line=", nil, append(append([]string{"=ybegin size=384 line=128 name=a.bin"}, yenc...), "=yend size=384"), atDefault, "misdetection: not binary at all; should be atYenc | atBinary"},
-		// Text that is taken for binary.
-		{"base64 text", []string{"Mime-Version: 1.0", "Content-Type: text/plain; charset=UTF-8", "Content-Transfer-Encoding: base64"}, atLines(3, 40, b64Alphabet, ""), atMIME, ""},
-		{"base64 text, encoding first", []string{"Mime-Version: 1.0", "Content-Transfer-Encoding: base64", "Content-Type: text/plain; charset=UTF-8"}, atLines(3, 40, b64Alphabet, ""), atMIME, ""},
-		{"base64 html", []string{"Mime-Version: 1.0", "Content-Type: text/html; charset=UTF-8", "Content-Transfer-Encoding: base64"}, atLines(3, 40, b64Alphabet, ""), atMIME | atHTML, ""},
-		{"base64 text, 12 lines", []string{"Mime-Version: 1.0", "Content-Type: text/plain; charset=UTF-8", "Content-Transfer-Encoding: base64"}, atLines(12, 76, b64Alphabet, ""), atMIME | atBinary | atBase64, "by design: the line count still makes a long base64 body a binary, so a binary can't pass as text/plain"},
-		{"base64 without Content-Type", []string{"Mime-Version: 1.0", "Content-Transfer-Encoding: base64"}, atLines(3, 40, b64Alphabet, ""), atMIME | atBinary | atBase64, "by design: only an explicit text/ type is exempt"},
+		// A text part sent as base64 (Content-Type text/..., or none) is decoded instead of
+		// counting its lines as base64: it is text when it decodes to text that would be text
+		// unencoded, and binary when a decoded byte is NUL, DEL or a control character other
+		// than TAB, LF, FF, CR and ESC.
+		{"base64 text", hdr64("text/plain; charset=UTF-8"), b64Text(30), atMIME, ""},
+		{"base64 text, encoding first", []string{"Mime-Version: 1.0", "Content-Transfer-Encoding: base64", "Content-Type: text/plain; charset=UTF-8"}, b64Text(30), atMIME, ""},
+		{"base64 html", hdr64("text/html; charset=UTF-8"), b64Text(30), atMIME | atHTML, ""},
+		{"base64 text/x-patch", hdr64("text/x-patch"), b64Text(30), atMIME, ""},
+		{"base64 text, ISO-2022-JP", hdr64("text/plain; charset=ISO-2022-JP"), []string{"GyRCJDMkcyRLJEEkTxsoQgo="}, atMIME, ""},
+		{"base64 text, CRLF lines", hdr64("text/plain"), edit(b64Text(30), func(l string) string { return l + "\r" }), atMIME, ""},
+		{"base64 text, 4 wide", hdr64("text/plain"), b64Wrap(patchText(1500), 4), atMIME, ""},
+		{"base64 text, 60 wide", hdr64("text/plain"), b64Wrap(patchText(1500), 60), atMIME, ""},
+		{"base64 text, 64 wide", hdr64("text/plain"), b64Wrap(patchText(1500), 64), atMIME, ""},
+		{"base64 text, 72 wide", hdr64("text/plain"), b64Wrap(patchText(1500), 72), atMIME, ""},
+		{"base64 text, 73 wide", hdr64("text/plain"), b64Wrap(patchText(1500), 73), atMIME, ""},
+		{"base64 text, 75 wide", hdr64("text/plain"), b64Wrap(patchText(1500), 75), atMIME, ""},
+		{"base64 text, 76 wide", hdr64("text/plain"), b64Wrap(patchText(1500), 76), atMIME, ""},
+		// One line longer than dfeedtest's line buffer (64 KiB) is handed over in pieces, as a
+		// long line is by diablo's (about 4 KiB): the pieces decode as one stream.
+		{"base64 text, one line in pieces", hdr64("text/plain"), b64Wrap(patchText(60000), 80000), atMIME, ""},
+		{"base64 random data, one line in pieces", hdr64("text/plain"), b64Wrap(randBytes(60000, 7), 80000), atMIME | atBinary | atBase64, ""},
+		{"base64 text, then a plain signature", hdr64("text/plain"), append(b64Text(30), "-- ", "Max"), atMIME, "a '--' line ends the part: what follows is not decoded"},
+		{"base64 text, two padded streams", hdr64("text/plain"), append(b64Text(5), b64Text(5)...), atMIME, ""},
+		{"base64 signed text", hdr64("text/plain"), b64Wrap(joined(append([]string{"-----BEGIN PGP SIGNED MESSAGE-----", "Hash: SHA512", "", "Signed text."}, pgp("SIGNATURE", 12)...)), 76), atMIME | atPGP, "the decoded lines get the armor rule of unencoded text"},
+		// RFC 2045: a body without a Content-Type is text/plain. B64_NOCTYPE_IS_TEXT in
+		// lib/arttype.c decides it; with it 0 the text case is atMIME | atBinary | atBase64.
+		{"base64 text, no Content-Type", []string{"Mime-Version: 1.0", "Content-Transfer-Encoding: base64"}, b64Text(30), atMIME, ""},
+		{"base64 random data, no Content-Type", []string{"Mime-Version: 1.0", "Content-Transfer-Encoding: base64"}, b64Wrap(randBytes(1140, 1), 76), atMIME | atBinary | atBase64, ""},
+		// Base64 that does not decode to text.
+		{"base64 random data in text/plain", hdr64("text/plain; charset=UTF-8"), atLines(3, 76, b64Alphabet, ""), atMIME | atBinary | atBase64, ""},
+		{"base64 text, 12 lines", hdr64("text/plain; charset=UTF-8"), atLines(12, 76, b64Alphabet, ""), atMIME | atBinary | atBase64, "lines of base64 characters that do not decode to text"},
+		{"base64 binary after text", hdr64("text/plain; charset=UTF-8"), b64Wrap(append(patchText(300), randBytes(171, 2)...), 76), atMIME | atBinary | atBase64, "one stream: text, then data"},
+		{"base64 binary after padded text", hdr64("text/plain"), append(b64Text(5), b64Wrap(randBytes(171, 3), 76)...), atMIME | atBinary | atBase64, "data after the padding is decoded too"},
+		{"base64 with NUL bytes", hdr64("text/plain"), []string{"AAAAAAAAAAAAAAAA"}, atMIME | atBinary | atBase64, ""},
+		{"base64 with DEL", hdr64("text/plain"), b64Wrap(append(patchText(100), 0x7f), 76), atMIME | atBinary | atBase64, ""},
+		{"base64 application/pdf", hdr64("application/pdf"), b64Text(30), atMIME | atBinary | atBase64, ""},
+		// Characters that base64 decoders skip do not hide the data.
+		{"base64 random data, trailing space", hdr64("text/plain"), edit(b64Wrap(randBytes(1140, 4), 76), func(l string) string { return l + " " }), atMIME | atBinary | atBase64, ""},
+		{"base64 random data, leading =", hdr64("text/plain"), edit(b64Wrap(randBytes(1140, 5), 76), func(l string) string { return "=" + l }), atMIME | atBinary | atBase64, ""},
+		{"base64 random data, leading !", hdr64("text/plain"), edit(b64Wrap(randBytes(1140, 6), 76), func(l string) string { return "!" + l }), atMIME | atBinary | atBase64, ""},
+		{"uuencode under a base64 text header", hdr64("text/plain"), append([]string{"begin 644 a.bin"}, atLines(12, 60, uuAlphabet, "M")...), atMIME | atBinary | atBase64, ""},
+		{"uuencode under a base64 header, no Content-Type", []string{"Mime-Version: 1.0", "Content-Transfer-Encoding: base64"}, append([]string{"begin 644 a.bin"}, atLines(12, 60, uuAlphabet, "M")...), atMIME | atBinary | atBase64, ""},
+		// Double encoding: the decoded lines get the checks of unencoded text.
+		{"base64 of a uuencoded file", hdr64("text/plain"), b64Wrap(joined(append([]string{"begin 644 a.bin"}, atLines(12, 60, uuAlphabet, "M")...)), 76), atMIME | atBinary | atBase64 | atUUencode, ""},
+		{"base64 of base64 data", hdr64("text/plain"), b64Wrap(joined(atLines(12, 76, b64Alphabet, "")), 76), atMIME | atBinary | atBase64, ""},
+		// MIME parts.
 		{"base64 text part in multipart", []string{"Mime-Version: 1.0", "Content-Type: multipart/alternative; boundary=XX"},
-			append(append([]string{"--XX", "Content-Type: text/plain; charset=UTF-8", "Content-Transfer-Encoding: base64", ""}, atLines(3, 40, b64Alphabet, "")...), "--XX--"), atMIME | atMultipart, ""},
+			append(append([]string{"--XX", "Content-Type: text/plain; charset=UTF-8", "Content-Transfer-Encoding: base64", ""}, b64Text(30)...), "--XX--"), atMIME | atMultipart, ""},
+		{"base64 text part, then plain text", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=XX"},
+			append(append([]string{"--XX", "Content-Type: text/x-patch", "Content-Transfer-Encoding: base64", ""}, b64Text(30)...), "--XX", "Content-Type: text/plain", "", "Thanks.", "--XX--"), atMIME | atMultipart, ""},
 		{"base64 image part after a base64 text part", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=XX"},
-			append(append(append([]string{"--XX", "Content-Type: text/plain", "Content-Transfer-Encoding: base64", ""}, atLines(2, 40, b64Alphabet, "")...), "--XX", "Content-Type: image/png", "Content-Transfer-Encoding: base64", ""), atLines(3, 40, b64Alphabet, "")...), atMIME | atMultipart | atBinary | atBase64, ""},
+			append(append(append([]string{"--XX", "Content-Type: text/plain", "Content-Transfer-Encoding: base64", ""}, b64Text(2)...), "--XX", "Content-Type: image/png", "Content-Transfer-Encoding: base64", ""), atLines(3, 40, b64Alphabet, "")...), atMIME | atMultipart | atBinary | atBase64, ""},
 		{"base64 part without Content-Type after a text part", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=XX"},
-			append(append(append([]string{"--XX", "Content-Type: text/plain", ""}, "hello"), "--XX", "Content-Transfer-Encoding: base64", ""), atLines(3, 40, b64Alphabet, "")...), atMIME | atMultipart | atBinary | atBase64, "a part has its own type: the earlier text/plain does not carry over"},
+			append(append(append([]string{"--XX", "Content-Type: text/plain", ""}, "hello"), "--XX", "Content-Transfer-Encoding: base64", ""), b64Wrap(randBytes(171, 8), 76)...), atMIME | atMultipart | atBinary | atBase64, "a part has its own type: the earlier text/plain does not carry over, and random data is not text"},
 		// Header parsing.
 		{"pem certificate", nil, pem("CERTIFICATE", 24), atDefault, ""},
 		{"pem certificate request", nil, pem("CERTIFICATE REQUEST", 14), atDefault, ""},
@@ -200,7 +275,7 @@ func TestArticleTypes(t *testing.T) {
 		{"uuencode ending on the 9th line", nil, append([]string{"begin 644 a.bin"}, atLines(9, 60, uuAlphabet, "M")...), atBinary | atUUencode, ""},
 		{"base64 ending on the 9th line", nil, atLines(9, 64, b64Alphabet, ""), atBinary | atBase64, ""},
 		{"empty body lines", nil, []string{"", "text", "", ""}, atDefault, ""},
-		{"base64 CTE, empty body", []string{"Content-Transfer-Encoding: base64"}, nil, atBinary | atBase64, "the deferred base64 CTE must clear the default bit like the other binary paths"},
+		{"base64 CTE, empty body", []string{"Content-Type: image/png", "Content-Transfer-Encoding: base64"}, nil, atMIME | atBinary | atBase64, "the deferred base64 CTE must clear the default bit like the other binary paths"},
 		{"folded multipart Content-Type", []string{"Mime-Version: 1.0", "Content-Type:", " multipart/mixed; boundary=XX"}, []string{"--XX", "--XX--"}, atMIME, "misdetection: the value on the next line is not seen; should add atMultipart"},
 		// PGP: every armor form, short (4 lines) and the size of an RSA-4096 signature or key
 		// (12 lines of 64 characters, which more than 8 in a row make a base64 binary).
@@ -286,10 +361,12 @@ end
 	text := send1("text", nil, []string{"Hello."})
 	yenc := send1("yenc", nil, append(append([]string{"=ybegin line=128 size=384 name=a.bin"}, atLines(3, 128, b64Alphabet, "")...), "=yend size=384"))
 	sig := send1("long signature", nil, append([]string{"-----BEGIN PGP SIGNED MESSAGE-----", "Hash: SHA512", "", "Signed text."}, pgp("SIGNATURE", 12)...))
+	b64txt := send1("base64 text", hdr64("text/plain; charset=UTF-8"), b64Wrap(patchText(1500), 73))
+	b64bin := send1("base64 random data", hdr64("text/plain; charset=UTF-8"), b64Wrap(randBytes(1140, 11), 76))
 	expect(t, p, 205, "QUIT")
 
-	bin := strings.Join(s.waitQueue(t, "bin", 1), "\n")
-	txt := strings.Join(s.waitQueue(t, "txt", 2), "\n")
+	bin := strings.Join(s.waitQueue(t, "bin", 2), "\n")
+	txt := strings.Join(s.waitQueue(t, "txt", 3), "\n")
 	if !strings.Contains(bin, yenc) || !strings.Contains(txt, text) {
 		t.Errorf("dqueue/bin = %q, dqueue/txt = %q: want yEnc %s in bin and text %s in txt", bin, txt, yenc, text)
 	}
@@ -303,6 +380,14 @@ end
 	// A text article with a 12-line signature (an RSA-4096 key) is not a binary.
 	if !strings.Contains(txt, sig) || strings.Contains(bin, sig) {
 		t.Errorf("dqueue/txt = %q, dqueue/bin = %q: want the long-signature article %s in txt only", txt, bin, sig)
+	}
+	// A text/plain body sent as base64 is text (here 73 characters a line); one that decodes
+	// to random data is a binary.
+	if !strings.Contains(txt, b64txt) || strings.Contains(bin, b64txt) {
+		t.Errorf("dqueue/txt = %q, dqueue/bin = %q: want the base64 text article %s in txt only", txt, bin, b64txt)
+	}
+	if !strings.Contains(bin, b64bin) || strings.Contains(txt, b64bin) {
+		t.Errorf("dqueue/txt = %q, dqueue/bin = %q: want the base64 random data article %s in bin only", txt, bin, b64bin)
 	}
 }
 
@@ -410,22 +495,38 @@ func offerHeaders(t *testing.T, s *Site, group string, extra, body []string) str
 	return line
 }
 
-// TestBase64TextNotRejectedAsBinary: a short text/plain article sent with
-// Content-Transfer-Encoding: base64 (some clients do that for non-ASCII text) passes the sample
-// IFILTER, which rejects binaries outside *.bina* groups. Before, the header alone made it a
-// binary. An image sent the same way is still refused.
+// TestBase64TextNotRejectedAsBinary: a text/plain article sent with
+// Content-Transfer-Encoding: base64 (some clients and mail gateways do that for non-ASCII text)
+// passes the sample IFILTER, which rejects binaries outside *.bina* groups, at any line width
+// and as one long line (which diablo reads in pieces). Before, the header alone made it a
+// binary, then nine base64 lines in a row did. An image sent the same way, random data or a
+// uuencoded file under a text header are still refused.
 func TestBase64TextNotRejectedAsBinary(t *testing.T) {
 	s := NewSite(t, SiteOptions{
 		Newsfeeds: DefaultNewsfeeds + "label IFILTER\n    addgroup *\n    delgroup *.bina*\n    arttypes binary\nend\n",
 	})
-	text := []string{"Mime-Version: 1.0", "Content-Type: text/plain; charset=UTF-8", "Content-Transfer-Encoding: base64"}
-	image := []string{"Mime-Version: 1.0", "Content-Type: image/png", "Content-Transfer-Encoding: base64"}
-	short := atLines(3, 40, b64Alphabet, "")
-	if line := offerHeaders(t, s, "comp.test", text, short); !strings.HasPrefix(line, "235") {
-		t.Errorf("IHAVE with a base64 text/plain article: %q, want 235", line)
-	}
-	if line := offerHeaders(t, s, "comp.test", image, short); !strings.HasPrefix(line, "437") {
-		t.Errorf("IHAVE with a base64 image: %q, want 437", line)
+	text := hdr64("text/plain; charset=UTF-8")
+	image := hdr64("image/png")
+	for _, c := range []struct {
+		name  string
+		extra []string
+		body  []string
+		want  string
+	}{
+		{"base64 text/plain", text, b64Text(30), "235"},
+		{"base64 text/plain, 73 wide", text, b64Wrap(patchText(1500), 73), "235"},
+		{"base64 text/plain, one long line", text, b64Wrap(patchText(12000), 20000), "235"},
+		{"base64 text, no Content-Type", []string{"Mime-Version: 1.0", "Content-Transfer-Encoding: base64"}, b64Text(30), "235"},
+		{"base64 text part in multipart", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=XX"},
+			append(append([]string{"--XX", "Content-Type: text/x-patch", "Content-Transfer-Encoding: base64", ""}, b64Text(30)...), "--XX--"), "235"},
+		{"base64 image", image, atLines(3, 40, b64Alphabet, ""), "437"},
+		{"base64 random data in text/plain", text, b64Wrap(randBytes(1140, 9), 76), "437"},
+		{"base64 random data in text/plain, one long line", text, b64Wrap(randBytes(12000, 10), 20000), "437"},
+		{"uuencode under a base64 text header", text, append([]string{"begin 644 a.bin"}, atLines(12, 60, uuAlphabet, "M")...), "437"},
+	} {
+		if line := offerHeaders(t, s, "comp.test", c.extra, c.body); !strings.HasPrefix(line, c.want) {
+			t.Errorf("IHAVE with %s: %q, want %s", c.name, line, c.want)
+		}
 	}
 }
 
