@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -290,6 +291,63 @@ func TestAdmRotConfigErrors(t *testing.T) {
 	for conf, want := range map[string]string{"keep 9999\n": "9999", "keep 0\n": "0", "keep 007\n": "7"} {
 		if out, code := rotRun(t, dir, conf, "-k"); code != 0 || strings.TrimSpace(out) != want {
 			t.Errorf("%q, rot -k: exit %d, output %q; want %s", conf, code, out, want)
+		}
+	}
+}
+
+// TestAdmRotKeepLowered: when keep is lowered, the copies above the new count go at the next
+// rotation, plain or with any suffix rot knows (built in or a method of rot.conf); names that only
+// look like copies (a leading zero, an unknown suffix, a .tmp, another file, a directory) stay.
+// Before, rot only looked at file.0 to file.<n>, and the copies above stayed for ever.
+func TestAdmRotKeepLowered(t *testing.T) {
+	if _, err := exec.LookPath("gzip"); err != nil {
+		t.Skip("no gzip")
+	}
+	dir := t.TempDir()
+	path := func(n string) string { return filepath.Join(dir, n) }
+	conf := "keep 5\ncompress gzip\nmethod upper .up tr a-z A-Z\n"
+	for i := 1; i <= 7; i++ {
+		rotWrite(t, path("f"), fmt.Sprintf("day %d\n", i))
+		if out, code := rotRun(t, dir, conf, "5", "f"); code != 0 {
+			t.Fatalf("rotation %d: exit %d, output %q", i, code, out)
+		}
+	}
+	// copies of earlier settings: plain, another built-in method, a method of rot.conf
+	for _, n := range []string{"f.3", "f.4.up", "f.5.bz2", "f.10.xz"} {
+		rotWrite(t, path(n), "old\n")
+	}
+	keepThese := []string{"f.06", "f.3.bak", "f.7.gz.tmp", "fz.3", "f.x", "f.3gz"}
+	for _, n := range keepThese {
+		rotWrite(t, path(n), "not a copy\n")
+	}
+	if err := os.Mkdir(path("f.9"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	keepThese = append(keepThese, "f.9")
+
+	rotWrite(t, path("f"), "day 8\n")
+	if out, code := rotRun(t, dir, strings.Replace(conf, "keep 5", "keep 1", 1), "1", "f"); code != 0 {
+		t.Fatalf("rotation with keep 1: exit %d, output %q", code, out)
+	}
+	if b, _ := os.ReadFile(path("f.0")); string(b) != "day 8\n" {
+		t.Errorf("f.0 = %q, want day 8", b)
+	}
+	if got := rotGunzip(t, path("f.1.gz")); got != "day 7\n" {
+		t.Errorf("f.1.gz = %q, want day 7", got)
+	}
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range ents {
+		n := e.Name()
+		if strings.HasPrefix(n, "f.") && n != "f.0" && n != "f.1.gz" && !slices.Contains(keepThese, n) {
+			t.Errorf("%s is still there after keep was lowered to 1", n)
+		}
+	}
+	for _, n := range keepThese {
+		if _, err := os.Stat(path(n)); err != nil {
+			t.Errorf("%s is gone, but it is not a copy rot made: %v", n, err)
 		}
 	}
 }

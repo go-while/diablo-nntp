@@ -1,10 +1,12 @@
 #!/bin/sh
 #
 # ROT <n> <file>... - rotate each file: file.<n-1> -> file.<n>, ...,
-# file.0 -> file.1, file -> file.0.  Files that don't exist are skipped.
-# n is the number of old copies to keep (digits, at most 9); anything else is
-# refused before any file is touched.  Exit status: 0, 1 when a move or a
-# compression failed, 2 for a usage or configuration error.
+# file.0 -> file.1, file -> file.0, so that file.0 to file.<n> are kept: n+1
+# old copies (rot 4 keeps file.0 to file.4; rot 0 only file.0).  Copies above
+# file.<n>, left by a larger n before, are removed.  Files that don't exist are
+# skipped.  n is digits, at most 9 of them; anything else is refused before any
+# file is touched.  Exit status: 0, 1 when a move, a removal or a compression
+# failed, 2 for a usage or configuration error.
 #
 # ROT -k - check rot.conf and print its keep count (4 when it says nothing);
 # daily.atrim uses it.
@@ -16,8 +18,9 @@
 # still write to it for a few seconds; file.1 and the older ones are compressed
 # when file.1 is made.  Lines (blank lines and # comments are ignored):
 #
-#	keep <n>			old copies to keep with "rot -k":
-#					0 to 9999 (default 4)
+#	keep <n>			the n of "rot -k": file.0 to file.<n>
+#					are kept, n+1 old copies; 0 to 9999
+#					(default 4)
 #	compress <method>		none (default), gzip, bzip2, xz, zstd,
 #					compress, or a method defined below
 #	method <name> <suffix> <command>
@@ -218,6 +221,31 @@ squeeze() {
     set +f
 }
 
+# expire <file>: remove <file>.<N> and <file>.<N><suffix>, for each suffix rot knows,
+# when N is above n: the copies a larger n kept before.  Nothing else is removed:
+# not <file>.0<N>, not an unknown suffix, not a name that only begins like that.
+expire() {
+    for c in "$1".[0-9]*; do
+	[ -f "$c" ] || continue		# also the pattern itself, when nothing matches
+	r=${c#"$1".}
+	d=${r%%[!0-9]*}
+	sfx=${r#"$d"}
+	case $d in
+	    0?*) continue ;;
+	esac
+	if [ -n "$sfx" ]; then
+	    case " $allsfx " in
+		*" $sfx "*) ;;
+		*) continue ;;
+	    esac
+	fi
+	# neither has leading zeros: the longer number is the larger
+	if [ "${#d}" -gt "${#n}" ] || { [ "${#d}" -eq "${#n}" ] && [ "$d" -gt "$n" ]; }; then
+	    rm -f "$c" || rc=1
+	fi
+    done
+}
+
 for f in "$@"; do
     j=$n
     while [ "$j" -gt 0 ]; do
@@ -232,5 +260,6 @@ for f in "$@"; do
     if [ -f "$f" ]; then
 	mv -f "$f" "$f.0" || rc=1
     fi
+    expire "$f"
 done
 exit $rc
