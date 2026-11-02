@@ -657,6 +657,45 @@ func TestQuotedPrintableNotRejectedAsBinary(t *testing.T) {
 	}
 }
 
+// TestArticleTypeStateNotCarriedOver: on one connection, the MIME state an article leaves
+// behind (a quoted-printable declaration, a multipart boundary, a base64 text part still being
+// decoded at its end) does not change the type of the next article.
+func TestArticleTypeStateNotCarriedOver(t *testing.T) {
+	s := NewSite(t, SiteOptions{
+		Newsfeeds: DefaultNewsfeeds + "label IFILTER\n    addgroup *\n    delgroup *.bina*\n    arttypes binary\nend\n",
+	})
+	p := s.Peer(t)
+	defer expect(t, p, 205, "QUIT")
+	soft := edit(atLines(12, 75, b64Alphabet, ""), func(l string) string { return l + "=" })
+	quoted := append([]string{"--XX", "Content-Type: text/plain", "Content-Transfer-Encoding: base64", ""}, b64Text(30)...)
+	for _, c := range []struct {
+		name  string
+		extra []string
+		body  []string
+		want  string
+	}{
+		{"quoted-printable text", hdrQP, qpLines(3), "235"},
+		{"soft line breaks, no headers, after it", nil, soft, "437"},
+		{"multipart with a base64 text part", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=XX"}, append(append([]string{}, quoted...), "--XX--"), "235"},
+		{"text quoting that part, after it", []string{"Mime-Version: 1.0", "Content-Type: text/plain"}, quoted, "437"},
+		{"base64 text ending in the middle of a line", hdr64("text/plain"), b64Wrap([]byte("Hello, no newline at the end"), 76), "235"},
+		{"base64 lines of text, no headers, after it", nil, b64Text(30), "437"},
+	} {
+		id := msgID(t)
+		expect(t, p, 335, "IHAVE %s", id)
+		a := newArticle(id, "talk.test", "state", c.body...)
+		a = append(append(append([]string{}, a[:6]...), c.extra...), a[6:]...)
+		send(t, p, wire(a))
+		line, err := p.ReadLine()
+		if err != nil {
+			t.Fatalf("IHAVE %s: %v", c.name, err)
+		}
+		if !strings.HasPrefix(line, c.want) {
+			t.Errorf("IHAVE with %s: %q, want %s", c.name, line, c.want)
+		}
+	}
+}
+
 // sha256Lines returns n SHA-256 digests in hex (64 characters), each followed by suffix.
 func sha256Lines(n int, suffix string) []string {
 	var l []string
