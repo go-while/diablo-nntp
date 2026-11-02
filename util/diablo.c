@@ -3575,16 +3575,19 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 			logit(LOG_CRIT, "spool article header write failed: %s",
 							strerror(errno));
 		    bsetfd(buffer, artFd);
+		    /*
+		     * An uncompressed body stays buffered here and goes out
+		     * with the terminator below in one flush.  A compressed
+		     * one has to be flushed through gzip now, before the
+		     * terminator is written uncompressed.
+		     */
 #ifdef USE_ZLIB
-		    if (cfile != NULL)
-			bsetcompress(buffer, cfile);
-		    bflush(buffer);
 		    if (cfile != NULL) {
+			bsetcompress(buffer, cfile);
+			bflush(buffer);
 			gzclose(cfile);
 			bsetcompress(buffer, NULL);
 		    }
-#else
-		    bflush(buffer);
 #endif
 		} else {
 		    artError |= LAERR_IO;
