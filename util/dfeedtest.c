@@ -255,7 +255,8 @@ LoadArt(void)
 	int len = strlen(buf);
 	size += len;
 
-	if (strlen(buf) == 1)
+	/* the blank line after the headers, LF or CRLF */
+	if (len == 1 || (len == 2 && buf[0] == '\r'))
 	    inHeader = 0;
 
 	/* a piece of a line longer than buf has no newline and is passed whole */

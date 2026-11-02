@@ -399,6 +399,30 @@ func TestArticleTypeBase64FlowedReply(t *testing.T) {
 	}
 }
 
+// TestArticleTypesCRLF: an article with CRLF line ends throughout (dfeedtest -a, as a peer
+// sends it) gets the same ArtType as with LF: its blank line ends the headers.
+func TestArticleTypesCRLF(t *testing.T) {
+	s := NewSite(t, SiteOptions{Newsfeeds: GlobalLabel, NoStart: true})
+	crlf := func(l []string) []string { return edit(l, func(x string) string { return x + "\r" }) }
+	for _, c := range []struct {
+		name  string
+		extra []string
+		body  []string
+		want  int
+	}{
+		{"base64 text", hdr64("text/plain; charset=UTF-8"), b64Text(30), atMIME},
+		{"base64 text, last line a pgp marker", hdr64("text/plain"), b64Wrap([]byte("Hello.\n-----BEGIN PGP MESSAGE-----\n"), 76), atMIME | atPGP},
+		{"base64 random data in text/plain", hdr64("text/plain"), b64Wrap(randBytes(1140, 12), 76), atMIME | atBinary | atBase64},
+		{"uuencode", nil, append([]string{"begin 644 a.bin"}, atLines(12, 60, uuAlphabet, "M")...), atBinary | atUUencode},
+	} {
+		lf := artTypeOf(t, s, atArticle(c.extra, c.body))
+		cr := artTypeOf(t, s, crlf(atArticle(c.extra, c.body)))
+		if lf != c.want || cr != c.want {
+			t.Errorf("%s: ArtType 0x%06x with LF, 0x%06x with CRLF, want 0x%06x", c.name, lf, cr, c.want)
+		}
+	}
+}
+
 // TestArticleTypesRoutedByArttypes: diablo itself (diablo.c calls ArticleType() on the wire
 // lines) sends each article to the queue of the label whose arttypes it matches: a yEnc
 // article to the "arttypes binary" label and a text one to the "arttypes !binary" label.
