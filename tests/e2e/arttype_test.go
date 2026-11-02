@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	_ "embed"
 	"encoding/base64"
 	"os"
 	"os/exec"
@@ -202,6 +203,20 @@ func TestArticleTypes(t *testing.T) {
 				t.Errorf("ArtType 0x%06x, want 0x%06x %s", got, c.want, c.bug)
 			}
 		})
+	}
+}
+
+//go:embed testdata/arttype/base64-flowed-reply.txt
+var base64FlowedReply string
+
+// TestArticleTypeBase64FlowedReply: a German reply as news clients send it, text/plain with
+// format=flowed in UTF-8, as base64 of 72 characters a line (testdata/arttype, rewritten from
+// an article that was refused as binary: ArtType 000b00). It is text.
+func TestArticleTypeBase64FlowedReply(t *testing.T) {
+	s := NewSite(t, SiteOptions{Newsfeeds: GlobalLabel, NoStart: true})
+	lines := strings.Split(strings.TrimRight(base64FlowedReply, "\n"), "\n")
+	if got := artTypeOf(t, s, lines); got != atMIME {
+		t.Errorf("ArtType 0x%06x, want 0x%06x (MIME only)", got, atMIME)
 	}
 }
 
