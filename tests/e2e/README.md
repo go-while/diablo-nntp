@@ -103,6 +103,7 @@ test fails.
 | `TestDexpireKeeptimeTwoSpools` | dexpire | D-76: two spools with different directory ages and a keep time of 3600 s: the 42-minute-old directory of spool 01 must stay. **Fails** on main before #109: it is removed |
 | `TestKPDBTornTail` | dkp | D-80: a KP database whose tail is a half-written record or a NUL block: the next append starts on a new line and is found. **Fails** on main before #110 |
 | `TestDnewslinkDeferredKeptOnExit` | dnewslink | D-66: entries the peer deferred with 431 are written back to the queue, one per line, when the session ends early. **Fails** on main before #111 |
+| `TestDnewslinkPipePreservesPreviousQueue`, `TestDnewslinkPipeQueueReplacedWhileWaiting` | dnewslink | Pipe-mode leftovers preserve existing queue entries and are appended to the current queue if it is replaced while the writer waits for its lock (D-88). |
 | `TestDcancelSpoolOnlyUpdatesHistory` | dcancel | D-67: `dcancel -a` and `-s` cancel the first of three articles; the other two stay readable (`-s` now updates the history). **Fails** on main before #112 for `-s` |
 | `TestDnewslinkOverlongQueueLine, TestDnewslinkFullDiskKeepsQueue` | dnewslink | D-72: an overlong queue line is skipped, the entries behind it are sent. D-74 (root only, Linux): a queue rewrite onto a full file system keeps the old queue. **Fail** on main before #113 |
 | `TestDnewslinkQueueFieldsPerLine` | dnewslink | D-73: after a reconnect a plain queue line does not inherit `C50` from the line before, and a retried entry keeps its flags. **Fails** on main before #114 |
