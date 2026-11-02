@@ -2232,8 +2232,15 @@ DumpArticle(int cfd, const char *relPath, off_t off, int size, int cSize)
     if (*relPath == '/') {
 	path = (char *)relPath;
     } else {
+	int n;
+
 	path = pathBase;
-	sprintf(path, "%s/%s", PatExpand(SpoolHomePat), relPath);
+	n = snprintf(pathBase, sizeof(pathBase), "%s/%s",
+	    PatExpand(SpoolHomePat), relPath);
+	if (n < 0 || n >= (int)sizeof(pathBase)) {
+	    logit(LOG_ERR, "spool path too long: %s", relPath);
+	    return(-1);
+	}
     }
 
     if (cfd >= 0 &&
@@ -3732,11 +3739,13 @@ ValidMsgId(char *msgid)
 void
 AttemptRemoveRenamedFile(struct stat *st, const char *spoolFile)
 {
-    char buf[256];
+    char buf[PATH_MAX];
     int fd;
     int begSeq = -1;
 
-    snprintf(buf, sizeof(buf), "%s/.%s.seq", PatExpand(DQueueHomePat), spoolFile);
+    if (snprintf(buf, sizeof(buf), "%s/.%s.seq", PatExpand(DQueueHomePat),
+	spoolFile) >= (int)sizeof(buf))
+	return;
     if ((fd = open(buf, O_RDONLY)) >= 0) {
 	int n;
 	if ((n = read(fd, buf, sizeof(buf) - 1)) > 0) {
@@ -3758,7 +3767,9 @@ AttemptRemoveRenamedFile(struct stat *st, const char *spoolFile)
 	for (n = 3; n >= 0; --n, ++begSeq) {
 	    struct stat nst;
 
-	    snprintf(buf, sizeof(buf), "%s/%s.S%05d", PatExpand(DQueueHomePat), spoolFile, begSeq);
+	    if (snprintf(buf, sizeof(buf), "%s/%s.S%05d", PatExpand(DQueueHomePat),
+		spoolFile, begSeq) >= (int)sizeof(buf))
+		break;
 	    if (stat(buf, &nst) == 0 && st->st_ino == nst.st_ino) {
 		remove(buf);
 		break;

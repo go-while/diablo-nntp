@@ -71,6 +71,7 @@ int
 ListenNotify(int *NotifyFd, int *NotifyLockFd, char *l)
 {
     struct sockaddr_un soun;
+    int n;
 
     if (*NotifyFd != -1)
 	return(1);
@@ -78,9 +79,13 @@ ListenNotify(int *NotifyFd, int *NotifyLockFd, char *l)
     if (*NotifyLockFd == -1) {
 	char lckBuf[PATH_MAX];
 	char buf[64];
-	int n;
 
-	sprintf(lckBuf, "%s.%s", PatRunExpand(DFeedNotifyLockPat), l);
+	n = snprintf(lckBuf, sizeof(lckBuf), "%s.%s",
+	    PatRunExpand(DFeedNotifyLockPat), l);
+	if (n < 0 || n >= (int)sizeof(lckBuf)) {
+	    logit(LOG_ERR, "notify lock path too long for label %s", l);
+	    return(0);
+	}
 	*NotifyLockFd = open(lckBuf, O_RDWR|O_CREAT, 0644);
 	if (*NotifyLockFd == -1) {
 	    logit(LOG_ERR, "Cannot create notify lock: %s", strerror(errno));
@@ -113,7 +118,15 @@ ListenNotify(int *NotifyFd, int *NotifyLockFd, char *l)
     }
     bzero(&soun, sizeof(soun));
     soun.sun_family = AF_UNIX;
-    sprintf(soun.sun_path, "%s.%s", PatRunExpand(DFeedNotifySocketPat), l);
+    n = snprintf(soun.sun_path, sizeof(soun.sun_path), "%s.%s",
+	PatRunExpand(DFeedNotifySocketPat), l);
+    if (n < 0 || n >= (int)sizeof(soun.sun_path)) {
+	logit(LOG_ERR, "notify socket path too long for label %s", l);
+	close(*NotifyFd);
+	*NotifyFd = -1;
+	RegisterNotify(l, 0);
+	return(0);
+    }
     remove(soun.sun_path);
     if (bind(*NotifyFd, (struct sockaddr *)&soun, sizeof(soun)) < 0) {
 	logit(LOG_ERR, "Unable to bind notify socket: %s", strerror(errno));

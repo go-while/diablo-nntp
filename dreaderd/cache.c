@@ -83,16 +83,29 @@ cacheHashNum(char *st)
     return(abs(h.h1 + h.h2));
 }
 
-void
+int
 cacheFile(hash_t hv, char *path, int makedir)
 {
     int blen = 0;
     char fstr[32];
     int i;
 
+    const char *home = PatExpand(CacheHomePat);
+
     sprintf(fstr, "%08x%08x", (int)hv.h1, (int)hv.h2);
 
-    strcpy(path, PatExpand(CacheHomePat));
+    /*
+     * path is PATH_MAX bytes.  The hash directories (at most 10 levels of
+     * "/" and 8 hex digits) and the file name add under 128 bytes; refuse
+     * a cache home too long to leave room for them; the callers then do
+     * without the cache for this article.
+     */
+    if (strlen(home) >= PATH_MAX - 128) {
+	logit(LOG_ERR, "cache directory path too long: %.64s...", home);
+	path[0] = 0;
+	return(-1);
+    }
+    strcpy(path, home);
     for (i = 0; i < DOpts.ReaderCacheDirs.dt_dirlvl; i++) {
 	int c = DOpts.ReaderCacheDirs.dt_dirinfo[i];
 	int formsize = 0;
@@ -115,6 +128,7 @@ cacheFile(hash_t hv, char *path, int makedir)
     }
     blen = strlen(path);
     sprintf(path + blen, "/%08x.%08x", (int)hv.h1, (int)hv.h2);
+    return(0);
 }
 
 int
@@ -131,7 +145,8 @@ OpenCache(const char *msgid, int *pcfd, int *psize)
      * open cache file
      */
 
-    cacheFile(hv, path, 1);
+    if (cacheFile(hv, path, 1) < 0)
+	return(0);
 
     if ((fd = open(path, O_RDWR)) >= 0) {
 	struct stat st;
@@ -176,7 +191,8 @@ CreateCache(Connection *conn)
      * open cache file
      */
 
-    cacheFile(hv, path, 1);
+    if (cacheFile(hv, path, 1) < 0)
+	return;
     {
 	struct stat st;
 	if (!stat(path, &st)) { /* uncacheable article */
@@ -271,9 +287,10 @@ AbortCache(int fd, const char *msgid, int closefd)
     char path[PATH_MAX];
     hash_t hv = hhash(msgid);
 
-    cacheFile(hv, path, 0);
-    strcat(path, ".tmp");
-    remove(path);
+    if (cacheFile(hv, path, 0) == 0) {
+	strcat(path, ".tmp");
+	remove(path);
+    }
     if (ftruncate(fd, 0) < 0)
 	logit(LOG_ERR, "AbortCache: cannot truncate %s (%s)",
 	      path, strerror(errno));
@@ -295,7 +312,13 @@ CommitCache(Connection *conn, int closefd)
     hash_t hv = hhash(msgid);
     int fd = fileno(conn->co_SReq->sr_Cache);
 
-    cacheFile(hv, path2, 0);
+    if (cacheFile(hv, path2, 0) < 0) {
+	/* CreateCache refuses the same names, so this is not expected */
+	hflock(fd, 0, XLOCK_UN);
+	if (closefd)
+	    close(fd);
+	return;
+    }
     strcpy(path1, path2);
     strcat(path1, ".tmp");
     if (rename(path1, path2) < 0) {
