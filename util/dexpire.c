@@ -1017,7 +1017,7 @@ updateHistory(void)
     FILE *DExpOverList = NULL;
     char path[PATH_MAX];
     int i;
-    char spoolHome[512];
+    char spoolHome[PATH_MAX];
     int spoolHomeLen;
     off_t npos = -1;
     off_t bpos = -1;

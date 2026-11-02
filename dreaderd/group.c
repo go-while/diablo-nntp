@@ -84,29 +84,51 @@ OverWriteAt(int fd, const void *buf, size_t len, off_t pos)
     return(0);
 }
 
-/* writev() is allowed to complete only part of an overview header. */
+/*
+ * writev() is allowed to complete only part of an overview header.  Issue
+ * the whole record as one writev() and, on a short write, resume from the
+ * exact byte where it stopped.
+ */
 static int
 OverWriteV(int fd, const struct iovec *iov, int count)
 {
+    struct iovec vec[8];
+    struct iovec *v = vec;
     int i;
 
-    for (i = 0; i < count; ++i) {
-        const char *ptr = iov[i].iov_base;
-        size_t left = iov[i].iov_len;
+    if (count < 0 || count > (int)(sizeof(vec) / sizeof(vec[0]))) {
+        errno = EINVAL;
+        return(-1);
+    }
+    for (i = 0; i < count; ++i)
+        vec[i] = iov[i];
 
-        while (left) {
-            ssize_t n = write(fd, ptr, left);
+    for (;;) {
+        ssize_t n;
 
-            if (n > 0) {
-                ptr += n;
-                left -= (size_t)n;
-            } else if (n < 0 && errno == EINTR) {
-                continue;
-            } else {
-                if (n == 0)
-                    errno = EIO;
-                return(-1);
-            }
+        while (count > 0 && v->iov_len == 0) {
+            ++v;
+            --count;
+        }
+        if (count == 0)
+            break;
+
+        n = writev(fd, v, count);
+        if (n < 0 && errno == EINTR)
+            continue;
+        if (n <= 0) {
+            if (n == 0)
+                errno = EIO;
+            return(-1);
+        }
+        while (count > 0 && (size_t)n >= v->iov_len) {
+            n -= (ssize_t)v->iov_len;
+            ++v;
+            --count;
+        }
+        if (count > 0) {
+            v->iov_base = (char *)v->iov_base + n;
+            v->iov_len -= (size_t)n;
         }
     }
     return(0);
@@ -869,6 +891,12 @@ GetOverInfo(const char *group)
 	}
 	ov = zalloc(&SysMemPool, sizeof(OverInfo));
 	ov->ov_Group = zallocStr(&SysMemPool, group);
+	/*
+	 * zalloc() zeroed ov, so ov_OFd is 0 (stdin) until it is opened
+	 * below.  Mark it closed now so an early FreeOverInfo() on an error
+	 * path does not close(0).
+	 */
+	ov->ov_OFd = -1;
 	GetOverExpire(group, &save);
 	ov->ov_LimitSecs = save.oe_LimitDays * 24.0 * 60.0 * 60.0;
 
@@ -876,6 +904,7 @@ GetOverInfo(const char *group)
 	    const char *rec;
 	    int recLen;
 	    if ((rec = KPDBReadRecord(KDBActive, group, KP_LOCK, &recLen)) == NULL) {
+		FreeOverInfo(ov);
 		return(NULL);
 	    }
 	    iter = strtol(KPDBGetField(rec, recLen, "ITER", NULL, "0"), NULL, 10);
@@ -941,22 +970,33 @@ again:
 								group, path);
 		r = -1;
 	    }
+	    if (r == 0 &&
+		(off_t)st.st_size - (off_t)oh.oh_HeadSize < (off_t)sizeof(OverArt)) {
+		/* header present but no room for even one OverArt: treat as a
+		 * new/empty file so it is re-initialised, instead of computing
+		 * ov_MaxArts 0 and taking a modulo by zero in GetOverArt(). */
+		r = -1;
+	    }
 	    if (r != 0) {
 		hflock(ov->ov_OFd, 0, XLOCK_EX);
 		/*
 		 * we have to test again after we got the lock in case
-		 * another process had a lock and adjusted the file.
+		 * another process had a lock and adjusted the file.  Use the
+		 * size as it is now, not the stale fstat from before the lock.
 		 */
+		if (fstat(ov->ov_OFd, &st) < 0)
+		    st.st_size = 0;
 		lseek(ov->ov_OFd, 0L, 0);
 		if (read(ov->ov_OFd, &oh, sizeof(oh)) != sizeof(oh) ||
-		    oh.oh_ByteOrder != OH_BYTEORDER
+		    oh.oh_ByteOrder != OH_BYTEORDER ||
+		    (off_t)st.st_size - (off_t)oh.oh_HeadSize < (off_t)sizeof(OverArt)
 		) {
 
 		    /*
 		     * If 'aInitArts' option not given in expireCtl
 		     */
 
-		    if (save.oe_InitArts == 0)
+		    if (save.oe_InitArts <= 0)
 			save.oe_InitArts = DEFARTSINGROUP;
 
 		    if (ftruncate(ov->ov_OFd, 0) < 0) {
@@ -964,6 +1004,7 @@ again:
 			    group, strerror(errno));
 			hflock(ov->ov_OFd, 0, XLOCK_UN);
 			FreeOverInfo(ov);
+			zfree(&SysMemPool, path, pathSize);
 			return(NULL);
 		    }
 		    st.st_size = sizeof(oh) + sizeof(OverArt) * save.oe_InitArts;
@@ -982,6 +1023,7 @@ again:
 			    group, strerror(errno));
 			hflock(ov->ov_OFd, 0, XLOCK_UN);
 			FreeOverInfo(ov);
+			zfree(&SysMemPool, path, pathSize);
 			return(NULL);
 		    }
 		}

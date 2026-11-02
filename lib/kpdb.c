@@ -156,12 +156,17 @@ KPDBOpen(const char *fileName, int oflags)
 KPDB *
 XKPDBOpen(int oflags, const char *ctl, ...)
 {
-    char path[1024];
+    char path[PATH_MAX];
     va_list va;
+    int n;
 
     va_start(va, ctl);
-    vsnprintf(path, sizeof(path), ctl, va);
+    n = vsnprintf(path, sizeof(path), ctl, va);
     va_end(va);
+    if (n < 0 || n >= (int)sizeof(path)) {
+	errno = ENAMETOOLONG;
+	return(NULL);
+    }
     return(KPDBOpen(path, oflags));
 }
 

@@ -232,6 +232,12 @@ DReadOver(char *data)
 	maxarts = (st.st_size - oh.oh_HeadSize) / sizeof(OverArt);
 	printf("\tmaxarts=%d", maxarts);
 
+	if (maxarts <= 0) {
+		printf("\t(over file has no article slots)\n");
+		close(fd1);
+		return;
+	}
+
 	pos = oh.oh_HeadSize + ((artNo & 0x7FFFFFFFFFFFFFFFLL) % maxarts) *
 						sizeof(OverArt);
 	printf("\tpos=%lld", (long long)pos);

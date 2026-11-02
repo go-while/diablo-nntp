@@ -2314,7 +2314,7 @@ ReadDExpOverList(void)
     FILE *DExpOverList;
     hash_t read_buffer[DEXPOVER_READ_BUFFER_SIZE];
     int i, n;
-    char path[128];
+    char path[PATH_MAX];
 
     dexpover_msgid_hash =
 	(struct bucket_t *)malloc(DEXPOVER_HASH_SIZE * sizeof(struct bucket_t));
@@ -2323,7 +2323,11 @@ ReadDExpOverList(void)
 	dexpover_msgid_hash[i].next=NULL;
     }
 
-    snprintf(path, 128, "%s.bak", PatDbExpand(DExpireOverListPat));
+    if (snprintf(path, sizeof(path), "%s.bak",
+	PatDbExpand(DExpireOverListPat)) >= (int)sizeof(path)) {
+	logit(LOG_ERR, "dexpover list path too long");
+	return;
+    }
     rename(PatDbExpand(DExpireOverListPat), path);
     DExpOverList = fopen(path, "r");
 
