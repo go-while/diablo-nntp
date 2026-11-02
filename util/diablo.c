@@ -4705,6 +4705,29 @@ ArticleFileInit(void)
     AFFlushTime = time(NULL);
 }
 
+/*
+ * ArticleFileCached() - the cached append descriptor of the file at path,
+ * matched by inode, or -1.  stat() opens no descriptor, so it cannot
+ * release a lock.
+ */
+static int
+ArticleFileCached(const char *path)
+{
+    struct stat ps;
+    int i;
+
+    if (stat(path, &ps) != 0)
+	return(-1);
+    for (i = 0; i < AFNum; ++i) {
+	struct stat st;
+
+	if (AFAry[i].af_Fd >= 0 && fstat(AFAry[i].af_Fd, &st) == 0 &&
+	    st.st_dev == ps.st_dev && st.st_ino == ps.st_ino)
+	    return(AFAry[i].af_Fd);
+    }
+    return(-1);
+}
+
 int
 ArticleFile(History *h, off_t *pbpos)
 {
@@ -4784,6 +4807,18 @@ ArticleFile(History *h, off_t *pbpos)
 
 	    h->iter = af->af_Iter;
 	    ArticleFileName(path, sizeof(path), h, ARTFILE_FILE);
+
+	    /*
+	     * Skip a file we already have open in the cache (a full one,
+	     * or the same B.<iter> under another slot).  Opening it again
+	     * would succeed, as fcntl locks never conflict within one
+	     * process, and closing the new descriptor would drop the lock
+	     * the cached entry still relies on.
+	     */
+	    if (ArticleFileCached(path) >= 0) {
+		++af->af_Iter;
+		continue;
+	    }
 
 	    if ((af->af_Fd = open(cdcache(path), O_RDWR|O_CREAT, 0644)) >= 0) {
 		struct stat st;
@@ -4972,6 +5007,8 @@ SpoolGunzip(int fd, off_t off, char *buf, int len)
 	if (z.avail_in == 0) {
 	    ssize_t n = pread(fd, ibuf, sizeof(ibuf), off);
 
+	    if (n < 0 && errno == EINTR)
+		continue;
 	    if (n <= 0)
 		break;
 	    off += n;
@@ -5011,9 +5048,11 @@ MapArticle(int fd, char *fname, char **base, History *h, int *extra, int *artSiz
 #ifdef USE_ZLIB
 	char *p;
 	off_t zoff = h->boffset + sizeof(SpoolArtHdr);
+	int hashdr = 1;
 
 	if ((uint8)tah.Magic1 != STORE_MAGIC1 &&
 					(uint8)tah.Magic2 != STORE_MAGIC2) {
+	    hashdr = 0;
 	    zoff = h->boffset;
 	    tah.Magic1 = STORE_MAGIC1;
 	    tah.Magic2 = STORE_MAGIC2;
@@ -5023,10 +5062,27 @@ MapArticle(int fd, char *fname, char **base, History *h, int *extra, int *artSiz
 	    tah.StoreLen = h->bsize;
 	    tah.StoreType = STORETYPE_GZIP;
 	}
-    	*base = (char *)malloc(tah.ArtLen + tah.HeadLen + 2);
+
+	/*
+	 * The spool header is data from disk: check it before it sizes
+	 * the buffer the article is inflated into.  A stored article's
+	 * history size is its uncompressed length plus this header.
+	 */
+	if (tah.HeadLen != sizeof(SpoolArtHdr) ||
+	    tah.ArtLen == 0 || tah.ArtLen >= SPOOL_MAX_FILE_SIZE ||
+	    (hashdr && (size_t)tah.ArtLen + sizeof(SpoolArtHdr) !=
+						(size_t)(uint32)h->bsize)
+	) {
+	    logit(LOG_ERR, "corrupt spool header in %s@%d: headlen %d artlen %u, history size %d\n",
+		fname, (int)h->boffset, (int)tah.HeadLen,
+		(unsigned int)tah.ArtLen, (int)h->bsize);
+	    return(-1);
+	}
+    	*base = (char *)malloc((size_t)tah.ArtLen + sizeof(SpoolArtHdr) + 2);
 	if (*base == NULL) {
-	    logit(LOG_CRIT, "Unable to malloc %d bytes for article (%s)\n",
-				tah.ArtLen + tah.HeadLen + 2, strerror(errno));
+	    logit(LOG_CRIT, "Unable to malloc %lu bytes for article (%s)\n",
+		(unsigned long)((size_t)tah.ArtLen + sizeof(SpoolArtHdr) + 2),
+		strerror(errno));
 	    return(-1);
 	}
 	p = *base;
@@ -5109,28 +5165,14 @@ ArticleOpen(History *h, const char *msgid, char **pfi, int32 *rsize, int *pmart,
 	 * appending, read it through that descriptor and do not close it:
 	 * closing any descriptor for the file would release our lock on
 	 * it, and another feeder process could then append to it too.
-	 * Locks are per process and file, so only that file matters.
+	 * Locks are per process and file, so only that file matters.  It
+	 * is matched by inode: the same B.<iter> can be in the cache
+	 * under another slot (slots shorter than the 10 minutes of a
+	 * spool directory).
 	 */
-	fd = -1;
-	{
-	    int i;
-
-	    for (i = 0; i < AFNum; ++i) {
-		AFCache *af = &AFAry[i];
-		struct stat st;
-
-		if (af->af_Fd >= 0 &&
-		    af->af_Slot == h->gmt &&
-		    af->af_Spool == H_SPOOL(h->exp) &&
-		    af->af_Iter == h->iter &&
-		    fstat(af->af_Fd, &st) == 0 && st.st_nlink > 0
-		) {
-		    fd = af->af_Fd;
-		    keepfd = 1;
-		    break;
-		}
-	    }
-	}
+	fd = ArticleFileCached(path);
+	if (fd >= 0)
+	    keepfd = 1;
 	if (fd >= 0 || (fd = cdopen(path, O_RDONLY, 0)) >= 0) {
 	    r = MapArticle(fd, path, pfi, h, pmart, rsize, compressed);
 
