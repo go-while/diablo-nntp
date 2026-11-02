@@ -1,6 +1,7 @@
 #!/bin/sh
 #
-# DAILY.ATRIM - rotate the logs, keeping 4 old copies of each.
+# DAILY.ATRIM - rotate the logs, keeping the number of old copies that rot.conf
+# asks for (4 without it), compressed as rot.conf says; see adm/rot.
 
 # The directory with dpath, dexpire, ...: DIABLO_BIN, else dbin next to this
 # script's directory (<path_home>/adm -> <path_home>/dbin; samples/adm in a source
@@ -31,10 +32,11 @@ cd "$log" || exit 1
 # seconds, whether the file name still points at the file it has open, and opens
 # the new file when it doesn't.  Up to 10 seconds of lines still go to the .0 file.
 status=0
+keep=$("$here/rot" -k 2>/dev/null) || keep=4
 # The logs of the cron jobs (dbin/djoblog writes <job>.log) are rotated as well, and
 # daily.log, which a crontab without djoblog still writes.  djoblog opens its log for
 # each batch of lines, so this job's own log can be rotated while it runs.
-"$here/rot" 4 daily.log hourly.expire.log daily.atrim.log biweekly.atrim.log \
+"$here/rot" "$keep" daily.log hourly.expire.log daily.atrim.log biweekly.atrim.log \
     daily.reader.log weekly.reader.log actsync.log histbackup.log \
     dspoolout.log control.log miscctl \
     general.log incoming.log drincoming.log path.log article.log \

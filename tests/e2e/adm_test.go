@@ -270,6 +270,7 @@ func TestAdmRotArguments(t *testing.T) {
 		defer cancel()
 		cmd := exec.CommandContext(ctx, "/bin/sh", append([]string{rot}, args...)...)
 		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "ROT_CONF="+os.DevNull) // not the sample rot.conf
 		out, err := cmd.CombinedOutput()
 		code := 0
 		var ee *exec.ExitError
