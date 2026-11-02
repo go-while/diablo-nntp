@@ -19,7 +19,9 @@
 ##			to all control messages.
 ##	<from>		Pattern that must match the From line.
 ##	<newsgroups>	Pattern that must match the newsgroup being
-##			newgroup'd or rmgroup'd (ignored for other messages).
+##			newgroup'd or rmgroup'd.  For checkgroups it limits
+##			the groups that may be changed; it is ignored
+##			for other messages.
 ##	<action>	What to do:
 ##	    doit			Perform the action
 ##	    doit=xxx			Perform it; log to xxx (see below)
