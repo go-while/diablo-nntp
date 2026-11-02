@@ -6,31 +6,42 @@
 # refused before any file is touched.  Exit status: 0, 1 when a move or a
 # compression failed, 2 for a usage or configuration error.
 #
-# ROT -k - print the number of old copies that rot.conf asks to keep (4 when
-# it says nothing); daily.atrim uses it.
+# ROT -k - check rot.conf and print its keep count (4 when it says nothing);
+# daily.atrim uses it.
 #
-# rot.conf, next to this script (or the file named by $ROT_CONF), says how
-# the old copies are compressed.  file.0 stays as it is, since a daemon may
+# rot.conf, next to this script, or the file named by $ROT_CONF, says how the
+# old copies are compressed.  Without a rot.conf next to the script rot uses
+# the defaults; a $ROT_CONF that does not exist, or a rot.conf that cannot be
+# read, is an error (2) before any file is touched.  file.0 stays as it is, since a daemon may
 # still write to it for a few seconds; file.1 and the older ones are compressed
 # when file.1 is made.  Lines (blank lines and # comments are ignored):
 #
-#	keep <n>			old copies to keep with "rot -k" (default 4)
+#	keep <n>			old copies to keep with "rot -k":
+#					0 to 9999 (default 4)
 #	compress <method>		none (default), gzip, bzip2, xz, zstd,
 #					compress, or a method defined below
 #	method <name> <suffix> <command>
-#					define or change a method: <command>
-#					reads the file on its standard input and
-#					writes the compressed file to its
-#					standard output; no quoting
+#					define a method, not one of the names
+#					above: <command> reads the file on its
+#					standard input and writes the compressed
+#					file to its standard output; no quoting
 #
 # Copies compressed with another method than the current one (or not at all)
 # are rotated as they are, with their own suffix, until they are dropped.  A
 # method of your own has to stay defined until its copies are gone, since rot
 # only knows the suffixes of the methods in rot.conf and the built-in ones.
 
-conf=${ROT_CONF:-$(dirname "$0")/rot.conf}
+if [ -n "${ROT_CONF:-}" ]; then
+    conf=$ROT_CONF
+    confset=1
+else
+    conf=$(dirname "$0")/rot.conf
+    confset=
+fi
 keep=4
+maxkeep=9999
 compress=none
+builtins="none gzip bzip2 xz zstd compress"
 # the methods, one per line: name, suffix, command; a later line with the same name wins
 nl='
 '
@@ -40,18 +51,28 @@ xz .xz xz -c
 zstd .zst zstd -q -c
 compress .Z compress -c"
 
-# number: digits only, at most 9 of them (after the leading zeros)
+# number: digits only, at most 9 of them (after the leading zeros); sets v to the
+# number without leading zeros
 isnumber() {
     case $1 in
 	''|*[!0-9]*) return 1 ;;
     esac
     z=${1%%[!0]*}
     v=${1#"$z"}
+    [ -n "$v" ] || v=0
     [ "${#v}" -le 9 ]
 }
 
 readconf() {
-    [ -f "$conf" ] || return 0
+    if [ ! -e "$conf" ] && [ ! -L "$conf" ]; then
+	[ -z "$confset" ] && return 0
+	echo "rot: $conf (ROT_CONF): no such file" >&2
+	return 2
+    fi
+    if [ -d "$conf" ] || [ ! -r "$conf" ]; then
+	echo "rot: $conf: cannot be read" >&2
+	return 2
+    fi
     set -f
     lineno=0
     while IFS= read -r line || [ -n "$line" ]; do
@@ -61,8 +82,9 @@ readconf() {
 	case $1 in
 	    '#'*) continue ;;
 	    keep)
-		[ $# -eq 2 ] && isnumber "$2" || { echo "rot: $conf:$lineno: keep needs a number" >&2; return 2; }
-		keep=$2
+		[ $# -eq 2 ] && isnumber "$2" && [ "$v" -le "$maxkeep" ] ||
+		    { echo "rot: $conf:$lineno: keep needs a number from 0 to $maxkeep" >&2; return 2; }
+		keep=$v
 		;;
 	    compress)
 		[ $# -eq 2 ] || { echo "rot: $conf:$lineno: compress needs one method name" >&2; return 2; }
@@ -70,6 +92,9 @@ readconf() {
 		;;
 	    method)
 		[ $# -ge 4 ] || { echo "rot: $conf:$lineno: method needs a name, a suffix and a command" >&2; return 2; }
+		case " $builtins " in
+		    *" $2 "*) echo "rot: $conf:$lineno: $2 is a built-in method; give yours another name" >&2; return 2 ;;
+		esac
 		case $3 in
 		    .?*) ;;
 		    *) echo "rot: $conf:$lineno: the suffix of a method starts with a dot" >&2; return 2 ;;
@@ -84,30 +109,12 @@ readconf() {
 		;;
 	    *) echo "rot: $conf:$lineno: unknown line \"$1\"" >&2; return 2 ;;
 	esac
-    done < "$conf"
+    done < "$conf" || { echo "rot: $conf: cannot be read" >&2; return 2; }
     set +f
     return 0
 }
 
 readconf || exit 2
-
-if [ "${1:-}" = -k ]; then
-    [ $# -eq 1 ] || { echo "usage: rot -k" >&2; exit 2; }
-    echo "$keep"
-    exit 0
-fi
-
-[ $# -ge 2 ] || { echo "usage: rot <n> <file>..." >&2; echo "       rot -k" >&2; exit 2; }
-n=$1
-shift
-case $n in
-    ''|*[!0-9]*) echo "rot: the number of copies must be digits, not \"$n\"" >&2; exit 2 ;;
-esac
-# no leading zeros (08 is not a number to the shell arithmetic below)
-zeros=${n%%[!0]*}
-n=${n#"$zeros"}
-[ -n "$n" ] || n=0
-[ "${#n}" -le 9 ] || { echo "rot: the number of copies is too large (at most 9 digits)" >&2; exit 2; }
 
 # the current method: its suffix in csfx and its command in ccmd; the suffixes of every
 # method in allsfx, so that copies made by another method are rotated too
@@ -142,6 +149,24 @@ if [ "$compress" != none ] && [ -z "$csfx" ]; then
     echo "rot: $conf: compress $compress is not a known method" >&2
     exit 2
 fi
+
+if [ "${1:-}" = -k ]; then
+    [ $# -eq 1 ] || { echo "usage: rot -k" >&2; exit 2; }
+    echo "$keep"
+    exit 0
+fi
+
+[ $# -ge 2 ] || { echo "usage: rot <n> <file>..." >&2; echo "       rot -k" >&2; exit 2; }
+n=$1
+shift
+case $n in
+    ''|*[!0-9]*) echo "rot: the number of copies must be digits, not \"$n\"" >&2; exit 2 ;;
+esac
+# no leading zeros (08 is not a number to the shell arithmetic below)
+zeros=${n%%[!0]*}
+n=${n#"$zeros"}
+[ -n "$n" ] || n=0
+[ "${#n}" -le 9 ] || { echo "rot: the number of copies is too large (at most 9 digits)" >&2; exit 2; }
 
 rc=0
 

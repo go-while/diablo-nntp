@@ -13,15 +13,21 @@ import (
 	"testing"
 )
 
-// rotRun runs adm/rot in dir with the given rot.conf text (none: no rot.conf).
+// rotRun runs adm/rot in dir with the given rot.conf text (none: an empty rot.conf).
 func rotRun(t *testing.T, dir, conf string, args ...string) (string, int) {
 	t.Helper()
 	cf := filepath.Join(dir, "rot.conf.test")
 	if conf == "" {
-		cf = filepath.Join(dir, "no-such-rot.conf")
+		cf = os.DevNull
 	} else if err := os.WriteFile(cf, []byte(conf), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	return rotRunConf(t, dir, cf, args...)
+}
+
+// rotRunConf runs adm/rot in dir with ROT_CONF set to cf.
+func rotRunConf(t *testing.T, dir, cf string, args ...string) (string, int) {
+	t.Helper()
 	cmd := exec.Command("/bin/sh", append([]string{filepath.Join(admSource(t), "rot")}, args...)...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "ROT_CONF="+cf)
@@ -225,5 +231,65 @@ func TestAdmRotSample(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(filepath.Join(dir, "f.1")); string(b) != "one\n" {
 		t.Errorf("f.1 = %q, want one (plain)", b)
+	}
+}
+
+// TestAdmRotConfigErrors: a rot.conf that is there but cannot be read, a ROT_CONF that names no
+// file, a method line that redefines a built-in method, a keep above 9999 and an unknown compress
+// method (with "rot -k" too, which daily.atrim runs first) are refused with 2 before any file is
+// touched. Before, an unreadable rot.conf gave a warning and the defaults, exit 0; ROT_CONF without
+// a file meant the defaults; "rot -k" printed the count without checking the method.
+func TestAdmRotConfigErrors(t *testing.T) {
+	dir := t.TempDir()
+	path := func(n string) string { return filepath.Join(dir, n) }
+	untouched := func(what string) {
+		t.Helper()
+		if b, _ := os.ReadFile(path("f")); string(b) != "keep me\n" {
+			t.Errorf("%s: f = %q, want it untouched", what, b)
+		}
+		if fileExists(path("f.0")) {
+			t.Errorf("%s: f.0 was made", what)
+		}
+	}
+	rotWrite(t, path("f"), "keep me\n")
+
+	if os.Geteuid() != 0 { // root reads a file of mode 000
+		cf := path("rot.conf.locked")
+		rotWrite(t, cf, "keep 9\n")
+		if err := os.Chmod(cf, 0); err != nil {
+			t.Fatal(err)
+		}
+		for _, args := range [][]string{{"-k"}, {"3", "f"}} {
+			if out, code := rotRunConf(t, dir, cf, args...); code != 2 {
+				t.Errorf("unreadable rot.conf, rot %v: exit %d, output %q; want 2", args, code, out)
+			}
+		}
+		untouched("unreadable rot.conf")
+	}
+	for _, args := range [][]string{{"-k"}, {"3", "f"}} {
+		if out, code := rotRunConf(t, dir, path("no-such-rot.conf"), args...); code != 2 {
+			t.Errorf("ROT_CONF without a file, rot %v: exit %d, output %q; want 2", args, code, out)
+		}
+	}
+	untouched("ROT_CONF without a file")
+
+	for name, conf := range map[string]string{
+		"gzip redefined":     "method gzip .gz gzip -9 -c\n",
+		"none redefined":     "method none .n cat\n",
+		"compress redefined": "method compress .Z compress -c\n",
+		"keep over 9999":     "keep 10000\n",
+		"unknown method":     "keep 3\ncompress nosuch\n",
+	} {
+		for _, args := range [][]string{{"-k"}, {"3", "f"}} {
+			if out, code := rotRun(t, dir, conf, args...); code != 2 {
+				t.Errorf("%s, rot %v: exit %d, output %q; want 2", name, args, code, out)
+			}
+		}
+		untouched(name)
+	}
+	for conf, want := range map[string]string{"keep 9999\n": "9999", "keep 0\n": "0", "keep 007\n": "7"} {
+		if out, code := rotRun(t, dir, conf, "-k"); code != 0 || strings.TrimSpace(out) != want {
+			t.Errorf("%q, rot -k: exit %d, output %q; want %s", conf, code, out, want)
+		}
 	}
 }
