@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+#!/usr/bin/env perl
 #
 # ABSOLUTELY NO WARRANTY WITH THIS PACKAGE. USE IT AT YOUR OWN RISK.
 #
@@ -938,8 +938,16 @@ sub ParseDiabloLogFile
 
 			chop $Line;
 
+			# The process that wrote the line ("diablo" in "... host diablo[123]: ..."),
+			# so that a host called diablo1 or diablo-reader doesn't make every line of
+			# it, dnewslink's too, a line of diablo.  Without one (another format) the
+			# line is looked at as a whole, as before.
+			$Proc = ($Line =~ /^... .. ..:..:..\s+\S+\s+([A-Za-z0-9_.-]+)(?:\[\d+\])?:/o) ? $1 : "";
+			$IsDiablo = $Proc ne "" ? $Proc =~ /diablo/io : $Line =~ /diablo|DIABLO/o;
+			$IsNewslink = $Proc ne "" ? $Proc =~ /newslink/o : $Line =~ /newslink/o;
+			$IsReader = $Proc ne "" ? $Proc =~ /reader/o : $Line =~ /reader/o;
 
-			if ($Line =~ /diablo|DIABLO/o) {
+			if ($IsDiablo) {
 
 
 				# ... diablo[230]: news.foo.org stats acc=0 ctl=0 failsafe=0 misshdrs=0 tooold=0 grpfilt=0 spamfilt=0 earlyexp=0 instantexp=0 notinactv=0 ioerr=0
@@ -1203,7 +1211,7 @@ sub ParseDiabloLogFile
 
 					$DiabloUptime = $1;
 				}
-			} elsif ($Line =~ /newslink/o) {
+			} elsif ($IsNewslink) {
 				# ... newslink[7390]: article batch corrupted:
 
 				if ($Line =~ /newslink\[(\d+)\]:\s+(\S+):(.*)\s+final\s+secs=(\d+)\s+acc=(\d+)\s+dup=(\d+)\s+rej=(\d+)\s+tot=(\d+)/o) {
@@ -1293,7 +1301,7 @@ sub ParseDiabloLogFile
 
 
 				}
-			} elsif ($Line =~ /reader/o) {
+			} elsif ($IsReader) {
 #Jun 29 10:18:27 mortti dreaderd[4928]: closed from tellus.csc.fi (193.166.1.7:38165) groups=102 arts=1 bytes=40256 posts=0 postbytes=0 postfail=0 secs=64209
 # .. dreaderd[27393]: closed from 2001:708:10:8:230:48ff:fe28:a9ee ([2001:708:10:8:230:48ff:fe28:a9ee]:59923) groups=...
 				next if $Line =~ /: (counters .* tcount=|connect to )/o;

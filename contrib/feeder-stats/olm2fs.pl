@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+#!/usr/bin/env perl
 
 # Crude and ugly but working script to convert the OLM list to
 # feeder-stats.conf format. Output is to standard output, redirect
