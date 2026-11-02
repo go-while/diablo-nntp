@@ -145,6 +145,25 @@ func qpFew(n int) []string {
 	return l
 }
 
+// mpBody returns the body of a multipart with boundary b: each part after a "--b" line, then
+// "--b--".
+func mpBody(b string, parts ...[]string) []string {
+	var l []string
+	for _, p := range parts {
+		l = append(append(l, "--"+b), p...)
+	}
+	return append(l, "--"+b+"--")
+}
+
+// b64TextPart is a part with base64 text in it; mpPart one that is itself a multipart.
+func b64TextPart() []string {
+	return append([]string{"Content-Type: text/plain; charset=UTF-8", "Content-Transfer-Encoding: base64", ""}, b64Text(30)...)
+}
+
+func mpPart(b string, parts ...[]string) []string {
+	return append([]string{"Content-Type: multipart/mixed; boundary=" + b, ""}, mpBody(b, parts...)...)
+}
+
 // atArticle builds an article with the usual headers, extra headers and a body.
 func atArticle(extra []string, body []string) []string {
 	a := newArticle("<arttype@e2e.test>", "e2e.test", "article type")
@@ -300,6 +319,30 @@ func TestArticleTypes(t *testing.T) {
 			append(append([]string{"--=_a b", "Content-Type: text/plain; charset=UTF-8", "Content-Transfer-Encoding: base64", ""}, b64Text(30)...), "--=_a b--"), atMIME | atMultipart, ""},
 		{"base64 image part, folded quoted boundary", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed;", "\tboundary=\"=_a b\""},
 			append(append([]string{"--=_a b", "Content-Type: image/png", "Content-Transfer-Encoding: base64", ""}, b64...), "--=_a b--"), atMIME | atMultipart | atBinary | atBase64, ""},
+		// The boundary parameter in its other forms (RFC 2045, RFC 822): a base64 text part
+		// is text with each.
+		{"boundary = \"XX\"", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary = \"XX\""}, mpBody("XX", b64TextPart()), atMIME | atMultipart, ""},
+		{"boundary= \"XX\"", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary= \"XX\""}, mpBody("XX", b64TextPart()), atMIME | atMultipart, ""},
+		{"BOUNDARY=XX", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; BOUNDARY=XX"}, mpBody("XX", b64TextPart()), atMIME | atMultipart, ""},
+		{"boundary with a quoted pair", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=\"X\\\"Y\""}, mpBody("X\"Y", b64TextPart()), atMIME | atMultipart, ""},
+		{"boundary with a quoted pair of a plain character", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=\"part\\+one\""}, mpBody("part+one", b64TextPart()), atMIME | atMultipart, ""},
+		{"boundary folded before =", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary", "\t=XX"}, mpBody("XX", b64TextPart()), atMIME | atMultipart, ""},
+		{"boundary folded after =", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=", " \"XX\""}, mpBody("XX", b64TextPart()), atMIME | atMultipart, ""},
+		{"boundary of 70 characters", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=\"" + strings.Repeat("b", 70) + "\""}, mpBody(strings.Repeat("b", 70), b64TextPart()), atMIME | atMultipart, ""},
+		{"boundary of 70 characters with a quoted pair", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=\"" + strings.Repeat("b", 69) + "\\\"\""}, mpBody(strings.Repeat("b", 69)+"\"", b64TextPart()), atMIME | atMultipart, ""},
+		{"boundary of 71 characters", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=\"" + strings.Repeat("b", 71) + "\""}, mpBody(strings.Repeat("b", 71), b64TextPart()), atMIME | atMultipart | atBinary | atBase64, "by design: not a valid boundary (RFC 2046), so its parts are not decoded, and 30 base64 lines are a binary as on main"},
+		// Nested multiparts: a closing delimiter ends its multipart, so siblings do not push out
+		// an outer boundary; past four levels the parts are not decoded (as on main).
+		{"four nested multipart siblings, then a base64 text part", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=XX"},
+			mpBody("XX", mpPart("Y1", []string{"", "a"}), mpPart("Y2", []string{"", "b"}), mpPart("Y3", []string{"", "c"}), mpPart("Y4", []string{"", "d"}), b64TextPart()), atMIME | atMultipart, ""},
+		{"base64 text part four levels deep", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=B1"},
+			mpBody("B1", mpPart("B2", mpPart("B3", mpPart("B4", b64TextPart())))), atMIME | atMultipart, ""},
+		{"base64 text part five levels deep", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=B1"},
+			mpBody("B1", mpPart("B2", mpPart("B3", mpPart("B4", mpPart("B5", b64TextPart()))))), atMIME | atMultipart | atBinary | atBase64, "by design: past four levels nothing is decoded, and 30 base64 lines are a binary as on main"},
+		{"base64 image part five levels deep", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=B1"},
+			mpBody("B1", mpPart("B2", mpPart("B3", mpPart("B4", mpPart("B5", append([]string{"Content-Type: image/png", "Content-Transfer-Encoding: base64", ""}, b64...)))))), atMIME | atMultipart | atBinary | atBase64, ""},
+		{"epilogue quoting a part after the closing delimiter", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=XX"},
+			append(mpBody("XX", []string{"Content-Type: text/plain", "", "Hello."}), "--XX", "Content-Type: text/plain", "Content-Transfer-Encoding: base64", "", "and here the epilogue goes on in plain words, not encoded at all."), atMIME | atMultipart, "after --XX-- the boundary is closed"},
 		// MIME parts.
 		{"base64 text part in multipart", []string{"Mime-Version: 1.0", "Content-Type: multipart/alternative; boundary=XX"},
 			append(append([]string{"--XX", "Content-Type: text/plain; charset=UTF-8", "Content-Transfer-Encoding: base64", ""}, b64Text(30)...), "--XX--"), atMIME | atMultipart, ""},
@@ -625,6 +668,10 @@ func TestBase64TextNotRejectedAsBinary(t *testing.T) {
 		{"base64 random data in text/plain, one long line", text, b64Wrap(randBytes(12000, 10), 20000), "437"},
 		{"uuencode under a base64 text header", text, append([]string{"begin 644 a.bin"}, atLines(12, 60, uuAlphabet, "M")...), "437"},
 		{"text quoting a base64 encoding header", []string{"Mime-Version: 1.0", "Content-Type: text/plain; charset=UTF-8"}, []string{"The gateway adds this header:", "Content-Transfer-Encoding: base64", "", "and then the body is ordinary text that is not encoded at all, as you see here."}, "235"},
+		{"base64 text part, boundary = \"XX\"", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary = \"XX\""}, mpBody("XX", b64TextPart()), "235"},
+		{"base64 text part, boundary with a quoted pair", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=\"part\\+one\""}, mpBody("part+one", b64TextPart()), "235"},
+		{"base64 text part after four nested multipart siblings", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=XX"},
+			mpBody("XX", mpPart("Y1", []string{"", "a"}), mpPart("Y2", []string{"", "b"}), mpPart("Y3", []string{"", "c"}), mpPart("Y4", []string{"", "d"}), b64TextPart()), "235"},
 		{"base64 of a uuencoded file, last line without newline", text, b64Wrap([]byte(strings.Join(append([]string{"begin 644 a.bin"}, atLines(9, 60, uuAlphabet, "M")...), "\n")), 76), "437"},
 	} {
 		if line := offerHeaders(t, s, "comp.test", c.extra, c.body); !strings.HasPrefix(line, c.want) {

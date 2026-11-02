@@ -98,13 +98,22 @@ static int QPPart = 0;	/* in the body of a part declared quoted-printable */
  * "Content-Transfer-Encoding: base64" in its text is not a MIME part.
  */
 #define	BND_MAX		70	/* the longest boundary (RFC 2046) */
-#define	BND_NUM		4	/* boundaries remembered (nested multiparts) */
+#define	BND_NUM		4	/* multiparts nested deeper are not followed */
 
 static int HdrBlock = 1;	/* in a header block */
 static int CTCont = 0;	/* the last header line was a Content-Type: its continuation may hold the boundary */
+static int BndState = 0;	/* in a folded boundary parameter: 1 = '=' wanted, 2 = the value */
+
+/*
+ * The boundaries of the multiparts we are in, innermost on top.  A
+ * closing "--boundary--" line pops its multipart (and any left open
+ * inside it).  A multipart nested deeper than BND_NUM is not pushed: the
+ * headers of its parts are not a header block and nothing in them is
+ * decoded, as on main.
+ */
 static char Bnd[BND_NUM][BND_MAX];
 static int BndLen[BND_NUM];
-static int BndNext = 0;
+static int BndTop = 0;	/* entries in use */
 static int B64Part = 0;	/* in the body of a base64 text part */
 static int B64Bits;	/* bits of the current group not yet decoded */
 static int B64NBits;	/* how many */
@@ -525,8 +534,8 @@ InitArticleType(void)
     QPPart = 0;
     HdrBlock = 1;
     CTCont = 0;
-    BndNext = 0;
-    memset(BndLen, 0, sizeof(BndLen));
+    BndState = 0;
+    BndTop = 0;
 }
 
 int
@@ -636,63 +645,118 @@ linePrefix(const char *s, int len, const char *lit)
 }
 
 /*
- * Remember the boundary="..." parameter of a Content-Type header line (or
- * of its continuation), quoted or not.  One longer than BND_MAX is not a
- * valid boundary and is not remembered.
+ * Push the boundary of a multipart.  Past BND_NUM it is not pushed.
+ */
+static void
+bndPush(const char *b, int n)
+{
+    if (BndTop >= BND_NUM || n < 1 || n > BND_MAX)
+	return;
+    memcpy(Bnd[BndTop], b, n);
+    BndLen[BndTop] = n;
+    ++BndTop;
+}
+
+/*
+ * Find the boundary parameter of a Content-Type header line, or go on
+ * with it on a continuation line: boundary, optional white space, '=',
+ * optional white space (each may be folded onto the next line), then a
+ * token or a quoted string with quoted pairs (RFC 2045, RFC 822).  The
+ * name is matched without case.  A value longer than BND_MAX (after
+ * unquoting) is not a valid boundary and is not remembered.
  */
 static void
 bndCapture(const char *p, int len)
 {
-    int i, n;
+    char v[BND_MAX];
+    int i = 0, n = 0;
 
-    for (i = 0; i + 9 <= len; i++) {
-	if (strncasecmp(p + i, "boundary=", 9) == 0 &&
-		(i == 0 || p[i - 1] == ';' || p[i - 1] == ' ' || p[i - 1] == '\t'))
-	    break;
-    }
-    if (i + 9 > len)
-	return;
-    p += i + 9;
-    len -= i + 9;
-    if (len > 0 && *p == '"') {
-	++p;
+    while (len > 0 && (p[len - 1] == '\n' || p[len - 1] == '\r'))
 	--len;
-	for (n = 0; n < len && p[n] != '"'; n++)
-	    ;
-    } else {
-	for (n = 0; n < len && p[n] != ';' && p[n] != ' ' && p[n] != '\t' &&
-						p[n] != '\r' && p[n] != '\n'; n++)
-	    ;
+    if (BndState == 0) {
+	for (i = 0; i + 8 <= len; i++) {
+	    if (strncasecmp(p + i, "boundary", 8) == 0 &&
+		    (i == 0 || p[i - 1] == ';' || p[i - 1] == ' ' ||
+							p[i - 1] == '\t')) {
+		int k = i + 8;
+
+		while (k < len && (p[k] == ' ' || p[k] == '\t'))
+		    ++k;
+		if (k == len || p[k] == '=')
+		    break;
+	    }
+	}
+	if (i + 8 > len)
+	    return;
+	i += 8;
+	BndState = 1;
     }
-    if (n < 1 || n > BND_MAX)
-	return;
-    memcpy(Bnd[BndNext], p, n);
-    BndLen[BndNext] = n;
-    BndNext = (BndNext + 1) % BND_NUM;
+    while (i < len && (p[i] == ' ' || p[i] == '\t'))
+	++i;
+    if (BndState == 1) {
+	if (i == len)
+	    return;			/* '=' on the next line */
+	if (p[i] != '=') {
+	    BndState = 0;
+	    return;
+	}
+	BndState = 2;
+	++i;
+	while (i < len && (p[i] == ' ' || p[i] == '\t'))
+	    ++i;
+    }
+    if (i == len)
+	return;				/* the value on the next line */
+    BndState = 0;
+    if (p[i] == '"') {
+	for (++i; i < len && p[i] != '"'; i++) {
+	    if (p[i] == '\\' && i + 1 < len)
+		++i;			/* quoted pair */
+	    if (n == BND_MAX)
+		return;			/* too long */
+	    v[n++] = p[i];
+	}
+	if (i == len)
+	    return;			/* no closing quote */
+    } else {
+	for (; i < len && p[i] != ';' && p[i] != ' ' && p[i] != '\t'; i++) {
+	    if (n == BND_MAX)
+		return;
+	    v[n++] = p[i];
+	}
+    }
+    bndPush(v, n);
 }
 
 /*
- * Is this line (after its "--") a boundary we know?  Returns 1 for one
- * that starts a part, 2 for the closing one ("--boundary--").
+ * Is this line (after its "--") the delimiter of a multipart we are in,
+ * innermost first?  Returns 1 for one that starts a part, 2 for the
+ * closing one ("--boundary--"), which pops that multipart and any left
+ * open inside it, 0 for none.  A part of an outer multipart also ends the
+ * ones inside it.
  */
 static int
 bndMatch(const char *p, int len)
 {
     int i, n, k;
 
-    for (i = 0; i < BND_NUM; i++) {
+    for (i = BndTop - 1; i >= 0; i--) {
 	n = BndLen[i];
-	if (n == 0 || len < n || memcmp(p, Bnd[i], n) != 0)
+	if (len < n || memcmp(p, Bnd[i], n) != 0)
 	    continue;
-	if (len >= n + 2 && p[n] == '-' && p[n + 1] == '-')
+	if (len >= n + 2 && p[n] == '-' && p[n + 1] == '-') {
+	    BndTop = i;
 	    return(2);
+	}
 	/* only white space may follow (RFC 2046) */
 	for (k = n; k < len; k++) {
 	    if (p[k] != ' ' && p[k] != '\t' && p[k] != '\r')
 		break;
 	}
-	if (k == len)
+	if (k == len) {
+	    BndTop = i + 1;
 	    return(1);
+	}
     }
     return(0);
 }
@@ -1028,7 +1092,7 @@ ArticleType(char *line, int len, int inheader)
 		QPPart = 1;
 	}
 	HdrBlock = 0;
-	CTCont = 0;
+	CTCont = BndState = 0;
     }
     /*
      * If we have found a binary, just keep it that way - saves CPU
@@ -1047,7 +1111,7 @@ ArticleType(char *line, int len, int inheader)
 	if (HdrBlock && (*ptr == ' ' || *ptr == '\t'))
 	    bndCapture(ptr, len);
 	else
-	    CTCont = 0;
+	    CTCont = BndState = 0;
     }
 
     /*
@@ -1079,6 +1143,7 @@ ArticleType(char *line, int len, int inheader)
 	    CTSeen = 1;
 	    CTText = hdrPrefix(cv, cvlen, "text/");
 	    if (HdrBlock) {
+		BndState = 0;
 		bndCapture(cv, cvlen);
 		CTCont = 1;
 	    }
