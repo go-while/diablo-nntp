@@ -430,6 +430,13 @@ typedef struct TimeRestrict {
 #define USE_AIO		0
 #endif
 
+/*
+ * Spool read buffer for local article fetches.  NNSLA_Loop reads an article
+ * through it in one blocking loop, so a larger buffer only means fewer read()
+ * calls per article; each reader process holds about one DFA at a time.
+ */
+#define DFA_BUFSIZE	65536
+
 typedef struct DirectFileAccess {
 #if USE_AIO
     struct aiocb *dfa_AIOcb;
@@ -438,7 +445,7 @@ typedef struct DirectFileAccess {
     int		dfa_Fd;
 #endif
     int		dfa_Size;
-    char	dfa_Buffer[4096];
+    char	dfa_Buffer[DFA_BUFSIZE];
     char	dfa_Field[MAX_HDR_CC];
     char	dfa_InHdr;
     char	dfa_LF;

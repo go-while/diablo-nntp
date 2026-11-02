@@ -84,29 +84,51 @@ OverWriteAt(int fd, const void *buf, size_t len, off_t pos)
     return(0);
 }
 
-/* writev() is allowed to complete only part of an overview header. */
+/*
+ * writev() is allowed to complete only part of an overview header.  Issue
+ * the whole record as one writev() and, on a short write, resume from the
+ * exact byte where it stopped.
+ */
 static int
 OverWriteV(int fd, const struct iovec *iov, int count)
 {
+    struct iovec vec[8];
+    struct iovec *v = vec;
     int i;
 
-    for (i = 0; i < count; ++i) {
-        const char *ptr = iov[i].iov_base;
-        size_t left = iov[i].iov_len;
+    if (count < 0 || count > (int)(sizeof(vec) / sizeof(vec[0]))) {
+        errno = EINVAL;
+        return(-1);
+    }
+    for (i = 0; i < count; ++i)
+        vec[i] = iov[i];
 
-        while (left) {
-            ssize_t n = write(fd, ptr, left);
+    for (;;) {
+        ssize_t n;
 
-            if (n > 0) {
-                ptr += n;
-                left -= (size_t)n;
-            } else if (n < 0 && errno == EINTR) {
-                continue;
-            } else {
-                if (n == 0)
-                    errno = EIO;
-                return(-1);
-            }
+        while (count > 0 && v->iov_len == 0) {
+            ++v;
+            --count;
+        }
+        if (count == 0)
+            break;
+
+        n = writev(fd, v, count);
+        if (n < 0 && errno == EINTR)
+            continue;
+        if (n <= 0) {
+            if (n == 0)
+                errno = EIO;
+            return(-1);
+        }
+        while (count > 0 && (size_t)n >= v->iov_len) {
+            n -= (ssize_t)v->iov_len;
+            ++v;
+            --count;
+        }
+        if (count > 0) {
+            v->iov_base = (char *)v->iov_base + n;
+            v->iov_len -= (size_t)n;
         }
     }
     return(0);
