@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"encoding/base64"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -52,6 +53,27 @@ func artTypeOf(t *testing.T, s *Site, lines []string) int {
 	}
 	t.Fatalf("dfeedtest -a: no ArtType in\n%s", out)
 	return 0
+}
+
+// hdr64 returns the MIME headers of a base64 body with the given Content-Type.
+func hdr64(ctype string) []string {
+	return []string{"Mime-Version: 1.0", "Content-Type: " + ctype, "Content-Transfer-Encoding: base64"}
+}
+
+// b64Text returns n lines of base64 (76 characters, the last one shorter and padded) that
+// decode to a patch description with UTF-8 text in it.
+func b64Text(n int) []string {
+	var text strings.Builder
+	for i := 0; text.Len() < n*57-5; i++ {
+		text.WriteString("tcp: free saved_syn after an RCU grace period (caf\u00e9) " + strconv.Itoa(i) + "\n")
+	}
+	enc := base64.StdEncoding.EncodeToString([]byte(text.String()[:n*57-5]))
+	var l []string
+	for len(enc) > 76 {
+		l = append(l, enc[:76])
+		enc = enc[76:]
+	}
+	return append(l, enc)
 }
 
 // atArticle builds an article with the usual headers, extra headers and a body.
@@ -140,7 +162,18 @@ func TestArticleTypes(t *testing.T) {
 		{"yenc total= part= line=", nil, append(append([]string{"=ybegin total=2 part=1 line=128 size=768 name=a.bin", "=ypart begin=1 end=384"}, yenc...), "=yend size=384 part=1"), atDefault, "misdetection: not binary at all; should be atYenc | atBinary | atPartial"},
 		{"yenc size= line=", nil, append(append([]string{"=ybegin size=384 line=128 name=a.bin"}, yenc...), "=yend size=384"), atDefault, "misdetection: not binary at all; should be atYenc | atBinary"},
 		// Text that is taken for binary.
-		{"base64 text", []string{"Mime-Version: 1.0", "Content-Type: text/plain; charset=UTF-8", "Content-Transfer-Encoding: base64"}, atLines(3, 40, b64Alphabet, ""), atMIME | atBinary | atBase64, "misdetection: a text/plain part is taken for binary by its base64 encoding; should not be binary"},
+		// Text that was sent as base64 is text when it decodes to text; base64 that does not,
+		// or that is not a text part, is binary.
+		{"base64 text", hdr64("text/plain; charset=UTF-8"), b64Text(30), atMIME, ""},
+		{"base64 text, no Content-Type", []string{"Mime-Version: 1.0", "Content-Transfer-Encoding: base64"}, b64Text(30), atMIME, ""},
+		{"base64 text/x-patch", hdr64("text/x-patch"), b64Text(30), atMIME, ""},
+		{"base64 text, Content-Type after the encoding", []string{"Mime-Version: 1.0", "Content-Transfer-Encoding: base64", "Content-Type: text/plain; charset=UTF-8"}, b64Text(30), atMIME, ""},
+		{"base64 text, ISO-2022-JP", hdr64("text/plain; charset=ISO-2022-JP"), []string{"GyRCJDMkcyRLJEEkTxsoQgo="}, atMIME, ""},
+		{"base64 random data in text/plain", hdr64("text/plain; charset=UTF-8"), atLines(3, 76, b64Alphabet, ""), atMIME | atBinary | atBase64, ""},
+		{"base64 binary after text", hdr64("text/plain; charset=UTF-8"), append(b64Text(5), atLines(3, 76, b64Alphabet, "")...), atMIME | atBinary | atBase64, ""},
+		{"base64 with NUL bytes", hdr64("text/plain"), []string{"AAAAAAAAAAAAAAAA"}, atMIME | atBinary | atBase64, ""},
+		{"base64 text/html", hdr64("text/html"), b64Text(30), atMIME | atHTML, ""},
+		{"base64 application/pdf", hdr64("application/pdf"), b64Text(30), atMIME | atBinary | atBase64, ""},
 		// Header parsing.
 		{"uppercase CONTENT-TYPE html", []string{"Mime-Version: 1.0", "CONTENT-TYPE: text/html"}, []string{"<p>Hi</p>"}, atMIME, "misdetection: the header is skipped (tolower(*(ptr + 1) == 'o') precedence bug); should add atHTML"},
 		{"uppercase CONTENT-TRANSFER-ENCODING", []string{"Mime-Version: 1.0", "CONTENT-TRANSFER-ENCODING: BASE64"}, atLines(3, 40, b64Alphabet, ""), atMIME, "misdetection: same precedence bug; should be atMIME | atBinary | atBase64"},

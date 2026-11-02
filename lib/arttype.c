@@ -57,6 +57,18 @@ int Type = ARTTYPE_DEFAULT;
 int UUencode = 0;
 int BinHex = 0;
 int Base64 = 0;
+/*
+ * A text part sent as base64 (Content-Type text/*, or none, with
+ * Content-Transfer-Encoding: base64) is not binary when it decodes to text:
+ * Base64Hdr is set when the header was seen, CtypeSeen/CtypeText say what
+ * the Content-Type was, and Base64Text is set at the first body line when
+ * the body is to be checked by decoding it.
+ */
+int Base64Hdr = 0;
+int CtypeSeen = 0;
+int CtypeText = 0;
+int BodyStarted = 0;
+int Base64Text = 0;
 
 /*
  * Extensible content type classification system
@@ -437,6 +449,63 @@ InitArticleType(void)
     UUencode = 0;
     BinHex = 0;
     Base64 = 0;
+    Base64Hdr = 0;
+    CtypeSeen = 0;
+    CtypeText = 0;
+    BodyStarted = 0;
+    Base64Text = 0;
+}
+
+/*
+ * Does this line of base64 decode to something that is not text?  Only a
+ * line made of base64 characters is looked at (a tail of fewer than four
+ * characters is ignored), and text is anything but NUL and control
+ * characters other than TAB, LF, CR, FF and ESC (ISO-2022).  Random data has
+ * one of those in about 99.9% of its lines of 57 bytes.
+ */
+static int
+Base64LineIsBinary(char *buf, int len)
+{
+    int i, v, bits, nbits;
+    int bad = 0;
+
+    if (len > 0 && buf[len - 1] == '\n')
+	len--;
+    if (len > 0 && buf[len - 1] == '\r')
+	len--;
+    bits = 0;
+    nbits = 0;
+    for (i = 0; i < len; i++) {
+	unsigned char c = (unsigned char)buf[i];
+
+	if (c >= 'A' && c <= 'Z')
+	    v = c - 'A';
+	else if (c >= 'a' && c <= 'z')
+	    v = c - 'a' + 26;
+	else if (c >= '0' && c <= '9')
+	    v = c - '0' + 52;
+	else if (c == '+')
+	    v = 62;
+	else if (c == '/')
+	    v = 63;
+	else if (c == '=')
+	    break;
+	else
+	    return(0);		/* not a base64 line: nothing to decide */
+	bits = (bits << 6) | v;
+	nbits += 6;
+	if (nbits >= 8) {
+	    int b;
+
+	    nbits -= 8;
+	    b = (bits >> nbits) & 0xff;
+	    bits &= (1 << nbits) - 1;
+	    if (b < 0x20 && b != '\t' && b != '\n' && b != '\r' &&
+						b != '\f' && b != 0x1b)
+		bad = 1;
+	}
+    }
+    return(bad);
 }
 
 int
@@ -525,6 +594,22 @@ ArticleType(char *line, int len, int inheader)
     ptr = line;
 
     /*
+     * The headers are done: a base64 body that is not a text part is binary,
+     * a text part is checked line by line (Base64LineIsBinary)
+     */
+    if (!inheader && !BodyStarted) {
+	BodyStarted = 1;
+	if (Base64Hdr) {
+	    if (!CtypeSeen || CtypeText)
+		Base64Text = 1;
+	    else
+		Type |= ARTTYPE_BASE64 | ARTTYPE_BINARY;
+	}
+	if (Type & ARTTYPE_BINARY)
+	    return(Type);
+    }
+
+    /*
      * Do some checks that could apply to headers and or body
      */
     first = tolower(*ptr);
@@ -533,10 +618,19 @@ ArticleType(char *line, int len, int inheader)
 	    Type |= ARTTYPE_HTML;
 	if (! strncasecmp(ptr, "Content-Type: ", 14))
 	    Type |= ARTTYPE_MIME;
+	if (inheader && ! strncasecmp(ptr, "Content-Type: ", 14)) {
+	    CtypeSeen = 1;
+	    if (! strncasecmp(ptr, "Content-Type: text/", 19))
+		CtypeText = 1;
+	}
 	if (! strncasecmp(ptr, "Content-Type: multipart", 23))
 	    Type |= ARTTYPE_MULTIPART;
-	if (! strncasecmp(ptr, "Content-transfer-encoding: base64", 33))
-	    Type |= ARTTYPE_BASE64 | ARTTYPE_BINARY;
+	if (! strncasecmp(ptr, "Content-transfer-encoding: base64", 33)) {
+	    if (inheader)
+		Base64Hdr = 1;		/* decided at the first body line */
+	    else
+		Type |= ARTTYPE_BASE64 | ARTTYPE_BINARY;
+	}
 	if (! strncasecmp(ptr, "Content-transfer-encoding: X-Bommanews", 38))
 	    Type |= ARTTYPE_BOMMANEWS | ARTTYPE_BINARY;
 	if (! strncasecmp(ptr, "Content-transfer-encoding: X-UnidataEncoding", 44))
@@ -569,6 +663,12 @@ ArticleType(char *line, int len, int inheader)
 		Type |= ARTTYPE_MIME;
     } else {
 	int linetype;
+
+	if (Base64Text) {
+	    if (Base64LineIsBinary(ptr, len))
+		Type |= ARTTYPE_BASE64 | ARTTYPE_BINARY;
+	    return(Type);
+	}
 
 	/* Get quoted UUencode, etc. */
 	if (*ptr == '>') {
