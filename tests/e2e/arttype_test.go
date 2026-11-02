@@ -131,6 +131,20 @@ func qpLines(n int) []string {
 	return l
 }
 
+// hdrQP is the MIME headers of a quoted-printable UTF-8 text.
+var hdrQP = []string{"Mime-Version: 1.0", "Content-Type: text/plain; charset=utf-8", "Content-Transfer-Encoding: quoted-printable"}
+
+// qpFew returns n lines of quoted-printable German without spaces (long compound words):
+// 74 base64 characters with two escapes (=C3=A4, ä), so the escapes are a small part of
+// the line.
+func qpFew(n int) []string {
+	var l []string
+	for i := 0; i < n; i++ {
+		l = append(l, "Donaudampfschifffahrtsgesellschaftskapit=C3=A4nswitwenrentenversicherung"+strconv.Itoa(10+i))
+	}
+	return l
+}
+
 // atArticle builds an article with the usual headers, extra headers and a body.
 func atArticle(extra []string, body []string) []string {
 	a := newArticle("<arttype@e2e.test>", "e2e.test", "article type")
@@ -276,6 +290,19 @@ func TestArticleTypes(t *testing.T) {
 		{"quoted-printable without headers", nil, qpLines(40), atDefault, ""},
 		{"base64 attachment with padding", []string{"Mime-Version: 1.0", "Content-Type: image/png", "Content-Transfer-Encoding: base64"}, append(append([]string{}, b64...), "QUJDRA=="), atMIME | atBinary | atBase64, ""},
 		{"base64 data without headers, padded at the end", nil, append(append([]string{}, b64...), "QUJDRA=="), atBinary | atBase64, ""},
+		// Without the declaration only a line that is valid quoted-printable, at least half
+		// =HH escapes, is not base64; in a part declared quoted-printable one escape or a soft
+		// line break is enough, but lines without '=' still count.
+		{"quoted-printable, few escapes, declared", hdrQP, qpFew(12), atMIME, ""},
+		{"quoted-printable, few escapes, not declared", nil, qpFew(12), atBinary | atBase64, "a line with two escapes in 74 base64 characters looks more like base64"},
+		{"quoted-printable, soft line breaks only, declared", hdrQP, edit(atLines(12, 75, b64Alphabet, ""), func(l string) string { return l + "=" }), atMIME, ""},
+		{"quoted-printable, soft line breaks only, not declared", nil, edit(atLines(12, 75, b64Alphabet, ""), func(l string) string { return l + "=" }), atBinary | atBase64, ""},
+		{"base64 lines in a quoted-printable part", hdrQP, b64, atMIME | atBinary | atBase64, "lines without '=' are counted as before"},
+		{"base64 after a quoted-printable part", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=XX"},
+			append(append(append([]string{"--XX", "Content-Type: text/plain; charset=utf-8", "Content-Transfer-Encoding: quoted-printable", ""}, qpLines(3)...), "--XX", "Content-Type: text/plain", ""), edit(b64, func(l string) string { return l[:70] + "=" })...), atMIME | atMultipart | atBinary | atBase64, "the declaration ends at the next boundary"},
+		{"base64 with a stray '=' in each line", nil, edit(b64, func(l string) string { return l[:30] + "=" + l[30:] }), atBinary | atBase64, ""},
+		{"base64 with a stray '=4F' in each line", nil, edit(b64, func(l string) string { return l[:30] + "=4F" + l[30:72] }), atBinary | atBase64, ""},
+		{"base64 with a stray '=' in each line, image/png", hdr64("image/png"), edit(b64, func(l string) string { return l[:30] + "=" + l[30:] }), atMIME | atBinary | atBase64, ""},
 		// Header parsing.
 		{"pem certificate", nil, pem("CERTIFICATE", 24), atDefault, ""},
 		{"pem certificate request", nil, pem("CERTIFICATE REQUEST", 14), atDefault, ""},
@@ -550,6 +577,30 @@ func TestBase64TextNotRejectedAsBinary(t *testing.T) {
 		{"uuencode under a base64 text header", text, append([]string{"begin 644 a.bin"}, atLines(12, 60, uuAlphabet, "M")...), "437"},
 	} {
 		if line := offerHeaders(t, s, "comp.test", c.extra, c.body); !strings.HasPrefix(line, c.want) {
+			t.Errorf("IHAVE with %s: %q, want %s", c.name, line, c.want)
+		}
+	}
+}
+
+// TestQuotedPrintableNotRejectedAsBinary: quoted-printable Chinese text (=E5=9C=A8... lines of
+// base64 characters) passes the sample IFILTER, with and without its MIME headers; base64 data
+// with a stray '=' in each line is still refused.
+func TestQuotedPrintableNotRejectedAsBinary(t *testing.T) {
+	s := NewSite(t, SiteOptions{
+		Newsfeeds: DefaultNewsfeeds + "label IFILTER\n    addgroup *\n    delgroup *.bina*\n    arttypes binary\nend\n",
+	})
+	b64 := atLines(12, 76, b64Alphabet, "")
+	for _, c := range []struct {
+		name  string
+		extra []string
+		body  []string
+		want  string
+	}{
+		{"quoted-printable Chinese", hdrQP, qpLines(40), "235"},
+		{"quoted-printable Chinese without headers", nil, qpLines(40), "235"},
+		{"base64 with a stray '='", nil, edit(b64, func(l string) string { return l[:30] + "=" + l[30:] }), "437"},
+	} {
+		if line := offerHeaders(t, s, "talk.test", c.extra, c.body); !strings.HasPrefix(line, c.want) {
 			t.Errorf("IHAVE with %s: %q, want %s", c.name, line, c.want)
 		}
 	}

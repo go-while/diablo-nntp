@@ -85,6 +85,8 @@ int Armor = 0;	/* lines left to skip in an ASCII-armored block (PGP, PEM), 0 = n
 #define	DLINE_MAX	1024	/* a longer decoded line is checked by its start */
 
 static int CTSeen = 0;	/* a Content-Type was seen in this header block */
+static int CTEQP = 0;	/* a quoted-printable Content-Transfer-Encoding is waiting for the end of its header block */
+static int QPPart = 0;	/* in the body of a part declared quoted-printable */
 static int B64Part = 0;	/* in the body of a base64 text part */
 static int B64Bits;	/* bits of the current group not yet decoded */
 static int B64NBits;	/* how many */
@@ -501,6 +503,8 @@ InitArticleType(void)
     CTEBase64 = 0;
     CTSeen = 0;
     B64Part = 0;
+    CTEQP = 0;
+    QPPart = 0;
 }
 
 int
@@ -610,6 +614,46 @@ linePrefix(const char *s, int len, const char *lit)
 }
 
 /*
+ * Is this line quoted-printable rather than base64?  Every '=' must start
+ * an =HH escape (two upper-case hex digits, RFC 2045) or be the soft line
+ * break at the end; base64 has '=' only as padding at the end of the data,
+ * and "==" or "=x" is not quoted-printable.  In a part declared
+ * quoted-printable one such '=' is enough.  Without the declaration the
+ * escapes must make up at least half of the line: the lines that look like
+ * base64 are those without spaces, which in quoted-printable means text
+ * in a non-Latin script, nearly all escapes (a line of Chinese in UTF-8 is
+ * 25 escapes and a soft line break).  A stray '=' in base64 data, or a
+ * few escapes in it, do not make it quoted-printable.
+ */
+#define	QPHEX(c)	(((c) >= '0' && (c) <= '9') || ((c) >= 'A' && (c) <= 'F'))
+
+static int
+qpLine(const char *p, int len, int declared)
+{
+    int i, esc = 0, soft = 0;
+
+    if (len > 0 && p[len - 1] == '\n')
+	len--;
+    if (len > 0 && p[len - 1] == '\r')
+	len--;
+    for (i = 0; i < len; i++) {
+	if (p[i] != '=')
+	    continue;
+	if (i == len - 1) {
+	    soft = 1;		/* soft line break */
+	    break;
+	}
+	if (i + 2 >= len || !QPHEX(p[i + 1]) || !QPHEX(p[i + 2]))
+	    return(0);
+	esc++;
+	i += 2;
+    }
+    if (declared)
+	return(esc > 0 || soft);
+    return(esc * 3 * 2 >= len);
+}
+
+/*
  * The per-line checks of a body line: runs of uuencode, BinHex and base64
  * lines, with ASCII-armored blocks not counted.  The counters are passed in
  * so that the decoded lines of a base64 text part are counted apart from
@@ -658,25 +702,12 @@ bodyLineTypes(char *ptr, int len, int *uu, int *bh, int *b64, int *armor)
 	linetype = classifyLineAsTypes(ptr, len);
 
 	/*
-	 * '=' in base64 is padding at the end of the data; a line with one
-	 * in the middle is quoted-printable (=E5=9C=A8... is made of base64
-	 * characters, and soft line breaks make its lines 76 long)
+	 * '=' in base64 is padding at the end of the data; quoted-printable
+	 * text in a non-Latin script (=E5=9C=A8..., 76 characters with a
+	 * soft line break) is made of base64 characters too (qpLine)
 	 */
-	if (linetype & B64) {
-	    int i;
-	    int l = len;
-
-	    if (l > 0 && ptr[l - 1] == '\n')
-		l--;
-	    if (l > 0 && ptr[l - 1] == '\r')
-		l--;
-	    for (i = 0; i < l - 2; i++) {
-		if (ptr[i] == '=') {
-		    linetype &= ~B64;
-		    break;
-		}
-	    }
-	}
+	if ((linetype & B64) && qpLine(ptr, len, QPPart))
+	    linetype &= ~B64;
 
 	if (len > 0 && *ptr == '-' && linePrefix(ptr, len, "-----BEGIN ")) {
 	    /* PGP in any armor form: message (also a part), signed
@@ -859,6 +890,11 @@ ArticleType(char *line, int len, int inheader)
 	    Type &= ~ARTTYPE_DEFAULT;
 	}
     }
+    /* the same for a quoted-printable one (qpLine) */
+    if (CTEQP && (len == 0 || (len == 1 && *line == '\r'))) {
+	CTEQP = 0;
+	QPPart = 1;
+    }
     /*
      * If we have found a binary, just keep it that way - saves CPU
      */
@@ -932,6 +968,8 @@ ArticleType(char *line, int len, int inheader)
 
 	    if (hdrPrefix(ce, celen, "base64"))
 		CTEBase64 = 1;
+	    if (hdrPrefix(ce, celen, "quoted-printable"))
+		CTEQP = 1;
 	    if (hdrPrefix(ce, celen, "X-Bommanews"))
 		Type |= ARTTYPE_BOMMANEWS | ARTTYPE_BINARY;
 	    if (hdrPrefix(ce, celen, "X-UnidataEncoding"))
@@ -959,11 +997,13 @@ ArticleType(char *line, int len, int inheader)
     } else {
 	/*
 	 * A MIME boundary starts a part: its Content-Type is not known yet,
-	 * and it ends a base64 text part
+	 * and it ends a base64 text part or a quoted-printable one
 	 */
 	if (len >= 2 && ptr[0] == '-' && ptr[1] == '-') {
 	    CTText = 0;
 	    CTSeen = 0;
+	    CTEQP = 0;
+	    QPPart = 0;
 	    if (B64Part) {
 		b64End();
 		if (Type & ARTTYPE_BINARY)
