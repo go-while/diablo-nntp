@@ -423,9 +423,8 @@ main(int ac, char **av)
 // copying no entries.  They must skip the group and leave its files alone.
 //
 // The test holds the record's lock (a 4-byte fcntl lock at its offset, as
-// hflock() takes it), starts the tool, waits until it is blocked on that lock
-// (seen in /proc/locks; a fixed second where there is none), marks the record
-// deleted as KPDBDelete() does, and releases the lock.
+// hflock() takes it) while the tool starts, and removes the group once the
+// tool waits for it (see deleteGroupWhileBlocked).
 func TestOverToolsGroupRemovedWhileWaiting(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -446,56 +445,137 @@ func TestOverToolsGroupRemovedWhileWaiting(t *testing.T) {
 			writeOver(t, data, []byte("xxxxxxxxxx"))
 
 			db := filepath.Join(s.Dir, "dactive.kp")
-			off := kpRecordOffset(t, db, "e2e.test")
-			f, err := os.OpenFile(db, os.O_RDWR, 0)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer f.Close()
-			lk := syscall.Flock_t{Type: syscall.F_WRLCK, Whence: 0, Start: off, Len: 4}
-			if err := syscall.FcntlFlock(f.Fd(), syscall.F_SETLK, &lk); err != nil {
-				t.Fatalf("lock record e2e.test: %v", err)
-			}
+			out := deleteGroupWhileBlocked(t, s, db, kpRecordOffset(t, db, "e2e.test"), tc.args)
 
-			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-			defer cancel()
-			cmd := exec.CommandContext(ctx, filepath.Join(s.Bin, tc.args[0]), tc.args[1:]...)
-			cmd.Dir = s.Dir
-			cmd.Env = append(os.Environ(), s.Env...)
-			var out bytes.Buffer
-			cmd.Stdout, cmd.Stderr = &out, &out
-			if err := cmd.Start(); err != nil {
-				t.Fatal(err)
-			}
-			done := make(chan error, 1)
-			go func() { done <- cmd.Wait() }()
-
-			if err := waitLockWaiter(cmd.Process.Pid, done); err != nil {
-				t.Fatalf("%s did not wait for the record: %v\n%s", tc.args[0], err, out.String())
-			}
-			if _, err := f.WriteAt([]byte("-"), off); err != nil {
-				t.Fatal(err)
-			}
-			lk.Type = syscall.F_UNLCK
-			if err := syscall.FcntlFlock(f.Fd(), syscall.F_SETLK, &lk); err != nil {
-				t.Fatal(err)
-			}
-			if err := <-done; err != nil {
-				t.Fatalf("%s: %v\n%s", tc.args[0], err, out.String())
-			}
-
-			if !strings.Contains(out.String(), "no longer in the active file") {
-				t.Errorf("%s did not report the removed group:\n%s", tc.args[0], out.String())
+			if !strings.Contains(out, "no longer in the active file") {
+				t.Errorf("%s did not report the removed group:\n%s", tc.args[0], out)
 			}
 			if _, err := os.Stat(data); err != nil {
-				t.Errorf("%s removed the data file of the removed group: %v\n%s", tc.args[0], err, out.String())
+				t.Errorf("%s removed the data file of the removed group: %v\n%s", tc.args[0], err, out)
 			}
 			if b, err := os.ReadFile(over); err != nil || !bytes.Equal(b, index) {
 				t.Errorf("%s changed the over file of the removed group (%d bytes, was %d): %v\n%s",
-					tc.args[0], len(b), len(index), err, out.String())
+					tc.args[0], len(b), len(index), err, out)
 			}
 		})
 	}
+}
+
+// TestDexpireoverGroupRemovedDuringResize: the group is still there when
+// dexpireover -a -s reads it first (NB..NE 1..1000 does not fit 500 slots, so
+// it moves NB up and marks the group for the NB write-back), and is removed
+// while ResizeGroup waits for the over.* lock (offset 4).  The resize saw the
+// group gone, but the caller still expired the group, and the write-back
+// (KPDBWriteEncode of NB, which creates a missing record) brought the group
+// back as "+...:e2e.test NB=0000001001" (NB as the expire pass left it) with
+// no other fields.  It must stay removed, and its files untouched.  (Found in
+// the third review, by GPT Terra.)
+func TestDexpireoverGroupRemovedDuringResize(t *testing.T) {
+	s, home := overSite(t, map[string]string{"readergrouphash": "hierarchy"})
+	s.Run(t, "dgrpctl", "adjust", "e2e.test", "NE", "=1000")
+	s.WriteFile(t, "dexpire.ctl", "e2e.*:x30\n")
+	over := filepath.Join(home, "e2e", "o.0.e2e.test")
+	index := append(overHeadMax("e2e.test", 500), make([]byte, 500*32)...)
+	writeOver(t, over, index)
+
+	db := filepath.Join(s.Dir, "dactive.kp")
+	out := deleteGroupWhileBlocked(t, s, over, 4, []string{"dexpireover", "-a", "-s", "-y", "-v"})
+
+	if live, _, _ := kpRecords(t, db, "e2e.test"); len(live) != 0 {
+		t.Errorf("the removed group is back in dactive.kp: %q\n%s", live, out)
+	}
+	if !strings.Contains(out, "no longer in the active file") {
+		t.Errorf("dexpireover did not report the removed group:\n%s", out)
+	}
+	if b, err := os.ReadFile(over); err != nil || !bytes.Equal(b, index) {
+		t.Errorf("dexpireover changed the over file of the removed group (%d bytes, was %d): %v\n%s",
+			len(b), len(index), err, out)
+	}
+}
+
+// TestDexpireoverGroupRemovedBeforeWriteBack: a group with no overview files
+// and no CTS field, so the only access dexpireover -a makes to its record is
+// the write-back of CTS.  The group is removed while that write waits for
+// the record's lock.  KPDBWriteEncode() then found no record and created one
+// with only CTS; the write-back must instead skip a group that is gone.
+func TestDexpireoverGroupRemovedBeforeWriteBack(t *testing.T) {
+	s, _ := overSite(t, nil)
+	s.WriteFile(t, "dexpire.ctl", "e2e.*:x30\n")
+	db := filepath.Join(s.Dir, "dactive.kp")
+	dkp := filepath.Join(s.Bin, "dkp")
+	for _, a := range [][]string{
+		{"-x", db, "e2e.test"},
+		{"-w", db, "e2e.test", "NB=0000000001"},
+		{"-w", db, "e2e.test", "NE=0000000300"},
+		{"-w", db, "e2e.test", "S=y"},
+	} {
+		if out, err := exec.Command(dkp, a...).CombinedOutput(); err != nil {
+			t.Fatalf("dkp %s: %v\n%s", strings.Join(a, " "), err, out)
+		}
+	}
+
+	out := deleteGroupWhileBlocked(t, s, db, kpRecordOffset(t, db, "e2e.test"), []string{"dexpireover", "-a", "-y", "-v"})
+
+	if live, _, _ := kpRecords(t, db, "e2e.test"); len(live) != 0 {
+		t.Errorf("the removed group is back in dactive.kp: %q\n%s", live, out)
+	}
+	if !strings.Contains(out, "no longer in the active file") {
+		t.Errorf("dexpireover did not report the removed group:\n%s", out)
+	}
+}
+
+// deleteGroupWhileBlocked holds a 4-byte fcntl lock at lockOff in lockPath
+// (as hflock() takes it), runs the tool (args) of site s, waits until the
+// tool is blocked on a lock (seen in /proc/locks; a fixed second where there
+// is none), marks e2e.test's record in dactive.kp deleted as KPDBDelete()
+// does, releases the lock, and returns the tool's output once it exits.
+func deleteGroupWhileBlocked(t *testing.T, s *Site, lockPath string, lockOff int64, args []string) string {
+	t.Helper()
+	db := filepath.Join(s.Dir, "dactive.kp")
+	recOff := kpRecordOffset(t, db, "e2e.test")
+	f, err := os.OpenFile(lockPath, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	lk := syscall.Flock_t{Type: syscall.F_WRLCK, Whence: 0, Start: lockOff, Len: 4}
+	if err := syscall.FcntlFlock(f.Fd(), syscall.F_SETLK, &lk); err != nil {
+		t.Fatalf("lock %s at %d: %v", lockPath, lockOff, err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, filepath.Join(s.Bin, args[0]), args[1:]...)
+	cmd.Dir = s.Dir
+	cmd.Env = append(os.Environ(), s.Env...)
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	if err := waitLockWaiter(cmd.Process.Pid, done); err != nil {
+		t.Fatalf("%s did not wait for the lock: %v\n%s", args[0], err, out.String())
+	}
+	dbf, err := os.OpenFile(db, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = dbf.WriteAt([]byte("-"), recOff)
+	dbf.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lk.Type = syscall.F_UNLCK
+	if err := syscall.FcntlFlock(f.Fd(), syscall.F_SETLK, &lk); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("%s: %v\n%s", args[0], err, out.String())
+	}
+	return out.String()
 }
 
 // kpRecordOffset returns the offset of the live record of key in a KP database.

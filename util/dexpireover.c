@@ -70,6 +70,7 @@ typedef struct Group {
 #define GRF_FROMREMOTE  0x00002000
 #define GRF_MODIFIED    0x00008000
 #define GRF_EDITEDBEG   0x00010000
+#define GRF_GONE        0x00020000	/* left dactive.kp during the run */
 
 #define GHSIZE		1024
 #define GHMASK		(GHSIZE-1)
@@ -113,9 +114,11 @@ int SetField(char **pptr, const char *str);
 void ExpireByDays(Group *group, int fd, OverHead *oh, int expireSecs);
 void ExpireBySpool(Group *group, int fd, OverHead *oh);
 void ExpireFromFile(Group *group, int fd, OverHead *oh, int expireSecs);
-void RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldDataEntries, int newDataEntries, int *fdl);
+int RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldDataEntries, int newDataEntries, int *fdl);
 void rewriteDataFile(Group *group, const char *cacheBase, int cacheSize, const OverArt *oa, OverArt *ob, const char *dirPath, int oldDataEntriesMask, int newDataEntriesMask, artno_t artNo);
-void ResizeGroup(Group *group, int fd, OverHead *oh, int maxArts, int OldDataEntries, int *fdl);
+int ResizeGroup(Group *group, int fd, OverHead *oh, int maxArts, int OldDataEntries, int *fdl);
+static void groupGone(Group *group, const char *what);
+static int writeActiveField(Group *group, const char *tok, const char *data);
 int nearestPower(int n);
 void ReadDExpOverList(void);
 int expOverListCheckExpired(hash_t *hv);
@@ -510,6 +513,10 @@ main(int ac, char **av)
 		 */
 		int add = 0;
 
+		/* removed from the active file during the run: leave it so */
+		if (group->gr_State & GRF_GONE)
+		    continue;
+
 		if (OldGroups) {
 		    if (group->gr_LMTS) {
 			/*
@@ -530,8 +537,8 @@ main(int ac, char **av)
 			if (ForReal) {
 			    char tsBuf[16];
 			    sprintf(tsBuf, "%08x", (int)t0);
-			    KPDBWriteEncode(KDBActive, group->gr_GroupName, "LMTS", tsBuf, 0);
-			    add = 1;
+			    if (writeActiveField(group, "LMTS", tsBuf) == 0)
+				add = 1;
 			}
 			if (VerboseOpt)
 			    printf("%s: added missing LMTS\n", group->gr_GroupName);
@@ -543,7 +550,7 @@ main(int ac, char **av)
 			if (ForReal) {
 			    char tsBuf[16];
 			    sprintf(tsBuf, "%08x", group->gr_CTS);
-			    KPDBWriteEncode(KDBActive, group->gr_GroupName, "CTS", tsBuf, 0);
+			    (void)writeActiveField(group, "CTS", tsBuf);
 			}
 			if (VerboseOpt)
 			    printf("%s: added missing CTS\n", group->gr_GroupName);
@@ -555,8 +562,8 @@ main(int ac, char **av)
 		    if (group->gr_State & GRF_EDITEDBEG) {
 			char startBuf[20];
 			snprintf(startBuf, sizeof(startBuf), "%010lld", group->gr_StartNo);
-			KPDBWriteEncode(KDBActive, group->gr_GroupName, "NB", startBuf, 0);
-			add = 1;
+			if (writeActiveField(group, "NB", startBuf) == 0)
+			    add = 1;
 		    }
 		}
 		count += add;
@@ -574,6 +581,40 @@ main(int ac, char **av)
 	HistoryClose();
 
     return(CompressFailed ? 1 : 0);
+}
+
+/*
+ * groupGone() - the group's record left dactive.kp after the scan began
+ * (a KP_LOCK read found none): stop working on the group and drop its
+ * pending write-back.
+ */
+static void
+groupGone(Group *group, const char *what)
+{
+    if (VerboseOpt)
+	printf("group %s no longer in the active file, %s\n",
+					group->gr_GroupName, what);
+    group->gr_State |= GRF_GONE;
+    group->gr_State &= ~GRF_MODIFIED;
+}
+
+/*
+ * writeActiveField() - update a field of the group's record, which must
+ * still exist.  The record stays locked from the check through the write,
+ * so a removal either comes first (and we skip) or waits for us.  A plain
+ * KPDBWrite() would create the record again with only this field.
+ */
+static int
+writeActiveField(Group *group, const char *tok, const char *data)
+{
+    int recLen;
+
+    if (KPDBReadRecord(KDBActive, group->gr_GroupName, KP_LOCK, &recLen) == NULL) {
+	groupGone(group, "not updated");
+	return(-1);
+    }
+    KPDBWriteEncode(KDBActive, group->gr_GroupName, tok, data, KP_UNLOCK);
+    return(0);
 }
 
 /*
@@ -793,6 +834,10 @@ ProcessOverviewFile(const char *dirPath, const char *name, int type)
     if (DebugOpt > 2)
 	printf("Maps to group: %s\n", group->gr_GroupName);
 
+    /* found missing while working on another of its files */
+    if (group->gr_State & GRF_GONE)
+	return;
+
     if (type == 1) {
 	/*
 	 * over. file	(fixed length file)
@@ -826,6 +871,7 @@ ProcessOverviewFile(const char *dirPath, const char *name, int type)
 		int expireSecs;
 		OverExpire save;
 		int recLen;
+		int gone = 0;
 		const char *rec = KPDBReadRecord(KDBActive, group->gr_GroupName,
                                                         KP_LOCK, &recLen);
 
@@ -835,9 +881,7 @@ ProcessOverviewFile(const char *dirPath, const char *name, int type)
 		 * leave its files alone.  No over.* lock is held yet.
 		 */
 		if (rec == NULL) {
-		    if (VerboseOpt)
-			printf("group %s no longer in the active file, skipping %s\n",
-			    group->gr_GroupName, path);
+		    groupGone(group, "skipped");
 		    close(fd);
 		    return;
 		}
@@ -949,23 +993,30 @@ ProcessOverviewFile(const char *dirPath, const char *name, int type)
 				needResize = 1;
 			if (numArts >= 1000 && d > 200)
 				needResize = 1;
-			if (needResize)
-			    ResizeGroup(group, fd, &oh, numArts, OldDataEntries, &fdLocked);
+			if (needResize &&
+			    ResizeGroup(group, fd, &oh, numArts, OldDataEntries, &fdLocked) < 0)
+			    gone = 1;
 		    }
 		}
 
-		if (UseExpireBySpool)
-		    ExpireBySpool(group, fd, &oh);
-		else if (UseExpireFromFile)
-		    ExpireFromFile(group, fd, &oh, expireSecs);
-		else if (UseExpireByDays)
-		    ExpireByDays(group, fd, &oh, expireSecs);
-
 		/*
-		 * Rewrite data files associated with over. file if -R.
+		 * If the group left the active file while the resize waited
+		 * for the over.* lock: no expire and no rewrite for it.
 		 */
-		if (RewriteDataOpt > 0)
-		    RewriteData(group, fd, &oh, dirPath, OldDataEntries, save.oe_DataSize, &fdLocked);
+		if (gone == 0) {
+		    if (UseExpireBySpool)
+			ExpireBySpool(group, fd, &oh);
+		    else if (UseExpireFromFile)
+			ExpireFromFile(group, fd, &oh, expireSecs);
+		    else if (UseExpireByDays)
+			ExpireByDays(group, fd, &oh, expireSecs);
+
+		    /*
+		     * Rewrite data files associated with over. file if -R.
+		     */
+		    if (RewriteDataOpt > 0)
+			(void)RewriteData(group, fd, &oh, dirPath, OldDataEntries, save.oe_DataSize, &fdLocked);
+		}
 	    } else {
 		printf("group %s, file \"%s\" bad file header\n",
 		    group->gr_GroupName,
@@ -993,9 +1044,7 @@ ProcessOverviewFile(const char *dirPath, const char *name, int type)
 
 	/* the group left the active file after the scan began: skip it */
 	if (rec == NULL) {
-	    if (VerboseOpt)
-		printf("group %s no longer in the active file, skipping %s\n",
-		    group->gr_GroupName, path);
+	    groupGone(group, "skipped");
 	    return;
 	}
 	/*
@@ -1565,7 +1614,7 @@ ExpireFromFile(Group *group, int fd, OverHead *oh, int expireSecs)
 /*
  * Rewrite the data.* files associated with an over. file
  */
-void
+int
 RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldDataEntries, int newDataEntries, int *fdl)
 {
     const OverArt *oaBase;
@@ -1588,7 +1637,7 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
      */
 
     if (ForReal == 0)
-	return;
+	return(0);
 
     /*
      * We need an exclusive lock for this to work, and if the
@@ -1604,7 +1653,7 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
 	    if (VerboseOpt > 2)
 		printf("unable to rewrite data for grp=%s - file in use\n",
 							group->gr_GroupName);
-	    return;
+	    return(0);
 	}
 	nrsignal(SIGALRM, SIG_IGN);
         *fdl=1;
@@ -1612,7 +1661,8 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
 
     if (fstat(fd, &st) != 0 || st.st_nlink == 0) {
         hflock(fd, 4, XLOCK_UN);
-        return;
+	*fdl = 0;
+        return(0);
     }
 
     /*
@@ -1621,12 +1671,12 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
     n = (st.st_size - oh->oh_HeadSize) / sizeof(OverArt);
     if (oh->oh_MaxArts <= 0 || n < oh->oh_MaxArts) {
 	fprintf(stderr, "Over file of group %s has no article slots (damaged header?) - skipped\n", group->gr_GroupName);
-	return;
+	return(0);
     }
 
     if ((sizeof(size_t) < sizeof(long long)) && (n > 0x7FFFFFFF)) {
 	fprintf(stderr, "Sanity check: dangerous number of records on non-64-bit system\n");
-	return;
+	return(0);
     }
 
     /*
@@ -1636,14 +1686,14 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
     oaBase = xmap(NULL, n * sizeof(OverArt), PROT_READ, MAP_SHARED, fd, oh->oh_HeadSize);
     if (oaBase == NULL) {
 	fprintf(stderr, "Unable to xmap over.* file for group %s (%lld) in RewriteData (%s)\n", group->gr_GroupName, n, strerror(errno));
-	return;
+	return(0);
     }
 
     oaBaseNew = calloc((size_t)n, sizeof(OverArt));
     if (oaBaseNew == NULL) {
 	fprintf(stderr, "Unable to calloc new over.* file space for group %s (%lld) in RewriteData (%s)\n", group->gr_GroupName, n, strerror(errno));
         xunmap((void *)oaBase, n * sizeof(OverArt));
-	return;
+	return(0);
     }
 
 
@@ -1657,12 +1707,10 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
 	rec = KPDBReadRecord(KDBActive, group->gr_GroupName, KP_LOCK, &recLen);
 	if (rec == NULL) {
 	    /* removed from the active file meanwhile: rebuild nothing */
-	    if (VerboseOpt)
-		printf("group %s no longer in the active file, data not rewritten\n",
-		    group->gr_GroupName);
+	    groupGone(group, "data not rewritten");
 	    xunmap((void *)oaBase, n * sizeof(OverArt));
 	    free(oaBaseNew);
-	    return;
+	    return(-1);
 	}
 	startNo = strtoll(KPDBGetField(rec, recLen, "NB", NULL, "-1"), NULL, 10);
 	endNo = strtoll(KPDBGetField(rec, recLen, "NE", NULL, "-1"), NULL, 10);
@@ -2005,7 +2053,7 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
      */
     xunmap((void *)oaBase, n * sizeof(OverArt));
     free(oaBaseNew);
-    return;
+    return(0);
 }
 
 /*
@@ -2123,7 +2171,7 @@ rewriteDataFile(Group *group, const char *cacheBase, int cacheSize, const OverAr
  * rebuilt.
  */
 
-void
+int
 ResizeGroup(Group *group, int fd, OverHead *oh, int newSize, int OldDataEntries, int *fdl)
 {
     int oldSize = oh->oh_MaxArts;
@@ -2138,7 +2186,7 @@ ResizeGroup(Group *group, int fd, OverHead *oh, int newSize, int OldDataEntries,
 	    if (VerboseOpt)
 		printf("resize maxArts from %d to %d failed, file in use grp=%s\n",
 					oldSize, newSize, group->gr_GroupName);
-	    return;
+	    return(0);
 	}
 	nrsignal(SIGALRM, SIG_IGN);
 	*fdl=1;
@@ -2146,21 +2194,23 @@ ResizeGroup(Group *group, int fd, OverHead *oh, int newSize, int OldDataEntries,
 
     if (fstat(fd, &st) < 0 || st.st_nlink == 0) {
         hflock(fd, 4, XLOCK_UN);
+	*fdl = 0;
         ++NoResizedGroups;
         if (VerboseOpt) {
     	    printf("resize maxArts from %d to %d failed, file in use grp=%s\n",
 				oldSize, newSize, group->gr_GroupName);
         }
-        return;
+        return(0);
     }
 
     /* a header that promises more records than the file holds, or none */
     if (oldSize <= 0 ||
 		(st.st_size - oh->oh_HeadSize) / (long long)sizeof(OverArt) < oldSize) {
 	hflock(fd, 4, XLOCK_UN);
+	*fdl = 0;
 	++NoResizedGroups;
 	fprintf(stderr, "Over file of group %s has no article slots (damaged header?) - skipped\n", group->gr_GroupName);
-	return;
+	return(0);
     }
 
     /*
@@ -2188,7 +2238,7 @@ ResizeGroup(Group *group, int fd, OverHead *oh, int newSize, int OldDataEntries,
 #ifndef	READOA
         if (fstat(fd, &st) != 0) {
 	    free(ob);
-	    return;
+	    return(0);
 	}
 
         /*
@@ -2229,21 +2279,19 @@ ResizeGroup(Group *group, int fd, OverHead *oh, int newSize, int OldDataEntries,
 	 * If the group has left the active file meanwhile, do not resize:
 	 * with no range, nothing would be copied and the index would be
 	 * rewritten empty.  The caller still holds and releases the over.*
-	 * lock.
+	 * lock, and stops working on the group.
 	 */
 	rec = KPDBReadRecord(KDBActive, group->gr_GroupName, KP_LOCK, &recLen);
 	if (rec == NULL) {
 	    ++NoResizedGroups;
-	    if (VerboseOpt)
-		printf("group %s no longer in the active file, not resized\n",
-		    group->gr_GroupName);
+	    groupGone(group, "not resized");
 	    free(ob);
 #ifdef	READOA
 	    free(oa);
 #else
 	    xunmap((void *)oa, n * sizeof(OverArt));
 #endif
-	    return;
+	    return(-1);
 	}
 	group->gr_EndNo = strtoll(KPDBGetField(rec, recLen, "NE", NULL, "-1"),
 								NULL, 10);
@@ -2345,7 +2393,7 @@ ResizeGroup(Group *group, int fd, OverHead *oh, int newSize, int OldDataEntries,
     if (VerboseOpt && oldSize != newSize) {
 	printf("resized maxArts from %d to %d grp=%s\n", oldSize, newSize, group->gr_GroupName);
     }
-    return;
+    return(0);
 }
 
 int
