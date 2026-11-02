@@ -520,6 +520,8 @@ KPDBLock(KPDB *kpdb, const char *rec)
 void 
 KPDBUnlock(KPDB *kpdb, const char *rec)
 {
+    if (rec == NULL)		/* no record found, so none locked */
+	return;
     hflock(kpdb->kp_Fd, rec - kpdb->kp_MapBase, XLOCK_UN);
 }
 
@@ -1138,8 +1140,9 @@ again:
 	 * deleted copy are stale: a caller that reads NX and writes NX+1
 	 * would hand out a number already used.  Release it and look again,
 	 * forcing the check for a grown database, as a replacement bumped
-	 * the append sequence.  Every pass follows a write that some other
-	 * process completed, so this loop does not spin.
+	 * the append sequence.  Every search path accepts only a '+' record,
+	 * so every pass follows a write that some other process completed,
+	 * and this loop does not spin.
 	 */
 	if (kpdb->kp_Cache[0] != '+') {
 	    hflock(kpdb->kp_Fd, lockoff, XLOCK_UN);
@@ -1252,7 +1255,11 @@ KPDBLookupBinary(
 		    if (DebugOpt > 8)
 			printf("G\n");
 		    doLeft = 1;
-		} else if (p[-KEY_OFF] == '-') {	/* deleted record */
+		} else if (p[-KEY_OFF] != '+') {
+		    /*
+		     * deleted record, or a damaged status byte: not live,
+		     * as the cache and the sequential search also require
+		     */
 		    doLeft = 1;
 		    doRight = 1;
 		} else {

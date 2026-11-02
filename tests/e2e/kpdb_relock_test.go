@@ -23,17 +23,23 @@ package e2e
 //	          times before it gets the live record.
 //	delete    P1 deletes the record while P2 waits; P2 must see no record,
 //	          not the deleted copy.
+//	badstatus a sorted record whose status byte is neither '+' nor '-' (a
+//	          damaged file) is not found, rather than returned (main) or
+//	          looked up again forever (the first version of the fix).
 //
 // Needs a C compiler and the source tree; skips otherwise, and fails instead
 // when E2E_REQUIRE_SRC=1 is set (see wmSkipf in wildmat_unit_test.go).
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -72,6 +78,7 @@ func TestKPDBLockRelookup(t *testing.T) {
 		{"replace1", []string{"P1 assigned 1", "P2 assigned 2", "final NX=0000000002 live=1"}},
 		{"replace3", []string{"P1 assigned 1", "P2 waited 4 times", "P2 assigned 2", "final NX=0000000002 live=1"}},
 		{"delete", []string{"P1 deleted", "P2 no record", "final live=0"}},
+		{"badstatus", []string{"badstatus no record"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -140,6 +147,7 @@ void pagefree(void *p, int bytes);
 `
 
 const kpRelockDriver = `#include "defs.h"
+#include <signal.h>
 #include <sys/wait.h>
 
 KPDB *KPDBOpen(const char *fileName, int oflags);
@@ -148,6 +156,8 @@ const char *KPDBReadRecord(KPDB *kpdb, const char *key, int lockMe, int *preclen
 const char *KPDBGetField(const char *rec, int recLen, const char *tok, int *plen, const char *def);
 int KPDBWrite(KPDB *kpdb, const char *key, const char *tok, const char *data, int lockMe);
 int KPDBDelete(KPDB *kpdb, const char *key);
+int KPDBReadRecordOff(KPDB *kpdb, const char *key, int lockMe, int *preclen);
+void KPDBReSort(KPDB *kpdb);
 
 MemPool *SysMemPool;
 volatile int DebugOpt;
@@ -227,6 +237,48 @@ allocNumber(KPDB *db, const char *who)
     return n;
 }
 
+static void
+lookupHung(int sig)
+{
+    (void)sig;
+    printf("badstatus lookup did not return\n");
+    _exit(1);
+}
+
+/*
+ * A damaged status byte on a sorted record: the binary search reaches it.
+ * The lookup must report no record and return.
+ */
+static int
+badStatus(const char *path)
+{
+    KPDB *db;
+    const char *rec;
+    int recLen, off, fd;
+
+    if ((db = KPDBOpen(path, O_RDWR)) == NULL)
+	return 2;
+    KPDBReSort(db);
+    off = KPDBReadRecordOff(db, Key, 0, &recLen);
+    KPDBClose(db);
+    if (off <= 0 || (fd = open(path, O_RDWR)) < 0 ||
+					pwrite(fd, "*", 1, off) != 1)
+	return 2;
+    close(fd);
+
+    if ((db = KPDBOpen(path, O_RDWR)) == NULL)
+	return 2;
+    signal(SIGALRM, lookupHung);
+    alarm(10);
+    rec = KPDBReadRecord(db, Key, KP_LOCK, &recLen);
+    alarm(0);
+    if (rec == NULL)
+	printf("badstatus no record\n");
+    else
+	printf("badstatus found a record with status '%c'\n", rec[0]);
+    return 0;
+}
+
 int
 main(int ac, char **av)
 {
@@ -246,7 +298,7 @@ main(int ac, char **av)
 	rounds = 3;
     else if (strcmp(mode, "delete") == 0)
 	del = 1;
-    else if (strcmp(mode, "replace1") != 0)
+    else if (strcmp(mode, "replace1") != 0 && strcmp(mode, "badstatus") != 0)
 	return 2;
     setvbuf(stdout, NULL, _IONBF, 0);
 
@@ -260,6 +312,8 @@ main(int ac, char **av)
     KPDBWrite(db, Key, "S", "y", KP_UNLOCK);
     KPDBWrite(db, "alt.zzz", "NB", "0000000001", 0);
     KPDBClose(db);
+    if (strcmp(mode, "badstatus") == 0)
+	return badStatus(path);
 
     if (pipe(go) < 0 || pipe(hook) < 0 || pipe(ready) < 0)
 	return 2;
@@ -359,3 +413,138 @@ main(int ac, char **av)
     return 0;
 }
 `
+
+// TestOverToolsGroupRemovedWhileWaiting: dexpireover and doverctl read a
+// group's record with KP_LOCK while they work through its overview files.
+// When the group is removed from dactive.kp while they wait for that record
+// (or before they look it up), the lookup now returns no record.  They used
+// to take the missing NB/NE as -1: doverctl removed the group's data file as
+// out of range, and dexpireover -s resized the index for an empty range,
+// copying no entries.  They must skip the group and leave its files alone.
+//
+// The test holds the record's lock (a 4-byte fcntl lock at its offset, as
+// hflock() takes it), starts the tool, waits until it is blocked on that lock
+// (seen in /proc/locks; a fixed second where there is none), marks the record
+// deleted as KPDBDelete() does, and releases the lock.
+func TestOverToolsGroupRemovedWhileWaiting(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"doverctl", []string{"doverctl", "-v", "clean"}},
+		{"dexpireover", []string{"dexpireover", "-s", "-y", "-v"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, home := overSite(t, map[string]string{"readergrouphash": "hierarchy"})
+			s.WriteFile(t, "dexpire.ctl", "e2e.*:x30\n")
+			over := filepath.Join(home, "e2e", "o.0.e2e.test")
+			data := filepath.Join(home, "e2e", "d.256.e2e.test")
+			// 500 empty OverArt slots: the right size for NB..NE 1..300, so
+			// -s resizes it only when the range is lost (-1).
+			index := append(overHeadMax("e2e.test", 500), make([]byte, 500*32)...)
+			writeOver(t, over, index)
+			writeOver(t, data, []byte("xxxxxxxxxx"))
+
+			db := filepath.Join(s.Dir, "dactive.kp")
+			off := kpRecordOffset(t, db, "e2e.test")
+			f, err := os.OpenFile(db, os.O_RDWR, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer f.Close()
+			lk := syscall.Flock_t{Type: syscall.F_WRLCK, Whence: 0, Start: off, Len: 4}
+			if err := syscall.FcntlFlock(f.Fd(), syscall.F_SETLK, &lk); err != nil {
+				t.Fatalf("lock record e2e.test: %v", err)
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, filepath.Join(s.Bin, tc.args[0]), tc.args[1:]...)
+			cmd.Dir = s.Dir
+			cmd.Env = append(os.Environ(), s.Env...)
+			var out bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &out, &out
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			go func() { done <- cmd.Wait() }()
+
+			if err := waitLockWaiter(cmd.Process.Pid, done); err != nil {
+				t.Fatalf("%s did not wait for the record: %v\n%s", tc.args[0], err, out.String())
+			}
+			if _, err := f.WriteAt([]byte("-"), off); err != nil {
+				t.Fatal(err)
+			}
+			lk.Type = syscall.F_UNLCK
+			if err := syscall.FcntlFlock(f.Fd(), syscall.F_SETLK, &lk); err != nil {
+				t.Fatal(err)
+			}
+			if err := <-done; err != nil {
+				t.Fatalf("%s: %v\n%s", tc.args[0], err, out.String())
+			}
+
+			if !strings.Contains(out.String(), "no longer in the active file") {
+				t.Errorf("%s did not report the removed group:\n%s", tc.args[0], out.String())
+			}
+			if _, err := os.Stat(data); err != nil {
+				t.Errorf("%s removed the data file of the removed group: %v\n%s", tc.args[0], err, out.String())
+			}
+			if b, err := os.ReadFile(over); err != nil || !bytes.Equal(b, index) {
+				t.Errorf("%s changed the over file of the removed group (%d bytes, was %d): %v\n%s",
+					tc.args[0], len(b), len(index), err, out.String())
+			}
+		})
+	}
+}
+
+// kpRecordOffset returns the offset of the live record of key in a KP database.
+func kpRecordOffset(t *testing.T, path, key string) int64 {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pos := 0
+	for _, l := range strings.SplitAfter(string(b), "\n") {
+		if _, rest, ok := strings.Cut(l, ":"); ok && l[0] == '+' && strings.HasPrefix(rest, key+" ") {
+			return int64(pos)
+		}
+		pos += len(l)
+	}
+	t.Fatalf("no live record for %s in %s:\n%s", key, path, b)
+	return 0
+}
+
+// waitLockWaiter returns once process pid is blocked waiting for a POSIX
+// lock, as /proc/locks lists it ("-> POSIX ... pid ..."), or after a second
+// where there is no /proc/locks.  It fails when the process exits first.
+func waitLockWaiter(pid int, done chan error) error {
+	if _, err := os.Stat("/proc/locks"); err != nil {
+		select {
+		case err := <-done:
+			done <- err
+			return fmt.Errorf("exited first (%v)", err)
+		case <-time.After(time.Second):
+			return nil
+		}
+	}
+	want := strconv.Itoa(pid)
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		b, _ := os.ReadFile("/proc/locks")
+		for _, l := range strings.Split(string(b), "\n") {
+			fs := strings.Fields(l)
+			if len(fs) > 5 && fs[1] == "->" && fs[2] == "POSIX" && fs[5] == want {
+				return nil
+			}
+		}
+		select {
+		case err := <-done:
+			done <- err
+			return fmt.Errorf("exited first (%v)", err)
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	return fmt.Errorf("not blocked on a lock after 30s")
+}

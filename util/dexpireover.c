@@ -830,6 +830,19 @@ ProcessOverviewFile(const char *dirPath, const char *name, int type)
                                                         KP_LOCK, &recLen);
 
 		/*
+		 * The group left the active file after the scan began
+		 * (removed before or while we waited for its record):
+		 * leave its files alone.  No over.* lock is held yet.
+		 */
+		if (rec == NULL) {
+		    if (VerboseOpt)
+			printf("group %s no longer in the active file, skipping %s\n",
+			    group->gr_GroupName, path);
+		    close(fd);
+		    return;
+		}
+
+		/*
 		 * Refresh the EndNo
 		 */
 		group->gr_EndNo = strtoll(KPDBGetField(rec, recLen, "NE",
@@ -977,6 +990,14 @@ ProcessOverviewFile(const char *dirPath, const char *name, int type)
 	int recLen;
 	const char *rec = KPDBReadRecord(KDBActive, group->gr_GroupName,
                                                         KP_LOCK, &recLen);
+
+	/* the group left the active file after the scan began: skip it */
+	if (rec == NULL) {
+	    if (VerboseOpt)
+		printf("group %s no longer in the active file, skipping %s\n",
+		    group->gr_GroupName, path);
+	    return;
+	}
 	/*
 	 * Refresh the EndNo
 	 */
@@ -1634,6 +1655,15 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
 	int recLen;
 
 	rec = KPDBReadRecord(KDBActive, group->gr_GroupName, KP_LOCK, &recLen);
+	if (rec == NULL) {
+	    /* removed from the active file meanwhile: rebuild nothing */
+	    if (VerboseOpt)
+		printf("group %s no longer in the active file, data not rewritten\n",
+		    group->gr_GroupName);
+	    xunmap((void *)oaBase, n * sizeof(OverArt));
+	    free(oaBaseNew);
+	    return;
+	}
 	startNo = strtoll(KPDBGetField(rec, recLen, "NB", NULL, "-1"), NULL, 10);
 	endNo = strtoll(KPDBGetField(rec, recLen, "NE", NULL, "-1"), NULL, 10);
 	KPDBUnlock(KDBActive, rec);
@@ -2153,12 +2183,13 @@ ResizeGroup(Group *group, int fd, OverHead *oh, int newSize, int OldDataEntries,
 	long long n;
 	long long i;
 	int recLen;
-	const char *rec = KPDBReadRecord(KDBActive, group->gr_GroupName,
-							KP_LOCK, &recLen);
+	const char *rec;
 
 #ifndef	READOA
-        if (fstat(fd, &st) != 0)
+        if (fstat(fd, &st) != 0) {
+	    free(ob);
 	    return;
+	}
 
         /*
          * Calculate number of overview records
@@ -2194,7 +2225,26 @@ ResizeGroup(Group *group, int fd, OverHead *oh, int newSize, int OldDataEntries,
 	 * We need to get the NE field again now that we have locked the
 	 * over.* file because it could have been adjusted by dreaderd
 	 * since we originally got it.
+	 *
+	 * If the group has left the active file meanwhile, do not resize:
+	 * with no range, nothing would be copied and the index would be
+	 * rewritten empty.  The caller still holds and releases the over.*
+	 * lock.
 	 */
+	rec = KPDBReadRecord(KDBActive, group->gr_GroupName, KP_LOCK, &recLen);
+	if (rec == NULL) {
+	    ++NoResizedGroups;
+	    if (VerboseOpt)
+		printf("group %s no longer in the active file, not resized\n",
+		    group->gr_GroupName);
+	    free(ob);
+#ifdef	READOA
+	    free(oa);
+#else
+	    xunmap((void *)oa, n * sizeof(OverArt));
+#endif
+	    return;
+	}
 	group->gr_EndNo = strtoll(KPDBGetField(rec, recLen, "NE", NULL, "-1"),
 								NULL, 10);
 	KPDBUnlock(KDBActive, rec);
