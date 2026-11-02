@@ -267,6 +267,7 @@ GrpCtlGroupInfo(char *group)
 	uint32 flen;
 	char buf[MAXGNAME];
 	time_t t;
+	char tbuf[32];	/* ctime_r: at least 26 */
 
 	printf("%s\n", group);
 	a = strtoll(KPDBGetField(rec, recLen, "NE", NULL, "0"), NULL, 10);
@@ -285,10 +286,10 @@ GrpCtlGroupInfo(char *group)
 	printf("ITER=%d\n", iter);
 	n = strtol(KPDBGetField(rec, recLen, "CTS", NULL, "0"), NULL, 16);
 	t = (time_t)(uint32)n;
-	printf("  CTS=%u=%s", n, ctime(&t));
+	printf("  CTS=%u=%s", n, ctime_r(&t, tbuf) ? tbuf : "?\n");
 	n = strtol(KPDBGetField(rec, recLen, "LMTS", NULL, "0"), NULL, 16);
 	t = (time_t)(uint32)n;
-	printf("  LMTS=%u=%s", n, ctime(&t));
+	printf("  LMTS=%u=%s", n, ctime_r(&t, tbuf) ? tbuf : "?\n");
 	flags = KPDBGetField(rec, recLen, "GD", (int *)&flen, "?");
 	if (flen >= sizeof(buf))
 	    flen = sizeof(buf) - 1;
@@ -305,6 +306,7 @@ GrpCtlGroupInfo(char *group)
 	OverArt oa;
 	struct stat st;
 	time_t t;
+	char tbuf[32];	/* ctime_r: at least 26 */
 	const char *gname = GFName(group, GRPFTYPE_OVER, 0, 1, iter,
 						&DOpts.ReaderGroupHashMethod);
 
@@ -360,7 +362,8 @@ GrpCtlGroupInfo(char *group)
 			OA_ARTNOSET(nb));
 	}
 	t = (time_t)oa.oa_TimeRcvd;
-	printf("  Time received: %d = %s", oa.oa_TimeRcvd, ctime(&t));
+	printf("  Time received: %d = %s", oa.oa_TimeRcvd,
+		ctime_r(&t, tbuf) ? tbuf : "?\n");
     }
     return(NULL);
 }
