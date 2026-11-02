@@ -3,10 +3,11 @@
 # ROT <n> <file>... - rotate each file: file.<n-1> -> file.<n>, ...,
 # file.0 -> file.1, file -> file.0, so that file.0 to file.<n> are kept: n+1
 # old copies (rot 4 keeps file.0 to file.4; rot 0 only file.0).  Copies above
-# file.<n>, left by a larger n before, are removed.  Files that don't exist are
-# skipped.  n is digits, at most 9 of them; anything else is refused before any
-# file is touched.  Exit status: 0, 1 when a move, a removal or a compression
-# failed, 2 for a usage or configuration error.
+# file.<n>, left by a larger n before, are removed up to file.9999; a dated name
+# such as file.20261101 is left alone.  Files that don't exist are skipped.  n is
+# a number from 0 to 9999, as keep in rot.conf; anything else is refused before
+# any file is touched.  Exit status: 0, 1 when a move, a removal or a
+# compression failed, 2 for a usage or configuration error.
 #
 # ROT -k - check rot.conf and print its keep count (4 when it says nothing);
 # daily.atrim uses it.
@@ -170,15 +171,25 @@ esac
 zeros=${n%%[!0]*}
 n=${n#"$zeros"}
 [ -n "$n" ] || n=0
-[ "${#n}" -le 9 ] || { echo "rot: the number of copies is too large (at most 9 digits)" >&2; exit 2; }
+# at most maxkeep, as keep: rot would otherwise replace the files up to file.<n>, an
+# admin's file.20261101 too (the length first, so the shell never compares a long number)
+if [ "${#n}" -gt "${#maxkeep}" ] || [ "$n" -gt "$maxkeep" ]; then
+    echo "rot: the number of copies is too large (at most $maxkeep)" >&2
+    exit 2
+fi
 
 rc=0
 
 # rmall <name>: remove <name> and <name><suffix> for every suffix
+# (rm only for a name that is there: a large n is then a loop of shell builtins)
 rmall() {
-    rm -f "$1" || rc=1
+    if [ -e "$1" ] || [ -L "$1" ]; then
+	rm -f "$1" || rc=1
+    fi
     for s in $allsfx; do
-	rm -f "$1$s" || rc=1
+	if [ -e "$1$s" ] || [ -L "$1$s" ]; then
+	    rm -f "$1$s" || rc=1
+	fi
     done
 }
 
@@ -266,8 +277,10 @@ squeeze() {
 }
 
 # expire <file>: remove <file>.<N> and <file>.<N><suffix>, for each suffix rot knows,
-# when N is above n: the copies a larger n kept before.  Nothing else is removed:
-# not <file>.0<N>, not an unknown suffix, not a name that only begins like that.
+# when N is above n and at most maxkeep (9999): the copies a larger n kept before.
+# Nothing else is removed: not <file>.0<N>, not an unknown suffix, not a name that only
+# begins like that, and not a larger number such as a date (file.20261101), which is
+# the admin's own file.
 expire() {
     for c in "$1".[0-9]*; do
 	[ -f "$c" ] || continue		# also the pattern itself, when nothing matches
@@ -283,8 +296,8 @@ expire() {
 		*) continue ;;
 	    esac
 	fi
-	# neither has leading zeros: the longer number is the larger
-	if [ "${#d}" -gt "${#n}" ] || { [ "${#d}" -eq "${#n}" ] && [ "$d" -gt "$n" ]; }; then
+	# no leading zeros, and no longer than maxkeep, so the shell can compare it
+	if [ "${#d}" -le "${#maxkeep}" ] && [ "$d" -gt "$n" ] && [ "$d" -le "$maxkeep" ]; then
 	    rm -f "$c" || rc=1
 	fi
     done

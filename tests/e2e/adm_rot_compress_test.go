@@ -302,9 +302,11 @@ func TestAdmRotConfigErrors(t *testing.T) {
 }
 
 // TestAdmRotKeepLowered: when keep is lowered, the copies above the new count go at the next
-// rotation, plain or with any suffix rot knows (built in or a method of rot.conf); names that only
-// look like copies (a leading zero, an unknown suffix, a .tmp, another file, a directory) stay.
-// Before, rot only looked at file.0 to file.<n>, and the copies above stayed for ever.
+// rotation, plain or with any suffix rot knows (built in or a method of rot.conf), up to file.9999;
+// names that only look like copies (a leading zero, an unknown suffix, a .tmp, another file, a
+// directory, a number above 9999 such as the date of f.20261101) stay. Before, rot only looked at
+// file.0 to file.<n>, and the copies above stayed for ever; then it took f.20261101 for copy
+// 20261101 and removed it.
 func TestAdmRotKeepLowered(t *testing.T) {
 	if _, err := exec.LookPath("gzip"); err != nil {
 		t.Skip("no gzip")
@@ -322,7 +324,10 @@ func TestAdmRotKeepLowered(t *testing.T) {
 	for _, n := range []string{"f.3", "f.4.up", "f.5.bz2", "f.10.xz"} {
 		rotWrite(t, path(n), "old\n")
 	}
-	keepThese := []string{"f.06", "f.3.bak", "f.7.gz.tmp", "fz.3", "f.x", "f.3gz"}
+	// not copies: a leading zero, an unknown suffix, a .tmp, other files, a number above 9999 (a
+	// date the admin gave a file of his own)
+	keepThese := []string{"f.06", "f.3.bak", "f.7.gz.tmp", "fz.3", "f.x", "f.3gz",
+		"f.20261101", "f.20261101.gz", "f.10000"}
 	for _, n := range keepThese {
 		rotWrite(t, path(n), "not a copy\n")
 	}
