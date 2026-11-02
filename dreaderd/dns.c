@@ -2863,7 +2863,7 @@ readAccessLine(FILE *af, char *fname, AccessDef *adef)
 		needread = 1;
 		return(0);
 	    }
-	    strcpy(adef->ad_IdentUser, opt);
+	    snprintf(adef->ad_IdentUser, sizeof(adef->ad_IdentUser), "%s", opt);
 	    opt = q;
 	}
     }
