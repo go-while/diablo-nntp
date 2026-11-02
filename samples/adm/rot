@@ -1,36 +1,51 @@
 #!/bin/sh
 #
 # ROT <n> <file>... - rotate each file: file.<n-1> -> file.<n>, ...,
-# file.0 -> file.1, file -> file.0.  Files that don't exist are skipped.
-# n is the number of old copies to keep (digits, at most 9); anything else is
-# refused before any file is touched.  Exit status: 0, 1 when a move or a
-# compression failed, 2 for a usage or configuration error.
+# file.0 -> file.1, file -> file.0, so that file.0 to file.<n> are kept: n+1
+# old copies (rot 4 keeps file.0 to file.4; rot 0 only file.0).  Copies above
+# file.<n>, left by a larger n before, are removed.  Files that don't exist are
+# skipped.  n is digits, at most 9 of them; anything else is refused before any
+# file is touched.  Exit status: 0, 1 when a move, a removal or a compression
+# failed, 2 for a usage or configuration error.
 #
-# ROT -k - print the number of old copies that rot.conf asks to keep (4 when
-# it says nothing); daily.atrim uses it.
+# ROT -k - check rot.conf and print its keep count (4 when it says nothing);
+# daily.atrim uses it.
 #
-# rot.conf, next to this script (or the file named by $ROT_CONF), says how
-# the old copies are compressed.  file.0 stays as it is, since a daemon may
-# still write to it for a few seconds; file.1 and the older ones are compressed
-# when file.1 is made.  Lines (blank lines and # comments are ignored):
+# rot.conf, next to this script, or the file named by $ROT_CONF, says how the
+# old copies are compressed.  Without a rot.conf next to the script rot uses
+# the defaults; a $ROT_CONF that does not exist, or a rot.conf that cannot be
+# read, is an error (2) before any file is touched.  file.0 stays as it is,
+# since a daemon may still write to it for a few seconds; the new file.1 is
+# compressed once every file has been rotated, and the older ones already are.
+# Lines (blank lines and # comments are ignored):
 #
-#	keep <n>			old copies to keep with "rot -k" (default 4)
+#	keep <n>			the n of "rot -k": file.0 to file.<n>
+#					are kept, n+1 old copies; 0 to 9999
+#					(default 4)
 #	compress <method>		none (default), gzip, bzip2, xz, zstd,
 #					compress, or a method defined below
 #	method <name> <suffix> <command>
-#					define or change a method: <command>
-#					reads the file on its standard input and
-#					writes the compressed file to its
-#					standard output; no quoting
+#					define a method, not one of the names
+#					above: <command> reads the file on its
+#					standard input and writes the compressed
+#					file to its standard output; no quoting
 #
 # Copies compressed with another method than the current one (or not at all)
 # are rotated as they are, with their own suffix, until they are dropped.  A
 # method of your own has to stay defined until its copies are gone, since rot
 # only knows the suffixes of the methods in rot.conf and the built-in ones.
 
-conf=${ROT_CONF:-$(dirname "$0")/rot.conf}
+if [ -n "${ROT_CONF:-}" ]; then
+    conf=$ROT_CONF
+    confset=1
+else
+    conf=$(dirname "$0")/rot.conf
+    confset=
+fi
 keep=4
+maxkeep=9999
 compress=none
+builtins="none gzip bzip2 xz zstd compress"
 # the methods, one per line: name, suffix, command; a later line with the same name wins
 nl='
 '
@@ -38,20 +53,30 @@ methods="gzip .gz gzip -c
 bzip2 .bz2 bzip2 -c
 xz .xz xz -c
 zstd .zst zstd -q -c
-compress .Z compress -c"
+compress .Z compress -f -c"
 
-# number: digits only, at most 9 of them (after the leading zeros)
+# number: digits only, at most 9 of them (after the leading zeros); sets v to the
+# number without leading zeros
 isnumber() {
     case $1 in
 	''|*[!0-9]*) return 1 ;;
     esac
     z=${1%%[!0]*}
     v=${1#"$z"}
+    [ -n "$v" ] || v=0
     [ "${#v}" -le 9 ]
 }
 
 readconf() {
-    [ -f "$conf" ] || return 0
+    if [ ! -e "$conf" ] && [ ! -L "$conf" ]; then
+	[ -z "$confset" ] && return 0
+	echo "rot: $conf (ROT_CONF): no such file" >&2
+	return 2
+    fi
+    if [ -d "$conf" ] || [ ! -r "$conf" ]; then
+	echo "rot: $conf: cannot be read" >&2
+	return 2
+    fi
     set -f
     lineno=0
     while IFS= read -r line || [ -n "$line" ]; do
@@ -61,8 +86,9 @@ readconf() {
 	case $1 in
 	    '#'*) continue ;;
 	    keep)
-		[ $# -eq 2 ] && isnumber "$2" || { echo "rot: $conf:$lineno: keep needs a number" >&2; return 2; }
-		keep=$2
+		[ $# -eq 2 ] && isnumber "$2" && [ "$v" -le "$maxkeep" ] ||
+		    { echo "rot: $conf:$lineno: keep needs a number from 0 to $maxkeep" >&2; return 2; }
+		keep=$v
 		;;
 	    compress)
 		[ $# -eq 2 ] || { echo "rot: $conf:$lineno: compress needs one method name" >&2; return 2; }
@@ -70,6 +96,9 @@ readconf() {
 		;;
 	    method)
 		[ $# -ge 4 ] || { echo "rot: $conf:$lineno: method needs a name, a suffix and a command" >&2; return 2; }
+		case " $builtins " in
+		    *" $2 "*) echo "rot: $conf:$lineno: $2 is a built-in method; give yours another name" >&2; return 2 ;;
+		esac
 		case $3 in
 		    .?*) ;;
 		    *) echo "rot: $conf:$lineno: the suffix of a method starts with a dot" >&2; return 2 ;;
@@ -84,30 +113,12 @@ readconf() {
 		;;
 	    *) echo "rot: $conf:$lineno: unknown line \"$1\"" >&2; return 2 ;;
 	esac
-    done < "$conf"
+    done < "$conf" || { echo "rot: $conf: cannot be read" >&2; return 2; }
     set +f
     return 0
 }
 
 readconf || exit 2
-
-if [ "${1:-}" = -k ]; then
-    [ $# -eq 1 ] || { echo "usage: rot -k" >&2; exit 2; }
-    echo "$keep"
-    exit 0
-fi
-
-[ $# -ge 2 ] || { echo "usage: rot <n> <file>..." >&2; echo "       rot -k" >&2; exit 2; }
-n=$1
-shift
-case $n in
-    ''|*[!0-9]*) echo "rot: the number of copies must be digits, not \"$n\"" >&2; exit 2 ;;
-esac
-# no leading zeros (08 is not a number to the shell arithmetic below)
-zeros=${n%%[!0]*}
-n=${n#"$zeros"}
-[ -n "$n" ] || n=0
-[ "${#n}" -le 9 ] || { echo "rot: the number of copies is too large (at most 9 digits)" >&2; exit 2; }
 
 # the current method: its suffix in csfx and its command in ccmd; the suffixes of every
 # method in allsfx, so that copies made by another method are rotated too
@@ -143,6 +154,24 @@ if [ "$compress" != none ] && [ -z "$csfx" ]; then
     exit 2
 fi
 
+if [ "${1:-}" = -k ]; then
+    [ $# -eq 1 ] || { echo "usage: rot -k" >&2; exit 2; }
+    echo "$keep"
+    exit 0
+fi
+
+[ $# -ge 2 ] || { echo "usage: rot <n> <file>..." >&2; echo "       rot -k" >&2; exit 2; }
+n=$1
+shift
+case $n in
+    ''|*[!0-9]*) echo "rot: the number of copies must be digits, not \"$n\"" >&2; exit 2 ;;
+esac
+# no leading zeros (08 is not a number to the shell arithmetic below)
+zeros=${n%%[!0]*}
+n=${n#"$zeros"}
+[ -n "$n" ] || n=0
+[ "${#n}" -le 9 ] || { echo "rot: the number of copies is too large (at most 9 digits)" >&2; exit 2; }
+
 rc=0
 
 # rmall <name>: remove <name> and <name><suffix> for every suffix
@@ -154,34 +183,77 @@ rmall() {
 }
 
 # mvall <from> <to>: <to> and its compressed forms are replaced by <from> or the
-# first of its compressed forms that exists, which keeps its suffix; sets moved to
-# the suffix ("" for a plain file) or to "-" when there was nothing to move
+# first of its compressed forms that exists, which keeps its suffix
 mvall() {
     rmall "$2"
-    moved=-
     if [ -f "$1" ]; then
 	mv -f "$1" "$2" || rc=1
-	moved=
 	return
     fi
     for s in $allsfx; do
 	if [ -f "$1$s" ]; then
 	    mv -f "$1$s" "$2$s" || rc=1
-	    moved=$s
 	    return
 	fi
     done
 }
 
+# lsmode <file>: print the permission bits of <file> as a chmod argument (u=rw,g=r,o=),
+# from the first field of "ls -ld", which POSIX specifies (there is no portable stat).
+# s and t count as x, S and T as nothing: a setuid, setgid or sticky bit on a log is not
+# worth carrying over.  ACLs and extended attributes are not carried over either.
+lsmode() {
+    l=$(ls -ld -- "$1") || return 1
+    p=${l%% *}
+    p=${p#?}
+    m=
+    for who in u g o; do
+	bits=
+	for want in r w x; do
+	    c=${p%"${p#?}"}
+	    p=${p#?}
+	    case $want$c in
+		rr|ww|xx|xs|xt) bits=$bits$want ;;
+		r-|w-|x-|xS|xT) ;;
+		*) return 1 ;;
+	    esac
+	done
+	m=$m${m:+,}$who=$bits
+    done
+    echo "$m"
+}
+
+# lsowner <file>: set uid and gid to the numeric owner and group of <file> ("ls -ln")
+lsowner() {
+    set -- $(ls -ln -- "$1") || return 1
+    [ $# -ge 4 ] || return 1
+    uid=$3
+    gid=$4
+}
+
 # squeeze <file>: compress <file> into <file><csfx> and remove it; when that fails
-# <file> stays as it is
+# <file> stays as it is.  The compressor's own messages go to standard error, which
+# cron mails.  The compressed copy keeps the mode of <file>, as the rename of a plain
+# copy does: it is written under umask 077, so that it is never wider than its
+# owner while it is written, and then gets the bits of <file> ("cp -p" first would
+# copy the whole log once more).  The owner and the group are copied when rot can
+# (as root); otherwise the copy is rot's own, as the log was.
 squeeze() {
-    [ -n "$csfx" ] || return 0
     set -f
-    if $ccmd < "$1" > "$1$csfx.tmp" 2>/dev/null; then
-	if mv -f "$1$csfx.tmp" "$1$csfx"; then
-	    rm -f "$1" || rc=1
+    rm -f "$1$csfx.tmp"
+    if ( umask 077; $ccmd < "$1" > "$1$csfx.tmp" ); then
+	if lsowner "$1"; then
+	    chown "$uid:$gid" "$1$csfx.tmp" 2>/dev/null
+	fi
+	if m=$(lsmode "$1") && chmod "$m" "$1$csfx.tmp"; then
+	    if mv -f "$1$csfx.tmp" "$1$csfx"; then
+		rm -f "$1" || rc=1
+	    else
+		rm -f "$1$csfx.tmp"
+		rc=1
+	    fi
 	else
+	    echo "rot: cannot give $1$csfx.tmp the mode of $1; left uncompressed" >&2
 	    rm -f "$1$csfx.tmp"
 	    rc=1
 	fi
@@ -193,19 +265,51 @@ squeeze() {
     set +f
 }
 
+# expire <file>: remove <file>.<N> and <file>.<N><suffix>, for each suffix rot knows,
+# when N is above n: the copies a larger n kept before.  Nothing else is removed:
+# not <file>.0<N>, not an unknown suffix, not a name that only begins like that.
+expire() {
+    for c in "$1".[0-9]*; do
+	[ -f "$c" ] || continue		# also the pattern itself, when nothing matches
+	r=${c#"$1".}
+	d=${r%%[!0-9]*}
+	sfx=${r#"$d"}
+	case $d in
+	    0?*) continue ;;
+	esac
+	if [ -n "$sfx" ]; then
+	    case " $allsfx " in
+		*" $sfx "*) ;;
+		*) continue ;;
+	    esac
+	fi
+	# neither has leading zeros: the longer number is the larger
+	if [ "${#d}" -gt "${#n}" ] || { [ "${#d}" -eq "${#n}" ] && [ "$d" -gt "$n" ]; }; then
+	    rm -f "$c" || rc=1
+	fi
+    done
+}
+
 for f in "$@"; do
     j=$n
     while [ "$j" -gt 0 ]; do
 	p=$((j - 1))
 	mvall "$f.$p" "$f.$j"
-	# the new .1 is the plain .0 of yesterday: compress it, the older ones already are
-	if [ "$j" -eq 1 ] && [ -z "$moved" ]; then
-	    squeeze "$f.1"
-	fi
 	j=$p
     done
     if [ -f "$f" ]; then
 	mv -f "$f" "$f.0" || rc=1
     fi
+    expire "$f"
 done
+# A plain file.1 now is yesterday's file.0, just moved (every older form of file.1 was
+# removed first): compress it, the older ones already are.  Only now, after every file
+# has been renamed, so that no log waits for the compression of another to be rotated.
+if [ -n "$csfx" ] && [ "$n" -gt 0 ]; then
+    for f in "$@"; do
+	if [ -f "$f.1" ]; then
+	    squeeze "$f.1"
+	fi
+    done
+fi
 exit $rc
