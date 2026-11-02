@@ -53,6 +53,11 @@ func TestDcontrolSamplesSyntax(t *testing.T) {
 					t.Errorf("%s:%d: unknown action %q", name, n+1, a)
 				}
 			}
+			// the <newsgroups> of a checkgroups rule is not tested when the rule is chosen, so
+			// such a rule for any sender would drop every checkgroups message after it
+			if f[0] == "checkgroups" && f[2] != "*" && strings.Contains(f[1], "*") && !strings.Contains(f[1], "@") {
+				t.Errorf("%s:%d: %q applies to the checkgroups of every sender", name, n+1, l)
+			}
 			got = append(got, l)
 		}
 		if len(got) < 1000 || got[0] != "cancel:*:*:doit,break" {
@@ -79,12 +84,13 @@ func TestDcontrolSamplesSyntax(t *testing.T) {
 
 // TestDcontrolSamplesPolicy: with each shipped sample, as dcontrol.ctl, a newgroup of the Big 8
 // signed by ISC (real article, modern key) creates the group, an unsigned newgroup for a Big 8
-// group does not, and an unsigned alt.* newgroup does, as in INN's control.ctl.
+// group does not, and an unsigned alt.* newgroup does, as in INN's control.ctl; the ISC
+// checkgroups updates the description of a group (no rule of a later hierarchy drops it).
 func TestDcontrolSamplesPolicy(t *testing.T) {
 	for _, name := range dcontrolSamples {
 		t.Run(name, func(t *testing.T) {
 			ctl := dcontrolSample(t, name)
-			s, st, _ := iscSiteCtl(t, []string{"news.announce.newgroups", "e2e.test"}, ctl)
+			s, st, _ := iscSiteCtl(t, []string{"news.announce.newgroups", "e2e.test", "comp.ai"}, ctl)
 			exists := func(g string) bool { return iscGroupNames(iscList(t, s, "ACTIVE"))[g] }
 			forged := func(g string) []string {
 				a := newArticle(msgID(t), "e2e.test", "cmsg newgroup "+g,
@@ -93,6 +99,12 @@ func TestDcontrolSamplesPolicy(t *testing.T) {
 			}
 			feedReader(t, s, st, "news.announce.newgroups", iscArticle(t, "newgroup", "modern"))
 			feedReader(t, s, st, "e2e.test", forged("comp.e2e.forged"), forged("alt.e2e.open"))
+			art := iscArticle(t, "checkgroups", "modern")
+			want := iscExpected(t, art, "comp.ai")["comp.ai"]
+			feedReader(t, s, st, "news.announce.newgroups", art)
+			waitFor(t, 20*time.Second, "the ISC description of comp.ai", func() bool {
+				return iscDescriptions(iscList(t, s, "NEWSGROUPS"), "comp.ai")["comp.ai"] == want
+			})
 			waitFor(t, 20*time.Second, "comp.lang.go created by the signed newgroup", func() bool { return exists("comp.lang.go") })
 			waitFor(t, 20*time.Second, "alt.e2e.open created", func() bool { return exists("alt.e2e.open") })
 			time.Sleep(iscRefusedWait)

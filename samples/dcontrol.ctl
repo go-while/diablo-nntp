@@ -592,7 +592,6 @@ rmgroup:news@newsflash.concordia.ca:concordia.*:doit=rmgroup
 # as INN, as a local, special hierarchy that shows all control messages
 # posted to any group.
 #
-checkgroups:*:control.*:drop
 newgroup:*:control.*:drop
 rmgroup:*:control.*:drop
 
@@ -768,11 +767,18 @@ rmgroup:mod-ena@ennui.org:esp.*:verify-esp.news.administracion
 ## ETERNAL-SEPTEMBER (Eternal-September Project)
 # Contact: news@eternal-september.org
 # URL: http://www.eternal-september.org/
-# Key URL: http://www.eternal-september.org/control/pgpkey.txt
-# Key fingerprint: B7 9A 2B C6 7D 5A FF 79  18 E2 AC 91 4B C1 25 F1
+# Key URL: https://www.eternal-september.org/control-eternal-september.asc
+# Key fingerprint: 17A7 E98E 3038 BE35 428F  30E4 F53C 21EE F3D2 EA49
+# The messages are now sent by control@eternal-september.org, signed by the key
+# above (user id "Control <control@eternal-september.org>", so verify-Control).
+# The lines for news@eternal-september.org are for the old key (fingerprint
+# B7 9A 2B C6 7D 5A FF 79  18 E2 AC 91 4B C1 25 F1, as in INN's control.ctl).
 # *PGP*   See README.PGP.
 newgroup:*:eternal-september.*:drop
 rmgroup:*:eternal-september.*:drop
+checkgroups:control@eternal-september.org:eternal-september.*:verify-Control
+newgroup:control@eternal-september.org:eternal-september.*:verify-Control
+rmgroup:control@eternal-september.org:eternal-september.*:verify-Control
 checkgroups:news@eternal-september.org:eternal-september.*:verify-news@eternal-september.org
 newgroup:news@eternal-september.org:eternal-september.*:verify-news@eternal-september.org
 rmgroup:news@eternal-september.org:eternal-september.*:verify-news@eternal-september.org
@@ -801,7 +807,6 @@ rmgroup:group-admin@usenet.eu.org:europa.*:verify-group-admin@usenet.eu.org
 # documents, and similar places to avoid clashes with real newsgroup
 # names.
 #
-checkgroups:*:example.*:drop
 newgroup:*:example.*:drop
 rmgroup:*:example.*:drop
 
@@ -946,7 +951,6 @@ rmgroup:*:fur.*:doit=rmgroup
 # be avoided on production servers since it may occur at many
 # disconnected sites.
 #
-checkgroups:*:general.*:drop
 newgroup:*:general.*:drop
 rmgroup:*:general.*:drop
 
@@ -1293,7 +1297,6 @@ rmgroup:news@linux.or.jp:jlug.*:verify-news@linux.or.jp
 # using it for any other purpose would be confusing and might trigger
 # implementation bugs.
 #
-checkgroups:*:junk.*:drop
 newgroup:*:junk.*:drop
 rmgroup:*:junk.*:drop
 
@@ -1396,7 +1399,6 @@ rmgroup:linux-admin@bofh.it:linux.*:verify-linux-admin@bofh.it
 # unconnected sites and may confuse news readers that read at multiple
 # sites.
 #
-checkgroups:*:local.*:drop
 newgroup:*:local.*:drop
 rmgroup:*:local.*:drop
 
@@ -2003,7 +2005,6 @@ rmgroup:*:prima.*:doit=rmgroup
 # It is not a good idea to use this hierarchy name on any production
 # server since they may occur on many unconnected sites.
 #
-checkgroups:*:private.*:drop
 newgroup:*:private.*:drop
 rmgroup:*:private.*:drop
 
@@ -2328,7 +2329,6 @@ rmgroup:*:termvakt.*:doit=rmgroup
 # use this hierarchy name on any production server since they may occur
 # on many unconnected sites.
 #
-checkgroups:*:test.*:drop
 newgroup:*:test.*:drop
 rmgroup:*:test.*:drop
 
@@ -2359,7 +2359,6 @@ rmgroup:tnn@iij-mc.co.jp:tnn.*:doit=rmgroup
 # but the hierarchy is still special-cased in some news software and
 # should not be used.
 #
-checkgroups:*:to.*:drop
 newgroup:*:to.*:drop
 rmgroup:*:to.*:drop
 
