@@ -72,8 +72,10 @@ rmgroup:*:*:log=rmgroup.other
 ## Only the last checkgroups line whose <from> matches is used, whatever its
 ## <newsgroups>; the pattern then limits the groups it may change.  A sender
 ## that issues checkgroups for several hierarchies therefore has one line with
-## the hierarchies joined by "|" (aus.*|bne.*|...).  Unlike INN, <from> is
-## matched with the case it has in the message.
+## the hierarchies joined by "|" (aus.*|bne.*|...), and a sender that also
+## matches an earlier wildcard <from> has that hierarchy in its line too
+## (eric@cirr.com: dfw.*|tx.*).  Unlike INN, <from> is matched with the case
+## it has in the message.
 
 ## Special reserved groups
 newgroup:*:control|general|junk|test|to:drop
@@ -652,6 +654,7 @@ rmgroup:newsmaster@demon.net:demon.*:verify-demon.news
 # URL: http://www.cirr.com/dfw/
 # Admin group: dfw.usenet.config
 checkgroups:eric@*cirr.com:dfw.*:doit=checkgroups
+# (eric@cirr.com also matches this line; its checkgroups for dfw.* are in its line for tx.* below)
 newgroup:eric@*cirr.com:dfw.*:doit=newgroup
 rmgroup:eric@*cirr.com:dfw.*:doit=rmgroup
 
@@ -860,6 +863,7 @@ rmgroup:newgroups-request@fido7.org:fido7.*:verify-fido7.announce.newgroups
 
 ## FINET (Finland and Finnish language alternative newsgroups)
 checkgroups:*@*.fi:finet.*:doit=checkgroups
+# (news@news.cc.tut.fi also matches this line; its checkgroups for finet.* are in its line for uta.* below)
 newgroup:*@*.fi:finet.*:doit=newgroup
 rmgroup:*@*.fi:finet.*:doit=rmgroup
 
@@ -2242,6 +2246,7 @@ rmgroup:*:su.*:doit=rmgroup
 
 ## SUNET (Swedish University Network)
 checkgroups:ber@*.sunet.se:sunet.*:doit=checkgroups
+# (ber@sunic.sunet.se also matches this line; its checkgroups for sunet.* are in its line for swnet.* below)
 newgroup:ber@*.sunet.se:sunet.*:doit=newgroup
 rmgroup:ber@*.sunet.se:sunet.*:doit=rmgroup
 
@@ -2251,7 +2256,7 @@ newgroup:news@info.nic.surfnet.nl:surfnet.*:doit=newgroup
 rmgroup:news@info.nic.surfnet.nl:surfnet.*:doit=rmgroup
 
 ## SWNET (Sverige, Sweden)
-checkgroups:ber@sunic.sunet.se:swnet.*:doit=checkgroups
+checkgroups:ber@sunic.sunet.se:sunet.*|swnet.*:doit=checkgroups
 newgroup:ber@sunic.sunet.se:swnet.*:doit=newgroup
 rmgroup:ber@sunic.sunet.se:swnet.*:doit=rmgroup
 
@@ -2377,7 +2382,7 @@ newgroup:k-12@news.nchu.edu.tw:tw.k-12.*:doit=newgroup
 rmgroup:k-12@news.nchu.edu.tw:tw.k-12.*:doit=rmgroup
 
 ## TX (Texas, USA)
-checkgroups:eric@cirr.com:tx.*:doit=checkgroups
+checkgroups:eric@cirr.com:dfw.*|tx.*:doit=checkgroups
 checkgroups:fletcher@cs.utexas.edu:austin.*|tx.*:doit=checkgroups
 checkgroups:usenet@academ.com:tx.*:doit=checkgroups
 newgroup:eric@cirr.com:tx.*:doit=newgroup
@@ -2500,7 +2505,7 @@ rmgroup:us-control@lists.killfile.org:us.*:verify-us-control@lists.killfile.org
 #rmgroup:news@ecf.toronto.edu:ut.*:doit
 
 ## UTA (Finnish)
-checkgroups:news@news.cc.tut.fi:uta.*:doit=checkgroups
+checkgroups:news@news.cc.tut.fi:finet.*|uta.*:doit=checkgroups
 newgroup:news@news.cc.tut.fi:uta.*:doit=newgroup
 rmgroup:news@news.cc.tut.fi:uta.*:doit=rmgroup
 

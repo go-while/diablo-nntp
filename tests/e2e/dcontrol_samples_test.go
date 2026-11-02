@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -153,5 +154,97 @@ func TestDcontrolSamplesCheckgroupsTwoHierarchies(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+// dcontrolWild is WildOrCmp: lib/wildcmp.c's WildCmp ('*' and '?' only, case-sensitive) for each
+// '|' alternative.
+func dcontrolWild(w, s string) bool {
+	for _, alt := range strings.Split(w, "|") {
+		if dcontrolWildOne(alt, s) {
+			return true
+		}
+	}
+	return false
+}
+
+func dcontrolWildOne(w, s string) bool {
+	if w == "" {
+		return s == ""
+	}
+	switch w[0] {
+	case '*':
+		for i := 0; i <= len(s); i++ {
+			if dcontrolWildOne(w[1:], s[i:]) {
+				return true
+			}
+		}
+		return false
+	case '?':
+		return s != "" && dcontrolWildOne(w[1:], s[1:])
+	}
+	return s != "" && s[0] == w[0] && dcontrolWildOne(w[1:], s[1:])
+}
+
+// dcontrolFromMatches is ParseControl's test of the From: line against the <from> of a rule.
+func dcontrolFromMatches(pat, from string) bool {
+	if dcontrolWild(pat, from) {
+		return true
+	}
+	return len(pat) <= 128 && dcontrolWild(fmt.Sprintf("*<%s>*|* %s|%s *", pat, pat, pat), from)
+}
+
+// TestDcontrolSamplesCheckgroupsSender: the Syntax test finds a second checkgroups line with the
+// same <from>; this one also finds a sender matched by the <from> of another line, a wildcard
+// (eric@cirr.com by eric@*cirr.com). For the sender of every checkgroups rule (a '*' or '?' of its
+// <from> read as "x"), the last rule it matches with ParseControl's From test must have the
+// hierarchies of all the rules it matches with the same action, or its checkgroups for the others
+// changes nothing. Rules with another action (signed and unsigned) cannot be joined and are not
+// compared.
+func TestDcontrolSamplesCheckgroupsSender(t *testing.T) {
+	type rule struct {
+		line                 int
+		from, groups, action string
+	}
+	for _, name := range dcontrolSamples {
+		var rules []rule
+		for n, l := range strings.Split(dcontrolSample(t, name), "\n") {
+			f := strings.SplitN(l, ":", 4)
+			if len(f) != 4 || f[0] != "checkgroups" || f[1] == "*" {
+				continue
+			}
+			rules = append(rules, rule{n + 1, f[1], f[2], f[3]})
+		}
+		reported := map[string]bool{}
+		for _, r := range rules {
+			from := "E2E <" + strings.NewReplacer("*", "x", "?", "x").Replace(r.from) + ">"
+			var match []rule
+			for _, o := range rules {
+				if dcontrolFromMatches(o.from, from) {
+					match = append(match, o)
+				}
+			}
+			if len(match) == 0 {
+				t.Errorf("%s:%d: no checkgroups rule matches its own sender %s", name, r.line, from)
+				continue
+			}
+			last := match[len(match)-1]
+			have := map[string]bool{}
+			for _, g := range strings.Split(last.groups, "|") {
+				have[g] = true
+			}
+			for _, m := range match {
+				if m.action != last.action {
+					continue
+				}
+				for _, g := range strings.Split(m.groups, "|") {
+					if key := fmt.Sprint(from, m.line, g); !have[g] && !reported[key] {
+						reported[key] = true
+						t.Errorf("%s:%d: a checkgroups from %s for %s is limited to %s by line %d",
+							name, m.line, from, g, last.groups, last.line)
+					}
+				}
+			}
+		}
 	}
 }
