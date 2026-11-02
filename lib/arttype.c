@@ -1255,8 +1255,8 @@ ArticleType(char *line, int len, int inheader)
     /*
      * Do some checks that could apply to headers and or body
      */
-    first = tolower(*ptr);
-    if (len >= 2 && first == 'c' && tolower(ptr[1]) == 'o') {
+    first = tolower((unsigned char)*ptr);
+    if (len >= 2 && first == 'c' && tolower((unsigned char)ptr[1]) == 'o') {
 	const char *cv = NULL;	/* the value of a Content-Type: header */
 	const char *ce = NULL;	/* the value of a Content-Transfer-Encoding: header */
 
@@ -1336,7 +1336,7 @@ ArticleType(char *line, int len, int inheader)
     yencLine(ptr, len);
 
     if (inheader) {
-	if (len >= 2 && first == 'c' && tolower(ptr[1]) == 'o') {
+	if (len >= 2 && first == 'c' && tolower((unsigned char)ptr[1]) == 'o') {
 	    if (hdrPrefix(ptr, len, "Control: "))
 		Type |= ARTTYPE_CONTROL;
 	    if (hdrPrefix(ptr, len, "Control: cancel "))
