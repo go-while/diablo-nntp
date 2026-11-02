@@ -914,7 +914,7 @@ sub IPv6Cidr {
 
 sub ParseDiabloLogFile
 {
-	my ($Error, $Line, $FullDate, $LineDate);
+	my ($Error, $Line, $FullDate, $LineDate, $Proc, $IsDiablo, $IsNewslink, $IsReader);
 
 	printf STDERR "Parsing %s for $BegDate - $EndDate ...\n",
 		 ($LogFile eq "-" ? "STDIN" : $LogFile) if $Verbose;
@@ -940,12 +940,16 @@ sub ParseDiabloLogFile
 
 			# The process that wrote the line ("diablo" in "... host diablo[123]: ..."),
 			# so that a host called diablo1 or diablo-reader doesn't make every line of
-			# it, dnewslink's too, a line of diablo.  Without one (another format) the
+			# it, dnewslink's too, a line of diablo.  It is the "name[pid]:" tag (Diablo's
+			# programs log with their pid) right after the time, or after the time and a
+			# host; a syslog may leave the host out.  Without one (another format) the
 			# line is looked at as a whole, as before.
-			$Proc = ($Line =~ /^... .. ..:..:..\s+\S+\s+([A-Za-z0-9_.-]+)(?:\[\d+\])?:/o) ? $1 : "";
+			$Proc = ($Line =~ /^... .. ..:..:..(?:\.\d+)?\s+([A-Za-z0-9_.-]+)\[\d+\]:/o ||
+				 $Line =~ /^... .. ..:..:..(?:\.\d+)?\s+\S+\s+([A-Za-z0-9_.-]+)\[\d+\]:/o) ? $1 : "";
 			$IsDiablo = $Proc ne "" ? $Proc =~ /diablo/io : $Line =~ /diablo|DIABLO/o;
 			$IsNewslink = $Proc ne "" ? $Proc =~ /newslink/o : $Line =~ /newslink/o;
-			$IsReader = $Proc ne "" ? $Proc =~ /reader/o : $Line =~ /reader/o;
+			# dreaderd and its children reader, feed, reader-dns and reader-sdns
+			$IsReader = $Proc ne "" ? $Proc =~ /reader|^feed$/o : $Line =~ /reader/o;
 
 			if ($IsDiablo) {
 
