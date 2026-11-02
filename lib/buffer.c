@@ -35,6 +35,7 @@ Prototype int bextfree(Buffer *b);
 #ifdef USE_ZLIB
 Prototype void bsetcompress(Buffer *b, gzFile cfile);
 Prototype int bzwrote(Buffer *b);
+Prototype int bflushgz(Buffer *b, int lvl);
 #endif
 
 #if USE_ANON_MMAP || USE_ZERO_MMAP
@@ -84,6 +85,53 @@ int
 bzwrote(Buffer *b)
 {
     return(b->bu_gzWrote);
+}
+
+/*
+ * bflushgz() - write the buffered data to the descriptor as one gzip
+ * member, compressed in memory.  gzdopen() would need a descriptor of its
+ * own (a dup) and gzclose() closes it: on a spool file that the caller
+ * holds an fcntl lock on, that close drops the lock.
+ */
+int
+bflushgz(Buffer *b, int lvl)
+{
+    z_stream z;
+    char obuf[16384];
+    int zr = Z_OK;
+    int len = b->bu_End - b->bu_Beg;
+
+    if (b->bu_Fd < 0 || b->bu_Error)
+	return(-1);
+    bzero(&z, sizeof(z));
+    if (deflateInit2(&z, lvl, Z_DEFLATED, MAX_WBITS + 16, 8,
+					Z_DEFAULT_STRATEGY) != Z_OK) {
+	b->bu_Error = EINVAL;
+	return(-1);
+    }
+    z.next_in = (Bytef *)(b->bu_Data + b->bu_Beg);
+    z.avail_in = len;
+    while (zr != Z_STREAM_END) {
+	z.next_out = (Bytef *)obuf;
+	z.avail_out = sizeof(obuf);
+	zr = deflate(&z, Z_FINISH);
+	if (zr != Z_OK && zr != Z_STREAM_END) {
+	    b->bu_Error = EIO;
+	    break;
+	}
+	if (WriteAll(b->bu_Fd, obuf, sizeof(obuf) - z.avail_out) < 0) {
+	    b->bu_Error = errno;
+	    break;
+	}
+    }
+    deflateEnd(&z);
+    if (b->bu_Error)
+	return(-1);
+    b->bu_gzWrote += len;
+    b->bu_Beg = b->bu_End = b->bu_NLScan = 0;
+    if (b->bu_Data != b->bu_Buf)
+	(void)bextfree(b);
+    return(0);
 }
 
 #endif
