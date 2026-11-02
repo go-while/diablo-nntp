@@ -88,6 +88,13 @@ main(int ac, char **av)
 	    FILE *fi;
 	    FILE *fo;
 	    int tfd;
+	    int failed = 0;
+
+	    if (buf == NULL) {
+		fprintf(stderr, "Unable to allocate temporary filename\n");
+		close(fd);
+		return(1);
+	    }
 
 	    if (hflock(fd, 0, XLOCK_EX|XLOCK_NB) < 0) {
 		printf("Unable to exclusively lock %s, someone else is using it\n", fileName);
@@ -99,38 +106,67 @@ main(int ac, char **av)
 	    }
 	    snprintf(buf, strlen(fileName) + 32, "%s.tmp%d", fileName, (int)getpid());
 	    fi = fdopen(fd, "r");
+	    if (fi == NULL) {
+		fprintf(stderr, "Unable to read %s: %s\n", fileName, strerror(errno));
+		close(fd);
+		free(buf);
+		return(1);
+	    }
 	    tfd = open(buf, O_WRONLY|O_CREAT|O_EXCL, 0640);
 	    fo = (tfd >= 0) ? fdopen(tfd, "w") : NULL;
-	    if (tfd >= 0 && fo == NULL)
+	    if (tfd >= 0 && fo == NULL) {
+		int error = errno;
 		close(tfd);
+		unlink(buf);
+		errno = error;
+	    }
 	    if (fo) {
 		char tmp[1024];
 		int lnl = 1;
+		int skip = 0;
 
 		while (fgets(tmp, sizeof(tmp), fi) != NULL) {
 		    int l = strlen(tmp);
-		    if (lnl && tmp[0] == '-')
-			continue;
-		    fputs(tmp, fo);
+		    if (lnl)
+			skip = (tmp[0] == '-');
+		    if (!skip)
+			fputs(tmp, fo);
 		    if (l == 0 || tmp[l-1] != '\n')
 			lnl = 0;
 		    else
 			lnl = 1;
 		}
-		fflush(fo);
-		if (ferror(fo)) {
-		    printf("Error writing temporary file: %s\n", strerror(errno));
-		    exit(1);
+		if (ferror(fi)) {
+		    fprintf(stderr, "Error reading %s\n", fileName);
+		    failed = 1;
 		}
-		fclose(fo);
-		rename(buf, fileName);
-		hflock(fd, 0, XLOCK_UN);
+		if (ferror(fo)) {
+		    fprintf(stderr, "Error writing %s\n", buf);
+		    failed = 1;
+		}
+		if (fclose(fo) != 0) {
+		    fprintf(stderr, "Error writing %s: %s\n", buf, strerror(errno));
+		    failed = 1;
+		}
+		if (!failed && rename(buf, fileName) != 0) {
+		    fprintf(stderr, "Unable to install %s: %s\n", buf, strerror(errno));
+		    failed = 1;
+		}
+		if (failed)
+		    unlink(buf);
 		fclose(fi);
+		free(buf);
+		if (failed)
+		    return(1);
 	    } else {
-		printf("Unable to create %s\n", buf);
+		fprintf(stderr, "Unable to create %s: %s\n", buf, strerror(errno));
+		fclose(fi);
+		free(buf);
+		return(1);
 	    }
 	} else {
-	    printf("Unable to open %s\n", fileName);
+	    fprintf(stderr, "Unable to open %s: %s\n", fileName, strerror(errno));
+	    return(1);
 	}
     }
 

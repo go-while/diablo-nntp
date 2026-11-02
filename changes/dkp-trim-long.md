@@ -1,0 +1,2 @@
+- `dkp -t` removes a deleted KP record in full even when it spans multiple input buffers; previously it could leave the end of the deleted record in the trimmed database.
+- If reading or installing the trimmed database fails, `dkp -t` now reports failure, preserves the original, and removes its incomplete temporary file.
