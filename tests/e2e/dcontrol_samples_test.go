@@ -32,6 +32,7 @@ func TestDcontrolSamplesSyntax(t *testing.T) {
 	var rules [][]string
 	for _, name := range dcontrolSamples {
 		var got []string
+		cgFrom := map[string]int{} // <from> of a checkgroups rule -> line
 		for n, l := range strings.Split(dcontrolSample(t, name), "\n") {
 			if strings.TrimSpace(l) == "" || strings.HasPrefix(l, "#") {
 				continue
@@ -57,6 +58,14 @@ func TestDcontrolSamplesSyntax(t *testing.T) {
 			// such a rule for any sender would drop every checkgroups message after it
 			if f[0] == "checkgroups" && f[2] != "*" && strings.Contains(f[1], "*") && !strings.Contains(f[1], "@") {
 				t.Errorf("%s:%d: %q applies to the checkgroups of every sender", name, n+1, l)
+			}
+			// dreaderd uses the last checkgroups rule whose <from> matches; a second line for
+			// the same sender (another hierarchy) would replace the first one
+			if f[0] == "checkgroups" && f[1] != "*" {
+				if prev, ok := cgFrom[f[1]]; ok {
+					t.Errorf("%s:%d: a second checkgroups line for %s (line %d): join the hierarchies with |", name, n+1, f[1], prev)
+				}
+				cgFrom[f[1]] = n + 1
 			}
 			got = append(got, l)
 		}
@@ -110,6 +119,38 @@ func TestDcontrolSamplesPolicy(t *testing.T) {
 			time.Sleep(iscRefusedWait)
 			if exists("comp.e2e.forged") {
 				t.Error("an unsigned newgroup created comp.e2e.forged")
+			}
+		})
+	}
+}
+
+// TestDcontrolSamplesCheckgroupsTwoHierarchies: a sender with checkgroups for two hierarchies
+// (fletcher@cs.utexas.edu: austin.* and tx.*) is acted on for both. dreaderd uses the last rule whose
+// <from> matches, so the sample has one line with both hierarchies; with a line each, the austin.*
+// checkgroups changed nothing and still logged "processing completed ok".
+func TestDcontrolSamplesCheckgroupsTwoHierarchies(t *testing.T) {
+	for _, name := range dcontrolSamples {
+		t.Run(name, func(t *testing.T) {
+			ctl := dcontrolSample(t, name)
+			st, spool := spoolStore(t)
+			s := NewReaderSite(t, ReaderOptions{Spool: spool, Groups: []string{"austin.test", "tx.test", "e2e.test"},
+				Files: map[string]string{"dcontrol.ctl": ctl}})
+			checkgroups := func(hier, group string) []string {
+				a := newArticle(msgID(t), "e2e.test", "cmsg checkgroups "+hier,
+					group+"\tDescribed by the "+hier+" checkgroups.")
+				for i, l := range a {
+					if strings.HasPrefix(l, "From: ") {
+						a[i] = "From: fletcher@cs.utexas.edu"
+					}
+				}
+				return append(append(a[:6:6], "Control: checkgroups"), a[6:]...)
+			}
+			feedReader(t, s, st, "e2e.test", checkgroups("austin", "austin.test"), checkgroups("tx", "tx.test"))
+			for _, g := range []string{"austin.test", "tx.test"} {
+				want := "Described by the " + strings.SplitN(g, ".", 2)[0] + " checkgroups."
+				waitFor(t, 20*time.Second, "the checkgroups description of "+g, func() bool {
+					return iscDescriptions(iscList(t, s, "NEWSGROUPS"), g)[g] == want
+				})
 			}
 		})
 	}

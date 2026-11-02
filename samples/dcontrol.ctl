@@ -80,12 +80,20 @@ rmgroup:*:*:log=rmgroup.other
 ##
 ## Most of these hierarchies are historical.  The comment of each one says so
 ## (*DEFUNCT*, *HISTORIC*, *LOCAL*, *PRIVATE*, *RESERVED*), and a rule for a
-## hierarchy you do not carry is harmless unless a control message for it
-## arrives.  Only a few are still maintained and widely used: the Big 8
-## (group-admin@isc.org), alt, and the hierarchies that sign their control
-## messages (de, fr, it, uk, be, ...).  To keep a hierarchy out, change its
-## newgroup lines to drop; delete the ones you do not need.  The lines at the
-## top (cancel, the log files, the types dropped) are Diablo's and stay first.
+## hierarchy you do not carry is not harmless: a newgroup creates the group,
+## and a checkgroups (doit=checkgroups) creates every group it lists and
+## removes the others of its hierarchies.  Only a few hierarchies are still
+## maintained and widely used: the Big 8 (group-admin@isc.org), alt, and the
+## hierarchies that sign their control messages (de, fr, it, uk, be, ...).  To
+## keep a hierarchy out, change its newgroup and checkgroups lines to drop, or
+## delete them.  The lines at the top (cancel, the log files, the types
+## dropped) are Diablo's and stay first.
+##
+## Only the last checkgroups line whose <from> matches is used, whatever its
+## <newsgroups>; the pattern then limits the groups it may change.  A sender
+## that issues checkgroups for several hierarchies therefore has one line with
+## the hierarchies joined by "|" (aus.*|bne.*|...).  Unlike INN, <from> is
+## matched with the case it has in the message.
 
 ## Special reserved groups
 newgroup:*:control|general|junk|test|to:drop
@@ -230,7 +238,7 @@ rmgroup:control@usenet.backbone.at:at.*:verify-control@usenet.backbone.at
 # *PGP*   See README.PGP.
 newgroup:*:aus.*:drop
 rmgroup:*:aus.*:drop
-checkgroups:ausadmin@aus.news-admin.org:aus.*:verify-ausadmin@aus.news-admin.org
+# (the checkgroups of ausadmin@aus.news-admin.org for aus.* are in the line for wa.* below)
 newgroup:ausadmin@aus.news-admin.org:aus.*:verify-ausadmin@aus.news-admin.org
 rmgroup:ausadmin@aus.news-admin.org:aus.*:verify-ausadmin@aus.news-admin.org
 
@@ -238,7 +246,7 @@ rmgroup:ausadmin@aus.news-admin.org:aus.*:verify-ausadmin@aus.news-admin.org
 # URL: http://frenzy.austin.tx.us/austin/
 # Admin group: austin.usenet.config
 checkgroups:chip@unicom.com:austin.*:doit=checkgroups
-checkgroups:fletcher@cs.utexas.edu:austin.*:doit=checkgroups
+# (the checkgroups of fletcher@cs.utexas.edu for austin.* are in the line for tx.* below)
 checkgroups:pug@pug.net:austin.*:doit=checkgroups
 newgroup:chip@unicom.com:austin.*:doit=newgroup
 newgroup:fletcher@cs.utexas.edu:austin.*:doit=newgroup
@@ -271,7 +279,7 @@ newgroup:*:backbone.*:log
 rmgroup:*:backbone.*:doit=rmgroup
 
 ## BC (British Columbia, Canada)
-checkgroups:bc_van_usenet@fastmail.ca:bc.*:doit=checkgroups
+# (the checkgroups of bc_van_usenet@fastmail.ca for bc.* are in the line for van.* below)
 newgroup:bc_van_usenet@fastmail.ca:bc.*:doit=newgroup
 rmgroup:bc_van_usenet@fastmail.ca:bc.*:doit=rmgroup
 
@@ -374,7 +382,7 @@ rmgroup:news@fu-berlin.de:bln.*:verify-news@fu-berlin.de
 # *PGP*   See README.PGP.
 newgroup:*:bne.*:drop
 rmgroup:*:bne.*:drop
-checkgroups:ausadmin@aus.news-admin.org:bne.*:verify-ausadmin@aus.news-admin.org
+# (the checkgroups of ausadmin@aus.news-admin.org for bne.* are in the line for wa.* below)
 newgroup:ausadmin@aus.news-admin.org:bne.*:verify-ausadmin@aus.news-admin.org
 rmgroup:ausadmin@aus.news-admin.org:bne.*:verify-ausadmin@aus.news-admin.org
 
@@ -393,7 +401,7 @@ rmgroup:*:bofh.*:drop
 ## CA (California, USA)
 # Contact: ikluft@thunder.sbay.org
 # URL: http://www.sbay.org/ca/
-checkgroups:ikluft@thunder.sbay.org:ca.*:doit=checkgroups
+# (the checkgroups of ikluft@thunder.sbay.org for ca.* are in the line for sbay.* below)
 newgroup:ikluft@thunder.sbay.org:ca.*:doit=newgroup
 rmgroup:ikluft@thunder.sbay.org:ca.*:doit=rmgroup
 
@@ -415,7 +423,7 @@ rmgroup:*@*calstate.edu:calstate.*:doit=rmgroup
 # *PGP*   See README.PGP.
 newgroup:*:canb.*:drop
 rmgroup:*:canb.*:drop
-checkgroups:ausadmin@aus.news-admin.org:canb.*:verify-ausadmin@aus.news-admin.org
+# (the checkgroups of ausadmin@aus.news-admin.org for canb.* are in the line for wa.* below)
 newgroup:ausadmin@aus.news-admin.org:canb.*:verify-ausadmin@aus.news-admin.org
 rmgroup:ausadmin@aus.news-admin.org:canb.*:verify-ausadmin@aus.news-admin.org
 
@@ -723,7 +731,7 @@ newgroup:newsadmin@efn.org:efn.*|eug.*:verify-eug.config
 rmgroup:newsadmin@efn.org:efn.*|eug.*:verify-eug.config
 
 ## EHIME-U (? University, Japan ?)
-checkgroups:news@cc.nias.ac.jp:ehime-u.*:doit=checkgroups
+# (the checkgroups of news@cc.nias.ac.jp for ehime-u.* are in the line for nias.* below)
 checkgroups:news@doc.dpc.ehime-u.ac.jp:ehime-u.*:doit=checkgroups
 newgroup:news@cc.nias.ac.jp:ehime-u.*:doit=newgroup
 newgroup:news@doc.dpc.ehime-u.ac.jp:ehime-u.*:doit=newgroup
@@ -1470,7 +1478,7 @@ rmgroup:neil@new*.medlux.ru:medlux.*:doit=rmgroup
 # *PGP*   See README.PGP.
 newgroup:*:melb.*:drop
 rmgroup:*:melb.*:drop
-checkgroups:ausadmin@aus.news-admin.org:melb.*:verify-ausadmin@aus.news-admin.org
+# (the checkgroups of ausadmin@aus.news-admin.org for melb.* are in the line for wa.* below)
 newgroup:ausadmin@aus.news-admin.org:melb.*:verify-ausadmin@aus.news-admin.org
 rmgroup:ausadmin@aus.news-admin.org:melb.*:verify-ausadmin@aus.news-admin.org
 
@@ -1638,7 +1646,7 @@ rmgroup:*:news4us.*:doit=rmgroup
 
 ## NF (Newfoundland and Labrador, Canada)
 # Contact: randy@mun.ca
-checkgroups:randy@mun.ca:nf.*:doit=checkgroups
+# (the checkgroups of randy@mun.ca for nf.* are in the line for sj.* below)
 newgroup:randy@mun.ca:nf.*:doit=newgroup
 rmgroup:randy@mun.ca:nf.*:doit=rmgroup
 
@@ -1648,7 +1656,7 @@ newgroup:news@niagara.com:niagara.*:doit=newgroup
 rmgroup:news@niagara.com:niagara.*:doit=rmgroup
 
 ## NIAS (Japanese ?)
-checkgroups:news@cc.nias.ac.jp:nias.*:doit=checkgroups
+checkgroups:news@cc.nias.ac.jp:ehime-u.*|nias.*:doit=checkgroups
 newgroup:news@cc.nias.ac.jp:nias.*:doit=newgroup
 rmgroup:news@cc.nias.ac.jp:nias.*:doit=rmgroup
 
@@ -1768,8 +1776,8 @@ newgroup:moderator@nrw.usenetverwaltung.de:nrw.*:verify-moderator@nrw.usenetverw
 rmgroup:moderator@nrw.usenetverwaltung.de:nrw.*:verify-moderator@nrw.usenetverwaltung.de
 
 ## NV (Nevada)
-checkgroups:cshapiro@netcom.com:nv.*:doit=checkgroups
-checkgroups:doctor@netcom.com:nv.*:doit=checkgroups
+# (the checkgroups of cshapiro@netcom.com for nv.* are in the line for vegas.* below)
+# (the checkgroups of doctor@netcom.com for nv.* are in the line for vegas.* below)
 newgroup:cshapiro@netcom.com:nv.*:doit=newgroup
 newgroup:doctor@netcom.com:nv.*:doit=newgroup
 rmgroup:cshapiro@netcom.com:nv.*:doit=rmgroup
@@ -2089,7 +2097,7 @@ rmgroup:satgroup@endicor.com:sat.*:verify-satgroup@endicor.com
 
 ## SBAY (South Bay/Silicon Valley, California)
 # URL: http://www.sbay.org/sbay-newsgroups.html
-checkgroups:ikluft@thunder.sbay.org:sbay.*:doit=checkgroups
+checkgroups:ikluft@thunder.sbay.org:ca.*|sbay.*:doit=checkgroups
 checkgroups:steveh@grafex.sbay.org:sbay.*:doit=checkgroups
 newgroup:ikluft@thunder.sbay.org:sbay.*:doit=newgroup
 newgroup:steveh@grafex.sbay.org:sbay.*:doit=newgroup
@@ -2150,7 +2158,7 @@ rmgroup:usenet@usenet-se.net:se.*:verify-usenet-se
 
 ## SEATTLE (Seattle, Washington, USA)
 checkgroups:billmcc@akita.com:seattle.*:doit=checkgroups
-checkgroups:graham@ee.washington.edu:seattle.*:doit=checkgroups
+# (the checkgroups of graham@ee.washington.edu for seattle.* are in the line for wash.* below)
 newgroup:billmcc@akita.com:seattle.*:doit=newgroup
 newgroup:graham@ee.washington.edu:seattle.*:doit=newgroup
 rmgroup:billmcc@akita.com:seattle.*:doit=rmgroup
@@ -2186,7 +2194,7 @@ rmgroup:news-admin@arnes.si:si.*:verify-si.news.announce.newsgroups
 
 ## SJ (St. John's, Newfoundland and Labrador, Canada)
 # Contact: randy@mun.ca
-checkgroups:randy@mun.ca:sj.*:doit=checkgroups
+checkgroups:randy@mun.ca:nf.*|sj.*:doit=checkgroups
 newgroup:randy@mun.ca:sj.*:doit=newgroup
 rmgroup:randy@mun.ca:sj.*:doit=rmgroup
 
@@ -2274,7 +2282,7 @@ rmgroup:ber@sunic.sunet.se:swnet.*:doit=rmgroup
 # *PGP*   See README.PGP.
 newgroup:*:syd.*:drop
 rmgroup:*:syd.*:drop
-checkgroups:ausadmin@aus.news-admin.org:syd.*:verify-ausadmin@aus.news-admin.org
+# (the checkgroups of ausadmin@aus.news-admin.org for syd.* are in the line for wa.* below)
 newgroup:ausadmin@aus.news-admin.org:syd.*:verify-ausadmin@aus.news-admin.org
 rmgroup:ausadmin@aus.news-admin.org:syd.*:verify-ausadmin@aus.news-admin.org
 
@@ -2390,7 +2398,7 @@ rmgroup:k-12@news.nchu.edu.tw:tw.k-12.*:doit=rmgroup
 
 ## TX (Texas, USA)
 checkgroups:eric@cirr.com:tx.*:doit=checkgroups
-checkgroups:fletcher@cs.utexas.edu:tx.*:doit=checkgroups
+checkgroups:fletcher@cs.utexas.edu:austin.*|tx.*:doit=checkgroups
 checkgroups:usenet@academ.com:tx.*:doit=checkgroups
 newgroup:eric@cirr.com:tx.*:doit=newgroup
 newgroup:fletcher@cs.utexas.edu:tx.*:doit=newgroup
@@ -2560,13 +2568,13 @@ newgroup:reggers@julian.uwo.ca:uwo.*:doit=newgroup
 rmgroup:reggers@julian.uwo.ca:uwo.*:doit=rmgroup
 
 ## VAN (Vancouver, British Columbia, Canada)
-checkgroups:bc_van_usenet@fastmail.ca:van.*:doit=checkgroups
+checkgroups:bc_van_usenet@fastmail.ca:bc.*|van.*:doit=checkgroups
 newgroup:bc_van_usenet@fastmail.ca:van.*:doit=newgroup
 rmgroup:bc_van_usenet@fastmail.ca:van.*:doit=rmgroup
 
 ## VEGAS (Las Vegas, Nevada, USA)
-checkgroups:cshapiro@netcom.com:vegas.*:doit=checkgroups
-checkgroups:doctor@netcom.com:vegas.*:doit=checkgroups
+checkgroups:cshapiro@netcom.com:nv.*|vegas.*:doit=checkgroups
+checkgroups:doctor@netcom.com:nv.*|vegas.*:doit=checkgroups
 newgroup:cshapiro@netcom.com:vegas.*:doit=newgroup
 newgroup:doctor@netcom.com:vegas.*:doit=newgroup
 rmgroup:cshapiro@netcom.com:vegas.*:doit=rmgroup
@@ -2589,7 +2597,7 @@ rmgroup:cts@dragon.com:vmsnet.*:doit=rmgroup
 # *PGP*   See README.PGP.
 newgroup:*:wa.*:drop
 rmgroup:*:wa.*:drop
-checkgroups:ausadmin@aus.news-admin.org:wa.*:verify-ausadmin@aus.news-admin.org
+checkgroups:ausadmin@aus.news-admin.org:aus.*|bne.*|canb.*|melb.*|syd.*|wa.*:verify-ausadmin@aus.news-admin.org
 newgroup:ausadmin@aus.news-admin.org:wa.*:verify-ausadmin@aus.news-admin.org
 rmgroup:ausadmin@aus.news-admin.org:wa.*:verify-ausadmin@aus.news-admin.org
 
@@ -2612,7 +2620,7 @@ newgroup:control@wales-usenet.org:wales.*:verify-wales-usenet
 rmgroup:control@wales-usenet.org:wales.*:verify-wales-usenet
 
 ## WASH (Washington State, USA)
-checkgroups:graham@ee.washington.edu:wash.*:doit=checkgroups
+checkgroups:graham@ee.washington.edu:seattle.*|wash.*:doit=checkgroups
 newgroup:graham@ee.washington.edu:wash.*:doit=newgroup
 rmgroup:graham@ee.washington.edu:wash.*:doit=rmgroup
 
