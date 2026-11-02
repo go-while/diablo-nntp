@@ -200,7 +200,14 @@ writeFeedOut(const char *label, const char *file, const char *msgid, const char 
      */
 
     if (fe->fe_Fd >= 0) {
-	int l = strlen(file) + strlen(msgid) + strlen(offSize) + (3 + 32 + 1);
+	/*
+	 * " H", " C" + cSize, the spaces, newline and nul.  cSize was not
+	 * counted: it comes from the SOUT line on stdin, and a line whose
+	 * fields are shifted can put a long value there (as in diablo's
+	 * writeFeedOut()).
+	 */
+	int l = strlen(file) + strlen(msgid) + strlen(offSize) +
+		(cSize != NULL ? strlen(cSize) : 0) + (3 + 32 + 1);
 
 	/*
 	 * line would be too long?
@@ -212,7 +219,8 @@ writeFeedOut(const char *label, const char *file, const char *msgid, const char 
 	    if (l >= fe->fe_BufMax - fe->fe_BufIdx)
 		flushFeedOut(fe);
 
-	    sprintf(fe->fe_Buf + fe->fe_BufIdx, "%s %s %s%s%s%s\n",
+	    snprintf(fe->fe_Buf + fe->fe_BufIdx, fe->fe_BufMax - fe->fe_BufIdx,
+		"%s %s %s%s%s%s\n",
 		file, msgid, offSize, 
 		(headOnly ? " H" : ""),
 		(cSize != NULL ? " C" : ""),

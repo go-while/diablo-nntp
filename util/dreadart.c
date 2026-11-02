@@ -119,7 +119,8 @@ main(int ac, char **av)
 
 		if (strncmp(buf, "DUMP ", 5) == 0) {
 		    History h = { 0 };
-		    if (sscanf(buf + 5, "%s gm=%d ex=%hd boff=%d bsize=%d",
+		    /* %249s: msgid holds MAXMSGIDLEN (250) bytes; the line is up to 8191 */
+		    if (sscanf(buf + 5, "%249s gm=%d ex=%hd boff=%d bsize=%d",
 					msgid, &h.gmt, &h.exp,
 					&h.boffset, &h.bsize) == 5) {
 			char *p;

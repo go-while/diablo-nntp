@@ -33,6 +33,23 @@ void DoExpire(int fd, int hsize, int rsize);
 int ServerCmd(char *cmd);
 void Fail(char *fname, char *errmsg);
 
+/*
+ * Copy a history file name (plus suffix) into one of the PATH_MAX buffers;
+ * a name that does not fit is refused, not cut: a cut name is a different
+ * file, and the backup or new history would go there.
+ */
+static void
+setFileName(char *buf, size_t size, const char *name, const char *suffix)
+{
+    int n = snprintf(buf, size, "%s%s", name, suffix);
+
+    if (n < 0 || (size_t)n >= size) {
+	fprintf(stderr, "dhisexpire: file name too long (%s): %.64s...\n",
+		strerror(ENAMETOOLONG), name);
+	exit(1);
+    }
+}
+
 void
 Usage(void)
 {
@@ -114,8 +131,7 @@ main(int ac, char **av)
 		    fprintf(stderr, "unexpected argument\n");
 		    exit(1);
 		}
-		strncpy(NewFileName, ptr, sizeof(NewFileName) - 1);
-		NewFileName[sizeof(NewFileName) - 1] = '\0';
+		setFileName(NewFileName, sizeof(NewFileName), ptr, "");
 		continue;
 	    }
 	    FileName = ptr;
@@ -137,8 +153,9 @@ main(int ac, char **av)
 	case 'o':
 	    if (*ptr == 0)
 		ptr = av[++i];
-	    strncpy(OldFileName, ptr, sizeof(OldFileName) - 1);
-	    OldFileName[sizeof(OldFileName) - 1] = '\0';
+	    if (ptr == NULL)
+		Usage();
+	    setFileName(OldFileName, sizeof(OldFileName), ptr, "");
 	    break;
 	case 'p':
 	    ShowProgress = 1;
@@ -191,9 +208,9 @@ main(int ac, char **av)
 	Usage();
     }
     if (NewFileName[0] == 0)
-	sprintf(NewFileName, "%s.new", FileName);
+	setFileName(NewFileName, sizeof(NewFileName), FileName, ".new");
     if (OldFileName[0] == 0)
-	sprintf(OldFileName, "%s.bak", FileName);
+	setFileName(OldFileName, sizeof(OldFileName), FileName, ".bak");
     if (strcmp(OldFileName, "0") == 0)
 	OldFileName[0] = 0;
 
