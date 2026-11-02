@@ -255,10 +255,15 @@ LoadArt(void)
 	int len = strlen(buf);
 	size += len;
 
-	if (strlen(buf) == 1)
+	/* the blank line after the headers, LF or CRLF */
+	if (len == 1 || (len == 2 && buf[0] == '\r'))
 	    inHeader = 0;
 
-        arttype = ArticleType(buf, len - 1, inHeader);
+	/* a piece of a line longer than buf has no newline and is passed whole */
+	if (len > 0 && buf[len - 1] == '\n')
+	    arttype = ArticleType(buf, len - 1, inHeader);
+	else
+	    arttype = ArticleTypePiece(buf, len, inHeader);
 
 	if (len < 2)
 	    continue;
@@ -279,6 +284,7 @@ LoadArt(void)
 	}
 
     }
+    arttype = ArticleTypeEnd();	/* the last decoded line of a base64 text part */
     sprintf(buf, "%d", npath);
     NumPath = strdup(buf);
     sprintf(buf, "%d", size);

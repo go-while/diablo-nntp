@@ -46,6 +46,8 @@ Prototype void InitArticleType(void);
 Prototype int ArtTypeConv(char *t);
 Prototype int ArtTypeMatch(int articletype, ArtTypeList *acctypes);
 Prototype int ArticleType(char *line, int len, int inheader);
+Prototype int ArticleTypePiece(char *line, int len, int inheader);
+Prototype int ArticleTypeEnd(void);
 
 #define	ARMOR_MAX	100	/* lines of one armored block (PGP, PEM) that are not counted */
 
@@ -61,9 +63,98 @@ int UUencode = 0;
 int BinHex = 0;
 int Base64 = 0;
 int PGPMime = 0;	/* in a PGP/MIME encrypted article: its octet-stream part is not a binary */
-int CTText = 0;	/* the last Content-Type seen is text/ */
+int CTText = 0;	/* the part's Content-Type is text/ */
 int CTEBase64 = 0;	/* a base64 Content-Transfer-Encoding is waiting for the end of its header block */
 int Armor = 0;	/* lines left to skip in an ASCII-armored block (PGP, PEM), 0 = not in one */
+
+/*
+ * A base64 part with no Content-Type in its header block.  RFC 2045 makes
+ * its type text/plain, so it is decoded and checked like a text/ part.
+ * Set this to 0 to make such a part a binary at the end of its headers,
+ * as before.  (The one place that decides it; tests/e2e/arttype_test.go
+ * pins it in the "base64 text, no Content-Type" cases.)
+ */
+#define	B64_NOCTYPE_IS_TEXT	1
+
+/*
+ * A base64 text part is decoded instead of counting its lines as base64:
+ * see b64Decode().  The base64 group (B64Bits, B64NBits, B64Quad, B64Pad)
+ * carries across lines and calls, so the line width of the encoding or a
+ * line handed over in pieces does not change what it decodes to.  The
+ * decoded text is split into lines (DLine) and those get the same per-line
+ * checks as an unencoded body, with their own counters (Dec*).
+ */
+#define	DLINE_MAX	1024	/* a longer decoded line is checked by its start */
+
+static int CTSeen = 0;	/* the part has a Content-Type */
+static int CTEQP = 0;	/* a quoted-printable Content-Transfer-Encoding is waiting for the end of its header block */
+static int QPPart = 0;	/* in the body of a part declared quoted-printable */
+static int QPEsc = 0;	/* an escape cut at the end of a piece: 1 = "=", 2 = "=H" */
+static int QPEscHi;	/* the H of "=H" */
+static int PieceMore = 0;	/* the last call was a piece: the line goes on */
+
+/*
+ * Where a part's headers are.  A header block is the article's headers, or
+ * the lines after a delimiter of a multipart we are in up to the next blank
+ * line, the boundary being the one a multipart Content-Type of a header
+ * block gave.  Only a header block says a part's type (CTText, CTSeen) and
+ * encoding (CTEBase64, CTEQP): a body that quotes "Content-Type:" or
+ * "Content-Transfer-Encoding: base64" in its text is not a MIME part.  A
+ * delimiter forgets all of it (partReset).
+ */
+#define	BND_MAX		70	/* the longest boundary (RFC 2046) */
+#define	BND_NUM		4	/* multiparts nested deeper are not followed */
+
+static int HdrBlock = 1;	/* in a header block */
+
+/*
+ * The value of a Content-Type header of a header block, its folded lines
+ * unfolded, is gathered in CTBuf and read at the end of the header
+ * (ctFinish): a multipart's boundary parameter, found by a MIME parameter
+ * reader that skips quoted strings and comments (RFC 2045, RFC 822).
+ */
+#define	CTBUF_MAX	2048	/* a longer Content-Type gives no boundary */
+
+static char CTBuf[CTBUF_MAX];
+static int CTLen;
+static int CTTrunc;	/* CTBuf overflowed */
+static int CTCont = 0;	/* gathering a Content-Type header */
+
+/*
+ * The boundaries of the multiparts we are in, innermost on top.  A
+ * closing "--boundary--" line pops its multipart (and any left open
+ * inside it).  A multipart nested deeper than BND_NUM is not pushed: the
+ * headers of its parts are not a header block and nothing in them is
+ * decoded, as on main.
+ */
+static char Bnd[BND_NUM][BND_MAX];
+static int BndLen[BND_NUM];
+static int BndTop = 0;	/* entries in use */
+static int B64Part = 0;	/* in the body of a base64 text part */
+static int B64Bits;	/* bits of the current group not yet decoded */
+static int B64NBits;	/* how many */
+static int B64Quad;	/* base64 characters in the current group, 0-3 */
+static int B64Pad;	/* 0, 1 = one '=' after two characters, 2 = group closed */
+static char DLine[DLINE_MAX];
+static int DLineLen;
+static int DecUUencode, DecBinHex, DecBase64, DecArmor;
+static int DLineCR;	/* the decoded line ended in CR: skip an LF after it */
+
+#define	B64_SPACE	(-1)	/* white space: skipped */
+#define	B64_EQ		(-2)	/* '=': padding */
+#define	B64_OTHER	(-3)	/* not base64: skipped, the line is also checked as it came */
+static signed char B64Val[256];	/* the value of a base64 character, or one of the above */
+static int B64ValSet = 0;
+
+/*
+ * b64Decode() is not inlined: in ArticleType() its loop runs short of
+ * registers and decodes about 40% slower (gcc 14, -O2).
+ */
+#if defined(__GNUC__)
+#define	ARTTYPE_NOINLINE	__attribute__((noinline))
+#else
+#define	ARTTYPE_NOINLINE
+#endif
 
 /*
  * Extensible content type classification system
@@ -464,6 +555,15 @@ InitArticleType(void)
     PGPMime = 0;
     CTText = 0;
     CTEBase64 = 0;
+    CTSeen = 0;
+    B64Part = 0;
+    CTEQP = 0;
+    QPPart = 0;
+    HdrBlock = 1;
+    CTCont = 0;
+    BndTop = 0;
+    QPEsc = 0;
+    PieceMore = 0;
 }
 
 int
@@ -572,11 +672,607 @@ linePrefix(const char *s, int len, const char *lit)
     return (len >= n && strncmp(s, lit, n) == 0);
 }
 
+/*
+ * Push the boundary of a multipart.  Past BND_NUM it is not pushed.
+ */
+static void
+bndPush(const char *b, int n)
+{
+    if (BndTop >= BND_NUM || n < 1 || n > BND_MAX)
+	return;
+    memcpy(Bnd[BndTop], b, n);
+    BndLen[BndTop] = n;
+    ++BndTop;
+}
+
+/*
+ * Gather the value of a Content-Type header (from its first line, more=0)
+ * or one of its continuation lines (more=1, kept with the white space it
+ * starts with, which is what unfolding leaves).
+ */
+static void
+ctGather(const char *p, int len, int more)
+{
+    while (len > 0 && (p[len - 1] == '\n' || p[len - 1] == '\r'))
+	--len;
+    if (!more) {
+	CTLen = 0;
+	CTTrunc = 0;
+	CTCont = 1;
+    }
+    if (len > CTBUF_MAX - CTLen) {
+	CTTrunc = 1;
+	len = CTBUF_MAX - CTLen;
+    }
+    memcpy(CTBuf + CTLen, p, len);
+    CTLen += len;
+}
+
+/*
+ * Skip white space and comments ("(...)", nested, with quoted pairs).
+ */
+static const char *
+mimeSkip(const char *p, const char *e)
+{
+    int depth;
+
+    for (;;) {
+	while (p < e && (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n'))
+	    ++p;
+	if (p >= e || *p != '(')
+	    return(p);
+	for (depth = 0; p < e; ++p) {
+	    if (*p == '\\' && p + 1 < e)
+		++p;
+	    else if (*p == '(')
+		++depth;
+	    else if (*p == ')' && --depth == 0) {
+		++p;
+		break;
+	    }
+	}
+    }
+}
+
+/*
+ * Go to the next ';' that is not in a quoted string or a comment.
+ */
+static const char *
+mimeNextParam(const char *p, const char *e)
+{
+    while (p < e && *p != ';') {
+	if (*p == '"') {
+	    for (++p; p < e && *p != '"'; ++p) {
+		if (*p == '\\' && p + 1 < e)
+		    ++p;
+	    }
+	    if (p < e)
+		++p;
+	} else if (*p == '(') {
+	    p = mimeSkip(p, e);
+	} else {
+	    ++p;
+	}
+    }
+    return(p);
+}
+
+/*
+ * The end of a gathered Content-Type header.  Its type gives CTText.  For
+ * a multipart, the first boundary parameter is pushed: the attribute is
+ * matched without case, white space and comments may stand around '=',
+ * and the value is a token or a quoted string with quoted pairs.  A value
+ * longer than BND_MAX after unquoting is not a valid boundary (RFC 2046).
+ * Nothing is pushed from a Content-Type longer than CTBUF_MAX.
+ */
+static void
+ctFinish(void)
+{
+    const char *p = CTBuf, *e = CTBuf + CTLen, *a;
+    char v[BND_MAX];
+    int n, alen, ok;
+
+    CTCont = 0;
+    p = mimeSkip(p, e);
+    CTText = (e - p >= 5 && strncasecmp(p, "text/", 5) == 0);
+    if (CTTrunc || e - p < 10 || strncasecmp(p, "multipart/", 10) != 0)
+	return;
+    for (;;) {
+	p = mimeNextParam(p, e);
+	if (p >= e)
+	    return;
+	p = mimeSkip(p + 1, e);
+	for (a = p; p < e && *p != '=' && *p != ';' && *p != '(' &&
+		*p != ' ' && *p != '\t' && *p != '"'; ++p)
+	    ;
+	alen = (int)(p - a);
+	p = mimeSkip(p, e);
+	if (p >= e || *p != '=')
+	    continue;
+	p = mimeSkip(p + 1, e);
+	n = 0;
+	ok = 1;
+	if (p < e && *p == '"') {
+	    for (++p; p < e && *p != '"'; ++p) {
+		if (*p == '\\' && p + 1 < e)
+		    ++p;		/* quoted pair */
+		if (n < BND_MAX)
+		    v[n] = *p;
+		++n;
+	    }
+	    if (p >= e)
+		ok = 0;			/* no closing quote */
+	    else
+		++p;
+	} else {
+	    for (; p < e && *p != ';' && *p != '(' && *p != ' ' &&
+						*p != '\t'; ++p) {
+		if (n < BND_MAX)
+		    v[n] = *p;
+		++n;
+	    }
+	}
+	if (alen == 8 && strncasecmp(a, "boundary", 8) == 0) {
+	    if (ok && n >= 1 && n <= BND_MAX)
+		bndPush(v, n);
+	    return;
+	}
+    }
+}
+
+/*
+ * Is this line (after its "--") the delimiter of a multipart we are in,
+ * innermost first?  Returns 1 for one that starts a part, 2 for the
+ * closing one ("--boundary--"), which pops that multipart and any left
+ * open inside it, 0 for none.  Only white space may follow either.  A
+ * part of an outer multipart also ends the ones inside it.
+ */
+static int
+bndMatch(const char *p, int len)
+{
+    int i, n, k;
+
+    for (i = BndTop - 1; i >= 0; i--) {
+	n = BndLen[i];
+	if (len < n || memcmp(p, Bnd[i], n) != 0)
+	    continue;
+	k = n;
+	if (len >= n + 2 && p[n] == '-' && p[n + 1] == '-')
+	    k = n + 2;
+	/* only white space may follow (RFC 2046) */
+	while (k < len && (p[k] == ' ' || p[k] == '\t' || p[k] == '\r'))
+	    ++k;
+	if (k < len)
+	    continue;
+	if (len >= n + 2 && p[n] == '-' && p[n + 1] == '-') {
+	    BndTop = i;
+	    return(2);
+	}
+	BndTop = i + 1;
+	return(1);
+    }
+    return(0);
+}
+
+/*
+ * Is this line quoted-printable rather than base64?  Every '=' must start
+ * an =HH escape (two hex digits: RFC 2045 says upper case, decoders take
+ * lower case too) or be the soft line break at the end; base64 has '=' only as padding at the end of the data,
+ * and "==" or "=x" is not quoted-printable.  In a part declared
+ * quoted-printable one such '=' is enough.  Without the declaration the
+ * escapes must make up at least half of the line: the lines that look like
+ * base64 are those without spaces, which in quoted-printable means text
+ * in a non-Latin script, nearly all escapes (a line of Chinese in UTF-8 is
+ * 25 escapes and a soft line break).  A stray '=' in base64 data, or a
+ * few escapes in it, do not make it quoted-printable, and neither does an
+ * escape of a byte that is not text (NOTTEXT).
+ */
+#define	QPHEX(c)	(((c) >= '0' && (c) <= '9') || ((c) >= 'A' && (c) <= 'F') || \
+			 ((c) >= 'a' && (c) <= 'f'))
+#define	QPVAL(c)	((c) <= '9' ? (c) - '0' : ((c) & ~0x20) - 'A' + 10)
+
+/*
+ * Is a byte not text: NUL, DEL or a control character other than TAB, LF,
+ * FF, CR and ESC (ESC for ISO-2022)?  The rule for decoded base64 and
+ * quoted-printable text.
+ */
+#define	NOTTEXT(b)	(((b) < 0x20 && (b) != '\t' && (b) != '\n' && \
+			  (b) != '\f' && (b) != '\r' && (b) != 0x1b) || (b) == 0x7f)
+
+/*
+ * May a line of this part be taken for quoted-printable text?  Only in a
+ * text/ part, or one without a Content-Type (B64_NOCTYPE_IS_TEXT): in an
+ * image or application part quoted-printable-shaped lines still count as
+ * base64 lines.
+ */
+#define	QPTEXT()	(CTText || (!CTSeen && B64_NOCTYPE_IS_TEXT))
+
+static int
+qpLine(const char *p, int len, int declared)
+{
+    int i, esc = 0, soft = 0;
+
+    if (len > 0 && p[len - 1] == '\n')
+	len--;
+    if (len > 0 && p[len - 1] == '\r')
+	len--;
+    for (i = 0; i < len; i++) {
+	if (p[i] != '=')
+	    continue;
+	if (i == len - 1) {
+	    soft = 1;		/* soft line break */
+	    break;
+	}
+	if (i + 2 >= len || !QPHEX(p[i + 1]) || !QPHEX(p[i + 2]) ||
+		NOTTEXT(QPVAL(p[i + 1]) * 16 + QPVAL(p[i + 2])))
+	    return(0);
+	esc++;
+	i += 2;
+    }
+    if (declared)
+	return(esc > 0 || soft);
+    return(esc * 3 * 2 >= len);
+}
+
+/*
+ * Has a line of a part declared quoted-printable text an escape of a byte
+ * that is not text (=00 to =1F but =09, =0A, =0C, =0D and =1B; =7F)?
+ * Then the part is a binary, as decoded base64 text is (b64Decode).  An
+ * escape cut at the end of a piece of a long line (ArticleTypePiece) is
+ * finished in the next piece (QPEsc).
+ */
+static int
+qpBad(const char *p, int len)
+{
+    int i, c;
+
+    for (i = 0; i < len; i++) {
+	c = (unsigned char)p[i];
+	if (QPEsc == 2) {
+	    QPEsc = 0;
+	    if (QPHEX(c) && NOTTEXT(QPEscHi * 16 + QPVAL(c)))
+		return(1);
+	} else if (QPEsc == 1) {
+	    QPEsc = 0;
+	    if (QPHEX(c)) {
+		QPEscHi = QPVAL(c);
+		QPEsc = 2;
+	    }
+	}
+	if (QPEsc == 0 && c == '=')
+	    QPEsc = 1;
+    }
+    return(0);
+}
+
+/*
+ * A yEnc header line: "=ybegin part=" or "=ybegin line=" (other keyword
+ * orders are not recognised).  For every line, and for the decoded lines
+ * of a base64 text part.
+ */
+static void
+yencLine(const char *ptr, int len)
+{
+    if (len > 0 && *ptr == '=') {
+	if (hdrPrefix(ptr, len, "=ybegin part="))
+	    Type |= ARTTYPE_BINARY|ARTTYPE_PARTIAL|ARTTYPE_YENC;
+	if (hdrPrefix(ptr, len, "=ybegin line="))
+	    Type |= ARTTYPE_BINARY|ARTTYPE_YENC;
+    }
+}
+
+/*
+ * The per-line checks of a body line: runs of uuencode, BinHex and base64
+ * lines, with ASCII-armored blocks not counted.  The counters are passed in
+ * so that the decoded lines of a base64 text part are counted apart from
+ * the lines as they came.  Returns 1 when the article is now a binary.
+ */
+static int
+bodyLineTypes(char *ptr, int len, int *uu, int *bh, int *b64, int *armor)
+{
+    int linetype;
+
+    /* Get quoted UUencode, etc. */
+    if (len > 0 && *ptr == '>') {
+	ptr++;
+	len--;
+	if (len > 0 && *ptr == ' ') {
+	    ptr++;
+	    len--;
+	}
+    }
+
+    /*
+     * We look for binary formats first, since these eat
+     * up CPU like there is no tomorrow.  We may miss
+     * some flags if we detect a binary file, the
+     * alternative is to remove the return(Type)'s and
+     * eat CPU for the entire binary.
+     */
+
+    /*
+     * The lines of an ASCII-armored block, a PGP signature, key or message
+     * or a PEM certificate or key (-----BEGIN label----- to -----END
+     * label-----), are base64 text of 64 characters, not a binary posting:
+     * do not count them as base64 or the other encodings.  The signature of
+     * an RSA-4096 key has 12 lines and a certificate more, so a signed text
+     * article or a post with a certificate was taken for a binary.  The
+     * skipping is bounded by ARMOR_MAX lines so that a long binary can't
+     * hide behind a "BEGIN" line.
+     */
+    if (*armor > 0) {
+	if (linePrefix(ptr, len, "-----END "))
+	    *armor = 0;
+	else
+	    --*armor;
+	linetype = 0;
+    } else {
+	linetype = classifyLineAsTypes(ptr, len);
+
+	/*
+	 * '=' in base64 is padding at the end of the data; quoted-printable
+	 * text in a non-Latin script (=E5=9C=A8..., 76 characters with a
+	 * soft line break) is made of base64 characters too (qpLine)
+	 */
+	if ((linetype & B64) && QPTEXT() && qpLine(ptr, len, QPPart))
+	    linetype &= ~B64;
+
+	if (len > 0 && *ptr == '-' && linePrefix(ptr, len, "-----BEGIN ")) {
+	    /* PGP in any armor form: message (also a part), signed
+	     * message, signature, public or private key block */
+	    if (linePrefix(ptr + 11, len - 11, "PGP "))
+		Type |= ARTTYPE_PGPMESSAGE;
+	    *armor = ARMOR_MAX;
+	}
+    }
+
+    if (linetype & UUE) {
+	*b64 = 0;
+	*bh = 0;
+	if (++*uu > 8) {
+	    Type |= ARTTYPE_UUENCODE | ARTTYPE_BINARY;
+	    Type &= ~ARTTYPE_DEFAULT;
+	    return(1);
+	}
+    } else if (linetype & BHX) {
+	*uu = 0;
+	*b64 = 0;
+	if (++*bh > 8) {
+	    Type |= ARTTYPE_BINHEX | ARTTYPE_BINARY;
+	    Type &= ~ARTTYPE_DEFAULT;
+	    return(1);
+	}
+    } else if (linetype & B64) {
+	*uu = 0;
+	*bh = 0;
+	if (++*b64 > 8) {
+	    Type |= ARTTYPE_BASE64 | ARTTYPE_BINARY;
+	    Type &= ~ARTTYPE_DEFAULT;
+	    return(1);
+	}
+    } else {
+	*uu = 0;
+	*b64 = 0;
+	*bh = 0;
+    }
+    return(0);
+}
+
+/*
+ * A decoded line of a base64 text part: the yEnc header check and the
+ * per-line checks of a body line (bodyLineTypes), with the counters of the
+ * decoded text.  Returns 1 when the article is now a binary.
+ */
+static int
+decodedLineTypes(char *ptr, int len)
+{
+    yencLine(ptr, len);
+    if ((Type & ARTTYPE_BINARY) ||
+	    bodyLineTypes(ptr, len, &DecUUencode, &DecBinHex, &DecBase64,
+								&DecArmor)) {
+	Type |= ARTTYPE_BASE64;
+	Type &= ~ARTTYPE_DEFAULT;
+	return(1);
+    }
+    return(0);
+}
+
+/*
+ * Start or end the body of a base64 text part.  At the end, a decoded line
+ * without a newline is checked too.
+ */
+static void
+b64Start(void)
+{
+    if (!B64ValSet) {
+	static const char alpha[] =
+	    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+	int i;
+
+	for (i = 0; i < 256; i++)
+	    B64Val[i] = B64_OTHER;
+	for (i = 0; i < 64; i++)
+	    B64Val[(unsigned char)alpha[i]] = i;
+	B64Val[' '] = B64Val['\t'] = B64Val['\r'] = B64Val['\n'] = B64_SPACE;
+	B64Val['='] = B64_EQ;
+	B64ValSet = 1;
+    }
+    B64Part = 1;
+    B64Bits = B64NBits = B64Quad = B64Pad = 0;
+    DLineLen = 0;
+    DLineCR = 0;
+    DecUUencode = DecBinHex = DecBase64 = DecArmor = 0;
+}
+
+static void
+b64End(void)
+{
+    if (B64Part && DLineLen > 0 && !(Type & ARTTYPE_BINARY))
+	(void)decodedLineTypes(DLine, DLineLen);
+    B64Part = 0;
+}
+
+/*
+ * Decode len bytes of the body of a base64 text part (a whole line or a
+ * piece of one).  The part is a binary as soon as a decoded byte is not
+ * text: NUL, DEL, or a control character other than TAB, LF, FF, CR and
+ * ESC (ESC for ISO-2022).  Random data has one of those in all but about
+ * 0.1% of its 57-byte lines.  Each decoded line also gets the yEnc header
+ * check and the per-line checks (decodedLineTypes), so base64 of a yEnc,
+ * uuencoded or base64 file is still a binary, while a signed text sent as
+ * base64 is not.  Text in UTF-16 or
+ * UTF-32 has NULs and is taken for a binary.
+ *
+ * White space is skipped.  '=' after two or three characters of a group
+ * closes it; any other '=' is skipped.  Data after a closed group starts a
+ * new one and is decoded too, so nothing can hide behind padding.  Any
+ * other character that is not base64 is skipped as RFC 2045 decoders do;
+ * the return value is then 1, and the caller also gives the line as it came
+ * the per-line checks.
+ */
+static int ARTTYPE_NOINLINE
+b64Decode(const char *buf, int len)
+{
+    int bits = B64Bits, nbits = B64NBits, quad = B64Quad, pad = B64Pad;
+    int dlen = DLineLen, cr = DLineCR;
+    int i, v, b;
+    int unclean = 0;
+
+    for (i = 0; i < len; i++) {
+	v = B64Val[(unsigned char)buf[i]];
+	if (v < 0) {
+	    if (v == B64_EQ) {
+		if (pad == 0 && quad == 2)
+		    pad = 1;
+		else if ((pad == 0 && quad == 3) || pad == 1) {
+		    pad = 2;
+		    bits = nbits = quad = 0;
+		}
+	    } else if (v == B64_OTHER) {
+		unclean = 1;
+	    }
+	    continue;		/* B64_SPACE and the rest are skipped */
+	}
+	if (pad) {
+	    /* data after padding: a new group */
+	    pad = 0;
+	    bits = nbits = quad = 0;
+	}
+	bits = (bits << 6) | v;
+	nbits += 6;
+	quad = (quad + 1) & 3;
+	if (nbits < 8)
+	    continue;
+	nbits -= 8;
+	b = (bits >> nbits) & 0xff;
+	bits &= (1 << nbits) - 1;
+
+	if (b >= 0x20 && b != 0x7f) {
+	    /* the common case: a printable byte of the decoded line */
+	    cr = 0;
+	    if (dlen < DLINE_MAX)
+		DLine[dlen++] = b;
+	    continue;
+	}
+	if (NOTTEXT(b)) {
+	    Type |= ARTTYPE_BASE64 | ARTTYPE_BINARY;
+	    Type &= ~ARTTYPE_DEFAULT;
+	    break;
+	}
+	/* a decoded line ends at LF, CR or CRLF */
+	if (b == '\n' && cr) {
+	    cr = 0;
+	} else if (b == '\n' || b == '\r') {
+	    cr = (b == '\r');
+	    if (decodedLineTypes(DLine, dlen))
+		break;
+	    dlen = 0;
+	} else {
+	    /* TAB, FF, ESC */
+	    cr = 0;
+	    if (dlen < DLINE_MAX)
+		DLine[dlen++] = b;
+	}
+    }
+    B64Bits = bits;
+    B64NBits = nbits;
+    B64Quad = quad;
+    B64Pad = pad;
+    DLineLen = dlen;
+    DLineCR = cr;
+    return(unclean);
+}
+
+/*
+ * A delimiter line ends a part: what its headers said (type, pending
+ * encodings, a base64 text part being decoded, a quoted-printable
+ * declaration) is forgotten before the next part's headers.
+ */
+static void
+partReset(void)
+{
+    if (B64Part)
+	b64End();
+    CTText = 0;
+    CTSeen = 0;
+    CTEBase64 = 0;
+    CTEQP = 0;
+    QPPart = 0;
+    QPEsc = 0;
+    CTCont = 0;
+}
+
+/*
+ * The end of the article (after its last line, before the "." line).  A
+ * base64 text part can end with a decoded line that has no newline: it
+ * gets the per-line checks here, as at a MIME boundary.  Returns the type.
+ */
+int
+ArticleTypeEnd(void)
+{
+    if (B64Part)
+	b64End();
+    if (Type != ARTTYPE_DEFAULT)
+	Type = Type & ~ARTTYPE_DEFAULT;
+    return(Type);
+}
+
+/*
+ * ArticleType() takes a whole line, without its end of line.  A line
+ * longer than the caller's buffer comes in pieces: each but the last
+ * through ArticleTypePiece(), the last through ArticleType().  Only state
+ * that runs along a line (a quoted-printable escape cut at a piece's end)
+ * needs to know; the base64 decoder goes on across lines anyway.
+ */
+static int articleType(char *line, int len, int inheader);
+
+int
+ArticleTypePiece(char *line, int len, int inheader)
+{
+    int t = articleType(line, len, inheader);
+
+    PieceMore = 1;
+    return(t);
+}
+
 int
 ArticleType(char *line, int len, int inheader)
 {
+    int t = articleType(line, len, inheader);
+
+    PieceMore = 0;
+    return(t);
+}
+
+static int
+articleType(char *line, int len, int inheader)
+{
     static char *ptr;
     static char first;
+
+    /* a new line: no escape is cut at its start */
+    if (!PieceMore)
+	QPEsc = 0;
 
     if (Type != ARTTYPE_DEFAULT)
 	Type = Type & ~ARTTYPE_DEFAULT;
@@ -586,12 +1282,24 @@ ArticleType(char *line, int len, int inheader)
      * binary unless its Content-Type is text/ (non-ASCII text is sent this
      * way).  The two headers can come in either order.
      */
-    if (CTEBase64 && (len == 0 || (len == 1 && *line == '\r'))) {
-	CTEBase64 = 0;
-	if (!CTText) {
-	    Type |= ARTTYPE_BASE64 | ARTTYPE_BINARY;
-	    Type &= ~ARTTYPE_DEFAULT;
+    if (len == 0 || (len == 1 && *line == '\r')) {
+	if (CTCont)
+	    ctFinish();
+	if (HdrBlock && CTEBase64) {
+	    if (CTText || (!CTSeen && B64_NOCTYPE_IS_TEXT)) {
+		/* a text part: decode it (b64Decode) */
+		b64Start();
+	    } else {
+		Type |= ARTTYPE_BASE64 | ARTTYPE_BINARY;
+		Type &= ~ARTTYPE_DEFAULT;
+	    }
 	}
+	/* the same for a quoted-printable one (qpLine) */
+	if (HdrBlock && CTEQP)
+	    QPPart = 1;
+	CTEBase64 = 0;
+	CTEQP = 0;
+	HdrBlock = 0;
     }
     /*
      * If we have found a binary, just keep it that way - saves CPU
@@ -605,11 +1313,19 @@ ArticleType(char *line, int len, int inheader)
 
     ptr = line;
 
+    /* a folded Content-Type header goes on, or it is done */
+    if (CTCont) {
+	if (HdrBlock && (*ptr == ' ' || *ptr == '\t'))
+	    ctGather(ptr, len, 1);
+	else
+	    ctFinish();
+    }
+
     /*
      * Do some checks that could apply to headers and or body
      */
-    first = tolower(*ptr);
-    if (len >= 2 && first == 'c' && tolower(ptr[1]) == 'o') {
+    first = tolower((unsigned char)*ptr);
+    if (len >= 2 && first == 'c' && tolower((unsigned char)ptr[1]) == 'o') {
 	const char *cv = NULL;	/* the value of a Content-Type: header */
 	const char *ce = NULL;	/* the value of a Content-Transfer-Encoding: header */
 
@@ -631,7 +1347,15 @@ ArticleType(char *line, int len, int inheader)
 	    int cvlen = len - (int)(cv - ptr);
 
 	    Type |= ARTTYPE_MIME;
-	    CTText = hdrPrefix(cv, cvlen, "text/");
+	    /*
+	     * In a header block: the part's type (CTSeen, CTText) and,
+	     * from the whole header, its boundary (ctFinish)
+	     */
+	    if (HdrBlock) {
+		CTSeen = 1;
+		CTText = hdrPrefix(cv, cvlen, "text/");
+		ctGather(cv, cvlen, 0);
+	    }
 	    if (hdrPrefix(cv, cvlen, "text/html"))
 		Type |= ARTTYPE_HTML;
 	    if (hdrPrefix(cv, cvlen, "multipart"))
@@ -663,8 +1387,11 @@ ArticleType(char *line, int len, int inheader)
 	if (ce != NULL) {
 	    int celen = len - (int)(ce - ptr);
 
-	    if (hdrPrefix(ce, celen, "base64"))
+	    /* a part's encoding is in its header block, not in its text */
+	    if (HdrBlock && hdrPrefix(ce, celen, "base64"))
 		CTEBase64 = 1;
+	    if (HdrBlock && hdrPrefix(ce, celen, "quoted-printable"))
+		CTEQP = 1;
 	    if (hdrPrefix(ce, celen, "X-Bommanews"))
 		Type |= ARTTYPE_BOMMANEWS | ARTTYPE_BINARY;
 	    if (hdrPrefix(ce, celen, "X-UnidataEncoding"))
@@ -675,13 +1402,10 @@ ArticleType(char *line, int len, int inheader)
 	    strncasecmp(ptr, "(This file must be converted with BinHex 4.0)", 33) == 0)
 	BinHex = 1;
 
-    if (first == '=' && hdrPrefix(ptr, len, "=ybegin part="))
-	Type |= ARTTYPE_BINARY|ARTTYPE_PARTIAL|ARTTYPE_YENC;
-    if (first == '=' && hdrPrefix(ptr, len, "=ybegin line="))
-	Type |= ARTTYPE_BINARY|ARTTYPE_YENC;
+    yencLine(ptr, len);
 
     if (inheader) {
-	if (len >= 2 && first == 'c' && tolower(ptr[1]) == 'o') {
+	if (len >= 2 && first == 'c' && tolower((unsigned char)ptr[1]) == 'o') {
 	    if (hdrPrefix(ptr, len, "Control: "))
 		Type |= ARTTYPE_CONTROL;
 	    if (hdrPrefix(ptr, len, "Control: cancel "))
@@ -690,89 +1414,52 @@ ArticleType(char *line, int len, int inheader)
 	if (first == 'm' && hdrPrefix(ptr, len, "Mime-Version: "))
 		Type |= ARTTYPE_MIME;
     } else {
-	int linetype;
+	int dl = 0;
 
-	/* A MIME boundary starts a part: its Content-Type is not known yet */
+	/*
+	 * A delimiter of a multipart we are in ends the part (and, closing,
+	 * the multipart); an opening one starts the headers of the next
+	 * part.  Other lines that start with "--" are text.
+	 */
 	if (len >= 2 && ptr[0] == '-' && ptr[1] == '-')
-	    CTText = 0;
+	    dl = bndMatch(ptr + 2, len - 2);
+	if (dl) {
+	    partReset();
+	    HdrBlock = (dl == 1);
+	    if (Type & ARTTYPE_BINARY)
+		return(Type);
+	} else if (B64Part) {
+	    int k = 3;
 
-	/* Get quoted UUencode, etc. */
-	if (*ptr == '>') {
-	    ptr++;
-	    len--;
-	    if (len > 0 && *ptr == ' ') {
-		ptr++;
-		len--;
-	    }
-	}
-
-	/*
-	 * We look for binary formats first, since these eat 
-	 * up CPU like there is no tomorrow.  We may miss 
-	 * some flags if we detect a binary file, the 
-	 * alternative is to remove the return(Type)'s and 
-	 * eat CPU for the entire binary.
-	 */
-
-	/*
-	 * The lines of an ASCII-armored block, a PGP signature, key or message
-	 * or a PEM certificate or key (-----BEGIN label----- to -----END
-	 * label-----), are base64 text of 64 characters, not a binary posting:
-	 * do not count them as base64 or the other encodings.  The signature of
-	 * an RSA-4096 key has 12 lines and a certificate more, so a signed text
-	 * article or a post with a certificate was taken for a binary.  The
-	 * skipping is bounded by ARMOR_MAX lines so that a long binary can't
-	 * hide behind a "BEGIN" line.
-	 */
-	if (Armor > 0) {
-	    if (linePrefix(ptr, len, "-----END "))
-		Armor = 0;
-	    else
-		--Armor;
-	    linetype = 0;
-	} else {
-	    linetype = classifyLineAsTypes(ptr, len);
-	    if (len > 0 && *ptr == '-' && linePrefix(ptr, len, "-----BEGIN ")) {
-		/* PGP in any armor form: message (also a part), signed
-		 * message, signature, public or private key block */
-		if (linePrefix(ptr + 11, len - 11, "PGP "))
-		    Type |= ARTTYPE_PGPMESSAGE;
-		Armor = ARMOR_MAX;
-	    }
-	}
-
-	if (linetype & UUE) {
-	    Base64 = 0;
-	    BinHex = 0;
-	    UUencode++;
-	    if (UUencode > 8) {
-		Type |= ARTTYPE_UUENCODE | ARTTYPE_BINARY;
-		Type &= ~ARTTYPE_DEFAULT;
+	    /*
+	     * A signature separator ("-- ") after base64 text: base64 has no
+	     * '-', so the encoded text is over, and the signature is checked
+	     * as it is, not decoded.  Any other line with '-' (a bare "--",
+	     * "---") is decoded on, its '-' skipped as decoders do.
+	     */
+	    while (k < len && (ptr[k] == ' ' || ptr[k] == '\t' || ptr[k] == '\r'))
+		++k;
+	    if (len >= 3 && ptr[0] == '-' && ptr[1] == '-' && ptr[2] == ' ' &&
+								k == len) {
+		b64End();
+		if (Type & ARTTYPE_BINARY)
+		    return(Type);
+	    } else if (!b64Decode(ptr, len) || (Type & ARTTYPE_BINARY)) {
+		/*
+		 * The body of a base64 text part is decoded, not counted
+		 * as base64 lines.  A line with characters that are not
+		 * base64 also gets the checks of a line as it came.
+		 */
 		return(Type);
 	    }
-	} else if (linetype & BHX) {
-	    UUencode = 0;
-	    Base64 = 0;
-	    BinHex++;
-	    if (BinHex > 8) {
-		Type |= ARTTYPE_BINHEX | ARTTYPE_BINARY;
-		Type &= ~ARTTYPE_DEFAULT;
-		return(Type);
-	    }
-	} else if (linetype & B64) {
-	    UUencode = 0;
-	    BinHex = 0;
-	    Base64++;
-	    if (Base64 > 8) {
-		Type |= ARTTYPE_BASE64 | ARTTYPE_BINARY;
-		Type &= ~ARTTYPE_DEFAULT;
-		return(Type);
-	    }
-	} else {
-	    UUencode = 0;
-	    Base64 = 0;
-	    BinHex = 0;
+	} else if (QPPart && QPTEXT() && qpBad(ptr, len)) {
+	    Type |= ARTTYPE_BINARY;
+	    Type &= ~ARTTYPE_DEFAULT;
+	    return(Type);
 	}
+
+	if (bodyLineTypes(ptr, len, &UUencode, &BinHex, &Base64, &Armor))
+	    return(Type);
     }
     if (Type != ARTTYPE_DEFAULT)
 	Type = Type & ~ARTTYPE_DEFAULT;
