@@ -656,6 +656,28 @@ bodyLineTypes(char *ptr, int len, int *uu, int *bh, int *b64, int *armor)
 	linetype = 0;
     } else {
 	linetype = classifyLineAsTypes(ptr, len);
+
+	/*
+	 * '=' in base64 is padding at the end of the data; a line with one
+	 * in the middle is quoted-printable (=E5=9C=A8... is made of base64
+	 * characters, and soft line breaks make its lines 76 long)
+	 */
+	if (linetype & B64) {
+	    int i;
+	    int l = len;
+
+	    if (l > 0 && ptr[l - 1] == '\n')
+		l--;
+	    if (l > 0 && ptr[l - 1] == '\r')
+		l--;
+	    for (i = 0; i < l - 2; i++) {
+		if (ptr[i] == '=') {
+		    linetype &= ~B64;
+		    break;
+		}
+	    }
+	}
+
 	if (len > 0 && *ptr == '-' && linePrefix(ptr, len, "-----BEGIN ")) {
 	    /* PGP in any armor form: message (also a part), signed
 	     * message, signature, public or private key block */

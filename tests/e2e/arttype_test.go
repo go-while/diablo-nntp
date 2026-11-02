@@ -112,6 +112,25 @@ func joined(l []string) []byte {
 	return []byte(strings.Join(l, "\n") + "\n")
 }
 
+// qpLines returns n lines of quoted-printable UTF-8 (Chinese text): 76 characters made of
+// =XX and a soft line break "=" at the end, like a mail client writes non-Latin text.
+func qpLines(n int) []string {
+	var l []string
+	for i := 0; i < n; i++ {
+		var b strings.Builder
+		for j := 0; b.Len() < 75; j++ {
+			c := []rune("在天安门屠杀现场我目睹了中国人民")[(i+j)%16]
+			for _, x := range []byte(string(c)) {
+				if b.Len()+3 <= 75 {
+					b.WriteString("=" + strings.ToUpper(strconv.FormatInt(int64(x), 16)))
+				}
+			}
+		}
+		l = append(l, b.String()+"=")
+	}
+	return l
+}
+
 // atArticle builds an article with the usual headers, extra headers and a body.
 func atArticle(extra []string, body []string) []string {
 	a := newArticle("<arttype@e2e.test>", "e2e.test", "article type")
@@ -251,6 +270,12 @@ func TestArticleTypes(t *testing.T) {
 			append(append(append([]string{"--XX", "Content-Type: text/plain", "Content-Transfer-Encoding: base64", ""}, b64Text(2)...), "--XX", "Content-Type: image/png", "Content-Transfer-Encoding: base64", ""), atLines(3, 40, b64Alphabet, "")...), atMIME | atMultipart | atBinary | atBase64, ""},
 		{"base64 part without Content-Type after a text part", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=XX"},
 			append(append(append([]string{"--XX", "Content-Type: text/plain", ""}, "hello"), "--XX", "Content-Transfer-Encoding: base64", ""), b64Wrap(randBytes(171, 8), 76)...), atMIME | atMultipart | atBinary | atBase64, "a part has its own type: the earlier text/plain does not carry over, and random data is not text"},
+		// Quoted-printable text is made of base64 characters, too: '=' inside a line is not
+		// base64 (padding comes at the end of the data).
+		{"quoted-printable Chinese text", []string{"Mime-Version: 1.0", "Content-Type: text/plain; charset=utf-8", "Content-Transfer-Encoding: quoted-printable"}, qpLines(40), atMIME, ""},
+		{"quoted-printable without headers", nil, qpLines(40), atDefault, ""},
+		{"base64 attachment with padding", []string{"Mime-Version: 1.0", "Content-Type: image/png", "Content-Transfer-Encoding: base64"}, append(append([]string{}, b64...), "QUJDRA=="), atMIME | atBinary | atBase64, ""},
+		{"base64 data without headers, padded at the end", nil, append(append([]string{}, b64...), "QUJDRA=="), atBinary | atBase64, ""},
 		// Header parsing.
 		{"pem certificate", nil, pem("CERTIFICATE", 24), atDefault, ""},
 		{"pem certificate request", nil, pem("CERTIFICATE REQUEST", 14), atDefault, ""},
