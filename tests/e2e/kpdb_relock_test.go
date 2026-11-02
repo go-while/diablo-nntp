@@ -37,6 +37,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -479,7 +480,9 @@ func TestDexpireoverGroupRemovedDuringResize(t *testing.T) {
 	writeOver(t, over, index)
 
 	db := filepath.Join(s.Dir, "dactive.kp")
-	out := deleteGroupWhileBlocked(t, s, over, 4, []string{"dexpireover", "-a", "-s", "-y", "-v"})
+	// -l60: the resize gives up on the over.* lock after LockWaitTime (1 s
+	// by default), sooner than a wait the test cannot see is noticed.
+	out := deleteGroupWhileBlocked(t, s, over, 4, []string{"dexpireover", "-a", "-s", "-y", "-v", "-l60"})
 
 	if live, _, _ := kpRecords(t, db, "e2e.test"); len(live) != 0 {
 		t.Errorf("the removed group is back in dactive.kp: %q\n%s", live, out)
@@ -526,9 +529,9 @@ func TestDexpireoverGroupRemovedBeforeWriteBack(t *testing.T) {
 
 // deleteGroupWhileBlocked holds a 4-byte fcntl lock at lockOff in lockPath
 // (as hflock() takes it), runs the tool (args) of site s, waits until the
-// tool is blocked on a lock (seen in /proc/locks; a fixed second where there
-// is none), marks e2e.test's record in dactive.kp deleted as KPDBDelete()
-// does, releases the lock, and returns the tool's output once it exits.
+// tool is blocked on a lock (see waitLockWaiter), marks e2e.test's record in
+// dactive.kp deleted as KPDBDelete() does, releases the lock, and returns the
+// tool's output once it exits.
 func deleteGroupWhileBlocked(t *testing.T, s *Site, lockPath string, lockOff int64, args []string) string {
 	t.Helper()
 	db := filepath.Join(s.Dir, "dactive.kp")
@@ -597,27 +600,78 @@ func kpRecordOffset(t *testing.T, path, key string) int64 {
 }
 
 // waitLockWaiter returns once process pid is blocked waiting for a POSIX
-// lock, as /proc/locks lists it ("-> POSIX ... pid ..."), or after a second
-// where there is no /proc/locks.  It fails when the process exits first.
+// lock.  It fails when the process exits first.  How it sees the wait:
+//
+//	proc    /proc/locks lists the waiter ("-> POSIX ... pid ...") (Linux)
+//	wchan   ps -o wchan shows the lock wait: "lockf" on the BSDs,
+//	        "fcntl_setlk" on Linux
+//	pstack  the process's user stack is in fcntl(), twice in a row (illumos)
+//	sleep   none of these: assume it after two seconds
+//
+// The first that applies is used; E2E_LOCKWAIT names one instead (to try a
+// fallback on Linux).  A tool that gives up on a lock after a timeout must
+// be given a long one, as the sleep fallback cannot see the wait.
 func waitLockWaiter(pid int, done chan error) error {
-	if _, err := os.Stat("/proc/locks"); err != nil {
+	mode := os.Getenv("E2E_LOCKWAIT")
+	if mode == "" {
+		switch {
+		case fileExists("/proc/locks"):
+			mode = "proc"
+		case runtime.GOOS == "illumos" || runtime.GOOS == "solaris":
+			mode = "pstack"
+		default:
+			mode = "wchan"
+		}
+	}
+	want := strconv.Itoa(pid)
+	waiting := func() bool {
+		switch mode {
+		case "proc":
+			b, _ := os.ReadFile("/proc/locks")
+			for _, l := range strings.Split(string(b), "\n") {
+				fs := strings.Fields(l)
+				if len(fs) > 5 && fs[1] == "->" && fs[2] == "POSIX" && fs[5] == want {
+					return true
+				}
+			}
+		case "wchan":
+			out, _ := exec.Command("ps", "-o", "wchan=", "-p", want).Output()
+			w := strings.TrimSpace(string(out))
+			return strings.HasPrefix(w, "lockf") || strings.HasPrefix(w, "fcntl_setlk")
+		case "pstack":
+			out, _ := exec.Command("pstack", want).Output()
+			return strings.Contains(string(out), "fcntl")
+		}
+		return false
+	}
+	if mode == "wchan" || mode == "pstack" {
+		// usable only if the tool is there and answers for this process
+		cmd := "ps"
+		if mode == "pstack" {
+			cmd = "pstack"
+		}
+		if _, err := exec.LookPath(cmd); err != nil {
+			mode = "sleep"
+		}
+	}
+	if mode == "sleep" {
 		select {
 		case err := <-done:
 			done <- err
 			return fmt.Errorf("exited first (%v)", err)
-		case <-time.After(time.Second):
+		case <-time.After(2 * time.Second):
 			return nil
 		}
 	}
-	want := strconv.Itoa(pid)
+	seen := 0
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
-		b, _ := os.ReadFile("/proc/locks")
-		for _, l := range strings.Split(string(b), "\n") {
-			fs := strings.Fields(l)
-			if len(fs) > 5 && fs[1] == "->" && fs[2] == "POSIX" && fs[5] == want {
+		if waiting() {
+			if seen++; seen >= 2 || mode == "proc" {
 				return nil
 			}
+		} else {
+			seen = 0
 		}
 		select {
 		case err := <-done:
@@ -626,5 +680,5 @@ func waitLockWaiter(pid int, done chan error) error {
 		case <-time.After(20 * time.Millisecond):
 		}
 	}
-	return fmt.Errorf("not blocked on a lock after 30s")
+	return fmt.Errorf("not seen waiting for a lock (%s) after 30s", mode)
 }
