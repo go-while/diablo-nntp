@@ -39,15 +39,89 @@
 
 #include <dreaderd/defs.h>
 
+#ifdef __OpenBSD__
+static int ExpireSnapshotFailed;
+#endif
+
 static void *
 MapOverRecords(int fd, size_t len, off_t offset)
 {
 #ifdef __OpenBSD__
-    return(xreadmap(fd, len, offset));
+    void *map = xreadmap(fd, len, offset);
+    if (map == NULL)
+        ExpireSnapshotFailed = 1;
+    return(map);
 #else
     return(xmap(NULL, len, PROT_READ, MAP_SHARED, fd, offset));
 #endif
 }
+
+#ifdef __OpenBSD__
+static int
+ExpireWriteAt(int fd, const OverArt *record, off_t offset)
+{
+    size_t done = 0;
+
+    while (done < sizeof(*record)) {
+        ssize_t n = pwrite(fd, (const char *)record + done,
+            sizeof(*record) - done, offset + (off_t)done);
+        if (n > 0)
+            done += (size_t)n;
+        else if (n < 0 && errno == EINTR)
+            continue;
+        else {
+            if (n == 0)
+                errno = EIO;
+            return(-1);
+        }
+    }
+    return(0);
+}
+
+/* A cached snapshot can age while expiration scans it.  Recheck under the
+ * same index lock used by overview writers before replacing a record. */
+static int
+ExpireSnapshotRecord(int fd, off_t offset, OverArt *snapshot)
+{
+    OverArt current, expired;
+    int result = -1;
+
+    if (hflock(fd, 0, XLOCK_EX) < 0) {
+        fprintf(stderr, "overview expiration lock failed: %s\n", strerror(errno));
+        ExpireSnapshotFailed = 1;
+        return(-1);
+    }
+    if (xreadat(fd, &current, sizeof(current), offset) < 0) {
+        fprintf(stderr, "overview expiration read failed: %s\n", strerror(errno));
+        goto out;
+    }
+    if (memcmp(&current, snapshot, sizeof(current)) != 0) {
+        *snapshot = current;
+        result = 0;
+        goto out;
+    }
+    expired = current;
+    expired.oa_ArtNo = -2;
+    if (ExpireWriteAt(fd, &expired, offset) < 0) {
+        int error = errno;
+        if (ExpireWriteAt(fd, &current, offset) < 0)
+            fprintf(stderr, "overview expiration rollback failed: %s\n", strerror(errno));
+        fprintf(stderr, "overview expiration write failed: %s\n", strerror(error));
+        goto out;
+    }
+    *snapshot = expired;
+    result = 1;
+out:
+    if (hflock(fd, 0, XLOCK_UN) < 0) {
+        fprintf(stderr, "overview expiration unlock failed: %s\n", strerror(errno));
+        ExpireSnapshotFailed = 1;
+        return(-1);
+    }
+    if (result < 0)
+        ExpireSnapshotFailed = 1;
+    return(result);
+}
+#endif
 
 #define GZ_MAGIC0       0x1F
 #define GZ_MAGIC1       0x8B
@@ -600,7 +674,11 @@ main(int ac, char **av)
     if (UseExpireBySpool)
 	HistoryClose();
 
-    return((CompressFailed || NeedZlibGroups) ? 1 : 0);
+    return((CompressFailed || NeedZlibGroups
+#ifdef __OpenBSD__
+        || ExpireSnapshotFailed
+#endif
+    ) ? 1 : 0);
 }
 
 /*
@@ -1353,17 +1431,26 @@ ExpireByDays(Group *group, int fd, OverHead *oh, int expireSecs)
 		if (expireSecs > 0 && 
 		    (dt > expireSecs || dt < -(60 * 60 * 24))
 		) {
-		    OverArt copy = *oa;
-
 		    expiredart = 1;
+#ifndef __OpenBSD__
+		    OverArt copy = *oa;
 		    copy.oa_ArtNo = -2;		/* EXPIRED */
+#endif
 		    if (ForReal) {
+#ifdef __OpenBSD__
+			int written = ExpireSnapshotRecord(fd,
+			    (off_t)oh->oh_HeadSize + i * sizeof(OverArt),
+			    (OverArt *)&oaBase[i]);
+			if (written < 0) {
+			    xunmap((void *)oaBase, n * sizeof(OverArt));
+			    return;
+			}
+			if (written == 0)
+			    continue;
+#else
 			lseek(fd, (off_t)oh->oh_HeadSize + i * sizeof(OverArt), 0);
 			if (WriteAll(fd, &copy, sizeof(OverArt)) < 0)
 			    printf("overview write failed: %s\n", strerror(errno));
-#ifdef __OpenBSD__
-			else
-			    memcpy((void *)&oaBase[i], &copy, sizeof(copy));
 #endif
 		    }
 		    ++count;
@@ -1380,6 +1467,14 @@ ExpireByDays(Group *group, int fd, OverHead *oh, int expireSecs)
 	/*
 	 * Update active file begin sequence number
 	 */
+#ifdef __OpenBSD__
+	if (xreadat(fd, (void *)oaBase, n * sizeof(OverArt), oh->oh_HeadSize) < 0) {
+	    fprintf(stderr, "overview expiration refresh failed: %s\n", strerror(errno));
+	    ExpireSnapshotFailed = 1;
+	    xunmap((void *)oaBase, n * sizeof(OverArt));
+	    return;
+	}
+#endif
 	while (group->gr_StartNo <= group->gr_EndNo) {
 	    long long i = (group->gr_StartNo & 0x7FFFFFFFFFFFFFFFLL) % n;
 	    const OverArt *oa = &oaBase[i];
@@ -1479,16 +1574,25 @@ ExpireBySpool(Group *group, int fd, OverHead *oh)
 		 */
 		if ((HistoryLookupByHash(dh, &dh_lookup) == -1) ||
 						H_EXPIRED(dh_lookup.exp)) {
+#ifndef __OpenBSD__
 		    OverArt copy = *oa;
-
 		    copy.oa_ArtNo = -2;		/* EXPIRED */
+#endif
 		    if (ForReal) {
+#ifdef __OpenBSD__
+			int written = ExpireSnapshotRecord(fd,
+			    (off_t)oh->oh_HeadSize + i * sizeof(OverArt),
+			    (OverArt *)&oaBase[i]);
+			if (written < 0) {
+			    xunmap((void *)oaBase, n * sizeof(OverArt));
+			    return;
+			}
+			if (written == 0)
+			    continue;
+#else
 			lseek(fd, oh->oh_HeadSize + i * sizeof(OverArt), 0);
 			if (WriteAll(fd, &copy, sizeof(OverArt)) < 0)
 			    printf("overview write failed: %s\n", strerror(errno));
-#ifdef __OpenBSD__
-			else
-			    memcpy((void *)&oaBase[i], &copy, sizeof(copy));
 #endif
 		    }
 		    ++count;
@@ -1501,6 +1605,14 @@ ExpireBySpool(Group *group, int fd, OverHead *oh)
 	/*
 	 * Update history file begin sequence number
 	 */
+#ifdef __OpenBSD__
+	if (xreadat(fd, (void *)oaBase, n * sizeof(OverArt), oh->oh_HeadSize) < 0) {
+	    fprintf(stderr, "overview expiration refresh failed: %s\n", strerror(errno));
+	    ExpireSnapshotFailed = 1;
+	    xunmap((void *)oaBase, n * sizeof(OverArt));
+	    return;
+	}
+#endif
 	while (group->gr_StartNo <= group->gr_EndNo) {
 	    long long i = (group->gr_StartNo & 0x7FFFFFFFFFFFFFFFLL) % n;
 	    const OverArt *oa = &oaBase[i];
@@ -1600,16 +1712,25 @@ ExpireFromFile(Group *group, int fd, OverHead *oh, int expireSecs)
 		    ((expireSecs > 0) && 
 		     (dt > expireSecs || dt < -(60 * 60 * 24)))
 		) {
+#ifndef __OpenBSD__
 		    OverArt copy = *oa;
-
 		    copy.oa_ArtNo = -2;		/* EXPIRED */
+#endif
 		    if (ForReal) {
+#ifdef __OpenBSD__
+			int written = ExpireSnapshotRecord(fd,
+			    (off_t)oh->oh_HeadSize + i * sizeof(OverArt),
+			    (OverArt *)&oaBase[i]);
+			if (written < 0) {
+			    xunmap((void *)oaBase, n * sizeof(OverArt));
+			    return;
+			}
+			if (written == 0)
+			    continue;
+#else
 			lseek(fd, oh->oh_HeadSize + i * sizeof(OverArt), 0);
 			if (WriteAll(fd, &copy, sizeof(OverArt)) < 0)
 			    printf("overview write failed: %s\n", strerror(errno));
-#ifdef __OpenBSD__
-			else
-			    memcpy((void *)&oaBase[i], &copy, sizeof(copy));
 #endif
 		    }
 		    ++count;
@@ -1622,6 +1743,14 @@ ExpireFromFile(Group *group, int fd, OverHead *oh, int expireSecs)
 	/*
 	 * Update history file begin sequence number
 	 */
+#ifdef __OpenBSD__
+	if (xreadat(fd, (void *)oaBase, n * sizeof(OverArt), oh->oh_HeadSize) < 0) {
+	    fprintf(stderr, "overview expiration refresh failed: %s\n", strerror(errno));
+	    ExpireSnapshotFailed = 1;
+	    xunmap((void *)oaBase, n * sizeof(OverArt));
+	    return;
+	}
+#endif
 	while (group->gr_StartNo <= group->gr_EndNo) {
 	    long long i = (group->gr_StartNo & 0x7FFFFFFFFFFFFFFFLL) % n;
 	    const OverArt *oa = &oaBase[i];
