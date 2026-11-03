@@ -687,6 +687,52 @@ HistoryPosLookupByHash(hash_t hv, History *h)
     return(-1);
 }
 
+/* File offset of the record at index. */
+static off_t
+recordOffset(HistIndex index)
+{
+    if (HHead.version > 1)
+	return((off_t)HEntryOff + (off_t)index * sizeof(History));
+    return((off_t)index);
+}
+
+static void
+unlockChain(off_t chainlock)
+{
+    if (chainlock > 0 && hflock(HFd, chainlock, XLOCK_UN) < 0)
+	HistoryFatalIO("hash chain unlock");
+}
+
+/*
+ * Lock the hash chain of hv for an add or a record update.  Returns the
+ * lock offset, 0 in fast mode (no lock, it has the file to itself), or
+ * -1.  dhisexpire marks the history dead and then waits for every chain
+ * lock before it copies the last records: a history found dead under the
+ * lock is reopened, so no write goes to the old file after that copy.
+ */
+static off_t
+lockChain(hash_t hv)
+{
+    for (;;) {
+	off_t chainlock;
+
+	if (HHeadMap->hmagic != HMAGIC)
+	    historyReOpen();
+	if (HFlags & HGF_FAST)
+	    return(0);
+	chainlock = HHead.headSize +
+	    (off_t)((hv.h1 ^ hv.h2) & HMask) * sizeof(HistIndex);
+	if (hflock(HFd, chainlock, XLOCK_EX) < 0) {
+	    logit(LOG_ERR, "Unable to lock dhistory chain: %s",
+		strerror(errno));
+	    return(-1);
+	}
+	if (HHeadMap->hmagic == HMAGIC)
+	    return(chainlock);
+	unlockChain(chainlock);
+    }
+}
+
 /*
  * This is a new and simplifed HistoryAdd that locks an append lock
  * (pos 4) and just appends the single history record and unlocks.
@@ -703,9 +749,6 @@ HistoryAdd(const char *msgid, History *h)
     off_t chainlock;
     int r = RCOK;
 
-    if (HHeadMap->hmagic != HMAGIC)
-	historyReOpen();
-
     /*
      * This should not happen, but if it does, log it and pretend we did it
      */
@@ -718,15 +761,10 @@ HistoryAdd(const char *msgid, History *h)
      *
      */
 
+    if ((chainlock = lockChain(h->hv)) < 0)
+	return(RCTRYAGAIN);
     hi = (h->hv.h1 ^ h->hv.h2) & HMask;
     pindex = HHead.headSize + hi * sizeof(HistIndex);
-    chainlock = (off_t)pindex;
-
-    if ((HFlags & HGF_FAST) == 0 &&
-        hflock(HFd, chainlock, XLOCK_EX) < 0) {
-	logit(LOG_ERR, "Unable to lock dhistory chain: %s", strerror(errno));
-	return(RCTRYAGAIN);
-    }
 
     /*
      * make sure message-id is not already in hash table
@@ -827,69 +865,96 @@ HistoryAdd(const char *msgid, History *h)
 	}
     }
 
-    if ((HFlags & HGF_FAST) == 0 &&
-        hflock(HFd, chainlock, XLOCK_UN) < 0)
-	HistoryFatalIO("hash chain unlock");
+    unlockChain(chainlock);
 
     return(r);
 }
 
+/*
+ * Replace the record of h->hv with *h, under its chain lock.  The link
+ * and an expired flag on disk are kept: *h can be an old copy, read
+ * before the history was replaced or the record was expired.
+ */
 int
 HistoryStore(History *h)
 {
     HistIndex index;
     History th;
-    off_t offset;
+    off_t chainlock;
 
-    index = HistoryPosLookupByHash(h->hv, &th);
-    if (index == (HistIndex)-1)
+    if ((chainlock = lockChain(h->hv)) < 0)
 	return(0);
-    if (HHead.version > 1)
-	offset = (off_t)HEntryOff + (off_t)index * sizeof(History);
-    else
-	offset = index;
-    if (HistoryWriteAt(HFd, h, sizeof(*h), offset) < 0)
-	HistoryFatalIO("record update");
-    return(1);
+    index = HistoryPosLookupByHash(h->hv, &th);
+    if (index != (HistIndex)-1) {
+	History nh = *h;
+
+	nh.next = th.next;
+	if (H_EXPIRED(th.exp))
+	    nh.exp |= EXPF_EXPIRED;
+	if (HistoryWriteAt(HFd, &nh, sizeof(nh), recordOffset(index)) < 0)
+	    HistoryFatalIO("record update");
+    }
+    unlockChain(chainlock);
+    return(index != (HistIndex)-1);
 }
 
-void
-HistoryStoreExp(History *h, HistIndex index)
+/* Write exp into the record at index; the caller holds its chain lock. */
+static void
+storeExp(uint16 exp, HistIndex index)
 {
-    off_t offset;
-
-    if (HHead.version > 1)
-	offset = (off_t)HEntryOff + (off_t)index * sizeof(History) +
-	    offsetof(History, exp);
-    else
-	offset = (off_t)index + offsetof(History, exp);
-    if (HistoryWriteAt(HFd, &h->exp, sizeof(h->exp), offset) < 0)
+    if (HistoryWriteAt(HFd, &exp, sizeof(exp),
+	recordOffset(index) + offsetof(History, exp)) < 0)
 	HistoryFatalIO("expiration update");
 }
 
 /*
- * Cancel/expire article in history
+ * Store h->exp in the record at index (from a lookup of h->hv), under
+ * its chain lock.  When that record is no longer h->hv (the history was
+ * replaced since), it is looked up again.
+ */
+void
+HistoryStoreExp(History *h, HistIndex index)
+{
+    History th;
+    off_t chainlock;
+
+    if ((chainlock = lockChain(h->hv)) < 0)
+	return;
+    if (pread(HFd, &th, sizeof(th), recordOffset(index)) != sizeof(th) ||
+	th.hv.h1 != h->hv.h1 || th.hv.h2 != h->hv.h2)
+	index = HistoryPosLookupByHash(h->hv, &th);
+    if (index != (HistIndex)-1)
+	storeExp(h->exp, index);
+    unlockChain(chainlock);
+}
+
+/*
+ * Cancel/expire article in history.  The lookup and the update are
+ * done under the chain lock.
  */
 int
 HistoryExpire(const char *msgid, History *h, int unexp)
 {
     HistIndex index;
     hash_t hv;
+    off_t chainlock;
 
     if (msgid == NULL)
 	hv = h->hv;
     else
 	hv = hhash(msgid);
-    index = HistoryPosLookupByHash(hv, h);
-    if (index == (HistIndex)-1)
+    if ((chainlock = lockChain(hv)) < 0)
 	return(0);
-    if (unexp && H_EXPIRED(h->exp)) {
-	h->exp &= ~EXPF_EXPIRED;
-	HistoryStoreExp(h, index);
-    } else if (!H_EXPIRED(h->exp)) {
-	h->exp |= EXPF_EXPIRED;
-	HistoryStoreExp(h, index);
+    index = HistoryPosLookupByHash(hv, h);
+    if (index != (HistIndex)-1) {
+	if (unexp && H_EXPIRED(h->exp)) {
+	    h->exp &= ~EXPF_EXPIRED;
+	    storeExp(h->exp, index);
+	} else if (!H_EXPIRED(h->exp)) {
+	    h->exp |= EXPF_EXPIRED;
+	    storeExp(h->exp, index);
+	}
     }
-    return(1);
+    unlockChain(chainlock);
+    return(index != (HistIndex)-1);
 }
-
