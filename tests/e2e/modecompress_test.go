@@ -1,10 +1,7 @@
 package e2e
 
 import (
-	"bytes"
 	"compress/zlib"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -48,11 +45,7 @@ func TestFeederModeCompressTwiceRefused(t *testing.T) {
 // COMPRESS gets 500 and the session goes on uncompressed, and dexpireover -z stops with a
 // message instead of leaving the data files as they are. Skipped on a build with zlib.
 func TestNoZlibCompressionOff(t *testing.T) {
-	b, err := os.ReadFile(filepath.Join(bin(t), "diablo"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if bytes.Contains(b, []byte("207 Compression enabled")) {
+	if builtWithZlib(t) {
 		t.Skip("built with zlib")
 	}
 	s := NewSite(t, SiteOptions{})

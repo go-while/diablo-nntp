@@ -240,6 +240,7 @@ test fails.
 | `TestFeederOutqRunning` | diablo | OUTQ from a peer reports its label's queue backlog, the queued articles, and as running only the queue file a dnewslink (here the test) holds a write lock on. **Fails** on main: the probe took the lock on a read-only descriptor, which always fails, so every file counted as running |
 | `TestDgrpctlGroupinfoTimes` | dgrpctl | `dgrpctl groupinfo` prints a new group's CTS as the creation time in seconds and as ctime text of the same year. **Fails** on main when built with `-fsanitize=address`: ctime read a 32-bit int as a 64-bit time_t (stack-buffer-overflow) |
 | `TestNoZlibCompressionOff` | diablo, dexpireover | only on a build with `./configure --without-zlib`: MODE COMPRESS gets 500 and the session goes on, `dexpireover -z` stops with "built without zlib". The compression tests (MODE COMPRESS, compressed spool, `dnewslink -Z`, `dexpireover -z`) skip on such a build |
+| `TestDexpireoverRewriteGzipData` | dexpireover | `dexpireover -R` on a group whose overview data exists only as `.gz`: with zlib the data ends up in a plain file with the same bytes; without zlib every file of the group stays as it was, the output says a zlib build is needed, and the exit status is non-zero. Plain data is rewritten by both builds. **Fails** on a `--without-zlib` build before this fix: the `.gz` was deleted, the data file left empty, and the exit status 0 |
 
 ## Running
 
