@@ -34,6 +34,8 @@ void DoUnDead(int fd);
 void DoExpire(int fd, int hsize, int rsize);
 int ServerCmd(char *cmd);
 void Fail(char *fname, char *errmsg);
+void BackupOld(void);
+void InstallNew(void);
 
 /*
  * Copy a history file name (plus suffix) into one of the PATH_MAX buffers;
@@ -404,34 +406,9 @@ DoExpire(int fd, int hsize, int rsize)
 		    DonePause = 5;
 		    HistoryClose();
 		    if (UseNewHistory) {
-			if (FileCopy) {
-			    if (OldFileName[0])
-				remove(OldFileName);
-			    if (OldFileName[0] && MoveFile(FileName, OldFileName) == -1)
-				Fail(NewFileName, "Unable to move history backup");
-			    if (MoveFile(NewFileName, FileName) == -1)
-				Fail(NewFileName, "Unable to move new history");
-			} else {
-			    /*
-			     * Link the backup under a temporary name and
-			     * rename it over the previous one, so that a
-			     * failure keeps the previous backup.
-			     */
-			    if (OldFileName[0]) {
-				char tmpName[PATH_MAX + 8];
-
-				snprintf(tmpName, sizeof(tmpName), "%s.new", OldFileName);
-				remove(tmpName);
-				if (link(FileName, tmpName) == -1)
-				    Fail(NewFileName, "Unable to link history backup");
-				if (rename(tmpName, OldFileName) == -1) {
-				    remove(tmpName);
-				    Fail(NewFileName, "Unable to rename history backup");
-				}
-			    }
-			    if (rename(NewFileName, FileName) == -1)
-				Fail(NewFileName, "Unable to rename new history");
-			}
+			if (OldFileName[0])
+			    BackupOld();
+			InstallNew();
 		    }
 		    if (!UseNewHistory)
 			OldStaysDead = 1;
@@ -514,34 +491,9 @@ DoExpire(int fd, int hsize, int rsize)
 		    DonePause = 4;
 		    HistoryClose();
 		    if (UseNewHistory) {
-			if (FileCopy) {
-			    if (OldFileName[0])
-				remove(OldFileName);
-			    if (OldFileName[0] && MoveFile(FileName, OldFileName) == -1)
-				Fail(NewFileName, "Unable to move history backup");
-			    if (MoveFile(NewFileName, FileName) == -1)
-				Fail(NewFileName, "Unable to move new history");
-			} else {
-			    /*
-			     * Link the backup under a temporary name and
-			     * rename it over the previous one, so that a
-			     * failure keeps the previous backup.
-			     */
-			    if (OldFileName[0]) {
-				char tmpName[PATH_MAX + 8];
-
-				snprintf(tmpName, sizeof(tmpName), "%s.new", OldFileName);
-				remove(tmpName);
-				if (link(FileName, tmpName) == -1)
-				    Fail(NewFileName, "Unable to link history backup");
-				if (rename(tmpName, OldFileName) == -1) {
-				    remove(tmpName);
-				    Fail(NewFileName, "Unable to rename history backup");
-				}
-			    }
-			    if (rename(NewFileName, FileName) == -1)
-				Fail(NewFileName, "Unable to rename new history");
-			}
+			if (OldFileName[0])
+			    BackupOld();
+			InstallNew();
 		    }
 		    DeadFd = -1;	/* the old history is replaced, or a backup */
 		    if (ServerCmd("go") == 0)
@@ -630,6 +582,62 @@ DoExpire(int fd, int hsize, int rsize)
     if (OldStaysDead)
 	printf("Note: the old history stays marked dead (no -a): run dhisexpire -u %s or use -a\n", FileName);
 #endif
+}
+
+/*
+ * Keep the old history as OldFileName: linked under a temporary name and
+ * renamed over the previous backup, so that a failure keeps that one.  It
+ * is not opened: closing a descriptor of it would drop all our locks on
+ * it, the dead marker too.  With -m a backup on another filesystem is
+ * copied (and the old history removed).
+ */
+void
+BackupOld(void)
+{
+    char tmpName[PATH_MAX + 8];
+
+    snprintf(tmpName, sizeof(tmpName), "%s.new", OldFileName);
+    remove(tmpName);
+    if (link(FileName, tmpName) == -1) {
+	if (FileCopy && errno == EXDEV) {
+	    remove(OldFileName);
+	    if (MoveFile(FileName, OldFileName) == -1)
+		Fail(NewFileName, "Unable to move history backup");
+	    return;
+	}
+	Fail(NewFileName, "Unable to link history backup");
+    }
+    if (rename(tmpName, OldFileName) == -1) {
+	remove(tmpName);
+	Fail(NewFileName, "Unable to rename history backup");
+    }
+}
+
+/*
+ * Put the new history at FileName.  With -m it may be on another
+ * filesystem: copy it next to FileName and rename it over, so that the
+ * name never shows a partial file.
+ */
+void
+InstallNew(void)
+{
+    char tmpName[PATH_MAX + 8];
+
+    if (!FileCopy) {
+	if (rename(NewFileName, FileName) == -1)
+	    Fail(NewFileName, "Unable to rename new history");
+	return;
+    }
+    snprintf(tmpName, sizeof(tmpName), "%s.tmp", FileName);
+    remove(tmpName);
+    if (MoveFile(NewFileName, tmpName) == -1) {
+	remove(tmpName);
+	Fail(NewFileName, "Unable to move new history");
+    }
+    if (rename(tmpName, FileName) == -1) {
+	remove(tmpName);
+	Fail(NewFileName, "Unable to rename new history");
+    }
 }
 
 int

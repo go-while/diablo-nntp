@@ -933,3 +933,37 @@ func TestHistoryOpenDuringDhisexpireFailure(t *testing.T) {
 		t.Errorf("dilookup still waits 20s after dhisexpire gave up\n%s", out.String())
 	}
 }
+
+// TestDhisexpireCopyMode: dhisexpire -m -a keeps the old history file
+// itself as the backup (it is linked, not opened and copied: closing a
+// descriptor of it would drop dhisexpire's locks on it) and renames the
+// copied new history into place, leaving no temporary file. Fails on main,
+// where the backup was a copy.
+func TestDhisexpireCopyMode(t *testing.T) {
+	s := NewSite(t, SiteOptions{NoStart: true})
+	hist := newHistory(t, s)
+	l := exec.Command(filepath.Join(s.Bin, "diload"), hist)
+	l.Dir, l.Env = s.Dir, append(os.Environ(), s.Env...)
+	l.Stdin = strings.NewReader(dumpLine(0xbcdef01, 0x2345678))
+	if b, err := l.CombinedOutput(); err != nil {
+		t.Fatalf("diload: %v\n%s", err, b)
+	}
+	before, err := os.Stat(hist)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Run(t, "dhisexpire", "-m", "-a", hist)
+	bak, err := os.Stat(hist + ".bak")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, bak) {
+		t.Errorf("the backup is a copy, not the old history file")
+	}
+	if fileExists(hist+".tmp") || fileExists(hist+".new") {
+		t.Errorf("dhisexpire -m left a temporary file")
+	}
+	if _, found := histExp(t, s, hist, "0bcdef01.02345678"); !found {
+		t.Errorf("the record is not in the new history")
+	}
+}
