@@ -354,7 +354,8 @@ LoadDiabloConfig(int ac, char **av)
 			optErr = 0;
 		    }
 		} else if (strcasecmp(cmd, "readerdnscachesize") == 0) {
-		    if (opt && confRange(opt, 0, 1048576, &DOpts.ReaderDnsCacheSize))
+		    /* opt is never NULL here (see the strsep above) */
+		    if (confRange(opt, 0, 1048576, &DOpts.ReaderDnsCacheSize))
 			optErr = 0;
 		} else if (strncasecmp(cmd, "path_", 5) == 0) {
 		    /*
