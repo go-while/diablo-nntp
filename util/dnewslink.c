@@ -3080,6 +3080,10 @@ flushCommandBuffer(int cfd)
 		    return(-1);
 	    }
 	    r = 0;
+	} else if (r == 0) {
+	    /* no progress and no error: poll() would not end it, give up */
+	    Cmde = 0;
+	    return(-1);
 	}
 	b += r;
 
