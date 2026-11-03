@@ -3,6 +3,7 @@ package e2e
 import (
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -64,6 +65,21 @@ func dnlPeerN(t *testing.T, h func(conn int, line string) (string, bool)) int {
 	return ln.Addr().(*net.TCPAddr).Port
 }
 
+// dnlSpool creates the spool file D.00000001/B.0001 that the hand-written queue lines of
+// the dnewslink tests name: 1 MB of NUL bytes, so that an "off,100" entry maps (a spool
+// file has a NUL after each article). dnewslink drops an entry whose spool file is gone
+// without offering it.
+func dnlSpool(t *testing.T, s *Site) {
+	t.Helper()
+	dir := filepath.Join(s.Dir, "spool", "news", "D.00000001")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "B.0001"), make([]byte, 1<<20), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func dnlQueue(t *testing.T, s *Site, name string) string {
 	b, err := os.ReadFile(s.Dir + "/dqueue/" + name)
 	if err != nil {
@@ -77,6 +93,7 @@ func dnlQueue(t *testing.T, s *Site, name string) string {
 // back to the queue file and are lost.
 func TestDnewslinkDeferredKeptOnExit(t *testing.T) {
 	s := NewSite(t, SiteOptions{NoStart: true})
+	dnlSpool(t, s)
 	port := dnlPeer(t, func(line string) (string, bool) {
 		switch {
 		case strings.HasPrefix(line, "mode stream"):

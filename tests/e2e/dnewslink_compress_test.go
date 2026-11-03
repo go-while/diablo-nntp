@@ -18,6 +18,7 @@ import (
 func TestDnewslinkBadCompressLevel(t *testing.T) {
 	skipWithoutZlib(t)
 	s := NewSite(t, SiteOptions{NoStart: true})
+	dnlSpool(t, s)
 	port := dnlPeer(t, func(line string) (string, bool) {
 		switch {
 		case strings.HasPrefix(line, "mode stream"):

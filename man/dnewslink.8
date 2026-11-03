@@ -73,6 +73,14 @@ connects to a remote host, it will attempt to negotiate a check/takethis
 streaming connection and, if that fails, will fallback to the non-streaming
 ihave protocol.
 .PP
+A queued article that has expired from the spool (or cannot be read from it)
+is not offered: no CHECK, TAKETHIS or IHAVE is sent for it, and it is dropped
+from the queue for good, not deferred or refiled.  If it goes missing between
+the CHECK and the TAKETHIS, the TAKETHIS is not sent.  These articles are
+counted and logged as
+.I "N articles expired before they could be sent"
+with the statistics.
+.PP
 DNewslink locks queue files as it processes them, allowing multiple dnewslinks
 to operate in parallel on different queue files without the possibility of
 creating a conflict.  DNewslink uses a sophisticated non-blocking I/O model
@@ -246,8 +254,8 @@ a streaming feed was negotiated.  Useful for header-only feeds.
 .PP
 This option turns on article logging to <logpath>/feedlog.<hostname>. Classes is
 is either comma-separated list of any combination of "accept", "reject", "defer",
-"refuse" and "error", or "all". Not that specifying "refuse" can generate huge 
-logfiles. Default is "all" if classes is not specified, and no logging if this
+"refuse", "error" and "gone" (articles no longer in the spool), or "all".
+Not that specifying "refuse" can generate huge logfiles. Default is "all" if classes is not specified, and no logging if this
 option is not given.
 .PP
 .B \-B
@@ -288,8 +296,13 @@ only polling the queue file (realtime feeds).
 .PP
 .B \-x
 .PP
-Skip queued articles whose spool file no longer exists instead of
-offering them.
+Also check with stat(2) that each queued article's spool file still exists
+before offering it.  Without
+.BR \-x ,
+dnewslink already skips an article whose spool file it cannot open
+(see above), so this option is redundant: it only also skips an article
+whose file was removed while dnewslink still has it open and could
+still send it.  Kept for compatibility.
 .PP
 .B \-C diablo.config
 .PP
