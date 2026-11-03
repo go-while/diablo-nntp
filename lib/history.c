@@ -1012,8 +1012,9 @@ HistoryStoreExp(History *h, HistIndex index)
 
 /*
  * Cancel/expire article in history.  The lookup and the update are
- * done under the chain lock.  Returns 1 when found, 0 when not, -1
- * when the lock failed (errno).
+ * done under the chain lock.  Returns 1 when found, 0 when not, 2 when
+ * it was found but dhisexpire replaced the history meanwhile and the
+ * new one has no such entry, -1 when the lock failed (errno).
  */
 int
 HistoryExpire(const char *msgid, History *h, int unexp)
@@ -1022,6 +1023,7 @@ HistoryExpire(const char *msgid, History *h, int unexp)
     hash_t hv;
     off_t chainlock;
     int lost;
+    int found = 0;
 
     if (msgid == NULL)
 	hv = h->hv;
@@ -1032,6 +1034,7 @@ HistoryExpire(const char *msgid, History *h, int unexp)
 	    return(-1);
 	index = HistoryPosLookupByHash(hv, h);
 	if (index != (HistIndex)-1) {
+	    found = 1;
 	    if (unexp && H_EXPIRED(h->exp)) {
 		h->exp &= ~EXPF_EXPIRED;
 		storeExp(h->exp, index);
@@ -1043,5 +1046,7 @@ HistoryExpire(const char *msgid, History *h, int unexp)
 	lost = updateLost();
 	unlockChain(chainlock);
     } while (lost);
-    return(index != (HistIndex)-1);
+    if (index == (HistIndex)-1)
+	return(found ? 2 : 0);
+    return(1);
 }

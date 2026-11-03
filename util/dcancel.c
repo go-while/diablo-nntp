@@ -165,6 +165,9 @@ main(int ac, char **av)
 		fprintf(stderr, "Unable to update the history entry for %s: %s\n",
 						msgid, strerror(errno));
 		HistoryFailed = 1;
+	    } else if (r == 2) {
+		printf("History replaced meanwhile, no entry left for: %s\n",
+								msgid);
 	    } else if (r > 0) {
 		if (h.iter == (uint16)-1) {
 		    fprintf(stderr, "Already removed %s\n", msgid);
