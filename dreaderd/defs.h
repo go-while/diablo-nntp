@@ -311,6 +311,7 @@ typedef struct DnsReq {
 /*
  * Define some values used in dr_ResultFlags
  */
+#define	RECV_FD_LOST	(-2)		/* RecvMsg: message whole, fd dropped */
 #define	DR_REQUIRE_DNS	0x0001		/* authinfo check required	*/
 #define	DR_SERVER_STATS	0x0002		/* struct has info server stats	*/
 #define	DR_SESSEXIT_RPT	0x0004		/* reporting session term stats	*/

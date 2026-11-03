@@ -156,13 +156,24 @@ RecvMsg(int from_fd, int *recv_fd, DnsRes *dres)
 	    return(-1);
 	}
     }
-    if (msg.msg_flags & (MSG_CTRUNC | MSG_TRUNC)) {
+    if (msg.msg_flags & MSG_TRUNC) {
 	logit(LOG_ERR, "recvmsg message truncated (flags=%d)", msg.msg_flags);
 	if (*recv_fd >= 0) {
 	    close(*recv_fd);
 	    *recv_fd = -1;
 	}
 	return(-1);
+    }
+    if (msg.msg_flags & MSG_CTRUNC) {
+	/*
+	 * The descriptor was dropped (descriptor limit), but the message
+	 * is whole: return it, so the caller can still account for the
+	 * connection.
+	 */
+	logit(LOG_ERR, "recvmsg descriptor dropped (flags=%d)", msg.msg_flags);
+	if (*recv_fd >= 0)
+	    close(*recv_fd);
+	*recv_fd = RECV_FD_LOST;
     }
 
     /*
