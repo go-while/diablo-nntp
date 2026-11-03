@@ -33,6 +33,7 @@
 #endif
 
 #include "defs.h"
+#include <sys/resource.h>
 
 #ifdef __linux__
 #include <sched.h>
