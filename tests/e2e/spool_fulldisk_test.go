@@ -65,6 +65,55 @@ func TestFeederFullDiskTryAgain(t *testing.T) {
 	expect(t, p, 205, "QUIT")
 }
 
+// TestFeederFullDiskBacksOff: after 10 articles in a row whose spool file could not be created
+// (each answered 431), the session answers 400 and ends, so the peer backs off and reconnects
+// later instead of offering article after article that cannot be stored. Before, every
+// article got its own 431 (and a second's wait) for as long as the peer kept sending. Once
+// there is room again, a new connection takes articles.
+func TestFeederFullDiskBacksOff(t *testing.T) {
+	so := preloadShim(t, "fulldisk", fullDiskSource)
+	flag := filepath.Join(t.TempDir(), "full")
+	s := NewSite(t, SiteOptions{
+		Config: map[string]string{"path_generallog": "%s/general.log"},
+		Setup: func(tb testing.TB, s *Site) {
+			s.Env = append(s.Env, lockFaultEnv(so), "FULLDISK_FLAG="+flag)
+		},
+	})
+	p := s.Peer(t)
+	if err := os.WriteFile(flag, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	expect(t, p, 203, "MODE STREAM")
+	for i := 0; i < 10; i++ {
+		id := msgID(t)
+		if err := p.Send(fmt.Sprintf("TAKETHIS %s\r\n%s", id, wire(newArticle(id, "e2e.test", "full disk backoff", "body")))); err != nil {
+			t.Fatal(err)
+		}
+		status(t, p, 431, fmt.Sprintf("TAKETHIS %d on a full disk", i+1))
+	}
+	line, err := p.ReadLine()
+	if err != nil || !strings.HasPrefix(line, "400 ") {
+		t.Fatalf("after 10 failed articles: %q (%v), want 400 and the end of the session", line, err)
+	}
+	if l, err := p.ReadLine(); err == nil {
+		t.Errorf("the session went on after the 400: %q", l)
+	}
+	logged, _ := os.ReadFile(filepath.Join(s.Dir, "log", "general.log"))
+	if !strings.Contains(string(logged)+s.Proc.Stderr(), "asking the peer to back off") {
+		t.Errorf("no back-off line in log/general.log or stderr:\n%s", logged)
+	}
+
+	if err := os.Remove(flag); err != nil {
+		t.Fatal(err)
+	}
+	q := s.Peer(t)
+	id := msgID(t)
+	expect(t, q, 335, "IHAVE %s", id)
+	send(t, q, wire(newArticle(id, "e2e.test", "after the back-off", "body")))
+	status(t, q, 235, "IHAVE after room was made")
+	expect(t, q, 205, "QUIT")
+}
+
 const fullDiskSource = `#define _GNU_SOURCE
 #define __EXTENSIONS__
 #include <dlfcn.h>
