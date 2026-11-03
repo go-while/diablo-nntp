@@ -3681,6 +3681,8 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 	 */
 
 	if (!responded && artError > 0) {
+	    int tryAgain = 0;
+
 	    if (artError & LAERR_POSTDUP) {
 		DoArtStats(STATS_REJECTED, STATS_REJ_POSDUP, size);
 		DEBUGLOG(msgid, "PostDuplicate2");
@@ -3802,10 +3804,16 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		SETREJECT("NoSpool");
 		addRejectToHistory = 1;
 	    } else if (artError & LAERR_IO) {
+		/*
+		 * No spool file could be opened: a full disk, an I/O
+		 * error or no descriptors left.  Not in history, and the
+		 * peer is told to try again later instead of dropping it.
+		 */
 		(void)PreCommit(msgid, PC_DELCOMM);
 		DoArtStats(STATS_REJECTED, STATS_REJ_IOERROR, size);
 		DEBUGLOG(msgid, "IOError/Missing-dir");
 		SETREJECT("IOError/Missing-dir");
+		tryAgain = 1;
 	    } else if (artError & LAERR_NOHDREND) {
 		(void)PreCommit(msgid, PC_DELCOMM);
 		DoArtStats(STATS_REJECTED, STATS_REJ_NOHDREND, size);
@@ -3818,7 +3826,7 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		addRejectToHistory = 1;
 	    }
 	    responded = 1;
-	    retcode = RCREJECT;
+	    retcode = tryAgain ? RCTRYAGAIN : RCREJECT;
 	}
 
 	if (DebugOpt > 1)
@@ -4794,6 +4802,7 @@ ArticleFile(History *h, off_t *pbpos)
 {
     AFCache	*af = NULL;
     int		rfd = -1;
+    int		openErr;
 
     /*
      * Look for entry in cache.
@@ -4924,15 +4933,16 @@ ArticleFile(History *h, off_t *pbpos)
 		continue;		/* try again 	  */
 	    }
 
+	    openErr = errno;	/* logit() and sleep() may change errno */
 	    logit(LOG_CRIT, "unable to open/create article file %s (%s) - aborting",
-							path, strerror(errno));
+							path, strerror(openErr));
 	    /*
 	     * The intermediate directory is missing
 	     */
 
 	    sleep(1);
-	    if (errno == ENOSPC || errno == EIO || errno == EMFILE || 
-		errno == ENFILE
+	    if (openErr == ENOSPC || openErr == EIO || openErr == EMFILE ||
+		openErr == ENFILE
 	    ) {
 		break;
 	    }
