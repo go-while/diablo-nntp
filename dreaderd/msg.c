@@ -1,6 +1,7 @@
 #define FDPASS_DAMN_CMSG_MACROS        1
 
 #include "defs.h"
+#include <poll.h>	/* lib/defs.h includes it only when USE_POLL is set */
 
 Prototype int SendMsg(int to_fd, int send_fd, DnsRes *dres);
 Prototype int RecvMsg(int from_fd, int *recv_fd, DnsRes *dres);
