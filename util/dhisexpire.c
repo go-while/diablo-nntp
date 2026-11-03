@@ -27,6 +27,7 @@ char *FileName = NULL;
 char NewFileName[PATH_MAX];
 char OldFileName[PATH_MAX];
 int HistoryVersion = 0;
+int HeadSize = 0;
 
 void DoUnDead(int fd);
 void DoExpire(int fd, int hsize, int rsize);
@@ -245,6 +246,7 @@ main(int ac, char **av)
 	rsize = hh.henSize;
 	hsize = hh.hashSize;
 	HistoryVersion = hh.version;
+	HeadSize = hh.headSize;
 
 	lseek(fd, hh.headSize, 0);
 
@@ -445,6 +447,17 @@ DoExpire(int fd, int hsize, int rsize)
 		rsignal(SIGINT, sigDead);
 		rsignal(SIGHUP, sigDead);
 		rsignal(SIGTERM, sigDead);
+		/*
+		 * Wait for the adds and updates that began before the dead
+		 * magic: they hold a hash chain lock.  Later ones find the
+		 * magic dead under their lock and wait for the new history,
+		 * so the copy below gets every record.
+		 */
+		if (rflock(fd, HeadSize, (off_t)hsize * sizeof(HistIndex),
+							XLOCK_EX) < 0 ||
+		    rflock(fd, HeadSize, (off_t)hsize * sizeof(HistIndex),
+							XLOCK_UN) < 0)
+		    Fail(NewFileName, "Unable to lock the history hash chains");
 		if (lseek(fd, seekpos, SEEK_SET) == -1)
 		    Fail(NULL, "Unable to seek in history");
 		DonePause = 2;
