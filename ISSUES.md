@@ -12,7 +12,7 @@ re-checked yet.
 Status values: **open**, **PR** (fix waiting for review, with its number), **fixed** (with
 the PR that fixed it), **decision** (needs the maintainer to decide), **won't fix**.
 
-Last updated 2026-11-03: audit of the open items against main: D-70, D-77, D-88, D-102, D-106, D-108, D-109, D-113 and D-114 marked fixed (their PRs had not updated this file), D-55 and D-101 noted as partly fixed; D-164 to D-166 marked fixed (#280: readerdef typos, access cache reload); D-167 marked fixed (#169: one Perl interpreter per script); D-134 marked fixed (#257: dkp -t); D-168 and D-169 marked fixed (#185); D-170 added (illumos loses a hand-back at the descriptor limit). Before that, 2026-10-30: D-167 to D-169 added (Perl authentication, the file and cdb deny lists); F-06 (Perl authentication) added; F-02 noted in progress (#167). Before that, 2026-10-29: D-16 marked fixed (#127). D-135 to D-146 and D-156, D-157 marked fixed (#145, #151 to #154); D-158 won't fix; D-150 to D-155 marked fixed (#158); D-147 to D-149 marked fixed (#159); D-159 to D-162 marked fixed (#160); D-164 to D-166 added from go-while's review of #160. Before that, 2026-10-28: D-91, D-96, D-98 and D-131 to D-133 marked fixed (#146 to #149). F-01 marked done, F-04 (NoCeM) and F-05 (init scripts, done) added, D-163 (file modes, fixed in #139) added; D-135 to D-162 added from go-while's batch of `main` at `0401451`, and a note on D-94. Before that, D-110 to D-134 added from go-while's third review pass of `main` at `6a4b97d`. Before that, 2026-10-27: D-66 to D-109 added from the second review pass and the reviews of the fixes
+Last updated 2026-11-03: audit of the open items against main: D-70, D-77, D-88, D-102, D-106, D-108, D-109, D-113 and D-114 marked fixed (their PRs had not updated this file), D-100 marked fixed (#230), D-55 and D-101 noted as partly fixed, six index links and the F-02/F-06 status corrected; D-164 to D-166 marked fixed (#280: readerdef typos, access cache reload); D-167 marked fixed (#169: one Perl interpreter per script); D-134 marked fixed (#257: dkp -t); D-168 and D-169 marked fixed (#185); D-170 added (illumos loses a hand-back at the descriptor limit). Before that, 2026-10-30: D-167 to D-169 added (Perl authentication, the file and cdb deny lists); F-06 (Perl authentication) added; F-02 noted in progress (#167). Before that, 2026-10-29: D-16 marked fixed (#127). D-135 to D-146 and D-156, D-157 marked fixed (#145, #151 to #154); D-158 won't fix; D-150 to D-155 marked fixed (#158); D-147 to D-149 marked fixed (#159); D-159 to D-162 marked fixed (#160); D-164 to D-166 added from go-while's review of #160. Before that, 2026-10-28: D-91, D-96, D-98 and D-131 to D-133 marked fixed (#146 to #149). F-01 marked done, F-04 (NoCeM) and F-05 (init scripts, done) added, D-163 (file modes, fixed in #139) added; D-135 to D-162 added from go-while's batch of `main` at `0401451`, and a note on D-94. Before that, D-110 to D-134 added from go-while's third review pass of `main` at `6a4b97d`. Before that, 2026-10-27: D-66 to D-109 added from the second review pass and the reviews of the fixes
 (D-77 is documented behaviour and only needs a note); the fixed ones are marked with their PR. Before that, D-53 to D-65 added from the review of `main` at `ca648d4`. Before that, 2026-10-26, after batch 1 (#30, #31, #37 to #44, #47 to #49) and the first part
 of batch 2 (#46, #50, #52, #62) were merged. Open: #35 (GnuPG pgpverify, held for a private
 advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
@@ -23,7 +23,7 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-02](#d-02-privilege-drop-results-not-checked) | Medium | `setgroups`/`setgid`/`setuid` results not checked | fixed (#6) |
 | [D-03](#d-03-non-root-start-refused-after-d-02) | High | A non-root start refused after the first D-02 fix | fixed (#6, 5a6e877) |
 | [D-04](#d-04-write-through-a-null-pointer-in-feedwrite) | High | Write through a NULL pointer in `FeedWrite()` | fixed (#8) |
-| [D-05](#d-05-const-strchr-warnings-with-glibc-243) | Low | `const strchr()` warnings with glibc 2.43 or later | fixed (#8) |
+| [D-05](#d-05-const-strchr-warnings-with-glibc-243-or-later) | Low | `const strchr()` warnings with glibc 2.43 or later | fixed (#8) |
 | [D-06](#d-06-dreaderd-writes-400-too-busy-after-a-205) | Medium | dreaderd writes "400 too busy" after a session's 205 | fixed (#12) |
 | [D-07](#d-07-dreaderd-cleanup-can-close-another-clients-descriptor) | Medium | dreaderd cleanup can close another client's descriptor | fixed (#12) |
 | [D-08](#d-08-dreaderd--p-hostport-does-not-bind) | Low | `dreaderd -P host:port` (and `-B`) does not bind | fixed (#13) |
@@ -42,7 +42,7 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-21](#d-21-dactivekp-write-errors-now-exit-the-process) | — | dactive.kp write errors now exit the process (#7) | won't fix (kept on purpose) |
 | [D-22](#d-22-gnu-make-install-ignores-prefix-and-destdir) | High | GNU Make `install`/`uninstall` ignore `PREFIX` and `DESTDIR` (live `/news` used) | fixed (#16) |
 | [D-23](#d-23-feederreader-sample-config-is-ignored) | Medium | `samples/feeder+reader/diablo.config` has no `version 2.0`: every directive ignored | fixed (#26) |
-| [D-24](#d-24-sample-dreaderaccess-allows-1008-not-localhost) | Medium | Sample `dreader.access` allows 1.0.0.0/8, not localhost | fixed (#55) |
+| [D-24](#d-24-sample-dreaderaccess-allows-10008-not-localhost) | Medium | Sample `dreader.access` allows 1.0.0.0/8, not localhost | fixed (#55) |
 | [D-25](#d-25-installed-config-files-are-read-only-symlinks-into-samples) | Medium | Installed config files are read-only symlinks into `samples/`; edits are lost on reinstall | fixed (#21) |
 | [D-26](#d-26-iter-written-as-decimal-read-as-hex) | Medium | Overview `ITER` written as decimal, read as hex by `dexpireover` | fixed (#54) |
 | [D-27](#d-27-documentation-is-stale-or-wrong) | Medium | INSTALL, README.md, README.READER: xmake, missing Linux steps, news user, PGP | fixed (#80) |
@@ -106,14 +106,14 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-89](#d-89-ai_addrconfig-still-passed-for-listen-bind-and-connect-addresses) | Low | `dreaderd` listen, bind and connect and `dsyncgroups` still pass `AI_ADDRCONFIG` | open |
 | [D-90](#d-90-kpdb-sort-writes-the-offsets-one-record-at-a-time) | Low | `KPDBSort()` does one 8-byte write per record; on a full ZFS dataset a sort of 259 records took about 51 s | open |
 | [D-91](#d-91-takethis-without-an-argument-answers-439-instead-of-501) | Low | TAKETHIS without an argument answers 439 instead of 501 | fixed (#146) |
-| [D-92](#d-92-header-only-feed-reports-unknownreject-for-laerrnobytes) | Low | Header-only feed reports UnknownReject for LAERR_NOBYTES | open |
+| [D-92](#d-92-header-only-feed-reports-unknownreject-for-laerr_nobytes) | Low | Header-only feed reports UnknownReject for LAERR_NOBYTES | open |
 | [D-93](#d-93-kpdbgetfield-key-scan-is-not-bounded-by-the-record-length) | Low | KPDBGetField key scan is not bounded by the record length | open |
 | [D-94](#d-94-dcontrolctl-dnewsfeeds-and-dserverhosts-split-long-lines) | Low | dcontrol.ctl, dnewsfeeds and dserver.hosts split long lines | open |
 | [D-95](#d-95-maxinboundrate-value-is-read-past-its-end) | Low | MaxInboundRate value ending in ';' or in an hour number is read past its end | open |
-| [D-96](#d-96-spamfilter-s0-turns-the-filter-off-and-usespamrwmap-0-does-not-compile) | Low | spamfilter: s0 turns the filter off, and USE_SPAM_RW_MAP 0 does not compile | fixed (#147) |
+| [D-96](#d-96-spamfilter-s0-turns-the-filter-off-and-use_spam_rw_map-0-does-not-compile) | Low | spamfilter: s0 turns the filter off, and USE_SPAM_RW_MAP 0 does not compile | fixed (#147) |
 | [D-97](#d-97-diab-filter-writes-one-byte-past-its-reply-buffer-writeall-loops-on-a-zero-write) | Low | diab-filter writes one byte past its reply buffer; writeAll loops on a zero write | open |
 | [D-98](#d-98-ctype-calls-on-plain-char) | Low | ctype calls on plain char | fixed (#148) |
-| [D-100](#d-100-cachefile-builds-the-path-without-bounds) | Low | cacheFile builds the path without bounds | open |
+| [D-100](#d-100-cachefile-builds-the-path-without-bounds) | Low | cacheFile builds the path without bounds | fixed (#230) |
 | [D-101](#d-101-spool-server-replies-have-no-line-cap-other-small-items-in-dreaderdserverc) | Low | Spool server replies have no line cap; other small items in dreaderd/server.c | open |
 | [D-102](#d-102-readaccesscache-leaks-descriptors-when-a-cache-open-fails) | Low | ReadAccessCache leaks descriptors when a cache open fails | fixed (#160) |
 | [D-103](#d-103-access-cache-reload-leaks-the-old-groupdef-and-grouplist-nodes) | Low | Access cache reload leaks the old GroupDef and GroupList nodes | open |
@@ -181,8 +181,8 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-165](#d-165-dreaderd-exits-when-one-access-cache-file-cannot-be-opened) | Low | dreaderd exits when one access-cache file cannot be opened | fixed (#280) |
 | [D-166](#d-166-a-misspelled-readerdef-option-is-logged-but-the-file-is-still-installed) | Low | A misspelled readerdef option is logged but the file is still installed | fixed (#280) |
 | [D-167](#d-167-perl-authentication-uses-only-the-first-script-a-worker-loads) | Low | Perl authentication uses only the first script a worker loads | fixed (#169) |
-| [D-168](#d-168-a-file-deny-list-leaks-a-file-handle-for-every-listed-user-that-logs-in) | Low | A `file !` deny list leaks a file handle for every listed user that logs in | fixed (#185) |
-| [D-169](#d-169-the-cdb-deny-list-does-not-work-and-rejects-every-user) | Low | The `cdb !` deny list does not work and rejects every user | fixed (#185) |
+| [D-168](#d-168-a-file--deny-list-leaks-a-file-handle-for-every-listed-user-that-logs-in) | Low | A `file !` deny list leaks a file handle for every listed user that logs in | fixed (#185) |
+| [D-169](#d-169-the-cdb--deny-list-does-not-work-and-rejects-every-user) | Low | The `cdb !` deny list does not work and rejects every user | fixed (#185) |
 | [D-170](#d-170-on-illumos-a-hand-back-lost-at-the-descriptor-limit-stays-counted) | Low | On illumos a hand-back lost at the descriptor limit stays counted (Act) | open |
 
 Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315), [F-02 configure script](#f-02-configure-script-for-the-build-options), [F-03 refeed a whole spool](#f-03-refeed-a-whole-spool-to-another-server), [F-04 NoCeM notices](#f-04-nocem-notices), [F-05 init scripts](#f-05-init-scripts-and-adm-script-replacements), [F-06 Perl authentication](#f-06-perl-authentication-for-dreaderd).
@@ -574,7 +574,7 @@ for each matching login (the `!` form is undocumented). `dreaderd/xover.c`
 (`NNStartListOverviewRange`): the OVER/XOVER range is only clamped to the group's low and high
 marks, so a very wide range (possible in xref-slave mode) is walked in one pass.
 
-Partly fixed: the `!` deny-file, cdb and db handles are closed again (#185, D-168 and D-169). The OVER/XOVER range clamp is still open.
+Partly fixed: the `!` deny-list handles are closed again, for file and cdb in #185 (D-168, D-169) and for db in #200. The OVER/XOVER range clamp is still open.
 
 ### D-56 `feedermaxheadersize` is never enforced
 `util/diablo.c:3004-3007`, `:2824`, `:3060`. `headerLen` is still 0 when it is compared with
@@ -779,8 +779,8 @@ run (`TestHostCacheDiabloHostsForms` failed on AlmaLinux 10, CentOS Stream 10 an
 with explicit hints (#115).
 
 ### D-89 AI_ADDRCONFIG still passed for listen, bind and connect addresses
-`dreaderd/main.c:485` (listen, `AI_PASSIVE|AI_ADDRCONFIG`), `dreaderd/server.c:401` (connect and
-bindhost) and `util/dsyncgroups.c:906` still pass `AI_ADDRCONFIG`. On a glibc 2.39 host without a
+`dreaderd/main.c:620` (listen, `AI_PASSIVE|AI_ADDRCONFIG`), `dreaderd/server.c:427` (connect and
+bindhost) and `util/dsyncgroups.c:915` still pass `AI_ADDRCONFIG`. On a glibc 2.39 host without a
 global IPv6 address a numeric IPv6 listen, bind or connect address (for example `::1`) fails with
 `EAI_ADDRFAMILY`. Same cause as D-87. From reading (found in the reviews of D-87).
 
@@ -819,6 +819,8 @@ build the offsets in memory and write them in one or a few large writes.
 
 ### D-100 cacheFile builds the path without bounds
 `dreaderd/cache.c:87-118`: with a very long `path_db` and `readercachedirs` the path is built without a length check. Config. From reading, not run (deep review of main 76578ae by go-while's reviewers).
+
+Fixed in #230: `dreaderd/cache.c` refuses a cache home of `PATH_MAX - 128` bytes or more; the hash levels need at most 108 bytes (`readercachedirs` is capped at 10), and every caller passes a `PATH_MAX` buffer.
 
 ### D-101 Spool server replies have no line cap; other small items in dreaderd/server.c
 `dreaderd/server.c`: spool replies have no line-length cap; the `ctl[1]` test on a one-character reply (`:821`). Found by go-while's reviewers from reading. The `ctl[1]` read is confirmed with AddressSanitizer on a Debian build: `NNFinishSReq(conn, "", 0)` (the `COM_STAT` case in `dreaderd/spool.c`) makes it read one byte past the empty string (global-buffer-overflow, reached by every STAT answered from the spool server). A normal build shows nothing, but an ASan build of dreaderd exits there, so e2e runs against one fail until it is fixed.
@@ -1108,7 +1110,7 @@ for `db_185.h` and `radlib.h`. The script would probe the same headers (and zlib
 write a local override file that `vendor.h` includes, leaving the admin's own settings in charge.
 It covers Linux, FreeBSD and SmartOS with little churn. A full autoconf setup (`configure.ac`, a
 generated `configure`, a `config.h.in`) can follow if it is wanted. Suggested by the maintainer and
-go-while on 2026-10-27. **Status: in progress in #167** (draft): a hand-written POSIX-sh `./configure` probes zlib, libcanlock, Berkeley DB, cdb, PAM, LDAP, Perl and RADIUS (radcli on Linux), writes `config.mk` and sets the `vendor.h` options; review findings are being worked before it lands. This also settles D-16.
+go-while on 2026-10-27. **Status: done in #167** (merged 2026-10-31): a hand-written POSIX-sh `./configure` probes zlib, libcanlock, Berkeley DB, cdb, PAM, LDAP, Perl and RADIUS (radcli on Linux), writes `config.mk` and sets the `vendor.h` options. This also settled D-16.
 
 ### F-03 Refeed a whole spool to another server
 There is no command that feeds every article on a diablo spool to another server. To another diablo
@@ -1158,8 +1160,8 @@ SMF and FreeBSD rc.d. Follow-ups: #145.
 ### F-06 Perl authentication for dreaderd
 dreaderd can call an external `perl` auth hook, but the path was thin and effectively single-use. This
 feature tracks bringing dreaderd authentication up to standard as part of the auth-backend
-modernization (alongside F-02's configure step, which also wires up RADIUS/radcli, cdb and PAM). Work
-is on the maintainer's branches: **#167** adds `./configure` feature-detection and RADIUS via radcli;
+modernization (alongside F-02's configure step, which also wires up RADIUS/radcli, cdb and PAM). Merged
+on 2026-10-31: **#167** adds `./configure` feature-detection and RADIUS via radcli;
 **#168** adds the tracking rows D-167 to D-169 (Perl authentication, file and cdb deny lists); **#169**
 adds `contrib/htpasswd-auth.pl` (auth against an Apache htpasswd file) and reworks the dreaderd Perl
 hook so each distinct `perl` line gets its own interpreter (fixes D-167) and a failed load refuses
