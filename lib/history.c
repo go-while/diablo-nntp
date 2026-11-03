@@ -1035,7 +1035,7 @@ HistoryExpire(const char *msgid, History *h, int unexp)
 	    if (unexp && H_EXPIRED(h->exp)) {
 		h->exp &= ~EXPF_EXPIRED;
 		storeExp(h->exp, index);
-	    } else if (!H_EXPIRED(h->exp)) {
+	    } else if (!unexp && !H_EXPIRED(h->exp)) {
 		h->exp |= EXPF_EXPIRED;
 		storeExp(h->exp, index);
 	    }
