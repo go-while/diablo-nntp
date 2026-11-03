@@ -62,6 +62,7 @@ Prototype char *RTStatus;
 Prototype char *MyGroupHome;
 
 void HandleDnsThread(ForkDesc *desc);
+static void StartDnsWorkers(void);
 void deleteDnsResHash(DnsRes *dres, ForkDesc *desc);
 int getReaderForkSlot(void);
 void delReaderForkSlot(pid_t pid);
@@ -997,15 +998,7 @@ main(int ac, char **av)
 	 * (C) standard DNS processes
 	 */
 
-	while (!Exiting && NumDnsForks < DOpts.ReaderDns) {
-	    pid_t pid;
-	    int fd;
-
-	    if ((pid = ForkPipe(&fd, DnsTask, "reader-dns", SOCK_SEQPACKET)) < 0)
-		break;
-	    AddThread("dns", fd, pid, THREAD_DNS, -1, 0);
-	    ++NumDnsForks;
-	}
+	StartDnsWorkers();
 
 #ifdef NOTDEF
 	/*
@@ -1029,14 +1022,29 @@ main(int ac, char **av)
 
 	{
 	    pid_t pid;
+	    int status = 0;
 
-	    while ((pid = wait3(NULL, WNOHANG, NULL)) > 0) {
+	    while ((pid = wait3(&status, WNOHANG, NULL)) > 0) {
 		ForkDesc *desc;
 
 		if ((desc = FindThread(-1, pid)) != NULL) {
 		    if (desc->d_Type == THREAD_DNS) {
-			if (!Exiting)
-			    logit(LOG_CRIT, "Lost dns resolver %d", (int)pid);
+			/*
+			 * A worker whose alarm cut an auth backend off sent
+			 * its refusal and exited: handle a reply still in the
+			 * socket before the pending descriptor is closed.
+			 */
+			if (!desc->d_Dead && desc->d_Count > 0) {
+			    desc->d_Pid = 0;	/* reaped: not to be signalled */
+			    HandleDnsThread(desc);
+			}
+			if (!Exiting) {
+			    if (WIFEXITED(status) &&
+				    WEXITSTATUS(status) == DNS_EXIT_AUTHTIMEOUT)
+				logit(LOG_NOTICE, "dns resolver %d replaced after an auth timeout", (int)pid);
+			    else
+				logit(LOG_CRIT, "Lost dns resolver %d", (int)pid);
+			}
 			--NumDnsForks;
 			if (desc->d_FdPend >= 0) {
 			    logit(LOG_NOTICE, "pending descriptor from %s on dead DNS pid closed",
@@ -1075,6 +1083,8 @@ main(int ac, char **av)
 		    fatal("main loop, wait3() pid %d, pid is not known to me!", (int)pid);
 		}
 	    }
+	    /* a worker replaced after an auth timeout: no pass without one */
+	    StartDnsWorkers();
 	}
 
 #ifdef	READER_BAN_LISTS
@@ -2378,6 +2388,23 @@ ReadDnsResponse(ForkDesc *desc, DnsRes *dres)
     return(1);
 }
 
+/*
+ * StartDnsWorkers() - fork DNS workers up to readerdns.
+ */
+static void
+StartDnsWorkers(void)
+{
+    while (!Exiting && NumDnsForks < DOpts.ReaderDns) {
+	pid_t pid;
+	int fd;
+
+	if ((pid = ForkPipe(&fd, DnsTask, "reader-dns", SOCK_SEQPACKET)) < 0)
+	    break;
+	AddThread("dns", fd, pid, THREAD_DNS, -1, 0);
+	++NumDnsForks;
+    }
+}
+
 void
 HandleDnsThread(ForkDesc *desc)
 {
@@ -2423,6 +2450,18 @@ HandleDnsThread(ForkDesc *desc)
 
     /* worker time, for DnsQAdmit() */
     DnsSample(desc->d_SendKnown, MonoMs() - desc->d_SendMs);
+
+    if (dres.dr_AuthTimeout) {
+	logit(LOG_ERR, "%s authentication from %s timed out after %d seconds, login refused",
+		AuthTimeoutName(dres.dr_AuthTimeout),
+		NetAddrToSt(0, (struct sockaddr *)&dres.dr_Addr, 1, 0, 0),
+		DOpts.ReaderAuthTimeout);
+	if (dres.dr_AuthTimeout & DR_AUTHTO_EXIT) {
+	    /* the worker exits now: never pick it again, wait3() reaps it */
+	    FD_CLR(desc->d_Fd, &SFds);
+	    desc->d_Dead = 1;
+	}
+    }
 
     if (dres.dr_ResultFlags & DR_SESSEXIT_RPT) {
 	/* we don't need the rest of this */

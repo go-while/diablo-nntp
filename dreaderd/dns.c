@@ -37,6 +37,7 @@
 #endif
 
 Prototype void DnsTask(int fd, const char *id);
+Prototype const char *AuthTimeoutName(int how);
 Prototype void InstallAccessCache(void);
 Prototype int ReadAccessCache(void);
 Prototype int ProxyFromOk(const ReaderDef *rd, const struct sockaddr_storage *peer);
@@ -242,76 +243,71 @@ WriteDnsResponse(int fd, const DnsRes *dres)
 #define AUTH_CALLS	/* backends that AuthCall() bounds */
 #endif
 
+#define AC_NETREMOTE	1
+#define AC_LDAP		2
+#define AC_PERL		3
+#define AC_PAM		4
+
+/*
+ * AuthTimeoutName() - the backend of dr_AuthTimeout, for main's log line.
+ */
+const char *
+AuthTimeoutName(int how)
+{
+    static const char *names[] = { "", "NetRemote", "LDAP", "Perl", "PAM" };
+
+    how &= ~DR_AUTHTO_EXIT;
+    if (how < 0 || how >= (int)(sizeof(names) / sizeof(names[0])))
+	return("auth");
+    return(names[how]);
+}
+
 #if defined(AUTH_CALLS) || !defined(INET6)
 static int AuthTimedOut = 0;		/* set by a backend's own timeout */
+
+/* milliseconds, for the deadlines */
+static double
+AuthNow(void)
+{
+    struct timeval tv;
+
+    gettimeofday(&tv, NULL);
+    return(tv.tv_sec * 1000.0 + tv.tv_usec / 1000.0);
+}
 #endif
 
 #ifdef AUTH_CALLS
 /*
  * Auth time limit (readerauthtimeout).  A DNS worker serves one request
- * at a time, so a backend that hangs holds the worker.  A backend with a
- * timeout of its own (LDAP, NetRemote) gets the limit as that timeout.
- * AuthCall() also arms alarm(): when it fires, the call is left with
- * siglongjmp(), descriptors it opened are closed, and the login is refused.
- * A hung backend is nearly always waiting in a system call, where leaving
- * it is safe.  LDAP and NetRemote get AUTH_GRACE more seconds, so their
- * own timeout comes first.  For Perl the first alarm goes to perl, so the
- * script dies at its next statement; the jump comes AUTH_GRACE later.
+ * at a time, so a backend that hangs holds the worker.
+ *
+ * LDAP and NetRemote share one deadline (AuthEnd) for the whole exchange,
+ * and each step gets the time left as its own timeout.  When that runs
+ * out, the login is refused and the worker goes on.
+ *
+ * AuthCall() also arms alarm(): at the limit for Perl and PAM, AUTH_GRACE
+ * later for LDAP and NetRemote.  A call still running then may hold a libc
+ * lock (syslog, the resolver) or be inside malloc, so the worker must not
+ * go on.  The handler sends the refusal with write() and ends the worker
+ * with _exit(); main logs the timeout and starts a new worker.
  */
 #define AUTH_GRACE	2
-#define AUTH_FDS	256
 
-static sigjmp_buf AuthJmp;
-static volatile sig_atomic_t AuthJmpSet = 0;
-static volatile sig_atomic_t AuthChain = 0;
-static struct sigaction AuthChainAct;	/* perl's SIGALRM handler */
-static int AuthChainSet = 0;
+static double AuthEnd = 0;		/* deadline (ms), 0 = none */
+static DnsRes *AuthRes = NULL;		/* the reply DnsTest() builds */
+static volatile sig_atomic_t AuthHow = 0;
 
 static void
-sigAlrmAuth(int sig, siginfo_t *info, void *uap)
+sigAlrmAuth(int sig)
 {
-    if (AuthChain) {
-	AuthChain = 0;
-	alarm(AUTH_GRACE);
-	if (AuthChainAct.sa_flags & SA_SIGINFO)
-	    AuthChainAct.sa_sigaction(sig, info, uap);
-	else if (AuthChainAct.sa_handler != SIG_DFL &&
-			AuthChainAct.sa_handler != SIG_IGN)
-	    AuthChainAct.sa_handler(sig);
+    if (AuthHow == 0 || AuthRes == NULL)
 	return;
-    }
-    if (AuthJmpSet) {
-	AuthJmpSet = 0;
-	siglongjmp(AuthJmp, 1);
-    }
+    /* async-signal-safe only from here: write() and _exit() */
+    AuthRes->dr_Code = 0;
+    AuthRes->dr_AuthTimeout = AuthHow | DR_AUTHTO_EXIT;
+    (void)WriteDnsResponse(DFd, AuthRes);
+    _exit(DNS_EXIT_AUTHTIMEOUT);
 }
-
-#ifdef PERL_ENABLED
-/*
- * AuthChainPerl() - perl has just set its SIGALRM handler: keep it for the
- * first alarm and put ours back, also inside the call that loaded perl.
- */
-static void
-AuthChainPerl(void)
-{
-    struct sigaction sa;
-
-    if (sigaction(SIGALRM, NULL, &AuthChainAct) < 0 ||
-		(!(AuthChainAct.sa_flags & SA_SIGINFO) &&
-		 (AuthChainAct.sa_handler == SIG_DFL ||
-		  AuthChainAct.sa_handler == SIG_IGN)))
-	return;
-    AuthChainSet = 1;
-    if (AuthJmpSet) {
-	memset(&sa, 0, sizeof(sa));
-	sa.sa_sigaction = sigAlrmAuth;
-	sa.sa_flags = SA_SIGINFO;
-	sigemptyset(&sa.sa_mask);
-	sigaction(SIGALRM, &sa, NULL);
-	AuthChain = 1;
-    }
-}
-#endif
 
 typedef struct AuthArgs {
     char	*user;
@@ -321,20 +317,6 @@ typedef struct AuthArgs {
     char	*localip;
     const char	*ipname;
 } AuthArgs;
-
-#define AC_NETREMOTE	1
-#define AC_LDAP		2
-#define AC_PERL		3
-#define AC_PAM		4
-
-static const char *AuthNames[] = { "", "NetRemote", "LDAP", "Perl", "PAM" };
-
-#ifdef LDAP_ENABLED
-static void LDAPForget(void);
-#endif
-#ifdef PERL_ENABLED
-static void PerlForget(void);
-#endif
 
 static char *
 AuthBackend(int how, AuthArgs *a)
@@ -368,97 +350,69 @@ AuthBackend(int how, AuthArgs *a)
 }
 
 /*
- * AuthCall() - one backend call within readerauthtimeout.  *timedOut is
- * set when it ran out of time; the result is then NULL (refused).
+ * AuthCall() - one backend call within readerauthtimeout.  When the
+ * backend's own timeout ran out, the result is NULL (refused) and
+ * dres->dr_AuthTimeout is set.
  */
 static char *
-AuthCall(int how, AuthArgs *a, int *timedOut)
+AuthCall(int how, AuthArgs *a, DnsRes *dres)
 {
     struct sigaction sa;
     struct sigaction osa;
-    unsigned char fds[AUTH_FDS / 8];
-    char * volatile r = NULL;
     int secs = DOpts.ReaderAuthTimeout;
-    int fd;
+    char *r;
 
-    *timedOut = 0;
     AuthTimedOut = 0;
-    if (secs <= 0)
+    if (secs <= 0) {
+	AuthEnd = 0;
 	return(AuthBackend(how, a));
-
-    /* the descriptors open now: a call cut short may leave others */
-    memset(fds, 0, sizeof(fds));
-    for (fd = 0; fd < AUTH_FDS; ++fd)
-	if (fcntl(fd, F_GETFD) >= 0)
-	    fds[fd / 8] |= 1 << (fd % 8);
+    }
+    AuthEnd = AuthNow() + secs * 1000.0;
 
     memset(&sa, 0, sizeof(sa));
-    sa.sa_sigaction = sigAlrmAuth;
-    sa.sa_flags = SA_SIGINFO;		/* no SA_RESTART */
+    sa.sa_handler = sigAlrmAuth;
     sigemptyset(&sa.sa_mask);
     sigaction(SIGALRM, &sa, &osa);
-
-    if (sigsetjmp(AuthJmp, 1) == 0) {
-	AuthChain = (how == AC_PERL && AuthChainSet);
-	AuthJmpSet = 1;
-	alarm((how == AC_LDAP || how == AC_NETREMOTE) ? secs + AUTH_GRACE : secs);
-	r = AuthBackend(how, a);
-	alarm(0);
-	AuthJmpSet = 0;
-	AuthChain = 0;
-	if (AuthTimedOut)
-	    *timedOut = 1;
-    } else {
-	alarm(0);
-	AuthChain = 0;
-	*timedOut = 1;
-	for (fd = 0; fd < AUTH_FDS; ++fd) {
-	    if ((fds[fd / 8] & (1 << (fd % 8))) == 0 &&
-			fcntl(fd, F_GETFD) >= 0)
-		close(fd);
-	}
-#ifdef LDAP_ENABLED
-	if (how == AC_LDAP)
-	    LDAPForget();
-#endif
-#ifdef PERL_ENABLED
-	if (how == AC_PERL)
-	    PerlForget();
-#endif
-    }
+    AuthRes = dres;
+    AuthHow = how;
+    alarm((how == AC_LDAP || how == AC_NETREMOTE) ? secs + AUTH_GRACE : secs);
+    r = AuthBackend(how, a);
+    alarm(0);
+    AuthHow = 0;
+    AuthRes = NULL;
     sigaction(SIGALRM, &osa, NULL);
-    if (*timedOut) {
+    AuthEnd = 0;
+
+    if (AuthTimedOut) {
 	r = NULL;
-	logit(LOG_ERR, "%s authentication from %s timed out after %d seconds, login refused",
-		AuthNames[how], a->ipname, secs);
+	dres->dr_AuthTimeout = how;
     }
     return(r);
 }
+
+#ifdef LDAP_ENABLED
+/* milliseconds left until AuthEnd; -1 without a limit, 0 when it passed */
+static double
+AuthLeft(void)
+{
+    double left;
+
+    if (AuthEnd <= 0)
+	return(-1);
+    if ((left = AuthEnd - AuthNow()) <= 0) {
+	AuthTimedOut = 1;
+	return(0);
+    }
+    return(left);
+}
+#endif
 #endif	/* AUTH_CALLS */
 
 #if defined(NETREMOTE_ENABLED) || !defined(INET6)
 /*
- * Deadlines for the backends that wait on a socket themselves (NetRemote,
- * ident): milliseconds, 0 = none.  One exchange shares one deadline.
+ * Wait for events on fd until deadline (ms, 0 = none); 0 when it passed
+ * (AuthTimedOut).  For the backends that wait on a socket themselves.
  */
-static double
-AuthNow(void)
-{
-    struct timeval tv;
-
-    gettimeofday(&tv, NULL);
-    return(tv.tv_sec * 1000.0 + tv.tv_usec / 1000.0);
-}
-
-static double
-AuthDeadline(int secs)
-{
-    if (secs <= 0)
-	return(0);
-    return(AuthNow() + secs * 1000.0);
-}
-
-/* wait for events on fd; 0 when the deadline passed (AuthTimedOut) */
 static int
 AuthWait(int fd, int events, double deadline)
 {
@@ -1163,44 +1117,40 @@ nrWrite(int fd, const char *buf, int siz, double deadline)
 }
 
 /*
- * netRemoteConnect() - a non-blocking connect to confhn (an IPv4 address,
- * or a name whose addresses are tried in turn) within the deadline.
+ * netRemoteConnect() - a non-blocking connect to confhn (an IPv4 address
+ * or a name; each of its IPv4 addresses is tried) within the deadline.
+ * The name lookup has no timeout of its own; for a login AuthCall()'s
+ * alarm bounds it.
  */
 static int
 netRemoteConnect(const char *confhn, int port, double deadline)
 {
-    struct hostent *hptr = NULL;
-    int i;
+    struct addrinfo hints;
+    struct addrinfo *res = NULL;
+    struct addrinfo *ai;
+    int fd = -1;
+    int e;
 
-    if (!isdigit((unsigned char)*confhn) &&
-		(hptr = gethostbyname(confhn)) == NULL) {
-	logit(LOG_ERR, "NetRemote gethostbyname: %s: %m", confhn);
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    if ((e = getaddrinfo(confhn, NULL, &hints, &res)) != 0) {
+	logit(LOG_ERR, "NetRemote lookup: %s: %s", confhn, gai_strerror(e));
 	return(-1);
     }
-    for (i = 0; ; ++i) {
+    for (ai = res; ai != NULL; ai = ai->ai_next) {
 	struct sockaddr_in sin;
-	int fd;
-	int err = 0;
+	int err;
 
-	memset(&sin, 0, sizeof(sin));
-	sin.sin_family = AF_INET;
+	memcpy(&sin, ai->ai_addr, sizeof(sin));
 	sin.sin_port = htons(port);
-	if (hptr == NULL) {
-	    if (i > 0)
-		break;
-	    sin.sin_addr.s_addr = inet_addr(confhn);
-	} else {
-	    if (hptr->h_addr_list[i] == NULL)
-		break;
-	    memcpy(&sin.sin_addr, hptr->h_addr_list[i], sizeof(sin.sin_addr));
-	}
 	if ((fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
 	    logit(LOG_ERR, "NetRemote socket create: %m");
-	    return(-1);
+	    break;
 	}
 	fcntl(fd, F_SETFL, O_NONBLOCK);
 	if (connect(fd, (struct sockaddr *)&sin, sizeof(sin)) == 0)
-	    return(fd);
+	    break;
 	err = errno;
 	if (err == EINPROGRESS) {
 	    socklen_t len = sizeof(err);
@@ -1208,17 +1158,19 @@ netRemoteConnect(const char *confhn, int port, double deadline)
 
 	    if (w > 0 && getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len) == 0 &&
 			err == 0)
-		return(fd);
+		break;
 	    if (w == 0)
 		err = ETIMEDOUT;
 	}
 	close(fd);
+	fd = -1;
 	logit(LOG_ERR, "NetRemote socket connect: %s(%s:%d): %s", confhn,
 		inet_ntoa(sin.sin_addr), port, strerror(err));
 	if (AuthTimedOut)
 	    break;
     }
-    return(-1);
+    freeaddrinfo(res);
+    return(fd);
 }
 
 /*
@@ -1272,8 +1224,9 @@ netRemoteAccounting(DnsReq *dreq)
 	}
     }
 
-    /* attach to remote server(s) */
-    deadline = AuthDeadline(DOpts.ReaderAuthTimeout);
+    /* attach to remote server(s), within readerauthtimeout too */
+    deadline = (DOpts.ReaderAuthTimeout > 0) ?
+		AuthNow() + DOpts.ReaderAuthTimeout * 1000.0 : 0;
     if ((fd = netRemoteConnect(confhn, port, deadline)) < 0)
 	return;
 
@@ -1370,8 +1323,8 @@ netRemoteAuthenticate(char *user, char *pass, char *conf, char *localip, char *r
 	}
     }
 
-    /* attach to remote server(s) */
-    deadline = AuthDeadline(DOpts.ReaderAuthTimeout);
+    /* attach to remote server(s), within AuthCall()'s deadline */
+    deadline = AuthEnd;
     if ((fd = netRemoteConnect(confhn, port, deadline)) < 0)
 	return(NULL);
 
@@ -1434,33 +1387,35 @@ netRemoteAuthenticate(char *user, char *pass, char *conf, char *localip, char *r
 static LDAP *LdapLd = NULL;	/* the connection, kept between logins */
 
 /*
- * LDAPForget() - drop the connection after a call was cut short.  It
- * cannot be unbound safely then, so only its socket is closed.
+ * The time left of AuthCall()'s deadline as a timeval: -1 without a limit,
+ * 0 when it has passed (AuthTimedOut), else 1.  Each step of the exchange
+ * (connect, bind, search, compare) gets only what is left, so the
+ * library's timeouts come before AuthCall()'s alarm.
  */
-static void
-LDAPForget(void)
+static int
+LDAPLeft(struct timeval *tv)
 {
-#ifdef LDAP_OPT_DESC
-    int fd = -1;
+    double left = AuthLeft();
 
-    if (LdapLd != NULL &&
-		ldap_get_option(LdapLd, LDAP_OPT_DESC, &fd) == LDAP_OPT_SUCCESS &&
-		fd >= 0 && fcntl(fd, F_GETFD) >= 0)
-	close(fd);
-#endif
-    LdapLd = NULL;
+    if (left < 0)
+	return(-1);
+    if (left == 0)
+	return(0);
+    tv->tv_sec = (long)(left / 1000);
+    tv->tv_usec = (long)((left - tv->tv_sec * 1000.0) * 1000);
+    if (tv->tv_sec == 0 && tv->tv_usec == 0)
+	tv->tv_usec = 1;
+    return(1);
 }
 
-/* readerauthtimeout as the library's connect and operation timeouts */
+/* the time left as the library's connect and operation timeouts */
 static void
 LDAPTimeouts(LDAP *ld)
 {
     struct timeval tv;
 
-    if (DOpts.ReaderAuthTimeout <= 0)
+    if (LDAPLeft(&tv) <= 0)
 	return;
-    tv.tv_sec = DOpts.ReaderAuthTimeout;
-    tv.tv_usec = 0;
 #ifdef LDAP_OPT_NETWORK_TIMEOUT
     ldap_set_option(ld, LDAP_OPT_NETWORK_TIMEOUT, &tv);
 #endif
@@ -1469,7 +1424,7 @@ LDAPTimeouts(LDAP *ld)
 #endif
 }
 
-/* a simple bind that waits at most readerauthtimeout for the answer */
+/* a simple bind (and the connect) within the time left */
 static int
 LDAPBind(LDAP *ld, char *who, char *pw)
 {
@@ -1478,14 +1433,19 @@ LDAPBind(LDAP *ld, char *who, char *pw)
     int msgid;
     int rc;
 
-    if (DOpts.ReaderAuthTimeout <= 0)
+    switch (LDAPLeft(&tv)) {
+    case -1:
 	return(ldap_simple_bind_s(ld, who, pw));
+    case 0:
+	return(LDAP_TIMEOUT);
+    }
+    LDAPTimeouts(ld);
     rc = LDAP_OTHER;
     if ((msgid = ldap_simple_bind(ld, who, pw)) < 0) {
 	ldap_get_option(ld, LDAP_OPT_ERROR_NUMBER, &rc);
+    } else if (LDAPLeft(&tv) == 0) {
+	rc = LDAP_TIMEOUT;
     } else {
-	tv.tv_sec = DOpts.ReaderAuthTimeout;
-	tv.tv_usec = 0;
 	switch (ldap_result(ld, msgid, LDAP_MSG_ALL, &tv, &res)) {
 	case 0:
 	    rc = LDAP_TIMEOUT;
@@ -1503,7 +1463,7 @@ LDAPBind(LDAP *ld, char *who, char *pw)
     return(rc);
 }
 
-/* ldap_search_s() that waits at most readerauthtimeout */
+/* ldap_search_s() within the time left */
 static int
 LDAPSearch(LDAP *ld, char *base, int scope, char *filter, char **attrs,
 		LDAPMessage **res)
@@ -1511,10 +1471,14 @@ LDAPSearch(LDAP *ld, char *base, int scope, char *filter, char **attrs,
     struct timeval tv;
     int rc;
 
-    if (DOpts.ReaderAuthTimeout <= 0)
+    *res = NULL;
+    switch (LDAPLeft(&tv)) {
+    case -1:
 	return(ldap_search_s(ld, base, scope, filter, attrs, 0, res));
-    tv.tv_sec = DOpts.ReaderAuthTimeout;
-    tv.tv_usec = 0;
+    case 0:
+	return(LDAP_TIMEOUT);
+    }
+    LDAPTimeouts(ld);
     rc = ldap_search_ext_s(ld, base, scope, filter, attrs, 0, NULL, NULL,
 				&tv, LDAP_NO_LIMIT, res);
     if (rc == LDAP_TIMEOUT)
@@ -1621,7 +1585,6 @@ LDAPAuthenticate(char *user, char *pass, char *realm, char *conf)
 	    ldap_free_urldesc(ludp);
 	    return(NULL);
 	}
-	LDAPTimeouts(LdapLd);
 
         ldap_free_urldesc(ludp);
 
@@ -1791,7 +1754,6 @@ LDAPAuthenticate(char *user, char *pass, char *conf)
 	    LdapLd = NULL;
 	    return(NULL);
 	}
-	LDAPTimeouts(LdapLd);
 
 	if ((msgid = LDAPBind(LdapLd, NULL, NULL)) !=
 								LDAP_SUCCESS) {
@@ -1878,6 +1840,7 @@ LDAPAuthenticate(char *user, char *pass, char *conf)
     r = NULL;
 #ifdef LDAP_COMPARE
     dn = ldap_get_dn(LdapLd, mptr);
+    LDAPTimeouts(LdapLd);
     if (ldap_compare_s(LdapLd, dn, ldappassattr, pass) == LDAP_COMPARE_TRUE) {
 	strcpy(result, "100 Success");
 	r = result;
@@ -1914,9 +1877,6 @@ LDAPAuthenticate(char *user, char *pass, char *conf)
  * the interpreter in a variable of this name.
  */
 static PerlInterpreter *my_perl = NULL;
-
-/* what the SIGALRM handler set below dies with (readerauthtimeout) */
-#define PERL_TIMEOUT_MSG	"diablo auth timeout\n"
 
 EXTERN_C void xs_init (pTHX);
 EXTERN_C void boot_DynaLoader (pTHX_ CV* cv);
@@ -1956,11 +1916,8 @@ char *call_checkuser(char *auth_args[], const char *conf)
 	char *emsg = SvPV_nolen(ERRSV);
 
 	/* checkuser died: refuse this login but keep serving the next one */
-	if (emsg && strcmp(emsg, PERL_TIMEOUT_MSG) == 0)
-	    AuthTimedOut = 1;
-	else
-	    logit(LOG_ERR, "PERL: checkuser died in \"%s\": %s", conf,
-		  emsg ? emsg : "(unknown error)");
+	logit(LOG_ERR, "PERL: checkuser died in \"%s\": %s", conf,
+	      emsg ? emsg : "(unknown error)");
 	(void)POPs;			/* drop the undef G_SCALAR left on the stack */
 	result = NULL;
     } else {
@@ -2080,9 +2037,6 @@ char *PerlAuthenticate(char *user, char *pass, char *conf)
 	}
 	pi->interp = my_perl;
 	pi->failed = 0;
-	/* AuthCall() passes the first alarm to this handler */
-	eval_pv("$SIG{ALRM} = sub { die \"diablo auth timeout\\n\" };", FALSE);
-	AuthChainPerl();
     }
     if (pi->failed)
 	return(NULL);
@@ -2095,28 +2049,6 @@ char *PerlAuthenticate(char *user, char *pass, char *conf)
     return result;
 }
 
-/*
- * PerlForget() - a call was cut short in the current interpreter, which is
- * then in an unknown state.  Leave it; the next login loads the script in
- * a new one (up to PERL_MAXINTERP in all).  A perl without MULTIPLICITY
- * can have no second one, so that script stays refused.
- */
-static void
-PerlForget(void)
-{
-    int i;
-
-    for (i = 0; i < PerlTabN; ++i) {
-	if (PerlTab[i].interp == my_perl && !PerlTab[i].failed) {
-	    logit(LOG_ERR, "PERL: interpreter for \"%s\" left after a timeout", PerlTab[i].conf);
-	    PerlTab[i].failed = 1;
-#ifdef MULTIPLICITY
-	    PerlTab[i].conf[0] = 0;
-#endif
-	    break;
-	}
-    }
-}
 #endif	/* PERL_ENABLED */
 
 #ifdef PAM_ENABLED
@@ -2505,7 +2437,6 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
 	    int authok;
 #ifdef AUTH_CALLS
 	    AuthArgs aa;
-	    int timedOut = 0;
 #endif
 
 	    /*
@@ -2739,8 +2670,8 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
 		stprintf("dns auth netremote %s@%s", user, ipname);
 		aa.conf = dres->dr_AuthDef->au_NetRemote;
 		aa.localip = NetAddrToSt(0, (struct sockaddr *)&dreq->dr_LSin, 1, 0, 1);
-		AuthReader = AuthCall(AC_NETREMOTE, &aa, &timedOut);
-		if (timedOut)
+		AuthReader = AuthCall(AC_NETREMOTE, &aa, dres);
+		if (dres->dr_AuthTimeout)
 		    goto authtimeout;
 		stprintf("dns auth search %s", ipname);
 		if (AuthReader != NULL && *AuthReader == '1') {
@@ -2774,8 +2705,8 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
 		stprintf("dns auth ldap %s@%s", user, ipname);
 		aa.conf = dres->dr_AuthDef->au_LDAP;
 		aa.realm = realm;
-		AuthReader = AuthCall(AC_LDAP, &aa, &timedOut);
-		if (timedOut)
+		AuthReader = AuthCall(AC_LDAP, &aa, dres);
+		if (dres->dr_AuthTimeout)
 		    goto authtimeout;
 		stprintf("dns auth search %s", ipname);
 		if (AuthReader != NULL && *AuthReader == '1') {
@@ -2803,8 +2734,8 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
 				*dreq->dr_AuthPass) {
 		stprintf("dns auth perl %s@%s", user, ipname);
 		aa.conf = dres->dr_AuthDef->au_Perl;
-		AuthReader = AuthCall(AC_PERL, &aa, &timedOut);
-		if (timedOut)
+		AuthReader = AuthCall(AC_PERL, &aa, dres);
+		if (dres->dr_AuthTimeout)
 		    goto authtimeout;
 		stprintf("dns auth search %s", ipname);
 		if (AuthReader != NULL && *AuthReader == '1') {
@@ -2837,8 +2768,8 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
 						*dreq->dr_AuthPass) {
 		stprintf("dns auth PAM %s@%s", user, ipname);
 		aa.conf = dres->dr_AuthDef->au_PAM;
-		AuthReader = AuthCall(AC_PAM, &aa, &timedOut);
-		if (timedOut)
+		AuthReader = AuthCall(AC_PAM, &aa, dres);
+		if (dres->dr_AuthTimeout)
 		    goto authtimeout;
 		stprintf("dns auth search %s", ipname);
 		if (AuthReader != NULL && *AuthReader == '1') {
@@ -3028,10 +2959,13 @@ getAuthUser(const struct sockaddr *plsin, const struct sockaddr *prsin, char *ub
      * necessary to deal with broken clients or firewalls.
      */
 
-    /* the whole exchange, at most readerauthtimeout too */
+    /*
+     * One deadline for the whole exchange, at most readerauthtimeout too.
+     * A timeout of 0 waits for nothing, as the select() with 0 did.
+     */
     if (DOpts.ReaderAuthTimeout > 0 && timeout > DOpts.ReaderAuthTimeout)
 	timeout = DOpts.ReaderAuthTimeout;
-    deadline = AuthDeadline(timeout > 0 ? timeout : 1);
+    deadline = AuthNow() + (timeout > 0 ? timeout : 0) * 1000.0;
 
     fcntl(cfd, F_SETFL, O_NONBLOCK);
     errno = 0;

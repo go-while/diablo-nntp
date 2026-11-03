@@ -357,7 +357,15 @@ typedef struct DnsRes {
     GroupDef *dr_ListGroupDef;		/* list group list pointer	*/
     GroupDef *dr_PostGroupDef;		/* post group list pointer	*/
     AuthDef *dr_AuthDef;		/* auth def pointer		*/
+    int dr_AuthTimeout;			/* backend that ran out of time	*/
 } DnsRes;
+
+/*
+ * After its alarm cut an auth backend off, a DNS worker sends its reply
+ * with DR_AUTHTO_EXIT in dr_AuthTimeout and exits with this status.
+ */
+#define DNS_EXIT_AUTHTIMEOUT	3
+#define DR_AUTHTO_EXIT		0x100
 
 #define DF_FEED		0x00000001	/* can feed			*/
 #define DF_READ		0x00000002	/* can read			*/
