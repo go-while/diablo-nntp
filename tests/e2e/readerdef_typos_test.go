@@ -116,6 +116,34 @@ func TestReaderdefUnknownOption(t *testing.T) {
 	})
 }
 
+// TestAccessDefUnknownOption: a misspelled option in a vserverdef, groupdef or authdef makes
+// dreader.access invalid too, as in a readerdef (D-166): logged, not installed, and on a first
+// start no service. Before, it was logged and the definition used without the setting.
+func TestAccessDefUnknownOption(t *testing.T) {
+	for _, tc := range []struct{ name, access string }{
+		{"vserverdef", strings.Replace(DefaultReaderAccess, "vserverdef DEFAULT\n", "vserverdef DEFAULT\n    hostnmae x.example\n", 1)},
+		{"groupdef", groupListAccess("groups testonly") + "groupdef typo\n    gruop e2e.test\nend\n"},
+		{"authdef", DefaultReaderAccess + "authdef fred\n    user fred\n    pasword fredspass\nend\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := NewReaderSite(t, ReaderOptions{SpoolAddr: "127.0.0.1:1", Access: tc.access, NoStart: true,
+				Config: map[string]string{"path_generallog": "%s/general.log"}})
+			startReaderNoWait(t, s)
+			var log string
+			waitFor(t, 5*time.Second, "the invalid option in the log", func() bool {
+				log = generalLog(s)
+				return strings.Contains(log, "Invalid "+tc.name+" option")
+			})
+			if !strings.Contains(log, "not updating") {
+				t.Errorf("the log does not say the file was refused:\n%s", log)
+			}
+			if g := readerGreeting(s.Addr); strings.HasPrefix(g, "200") || strings.HasPrefix(g, "201") {
+				t.Errorf("dreaderd with a misspelled %s option gave service: %q", tc.name, strings.TrimSpace(g))
+			}
+		})
+	}
+}
+
 // TestReaderAccessCacheFileMissing (D-165): when one of the five access cache files cannot be
 // opened while the main dreaderd process reloads the cache, it logs that and keeps the access
 // map it has. Before, the main process exited ("Fatal: Unable to load access cache") on the

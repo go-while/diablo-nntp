@@ -256,7 +256,11 @@ once and is disconnected, and so does a request still waiting after
 .B readerdnswait
 seconds (default 5, 1 to 300).
 .B readerdnsqueue 0
-queues no new connection.  dreaderd keeps accepting while the DNS
+queues no new connection.  A client the main process cannot pass to its
+reader at once (the reader does not read and its socket is full) waits
+for it at most
+.B readerdnswait
+seconds too, then gets the same 400.  dreaderd keeps accepting while the DNS
 processes are busy, so a login flood gets quick 400 replies instead of
 waiting in the kernel's listen backlog, which dreaderd asks to be as
 large as the kernel allows (net.core.somaxconn on Linux); past 200 refusals
