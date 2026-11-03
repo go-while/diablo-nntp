@@ -87,29 +87,18 @@ func TestReaderLoginsQueueForDNSWorker(t *testing.T) {
 	}
 }
 
-// TestReaderDNSQueueLimit (D-51): when more logins arrive than the queue holds (4 * readerdns
-// + 4), the extra ones are turned away with 400 and the rest still succeed; nothing hangs, and
-// the reader serves a login afterwards.
+// TestReaderDNSQueueLimit (D-51): 40 logins at once against one DNS/auth worker. AUTHINFO
+// logins of greeted clients have no queue limit (their number is bounded by the connection
+// limit), so each gets 281, nothing hangs, and the reader serves a login afterwards. Before
+// the overload change the queue held 4 * readerdns + 4 requests and the rest got 400.
 func TestReaderDNSQueueLimit(t *testing.T) {
 	_, spool := spoolStore(t)
 	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: AuthReaderAccess,
 		Config: map[string]string{"readerthreads": "64"}})
-	ok, busy := 0, 0
 	for i, r := range authBurst(t, s.Addr, 40) {
-		switch {
-		case strings.HasPrefix(r, "281"):
-			ok++
-		case strings.HasPrefix(r, "400"):
-			busy++
-		default:
-			t.Errorf("login %d: got %q, want 281 or 400", i, r)
+		if !strings.HasPrefix(r, "281") {
+			t.Errorf("login %d: got %q, want 281", i, r)
 		}
-	}
-	t.Logf("%d logins succeeded, %d got 400", ok, busy)
-	// One worker and a queue of 8 hold 9 logins at a time, so at least 9 get 281 and, of 40,
-	// some get 400.
-	if ok < 9 || busy == 0 {
-		t.Errorf("%d logins succeeded and %d got 400, want at least 9 and at least 1", ok, busy)
 	}
 	c := s.Reader(t)
 	expect(t, c, 381, "AUTHINFO USER fred")
@@ -126,8 +115,7 @@ func TestReaderDNSQueueAuthPairing(t *testing.T) {
 	_, spool := spoolStore(t)
 	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: AuthReaderAccess,
 		Config: map[string]string{"readerthreads": "64"}})
-	// Eight at a time fits the D-51 queue (4 * readerdns + 4 with readerdns 1), so
-	// none is turned away with 400 and every connection gets a verdict.
+	// Eight at a time: none is turned away with 400 and every connection gets a verdict.
 	for round := 0; round < 5; round++ {
 		res := authBurstWith(t, s.Addr, 8, func(i int) string {
 			if i%2 == 0 {
