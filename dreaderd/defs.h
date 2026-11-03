@@ -267,11 +267,27 @@ typedef struct AccessMap {		/* Define an access mapping	*/
  * stuffed into DnsReq.  Yech.  JG200106061214
  */
 
+/*
+ * Name lookup result of a client address (dr_Lookup).  Main passes a known
+ * result (DNS cache, or the connect-time result on AUTHINFO) in DnsReq and
+ * the worker then skips the reverse and forward lookups.
+ */
+#define DNSHOSTLEN	256		/* longest name we pass (DNS: 253) */
+#define DL_NONE		0		/* unknown: worker looks it up	*/
+#define DL_HOST		1		/* name, forward lookup confirms */
+#define DL_MISMATCH	2		/* name, forward does not confirm */
+#define DL_NOHOST	3		/* no reverse name		*/
+#define DL_MASK		0x0f
+#define DL_FRESH	0x10		/* worker did the lookups now	*/
+#define DL_TEMP		0x20		/* temporary failure: no caching */
+
 typedef struct DnsReq {
     struct sockaddr_storage dr_LSin;	/* local interface		*/
     struct sockaddr_storage dr_RSin;	/* remote ip:port		*/
     char dr_AuthUser[64];		/* authinfo user		*/
     char dr_AuthPass[64];		/* authinfo pass		*/
+    int dr_Lookup;			/* DL_*: known lookup result	*/
+    char dr_RevHost[DNSHOSTLEN];	/* its name (DL_HOST/MISMATCH)	*/
     int dr_Flags;			/* flags to pass res->req->res	*/
     int dr_ResultFlags;			/* see #defines below		*/
     double dr_ByteCount;		/* how many bytes sent - stats	*/
@@ -323,6 +339,9 @@ typedef struct DnsRes {
     char dr_IdentUser[16];		/* the ident username		*/
     char dr_AuthUser[64];		/* the authinfo user		*/
     char dr_AuthPass[64];		/* the authinfo pass		*/
+    int dr_Lookup;			/* DL_*: name lookup result	*/
+    char dr_RevHost[DNSHOSTLEN];	/* reverse name (DL_HOST/MISMATCH) */
+    struct sockaddr_storage dr_LookupAddr; /* address it is for	*/
     int dr_DnsMismatch;			/* Fwd/Rev DNS don't match	*/
     int dr_ResultFlags;			/* see #defines above		*/
     int dr_StaticAuth;			/* don't change auth details	*/

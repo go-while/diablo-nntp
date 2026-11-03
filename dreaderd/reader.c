@@ -1230,6 +1230,7 @@ NNCommand2(Connection *conn)
 	hints.ai_flags = AI_NUMERICHOST|AI_NUMERICSERV;
 	if (getaddrinfo(srcaddr, srcport, &hints, &ai) == 0) {
           memcpy(&conn->co_Auth.dr_Addr, ai->ai_addr, ai->ai_addrlen);
+          conn->co_Auth.dr_Lookup = DL_NONE;	/* new client address */
           conn->co_Auth.dr_Flags &= ~DF_HAPROXY;
           conn->co_Auth.dr_Flags |= DF_ISPROXIED;
           conn->co_Auth.dr_ResultFlags = DR_REQUIRE_DNS;
@@ -1277,6 +1278,7 @@ NNCommand2(Connection *conn)
        * initialized IPv4 address, leaving the remainder cleared. */
       memset(&conn->co_Auth.dr_Addr, 0, sizeof(conn->co_Auth.dr_Addr));
       memcpy(&conn->co_Auth.dr_Addr, &sin, sizeof(sin));
+      conn->co_Auth.dr_Lookup = DL_NONE;	/* new client address */
 
       conn->co_Auth.dr_Flags &= ~DF_USEPROXIED;
       conn->co_Auth.dr_Flags |= DF_ISPROXIED;

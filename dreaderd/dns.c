@@ -306,9 +306,10 @@ DnsTask(int fd, const char *id)
 
 	    char hname[NI_MAXHOST];
 	    char ipname[NI_MAXHOST];
+	    const char *ip = NetAddrToSt(0, (struct sockaddr *)&dreq.dr_RSin, 1, 0, 0);
 
-	    GetIPHost((struct sockaddr *)&dreq.dr_RSin, hname, sizeof(hname),
-						ipname, sizeof(ipname));
+	    snprintf(ipname, sizeof(ipname), "%s", (ip != NULL) ? ip : "");
+	    hname[0] = 0;
 
 	    bcopy(&dreq.dr_RSin, &dres.dr_Addr, sizeof(dres.dr_Addr));
 	    dres.dr_Flags = dreq.dr_Flags;
@@ -322,11 +323,44 @@ DnsTask(int fd, const char *id)
 		logit(LOG_ERR, "Client numeric address exceeds DNS result capacity");
 		dres.dr_Code = 0;
 	    } else {
-		/* Do forward DNS doublecheck */
+		int dl = dreq.dr_Lookup & DL_MASK;
+		int fl = 0;
+
+		if (dl >= DL_HOST && dl <= DL_NOHOST &&
+		    memchr(dreq.dr_RevHost, 0, sizeof(dreq.dr_RevHost)) != NULL &&
+		    (dl == DL_NOHOST) == (dreq.dr_RevHost[0] == 0)) {
+		    /* main knows the result: no lookups */
+		    snprintf(hname, sizeof(hname), "%s", dreq.dr_RevHost);
+		} else {
+		    int r;
+
+		    fl = DL_FRESH;
+		    r = GetIPHost((struct sockaddr *)&dreq.dr_RSin, hname,
+					sizeof(hname), ipname, sizeof(ipname));
+		    if (r == -2)
+			fl |= DL_TEMP;
+		    if (hname[0] == 0) {
+			dl = DL_NOHOST;
+		    } else {
+			/* Do forward DNS doublecheck */
+			r = TestForwardLookup(hname, ipname,
+					(struct sockaddr *)&dreq.dr_RSin);
+			dl = (r < 0) ? DL_MISMATCH : DL_HOST;
+			if (r == -2)
+			    fl |= DL_TEMP;
+		    }
+		}
+		/* hand the result back, for the cache and AUTHINFO */
+		if (strlen(hname) < sizeof(dres.dr_RevHost)) {
+		    dres.dr_Lookup = dl | fl;
+		    snprintf(dres.dr_RevHost, sizeof(dres.dr_RevHost), "%s", hname);
+		    bcopy(&dreq.dr_RSin, &dres.dr_LookupAddr,
+					sizeof(dres.dr_LookupAddr));
+		}
+
 		if (hname[0] == 0)
 		    StoreDnsHost(&dres, ipname, ipname);
-		else if (TestForwardLookup(hname, ipname,
-					(struct sockaddr *)&dreq.dr_RSin) < 0)
+		else if (dl == DL_MISMATCH)
 		    dres.dr_DnsMismatch = 1;
 		else
 		    StoreDnsHost(&dres, hname, ipname);
