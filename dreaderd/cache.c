@@ -33,6 +33,21 @@ int CacheHitsFD=-1;
 char *CacheHits=NULL;
 uint32 CacheHitsEnd=0;
 
+#ifdef __OpenBSD__
+/* File readers of cache.hits do not see dirty mapped writes until MS_SYNC. */
+static int
+CacheHitsPublish(void *ptr, size_t len)
+{
+    size_t page = (size_t)getpagesize();
+    size_t offset = (size_t)ptr % page;
+    if (msync((char *)ptr - offset, len + offset, MS_SYNC) < 0) {
+        logit(LOG_ERR, "cache.hits sync failed: %s", strerror(errno));
+        return(-1);
+    }
+    return(0);
+}
+#endif
+
 /* Write the complete scoreboard range, including after EINTR/short writes.
  * Explicit offsets avoid disturbing other users of CacheHitsFD's file offset.
  */
@@ -689,6 +704,13 @@ CreateCacheHitEntry(struct CacheHash_t *ch, artno_t endNo) {
     /* Publish the link last: readers walk the chains without the lock. */
     CH_STORE_REL(i, ne);
 
+#ifdef __OpenBSD__
+    /* Publish the entry, its chain link and the changed header to file I/O. */
+    if (CacheHitsPublish(che, sizeof(*che)) < 0 ||
+        CacheHitsPublish(i, sizeof(*i)) < 0 ||
+        CacheHitsPublish(chh, sizeof(*chh)) < 0)
+        goto failed;
+#endif
     hflock(CacheHitsFD, 0, XLOCK_UN);
     return che;
 
@@ -728,6 +750,10 @@ UpdateCacheHits(char *groupName, int grpIter, artno_t endNo, int cachehit) {
     } else {
 	CH_ADD(&che->che_ReadArt, 1);
     }
+#ifdef __OpenBSD__
+    if (CacheHitsPublish(che, sizeof(*che)) < 0)
+        return NULL;
+#endif
     return che;
 }
 

@@ -216,6 +216,14 @@ main(int ac, char **av) {
     }
 
     
+#ifdef __OpenBSD__
+    if (msync(CacheHits, CacheHitsEnd, MS_SYNC) < 0) {
+	fprintf(stderr, "Unable to sync cache hits file: %s\n", strerror(errno));
+	hflock(CacheHitsFD, 0, XLOCK_UN);
+	close(CacheHitsFD);
+	exit(1);
+    }
+#endif
     hflock(CacheHitsFD, 0, XLOCK_UN);
     close(CacheHitsFD);
     exit(0);
