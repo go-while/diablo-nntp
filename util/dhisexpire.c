@@ -457,18 +457,20 @@ DoExpire(int fd, int hsize, int rsize)
 		hh.hmagic = HDEADMAGIC;
 		if (lseek(fd, 0, SEEK_SET) == -1)
 		    Fail(NewFileName, "Unable to seek to pos 0 in history");
-		if (write(fd, &hh, sizeof(hh)) == -1) {
-		    perror("historyheadwrite");
-		    Fail(NewFileName, "Unable to write history header");
-		}
 		/*
-		 * From here the history stays dead until it is replaced:
-		 * Fail() and the signal handler mark it alive again.
+		 * From the write on the history stays dead until it is
+		 * replaced: Fail() and the signal handler mark it alive again.
+		 * Set them up first, so that no signal leaves it dead; both
+		 * change only a magic that is dead.
 		 */
 		DeadFd = fd;
 		rsignal(SIGINT, sigDead);
 		rsignal(SIGHUP, sigDead);
 		rsignal(SIGTERM, sigDead);
+		if (write(fd, &hh, sizeof(hh)) == -1) {
+		    perror("historyheadwrite");
+		    Fail(NewFileName, "Unable to write history header");
+		}
 		/*
 		 * Wait for the adds and updates that began before the dead
 		 * magic: they hold a hash chain lock.  Later ones find the
