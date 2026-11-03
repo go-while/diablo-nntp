@@ -192,7 +192,9 @@ DnsCacheGet(const struct sockaddr *sa, int *lookup, char *host, size_t hostlen)
 {
     DcEnt *e;
 
-    if (DcTab == NULL)
+    DcKey k;
+
+    if (DcTab == NULL || !dcKey(sa, &k))
 	return(0);
     if ((e = dcFind(sa)) == NULL || strlen(e->dc_Host) >= hostlen) {
 	++DcMisses;
