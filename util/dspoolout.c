@@ -632,7 +632,13 @@ spool_file(char *spoolFile, int pass, NewslinkInfo *li, int flags)
     if (fd >= 0) {
 	char buf[64];
 
-	xflock(fd, XLOCK_EX);		/* lock and leave locked */
+	if (xflock(fd, XLOCK_EX) < 0) {	/* lock and leave locked */
+	    /* the sequence numbers are a read-modify-write: skip the label */
+	    fprintf(stderr, "dspoolout: unable to lock %s: %s\n",
+		seqFile, strerror(errno));
+	    close(fd);
+	    return(flags);
+	}
 	memset(buf, 0, sizeof(buf));
 	if (read(fd, buf, sizeof(buf) - 1) < 0)
 	    buf[0] = 0;
