@@ -21,6 +21,9 @@
  */
 
 #include "defs.h"
+#ifdef __OpenBSD__
+#include <limits.h>
+#endif
 
 #if defined(__GLIBC__) && !defined(_XOPEN_SOURCE)
   char *strptime(const char *s, const char *format, struct tm *tm);
@@ -41,6 +44,15 @@ char msgId[MAXMSGIDLEN];
 char newsgroups[16384];
 uint32 GmtStart = 0;
 uint32 GmtEnd = 0;
+
+#ifdef __OpenBSD__
+/* The existing parsers operate on a fragment but record absolute offsets. */
+static int SpoolFragmentBase;
+static int SpoolFragmentActive;
+static int SpoolFragmentCount;
+static void ScanSpoolFileRead(int fd, int bytes, int gmt, int iter,
+    char *path, uint16 spoolobj);
+#endif
 
 void ScanSpoolObject(uint16 spoolobj);
 void ScanSpool(uint16 spoolobj);
@@ -426,6 +438,115 @@ ScanSpoolDirectory(char *dpath, int gmt, uint16 spoolobj)
     }
 }
 
+#ifdef __OpenBSD__
+/* Scan one article at a time instead of retaining a stale file mapping or
+ * copying the whole spool file.  Old-format articles are bounded by their
+ * NUL terminator; new-format articles need only the stored header bytes. */
+static void
+ScanSpoolFileRead(int fd, int bytes, int gmt, int iter, char *path, uint16 spoolobj)
+{
+    unsigned char magic[2];
+    int pos = 0, old = 0;
+
+    SpoolFragmentActive = 1;
+    SpoolFragmentCount = 0;
+    if (bytes < 2 || xreadat(fd, magic, sizeof(magic), 0) < 0 ||
+        magic[0] != STORE_MAGIC1 || magic[1] != STORE_MAGIC2)
+        old = 1;
+    while (pos < bytes && !old) {
+        SpoolArtHdr ah;
+        size_t need, disklen;
+        char *fragment;
+
+        if (bytes - pos < (int)sizeof(ah) ||
+            xreadat(fd, &ah, sizeof(ah), pos) < 0) {
+            printf("\tIncomplete spool header at %d\n", pos);
+            break;
+        }
+        if ((uint8)ah.Magic1 != STORE_MAGIC1 || (uint8)ah.Magic2 != STORE_MAGIC2) {
+            printf("\tFailed at offset %d: invalid header magic (%d:%d)\n",
+                pos, ah.Magic1, ah.Magic2);
+            old = 1;
+            break;
+        }
+        if (ah.HeadLen < sizeof(ah) || ah.ArtHdrLen > ah.ArtLen ||
+            ah.ArtLen >= SPOOL_MAX_FILE_SIZE || ah.StoreLen < sizeof(ah) ||
+            ah.StoreLen > (uint32)(bytes - pos) ||
+            ((ah.StoreType & STORETYPE_GZIP) && ah.StoreLen == (uint32)(bytes - pos))) {
+            printf("\tInvalid spool article at offset %d\n", pos);
+            break;
+        }
+        disklen = (size_t)ah.StoreLen + ((ah.StoreType & STORETYPE_GZIP) ? 1 : 0);
+        need = (ah.StoreType & STORETYPE_GZIP) ? sizeof(ah) :
+            (size_t)ah.HeadLen + ah.ArtHdrLen;
+        if (need > ah.StoreLen || need < sizeof(ah)) {
+            printf("\tInvalid spool header length at offset %d\n", pos);
+            break;
+        }
+        fragment = calloc(1, need + 16);
+        if (fragment == NULL || xreadat(fd, fragment, need, pos) < 0) {
+            printf("\tUnable to read spool article at %d: %s\n", pos, strerror(errno));
+            free(fragment);
+            break;
+        }
+        SpoolFragmentBase = pos;
+        ScanSpoolFileMap(fragment, (int)need, gmt, iter, path, spoolobj, fd);
+        free(fragment);
+        pos += (int)disklen;
+    }
+    if (old) {
+        char block[65536];
+        printf(" (old format) ");
+        while (pos < bytes) {
+            int end = pos;
+            char *fragment;
+            size_t len;
+            int terminated = 0;
+
+            while (end < bytes) {
+                size_t n = (size_t)(bytes - end);
+                char *zero;
+                if (n > sizeof(block))
+                    n = sizeof(block);
+                if (xreadat(fd, block, n, end) < 0) {
+                    printf("\tUnable to read spool at %d: %s\n", end, strerror(errno));
+                    goto done;
+                }
+                zero = memchr(block, 0, n);
+                if (zero != NULL) {
+                    end += (int)(zero - block) + 1;
+                    terminated = 1;
+                    break;
+                }
+                end += (int)n;
+                if (end - pos >= SPOOL_MAX_FILE_SIZE)
+                    break;
+            }
+            len = (size_t)(end - pos);
+            if (!terminated || len > SPOOL_MAX_FILE_SIZE) {
+                printf("\tIncomplete or oversized old spool article at %d\n", pos);
+                break;
+            }
+            fragment = calloc(1, len + 16);
+            if (fragment == NULL || xreadat(fd, fragment, len, pos) < 0) {
+                printf("\tUnable to read old spool article at %d: %s\n", pos, strerror(errno));
+                free(fragment);
+                break;
+            }
+            SpoolFragmentBase = pos;
+            ScanSpoolFileMapOld(fragment, (int)len, gmt, iter, path, spoolobj);
+            free(fragment);
+            pos = end;
+        }
+    }
+done:
+    if (!QuietOpt)
+        printf("%d entries", SpoolFragmentCount);
+    SpoolFragmentActive = 0;
+    SpoolFragmentBase = 0;
+}
+#endif
+
 void
 ScanSpoolFile(char *fpath, int gmt, int iter, uint16 spoolobj)
 {
@@ -448,6 +569,21 @@ ScanSpoolFile(char *fpath, int gmt, int iter, uint16 spoolobj)
 	return;
     }
     bytes = st.st_size;
+
+#ifdef __OpenBSD__
+    if (st.st_size <= 0 || st.st_size > INT_MAX) {
+        printf("    %s\tinvalid or oversized spool file\n", fpath);
+        close(fd);
+        return;
+    }
+    if (!QuietOpt)
+        printf("    %s: ", fpath);
+    ScanSpoolFileRead(fd, bytes, gmt, iter, fpath, spoolobj);
+    if (!QuietOpt)
+        printf("\n");
+    close(fd);
+    return;
+#endif
 
     base = xmap(NULL, bytes, PROT_READ, MAP_SHARED, fd, 0);
     if (base == NULL) {
@@ -500,7 +636,11 @@ ScanSpoolFileMap(const char *base, int bytes, int gmt, int iter, char *dpath, ui
 
 	    artbase = (char *)malloc(ah.ArtLen + 2);
 	    bzero(artbase, ah.ArtLen + 2);
-	    lseek(fd, b + ah.HeadLen, 0);
+	    lseek(fd, b + ah.HeadLen
+#ifdef __OpenBSD__
+                + SpoolFragmentBase
+#endif
+                , 0);
 	    if ((gzf = gzdopen(dup(fd), "r")) != NULL) {
 		if (gzread(gzf, artbase, len) != len)
 		    arthdrlen = 0;
@@ -551,6 +691,10 @@ ScanSpoolFileMap(const char *base, int bytes, int gmt, int iter, char *dpath, ui
 	    h.gmt = gmt;
 	    h.exp = 100 + spoolobj;
 	    h.boffset = b;
+#ifdef __OpenBSD__
+	    if (SpoolFragmentActive)
+		h.boffset += SpoolFragmentBase;
+#endif
 	    h.bsize = ah.StoreLen - 1;
 	    headOnly = 0;
 	    if (ah.ArtHdrLen == ah.ArtLen) {
@@ -574,8 +718,16 @@ ScanSpoolFileMap(const char *base, int bytes, int gmt, int iter, char *dpath, ui
 	    b++;
 	}
     }
-    if (!QuietOpt)
+    if (!QuietOpt
+#ifdef __OpenBSD__
+        && !SpoolFragmentActive
+#endif
+    )
 	printf("%d entries", count);
+#ifdef __OpenBSD__
+    if (SpoolFragmentActive)
+        SpoolFragmentCount += count;
+#endif
 }
 
 void
@@ -588,7 +740,14 @@ ScanSpoolFileMapOld(const char *base, int bytes, int gmt, int iter, char *dpath,
      * scan file
      */
 
-    printf(" (old format) ");
+    if (
+#ifdef __OpenBSD__
+        !SpoolFragmentActive
+#else
+        1
+#endif
+    )
+        printf(" (old format) ");
     while (b < bytes) {
 	int i = b;
 	int inHeader = 1;
@@ -645,6 +804,10 @@ ScanSpoolFileMapOld(const char *base, int bytes, int gmt, int iter, char *dpath,
 	    h.gmt = gmt;
 	    h.exp = 100 + spoolobj;
 	    h.boffset = b;
+#ifdef __OpenBSD__
+	    if (SpoolFragmentActive)
+		h.boffset += SpoolFragmentBase;
+#endif
 	    h.bsize = i - b;
 	    if (numLines == 0)
 		h.exp |= EXPF_HEADONLY;
@@ -669,8 +832,16 @@ ScanSpoolFileMapOld(const char *base, int bytes, int gmt, int iter, char *dpath,
 	}
 	b = i;
     }
-    if (!QuietOpt)
+    if (!QuietOpt
+#ifdef __OpenBSD__
+        && !SpoolFragmentActive
+#endif
+    )
 	printf("%d entries", count);
+#ifdef __OpenBSD__
+    if (SpoolFragmentActive)
+        SpoolFragmentCount += count;
+#endif
 }
 
 void
@@ -719,4 +890,3 @@ strSort(const void *s1, const void *s2)
     str2 = strstr(str2, "D.");
     return(strcmp(str1, str2));
 }  
-
