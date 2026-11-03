@@ -2475,10 +2475,15 @@ HandleDnsThread(ForkDesc *desc)
     }
 
     if (error1 == NULL) {
-        if ((r = ReadAccessCache()) < 0) {
-	    logit(LOG_CRIT, "Fatal: Unable to load access cache");
-	    exit(1);
-        }
+        /*
+         * A cache file that cannot be opened is logged by ReadAccessCache()
+         * and tried again on the next connection.  Keep the map we have
+         * (-1); without one (-2) SetAuthDetails() denies this client.
+         * Never exit the main process over it (D-165).
+         */
+        if ((r = ReadAccessCache()) < 0)
+	    logit(LOG_CRIT, "Unable to load access cache, %s",
+		    (r == -2) ? "no access map: client refused" : "keeping the old one");
         SetAuthDetails(&dres, dres.dr_ReaderName);
         vsname = dres.dr_VServerDef->vs_Name;
         dres.dr_TimeStart = time(NULL);
