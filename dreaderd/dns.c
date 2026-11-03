@@ -350,8 +350,11 @@ DnsTask(int fd, const char *id)
 			    fl |= DL_TEMP;
 		    }
 		}
-		/* hand the result back, for the cache and AUTHINFO */
-		if (strlen(hname) < sizeof(dres.dr_RevHost)) {
+		/*
+		 * Hand the result back, for the cache and AUTHINFO.  Not one
+		 * that failed temporarily: AUTHINFO must look up again.
+		 */
+		if ((fl & DL_TEMP) == 0 && strlen(hname) < sizeof(dres.dr_RevHost)) {
 		    dres.dr_Lookup = dl | fl;
 		    snprintf(dres.dr_RevHost, sizeof(dres.dr_RevHost), "%s", hname);
 		    bcopy(&dreq.dr_RSin, &dres.dr_LookupAddr,

@@ -279,7 +279,7 @@ typedef struct AccessMap {		/* Define an access mapping	*/
 #define DL_NOHOST	3		/* no reverse name		*/
 #define DL_MASK		0x0f
 #define DL_FRESH	0x10		/* worker did the lookups now	*/
-#define DL_TEMP		0x20		/* temporary failure: no caching */
+#define DL_TEMP		0x20		/* temporary failure: worker only */
 
 typedef struct DnsReq {
     struct sockaddr_storage dr_LSin;	/* local interface		*/

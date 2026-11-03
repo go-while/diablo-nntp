@@ -1611,6 +1611,7 @@ TrySendDns(int fd, struct sockaddr_in *rsin, DnsRes *dres)
 	 */
 	if (dres == NULL || dres->dr_ResultFlags != DR_SESSEXIT_RPT) {
 	    if (dres != NULL && (dres->dr_Lookup & DL_MASK) != DL_NONE &&
+		    (dres->dr_Lookup & DL_TEMP) == 0 &&
 		    memchr(dres->dr_RevHost, 0, sizeof(dres->dr_RevHost)) &&
 		    DnsCacheSameAddr((struct sockaddr *)&dres->dr_LookupAddr,
 					(struct sockaddr *)rsin)) {
