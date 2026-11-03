@@ -244,6 +244,22 @@ func TestCheckgroupsSenderAddress(t *testing.T) {
 		log := cgDone(t, s)
 		cgWant(t, s, log, []string{"e2e.test"}, []string{"e2e.new"})
 	})
+	t.Run("last angle address", func(t *testing.T) {
+		s := cgSiteArt(t, []string{"e2e.test"}, files(), cgArticle(t, "E2E <e2e@example.invalid> Other <other@example.invalid>", nil, body...))
+		log := cgDone(t, s)
+		cgWant(t, s, log, []string{"e2e.test", "e2e.new"}, nil)
+	})
+	t.Run("two bare addresses", func(t *testing.T) {
+		// become one word ("e2e@example.invalid__other@example.invalid"), as in INN
+		s := cgSiteArt(t, []string{"e2e.test"}, files(), cgArticle(t, "e2e@example.invalid, other@example.invalid", nil, body...))
+		log := cgDone(t, s)
+		cgWant(t, s, log, []string{"e2e.test"}, []string{"e2e.new"})
+	})
+	t.Run("empty Sender, From is used", func(t *testing.T) {
+		s := cgSiteArt(t, []string{"e2e.test"}, files(), cgArticle(t, "other@example.invalid", []string{"Sender: "}, body...))
+		log := cgDone(t, s)
+		cgWant(t, s, log, []string{"e2e.test", "e2e.new"}, nil)
+	})
 	t.Run("Sender wins, any case", func(t *testing.T) {
 		s := cgSiteArt(t, []string{"e2e.test"}, files(), cgArticle(t, "", []string{"Sender: Other <OTHER@Example.Invalid>"}, body...))
 		log := cgDone(t, s)
@@ -280,4 +296,40 @@ func TestCheckgroupsLineMatching(t *testing.T) {
 			t.Errorf("the check went to cg.log too:\n%s", log)
 		}
 	})
+}
+
+// TestCheckgroupsPgpverifyStatus: a signer that pgpverify prints counts only with exit status 0.
+// A fake path_home/dbin/pgpverify prints the key's name and exits 0 (the line acts) or 2 (the
+// signature could not be checked: the line leaves its groups alone).
+func TestCheckgroupsPgpverifyStatus(t *testing.T) {
+	for _, tc := range []struct {
+		status string
+		made   bool
+	}{{"0", true}, {"2", false}} {
+		t.Run("exit "+tc.status, func(t *testing.T) {
+			st, spool := spoolStore(t)
+			s := NewReaderSite(t, ReaderOptions{Spool: spool, Groups: []string{"e2e.test"}, NoStart: true,
+				Files: map[string]string{"dcontrol.ctl": cgLogLine + "checkgroups:*:*:verify-e2e-key\n"}})
+			if err := os.MkdirAll(filepath.Join(s.Dir, "dbin"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			s.WriteFile(t, "dbin/pgpverify", "#!/bin/sh\ncat > /dev/null\necho e2e-key\nexit "+tc.status+"\n")
+			if err := os.Chmod(filepath.Join(s.Dir, "dbin", "pgpverify"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			_, port, _ := strings.Cut(s.Addr, ":")
+			startReader(t, s, "[127.0.0.1]:"+port)
+			feedReader(t, s, st, "e2e.test", cgArticle(t, "", []string{"X-PGP-Sig: 1.0 Subject,Control,Message-ID e2e"},
+				"e2e.test\tThe test group.", "e2e.new\tNew."))
+			log := cgDone(t, s)
+			if tc.made {
+				cgWant(t, s, log, []string{"e2e.new"}, nil)
+			} else {
+				cgWant(t, s, log, nil, []string{"e2e.new"})
+				if !strings.Contains(log, "cannot verify, groups left alone") {
+					t.Errorf("control log:\n%s", log)
+				}
+			}
+		})
+	}
 }

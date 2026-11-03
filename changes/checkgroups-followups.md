@@ -1,0 +1,6 @@
+- `dreaderd` checkgroups follow-ups (go-while's review of #259):
+  - **pgpverify:** a signer counts only when pgpverify exits 0. Exit status 2 with output is "cannot verify", so the line leaves its groups alone.
+  - **Sender:** the sender is cleaned the way INN's controlchan (cleanaddr) does it. The comment (from the first `(` to the last `)`) is removed, the address in the last `<...>` is taken, other characters become `_`, and the result is lower-cased. An empty `Sender:` falls back to `From:`.
+  - **Logs:** the log name a line's own `=xxx` is compared against is recorded only after its lock and fdopen succeed.
+  - **Duplicate headers:** a control message with two `Sender:` headers is refused like two `From:`.
+  - Tests: `TestCheckgroupsSenderAddress` (last `<...>`, two bare addresses, empty `Sender:`) and `TestCheckgroupsPgpverifyStatus`.

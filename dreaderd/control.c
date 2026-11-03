@@ -111,6 +111,7 @@ ExecuteControl(Connection *conn, const char *ctlMsg, const char *art, int artLen
 	int l = 0;
 	int nControl = 0;
 	int nFrom = 0;
+	int nSender = 0;
 	int nNewsgroups = 0;
 	int nPGPSig = 0;
 
@@ -136,6 +137,7 @@ ExecuteControl(Connection *conn, const char *ctlMsg, const char *art, int artLen
 		++nFrom;
 		from = zallocStrTrim2(&conn->co_MemPool, 0, line + 5, l - 5);
 	    } else if (strncasecmp(line, "Sender:", 7) == 0) {
+		++nSender;
 		zfreeStr(&conn->co_MemPool, &sender);
 		sender = zallocStrTrim2(&conn->co_MemPool, 0, line + 7, l - 7);
 	    } else if (strncasecmp(line, "Newsgroups:", 11) == 0) {
@@ -158,11 +160,11 @@ ExecuteControl(Connection *conn, const char *ctlMsg, const char *art, int artLen
 
 	/*
 	 * A control message with any of these twice is never executed: the
-	 * article's Control: that is acted on, and the From: and Newsgroups:
-	 * matched against dcontrol.ctl, are the last ones, while a signature
-	 * covers the first.
+	 * article's Control: that is acted on, and the From:, Sender: and
+	 * Newsgroups: matched against dcontrol.ctl, are the last ones, while a
+	 * signature covers the first.
 	 */
-	if (nControl > 1 || nFrom > 1 || nNewsgroups > 1 || nPGPSig > 1)
+	if (nControl > 1 || nFrom > 1 || nSender > 1 || nNewsgroups > 1 || nPGPSig > 1)
 	    dupHeaders = 1;
     }
 
@@ -193,9 +195,9 @@ ExecuteControl(Connection *conn, const char *ctlMsg, const char *art, int artLen
 	;
     }
     if (badCmd == NULL && dupHeaders) {
-	badCmd = "duplicate Control:, From:, Newsgroups: or X-PGP-Sig: header\n";
+	badCmd = "duplicate Control:, From:, Sender:, Newsgroups: or X-PGP-Sig: header\n";
 	logit(LOG_NOTICE, "control %s %s refused: duplicate Control:, From:, "
-	    "Newsgroups: or X-PGP-Sig: header", cmd[0], cmd[1] ? cmd[1] : "");
+	    "Sender:, Newsgroups: or X-PGP-Sig: header", cmd[0], cmd[1] ? cmd[1] : "");
     }
 
     /*
@@ -237,7 +239,7 @@ ExecuteControl(Connection *conn, const char *ctlMsg, const char *art, int artLen
 	    hasDGP = hasXDGPSig;
 #endif
 	    if (badCmd == NULL)
-		badCmd = CgRun(conn, ctl, art, artLen, body, artLen - (body - art), sender ? sender : from, hasPGP, hasDGP);
+		badCmd = CgRun(conn, ctl, art, artLen, body, artLen - (body - art), (sender && sender[0]) ? sender : from, hasPGP, hasDGP);
 	} else if (ctl->ct_Flags & CTFF_VERIFY) {
 	    /*
 	     * On success, verification routine will clear other CTFF_VERIFY
@@ -564,11 +566,11 @@ ParseControl(Connection *conn, const char *cmd, const char *from, const char *ne
 		    ctl->ct_LogFo = NULL;
 		}
 
+		CtlLogName[0] = 0;
 		if (logFile[0] == '/')
 		    fd = xopen(O_RDWR|O_CREAT, 0640, "%s", logFile);
 		else
 		    fd = xopen(O_RDWR|O_CREAT, 0640, "%s/%s", PatExpand(LogHomePat), logFile);
-		snprintf(CtlLogName, sizeof(CtlLogName), "%s", (fd >= 0) ? logFile : "");
 
 		if (DebugOpt)
 		    printf("creating log file %s fd = %d\n", logFile, fd);
@@ -592,6 +594,7 @@ ParseControl(Connection *conn, const char *cmd, const char *from, const char *ne
 		    fseek(ctl->ct_LogFo, 0L, 2);
 		    ctl->ct_LogSeekPos = ftell(ctl->ct_LogFo);
 		    ctl->ct_Flags |= CTF_LOG;
+		    snprintf(CtlLogName, sizeof(CtlLogName), "%s", logFile);
 		}
 	    }
 	}
@@ -1079,42 +1082,51 @@ CgCompare(const void *a, const void *b)
 }
 
 /*
- * CgSenderAddr() - the one address of a Sender: or From: header that the
- * checkgroups lines are matched against, as INN's controlchan reduces it: the
- * address in <...>, else the first word that is not a (comment); in lower case.
+ * CgSenderAddr() - the sender as the checkgroups lines are matched against it,
+ * made as INN's controlchan (cleanaddr) makes it from Sender: or From:: the
+ * comment, from the first '(' to the last ')' with the white space around it,
+ * is removed; of a <...> the address in the last one is taken; every character
+ * but letters, digits and -+_.@% becomes '_', a leading '-' too; lower case.
  */
 static void
 CgSenderAddr(const char *hdr, char *buf, int size)
 {
-    const char *b = hdr ? strchr(hdr, '<') : NULL;
-    const char *e = NULL;
+    char tmp[1024];
+    const char *lp;
+    const char *rp;
+    const char *b;
+    const char *e;
     int n = 0;
 
-    if (b && (e = strchr(b + 1, '>')) != NULL) {
-	++b;
-    } else if ((b = hdr) != NULL) {
-	for (;;) {
-	    while (*b == ' ' || *b == '\t' || *b == ',')
-		++b;
-	    if (*b != '(')
-		break;
-	    {
-		int depth = 0;
+    snprintf(tmp, sizeof(tmp), "%s", hdr ? hdr : "");
+    {
+	char *open = strchr(tmp, '(');
+	char *close = open ? strrchr(open, ')') : NULL;
 
-		do {
-		    if (*b == '(')
-			++depth;
-		    else if (*b == ')')
-			--depth;
-		    ++b;
-		} while (*b && depth > 0);
-	    }
+	if (open && close) {
+	    while (open > tmp && (open[-1] == ' ' || open[-1] == '\t'))
+		--open;
+	    ++close;
+	    while (*close == ' ' || *close == '\t')
+		++close;
+	    memmove(open, close, strlen(close) + 1);
 	}
-	for (e = b; *e && *e != ' ' && *e != '\t' && *e != ',' && *e != '('; ++e)
-	    ;
     }
-    while (b && b < e && n < size - 1)
-	buf[n++] = tolower((int)(uint8)*b++);
+    b = tmp;
+    e = tmp + strlen(tmp);
+    if ((lp = strrchr(tmp, '<')) != NULL && (rp = strrchr(lp, '>')) != NULL) {
+	b = lp + 1;
+	e = rp;
+    }
+    for (; b < e && n < size - 1; ++b) {
+	int c = (uint8)*b;
+
+	if (!isalnum(c) && strchr("-+_.@%", c) == NULL)
+	    c = '_';
+	if (n == 0 && c == '-')
+	    c = '_';
+	buf[n++] = tolower(c);
+    }
     buf[n] = 0;
 }
 

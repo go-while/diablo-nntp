@@ -107,7 +107,8 @@ PGPSigner(const char *art, int artLen, char *signer, int signerSize, int *pcanno
 	    buf[n] = 0;
 
 	    /*
-	     * No answer: pgpverify's exit status says why.
+	     * pgpverify's exit status says whether the answer is a signer,
+	     * or why there is none.
 	     */
 	    close(fds[0]);
 	    fds[0] = -1;
@@ -116,8 +117,20 @@ PGPSigner(const char *art, int artLen, char *signer, int signerSize, int *pcanno
 
 		waitpid(pid, &status, 0);
 		pid = -1;
-		if (n == 0 && WIFEXITED(status)) {
+		if (!WIFEXITED(status)) {
+		    ;			/* killed: "Unable to exec" stands */
+		} else if (WEXITSTATUS(status) == 0 && n) {
+		    /*
+		     * a good signature: the answer is the signer
+		     */
+		    snprintf(signer, signerSize, "%s", buf);
+		    badCmd = NULL;
+		    cannot = 0;
+		} else {
 		    switch (WEXITSTATUS(status)) {
+		    case 0:
+			badCmd = "pgp verification gave no signer\n";
+			break;
 		    case 1:
 			badCmd = "pgp signature header (X-PGP-Sig) missing\n";
 			cannot = 0;
@@ -131,15 +144,6 @@ PGPSigner(const char *art, int artLen, char *signer, int signerSize, int *pcanno
 			break;
 		    }
 		}
-	    }
-
-	    /*
-	     * if non-null answer, pgp-verify succeeded
-	     */
-	    if (n) {
-		snprintf(signer, signerSize, "%s", buf);
-		badCmd = NULL;
-		cannot = 0;
 	    }
 	}
 	if (fds[0] >= 0)
