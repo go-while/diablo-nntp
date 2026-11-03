@@ -31,6 +31,7 @@
  */
 
 #include "defs.h"
+#include <poll.h>	/* lib/defs.h includes it only when USE_POLL is set */
 
 #if NEED_TERMIOS
 #include <sys/termios.h>
@@ -84,6 +85,7 @@ void ArticleFileInit(void);
 int ArticleFile(History *h, off_t *pbpos);
 void ArticleFileCloseAll(void);
 void ArticleFileCacheFlush(time_t t);
+void ArticleFileIdle(Buffer *bi);
 void ArticleFileClose(int i);
 void ArticleFileTrunc(int artFd, off_t bpos);
 void ArticleFileSetSize(int artFd);
@@ -1923,9 +1925,12 @@ DoSession(int fd, int count)
 					DOpts.FeederHostName);
     fflush(fo);
 
-    while (!SessionExitReq &&
-	    (buf = bgets(bi, NULL)) != NULL && buf != (char *)-1) {
+    while (!SessionExitReq) {
 	char *cmd;
+
+	ArticleFileIdle(bi);
+	if ((buf = bgets(bi, NULL)) == NULL || buf == (char *)-1)
+	    break;
 
 
 	if (DebugOpt > 2) {
@@ -5007,10 +5012,52 @@ ArticleFileCacheFlush(time_t t)
     if (t - AFFlushTime < 600)
 	return;
     for (i = 0; i < MAXDIABLOFDCACHE; ++i) {
-	if (AFAry[i].af_Fd >= 0 && (t - AFAry[i].af_OpenTime) >= 600)
+	struct stat st;
+
+	if (AFAry[i].af_Fd < 0)
+	    continue;
+	/* old, or removed by dexpire: its space is only freed when closed */
+	if ((t - AFAry[i].af_OpenTime) >= 600 ||
+	    (fstat(AFAry[i].af_Fd, &st) == 0 && st.st_nlink == 0))
 	    ArticleFileClose(i);
     }
     AFFlushTime = t;
+}
+
+/*
+ * ArticleFileIdle() - called before the session reads its next command.
+ * The cached spool files are only flushed when an article arrives, so a
+ * connection that goes quiet (a peer backing off from a full disk, or
+ * sending only CHECKs) kept them open, and the space of the ones dexpire
+ * removed could not be freed.  When no input is buffered and none arrives
+ * within FEED_IDLE_CLOSE seconds, close them all; a busy feed never waits
+ * that long.
+ */
+#define FEED_IDLE_CLOSE	10	/* seconds */
+
+void
+ArticleFileIdle(Buffer *bi)
+{
+    struct pollfd pfd;
+    int i;
+
+    ArticleFileCacheFlush(time(NULL));
+    for (i = 0; i < MAXDIABLOFDCACHE; ++i)
+	if (AFAry[i].af_Fd >= 0)
+	    break;
+    if (i == MAXDIABLOFDCACHE || bi->bu_Beg < bi->bu_End)
+	return;
+#ifdef	USE_ZLIB
+    if (bi->bu_CBuf && bi->bu_CBuf->z_str.avail_in > 0)
+	return;		/* compressed input not yet inflated */
+#endif
+    pfd.fd = bi->bu_Fd;
+    pfd.events = POLLIN;
+    pfd.revents = 0;
+    if (poll(&pfd, 1, FEED_IDLE_CLOSE * 1000) == 0) {
+	ArticleFileCloseAll();
+	AFNum = 0;	/* every entry is closed: start the cache afresh */
+    }
 }
 
 void
