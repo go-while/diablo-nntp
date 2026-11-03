@@ -1120,7 +1120,7 @@ PostRefusedGroup(char *groups, char *pstatus)
 	    const char *rec;
 	    int recLen;
 
-	    rec = KPDBReadRecord(KDBActive, groups + i, KP_LOCK, &recLen);
+	    rec = KPDBReadRecord(KDBActive, groups + i, KP_LOCK_RO, &recLen);
 	    if (rec != NULL) {
 		int slen = 0;
 		const char *s = KPDBGetField(rec, recLen, "S", &slen, NULL);
@@ -1454,7 +1454,7 @@ CheckGroupModeration(const char *group)
     int recLen;
     int r = -1;
 
-    rec = KPDBReadRecord(KDBActive, group, KP_LOCK, &recLen);
+    rec = KPDBReadRecord(KDBActive, group, KP_LOCK_RO, &recLen);
     if (rec != NULL) {
         int slen;
         const char *s = KPDBGetField(rec, recLen, "S", &slen, NULL);
@@ -1483,7 +1483,7 @@ CheckValidRestrictedGroup(const char *group)
     if (DOpts.ReaderAutoAddToActive)
 	r = 0;
 
-    rec = KPDBReadRecord(KDBActive, group, KP_LOCK, &recLen);
+    rec = KPDBReadRecord(KDBActive, group, KP_LOCK_RO, &recLen);
 
     if (rec != NULL) {
         int slen;

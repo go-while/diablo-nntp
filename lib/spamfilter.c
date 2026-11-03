@@ -475,7 +475,22 @@ spamFilterTable(time_t t, FilterInfo *fi, hash_t mhv, md5hash_t *hv, int lines)
     int dhits = 0;
     int isdup = 1;
 
-    hflock(fi->Fd, off, XLOCK_EX);
+    /*
+     * The slot is a read-modify-write: without its lock, pass the
+     * article and leave the slot alone.
+     */
+    if (hflock(fi->Fd, off, XLOCK_EX) < 0) {
+	static unsigned int fails;
+	int error = errno;
+
+	/* logged the 1st, 2nd, 4th, 8th, ... time */
+	++fails;
+	if ((fails & (fails - 1)) == 0)
+	    logit(LOG_ERR, "SpamFilter: unable to lock slot %d of %s: %s (%u times)",
+		i, PatDbExpand((fi == &NphFilter) ? SpamNphCachePat :
+		SpamBodyCachePat), strerror(error), fails);
+	return(0);
+    }
 
     t0 = f->f_Time;
 

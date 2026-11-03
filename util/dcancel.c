@@ -750,7 +750,16 @@ again:
 	     * we have to re-open it.
 	     */
 
-	    hflock(ov->ov_OFd, 4, XLOCK_SH);
+	    if (hflock(ov->ov_OFd, 4, XLOCK_SH) < 0) {
+		int error = errno;
+
+		logit(LOG_ERR, "Error on overview lock for group %s: %s (%s)",
+						group, path, strerror(error));
+		fprintf(stderr, "%s: overview lock failed: %s\n",
+						group, strerror(error));
+		close(ov->ov_OFd);
+		return(NULL);
+	    }
 
 	    if (fstat(ov->ov_OFd, &st) < 0 || st.st_nlink == 0) {
 		hflock(ov->ov_OFd, 4, XLOCK_UN);
@@ -782,7 +791,17 @@ again:
 		r = -1;
 	    }
 	    if (r != 0) {
-		hflock(ov->ov_OFd, 0, XLOCK_EX);
+		if (hflock(ov->ov_OFd, 0, XLOCK_EX) < 0) {
+		    int error = errno;
+
+		    logit(LOG_ERR, "Error on overview lock for group %s: %s (%s)",
+						group, path, strerror(error));
+		    fprintf(stderr, "%s: overview lock failed: %s\n",
+						group, strerror(error));
+		    hflock(ov->ov_OFd, 4, XLOCK_UN);
+		    close(ov->ov_OFd);
+		    return(NULL);
+		}
 		/*
 		 * we have to test again after we got the lock in case
 		 * another process had a lock and adjusted the file.  Use the
@@ -894,7 +913,11 @@ CancelOverArt(OverInfo *ov, artno_t artNo)
 	off_t ovpos = 0;
 	const OverArt *oa;
 
-	hflock(ov->ov_OFd, 0, XLOCK_EX);
+	if (hflock(ov->ov_OFd, 0, XLOCK_EX) < 0) {
+	    fprintf(stderr, "%s: overview lock failed: %s\n",
+					ov->ov_Group, strerror(errno));
+	    return(0);
+	}
 	oa = GetOverArt(ov, artNo, &ovpos);
 	if (OA_ARTNOEQ(artNo, oa->oa_ArtNo)) {
 	    OverArt copy = *oa;

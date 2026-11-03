@@ -104,7 +104,13 @@ main(int ac, char **av) {
 	fprintf(stderr, "Can not open cache hits file (%s)\n", PatDbExpand(CacheHitsPat));
 	exit(1);
     }
-    hflock(CacheHitsFD, 0, XLOCK_EX);
+    if (hflock(CacheHitsFD, 0, XLOCK_EX) < 0) {
+	int error = errno;
+
+	fprintf(stderr, "Can not lock cache hits file %s (%s)\n",
+	    PatDbExpand(CacheHitsPat), strerror(error));
+	exit(1);
+    }
     r = read(CacheHitsFD, &chh, sizeof(struct CacheHitHead));
     /* the same checks as dreaderd, and room for one entry */
     if (!CacheHitsUsable(CacheHitsFD, &chh, r) ||

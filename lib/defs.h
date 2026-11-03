@@ -664,6 +664,7 @@ typedef struct OverExpire {
 #define XLOCK_EX	2
 #define XLOCK_UN	3
 #define XLOCK_NB	0x10
+#define XLOCK_INTR	0x20	/* a signal ends a blocking wait (alarm timeout) */
 
 #define MAXFEEDTABLE	256
 

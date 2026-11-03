@@ -269,7 +269,7 @@ NNStartListOverview(Connection *conn, const char *hdr, const char *ran, const ch
 	    int recLen;
 
 	    /* the group's range now, not as of GROUP */
-	    if ((rec = KPDBReadRecord(KDBActive, conn->co_GroupName, KP_LOCK, &recLen)) != NULL) {
+	    if ((rec = KPDBReadRecord(KDBActive, conn->co_GroupName, KP_LOCK_RO, &recLen)) != NULL) {
 		lbeg = strtoll(KPDBGetField(rec, recLen, "NB", NULL, "0"), NULL, 10);
 		lend = strtoll(KPDBGetField(rec, recLen, "NE", NULL, "0"), NULL, 10);
 		KPDBUnlock(KDBActive, rec);
@@ -398,7 +398,7 @@ NNStartListOverviewRange(Connection *conn)
     if (conn->co_ListEndNo < 0)
 	conn->co_ListEndNo = 0;
 
-    if ((rec = KPDBReadRecord(KDBActive, conn->co_GroupName, KP_LOCK, &recLen)) == NULL) {
+    if ((rec = KPDBReadRecord(KDBActive, conn->co_GroupName, KP_LOCK_RO, &recLen)) == NULL) {
 	if (conn->co_ArtMode == COM_NEWNEWS) {
 	    NNListNewNews(conn);	/* no such group: the next one */
 	    return;

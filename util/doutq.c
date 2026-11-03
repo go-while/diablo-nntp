@@ -143,8 +143,18 @@ ScanSeq(char *name, char *host, int m)
 	if (snprintf(path, sizeof(path), "%s/%s.S%05d", PatExpand(DQueueHomePat),
 	    name, i) >= (int)sizeof(path))
 	    break;
-	if ((fd = open(path, O_RDWR)) >= 0) {
-	    if (xflock(fd, XLOCK_EX|XLOCK_NB) < 0) {
+	/*
+	 * A dnewslink working on the file holds a write lock on all of it.
+	 * Ask with F_GETLK, as diablo's OUTQ does: taking the lock would
+	 * make a dnewslink starting on the file in that moment skip it,
+	 * and needs write access to the queue.
+	 */
+	if ((fd = open(path, O_RDONLY)) >= 0) {
+	    struct flock fl = { 0 };
+
+	    fl.l_type = F_WRLCK;
+	    fl.l_whence = SEEK_SET;
+	    if (fcntl(fd, F_GETLK, &fl) == 0 && fl.l_type != F_UNLCK) {
 		printf("%05d ", i);
 		c = 0;
 	    }
