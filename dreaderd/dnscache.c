@@ -10,13 +10,16 @@
  *	drops the entry closest to expiry.  Main is single-threaded, so
  *	there is no locking.  Entries with a name use readerdnscachettl,
  *	entries without one or with a forward mismatch readerdnscachenegttl.
- *	Temporary lookup failures are not cached.
+ *	An entry keeps the (monotonic) time it was stored and is checked
+ *	against the current TTL, so a lowered TTL applies at once.  Lookups
+ *	that failed, or may have failed, temporarily are not cached.
  */
 
 #include "defs.h"
 
 Prototype int DnsCacheGet(const struct sockaddr *sa, int *lookup, char *host, size_t hostlen);
-Prototype void DnsCacheStore(const struct sockaddr *sa, int lookup, const char *host);
+Prototype void DnsCacheStore(const struct sockaddr *sa, int lookup, const char *host, unsigned int gen);
+Prototype unsigned int DnsCacheGen(void);
 Prototype int DnsCacheSameAddr(const struct sockaddr *a, const struct sockaddr *b);
 Prototype void DnsCacheFlush(void);
 Prototype void DnsCacheStats(FILE *fo);
@@ -31,13 +34,16 @@ typedef struct DcKey {
 
 typedef struct DcEnt {
     DcKey dc_Key;
-    time_t dc_Expire;
+    time_t dc_Stored;			/* dcNow() when stored		*/
     int dc_Lookup;			/* DL_*, DL_NONE = empty slot	*/
     char dc_Host[DNSHOSTLEN];
 } DcEnt;
 
 static DcEnt *DcTab;
 static int DcSets;
+static int DcAllocFailed;
+static unsigned int DcSeed;
+static unsigned int DcGen;		/* bumped by a flush		*/
 static unsigned long DcHits, DcMisses, DcStores, DcEvicts, DcUsed;
 
 /*
@@ -86,7 +92,7 @@ dcKeyEq(const DcKey *a, const DcKey *b)
 static unsigned int
 dcHash(const DcKey *k)
 {
-    unsigned int h = 2166136261U;
+    unsigned int h = 2166136261U ^ DcSeed;
     int i;
 
     h = (h ^ k->k_Family) * 16777619U;
@@ -104,26 +110,54 @@ dcTtl(int lookup)
 				DOpts.ReaderDnsCacheNegTTL);
 }
 
+/* seconds from a clock that a wall-clock step does not move */
+static time_t
+dcNow(void)
+{
+#ifdef CLOCK_MONOTONIC
+    struct timespec ts;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) == 0)
+	return(ts.tv_sec);
+#endif
+    return(time(NULL));
+}
+
+/* seconds an entry has left under the current TTLs, <= 0 = expired */
+static time_t
+dcLeft(const DcEnt *e, time_t now)
+{
+    int ttl = dcTtl(e->dc_Lookup);
+
+    if (ttl <= 0 || now < e->dc_Stored)
+	return(0);
+    return(e->dc_Stored + ttl - now);
+}
+
 /*
- * The size is read once, on first use: readerdnscachesize entries,
- * rounded down to a multiple of DC_WAYS (at least one set).
+ * The size is read on first use: readerdnscachesize entries, rounded down
+ * to a multiple of DC_WAYS (at least one set).  A failed allocation is
+ * logged once and not retried until a flush.
  */
 static int
 dcAlloc(void)
 {
     if (DcTab != NULL)
 	return(1);
-    if (DOpts.ReaderDnsCacheSize <= 0)
+    if (DOpts.ReaderDnsCacheSize <= 0 || DcAllocFailed)
 	return(0);
     DcSets = DOpts.ReaderDnsCacheSize / DC_WAYS;
     if (DcSets < 1)
 	DcSets = 1;
     if ((DcTab = calloc((size_t)DcSets * DC_WAYS, sizeof(DcEnt))) == NULL) {
-	logit(LOG_ERR, "DNS cache: no memory for %d entries",
+	logit(LOG_ERR, "DNS cache: no memory for %d entries, cache off",
 	    DcSets * DC_WAYS);
 	DcSets = 0;
+	DcAllocFailed = 1;
 	return(0);
     }
+    DcSeed = (unsigned int)time(NULL) * 2654435761U ^ (unsigned int)getpid();
+    DcUsed = 0;
     return(1);
 }
 
@@ -141,13 +175,12 @@ DnsCacheGet(const struct sockaddr *sa, int *lookup, char *host, size_t hostlen)
 
     if (DcTab == NULL || !dcKey(sa, &k))
 	return(0);
-    now = time(NULL);
+    now = dcNow();
     e = &DcTab[(size_t)(dcHash(&k) % (unsigned int)DcSets) * DC_WAYS];
     for (i = 0; i < DC_WAYS; ++i, ++e) {
 	if (e->dc_Lookup == DL_NONE || !dcKeyEq(&e->dc_Key, &k))
 	    continue;
-	if (e->dc_Expire <= now || dcTtl(e->dc_Lookup) <= 0 ||
-		strlen(e->dc_Host) >= hostlen)
+	if (dcLeft(e, now) <= 0 || strlen(e->dc_Host) >= hostlen)
 	    break;
 	*lookup = e->dc_Lookup;
 	memcpy(host, e->dc_Host, strlen(e->dc_Host) + 1);
@@ -158,23 +191,30 @@ DnsCacheGet(const struct sockaddr *sa, int *lookup, char *host, size_t hostlen)
     return(0);
 }
 
+/* the flush generation; a result looked up before a flush is not stored */
+unsigned int
+DnsCacheGen(void)
+{
+    return(DcGen);
+}
+
 void
-DnsCacheStore(const struct sockaddr *sa, int lookup, const char *host)
+DnsCacheStore(const struct sockaddr *sa, int lookup, const char *host, unsigned int gen)
 {
     DcKey k;
     DcEnt *set;
     DcEnt *slot = NULL;
     time_t now;
-    int ttl = dcTtl(lookup);
     size_t len = strlen(host);
     int i;
 
-    if (ttl <= 0 || lookup < DL_HOST || lookup > DL_NOHOST ||
+    if (gen != DcGen || dcTtl(lookup) <= 0 ||
+	    lookup < DL_HOST || lookup > DL_NOHOST ||
 	    len >= DNSHOSTLEN || (lookup != DL_NOHOST && len == 0))
 	return;
     if (!dcKey(sa, &k) || !dcAlloc())
 	return;
-    now = time(NULL);
+    now = dcNow();
     set = &DcTab[(size_t)(dcHash(&k) % (unsigned int)DcSets) * DC_WAYS];
 
     /* same key, else an empty or expired slot, else closest to expiry */
@@ -191,19 +231,19 @@ DnsCacheStore(const struct sockaddr *sa, int lookup, const char *host)
 	}
     }
     for (i = 0; slot == NULL && i < DC_WAYS; ++i) {
-	if (set[i].dc_Expire <= now)
+	if (dcLeft(&set[i], now) <= 0)
 	    slot = &set[i];
     }
     if (slot == NULL) {
 	slot = &set[0];
 	for (i = 1; i < DC_WAYS; ++i) {
-	    if (set[i].dc_Expire < slot->dc_Expire)
+	    if (dcLeft(&set[i], now) < dcLeft(slot, now))
 		slot = &set[i];
 	}
 	++DcEvicts;
     }
     slot->dc_Key = k;
-    slot->dc_Expire = now + ttl;
+    slot->dc_Stored = now;
     slot->dc_Lookup = lookup;
     memcpy(slot->dc_Host, host, len + 1);
     ++DcStores;
@@ -218,12 +258,19 @@ DnsCacheSameAddr(const struct sockaddr *a, const struct sockaddr *b)
     return(dcKey(a, &ka) && dcKey(b, &kb) && dcKeyEq(&ka, &kb));
 }
 
+/*
+ * Free the table (it is allocated again on the next store) and bump the
+ * generation, so lookups already in flight are not stored.
+ */
 void
 DnsCacheFlush(void)
 {
-    if (DcTab != NULL)
-	memset(DcTab, 0, (size_t)DcSets * DC_WAYS * sizeof(DcEnt));
+    free(DcTab);
+    DcTab = NULL;
+    DcSets = 0;
     DcUsed = 0;
+    DcAllocFailed = 0;
+    ++DcGen;
 }
 
 void

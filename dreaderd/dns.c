@@ -354,6 +354,7 @@ DnsTask(int fd, const char *id)
 		 * Hand the result back, for the cache and AUTHINFO.  Not one
 		 * that failed temporarily: AUTHINFO must look up again.
 		 */
+		dres.dr_CacheGen = dreq.dr_CacheGen;
 		if ((fl & DL_TEMP) == 0 && strlen(hname) < sizeof(dres.dr_RevHost)) {
 		    dres.dr_Lookup = dl | fl;
 		    snprintf(dres.dr_RevHost, sizeof(dres.dr_RevHost), "%s", hname);

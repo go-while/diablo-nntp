@@ -1390,7 +1390,9 @@ DoCommand(int ufd)
 		} else if (strcmp(s1, "version") == 0) {
 		    fprintf(fo, "200 DREADERD Version %s - %s\n", VERS, SUBREV);
 		} else if (strcmp(s1, "dnscache") == 0) {
-		    if (s2 != NULL && strncmp(s2, "flush", 5) == 0) {
+		    char *a2 = (s2 != NULL) ? strtok(s2, " \t\r") : NULL;
+
+		    if (a2 != NULL && strcmp(a2, "flush") == 0) {
 			DnsCacheFlush();
 			fprintf(fo, "200 DNS cache flushed\n");
 		    } else {
@@ -1610,6 +1612,7 @@ TrySendDns(int fd, struct sockaddr_in *rsin, DnsRes *dres)
 	 * DNS cache.
 	 */
 	if (dres == NULL || dres->dr_ResultFlags != DR_SESSEXIT_RPT) {
+	    dreq.dr_CacheGen = DnsCacheGen();
 	    if (dres != NULL && (dres->dr_Lookup & DL_MASK) != DL_NONE &&
 		    (dres->dr_Lookup & DL_TEMP) == 0 &&
 		    memchr(dres->dr_RevHost, 0, sizeof(dres->dr_RevHost)) &&
@@ -1950,7 +1953,8 @@ HandleDnsThread(ForkDesc *desc)
     /* the worker did the lookups: remember the result */
     if ((dres.dr_Lookup & (DL_FRESH | DL_TEMP)) == DL_FRESH)
 	DnsCacheStore((struct sockaddr *)&dres.dr_LookupAddr,
-			dres.dr_Lookup & DL_MASK, dres.dr_RevHost);
+			dres.dr_Lookup & DL_MASK, dres.dr_RevHost,
+			dres.dr_CacheGen);
 
     if (isdigit(dres.dr_ReaderName[0]) && isdigit(dres.dr_ReaderName[1]) && isdigit(dres.dr_ReaderName[2])) {
 	p = dres.dr_ReaderName;

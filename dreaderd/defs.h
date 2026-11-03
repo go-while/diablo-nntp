@@ -288,6 +288,7 @@ typedef struct DnsReq {
     char dr_AuthPass[64];		/* authinfo pass		*/
     int dr_Lookup;			/* DL_*: known lookup result	*/
     char dr_RevHost[DNSHOSTLEN];	/* its name (DL_HOST/MISMATCH)	*/
+    unsigned int dr_CacheGen;		/* DNS cache flush generation	*/
     int dr_Flags;			/* flags to pass res->req->res	*/
     int dr_ResultFlags;			/* see #defines below		*/
     double dr_ByteCount;		/* how many bytes sent - stats	*/
@@ -342,6 +343,7 @@ typedef struct DnsRes {
     int dr_Lookup;			/* DL_*: name lookup result	*/
     char dr_RevHost[DNSHOSTLEN];	/* reverse name (DL_HOST/MISMATCH) */
     struct sockaddr_storage dr_LookupAddr; /* address it is for	*/
+    unsigned int dr_CacheGen;		/* from the DnsReq		*/
     int dr_DnsMismatch;			/* Fwd/Rev DNS don't match	*/
     int dr_ResultFlags;			/* see #defines above		*/
     int dr_StaticAuth;			/* don't change auth details	*/
