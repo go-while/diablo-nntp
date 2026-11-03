@@ -89,9 +89,10 @@ and creates the new history file with ``.new'' tagged into the end.
 .PP
 .B \-m
 .PP
-By default, dhisexpire can only rename files on the same filesystem
-Using this option, causes dhisexpire to do a full copy of the file
-rather than a rename, allowing the file to be moved across filesystems.
+By default, dhisexpire can only rename files on the same filesystem.
+With this option it copies the new history next to the old one and
+renames the copy into place, so the new history can be on another
+filesystem. A backup on another filesystem is copied as well.
 .PP
 .B \-o old-dhistory-file
 .PP
