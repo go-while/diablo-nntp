@@ -221,7 +221,7 @@ SelectGroup(Connection *conn, const char *group)
 
     if (groups != NULL && !GroupFindWild(group, groups))
 	return(-1);
-    if ((rec = KPDBReadRecord(KDBActive, group, KP_LOCK, &recLen)) == NULL)
+    if ((rec = KPDBReadRecord(KDBActive, group, KP_LOCK_RO, &recLen)) == NULL)
 	return(-1);
     artBeg = strtoll(KPDBGetField(rec, recLen, "NB", NULL, "-1"), NULL,10);
     artEnd = strtoll(KPDBGetField(rec, recLen, "NE", NULL, "-1"), NULL,10);

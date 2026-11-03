@@ -138,13 +138,39 @@ KPDBFatalIO(KPDB *kpdb, const char *operation)
  * KPDBLockRec() - lock a record, or the append lock at offset 4, for a
  * read-modify-write.  Without the lock a number could be handed out twice
  * or two appends mixed, and calling the record missing would make callers
- * create it again, so a failure is fatal like a failed write.
+ * create it again, so a failure is fatal like a failed write.  ENOLCK
+ * (lock table full, lockd) may pass: try a few times first.  A deadlock
+ * (EDEADLK) stays while we hold our locks: no retry.
  */
+#define KP_LOCK_TRIES	5
+
 static void
 KPDBLockRec(KPDB *kpdb, off_t offset)
 {
-    if (hflock(kpdb->kp_Fd, offset, XLOCK_EX) < 0)
-	KPDBFatalIO(kpdb, (offset == 4) ? "append lock" : "record lock");
+    int tries = 0;
+
+    while (hflock(kpdb->kp_Fd, offset, XLOCK_EX) < 0) {
+	if (errno != ENOLCK || ++tries >= KP_LOCK_TRIES)
+	    KPDBFatalIO(kpdb, (offset == 4) ? "append lock" : "record lock");
+	usleep(100000);
+    }
+}
+
+/*
+ * KPDBLockWarn() - a record lock taken only to read failed: the caller
+ * reads unlocked (the worst case is a torn read).  Logged the 1st, 2nd,
+ * 4th, 8th, ... time.
+ */
+static void
+KPDBLockWarn(KPDB *kpdb)
+{
+    static unsigned int fails;
+    int error = errno;
+
+    ++fails;
+    if ((fails & (fails - 1)) == 0)
+	logit(LOG_ERR, "KPDB record lock failed for %s: %s (%u times, read unlocked)",
+	    kpdb->kp_FileName, strerror(error), fails);
 }
 
 /*
@@ -535,17 +561,13 @@ KPDBGetFieldDecode(const char *rec, int recLen, const char *tok, int *plen, cons
 
 /*
  * KPDBLock() - lock a record read before, to read it whole (LIST).  A
- * failed lock risks only a torn read: say so once and go on.
+ * failed lock risks only a torn read: log it and go on.
  */
 void 
 KPDBLock(KPDB *kpdb, const char *rec)
 {
-    static int logged;
-
-    if (hflock(kpdb->kp_Fd, rec - kpdb->kp_MapBase, XLOCK_EX) < 0 &&
-	logged++ == 0)
-	logit(LOG_ERR, "KPDB record lock failed for %s: %s",
-	    kpdb->kp_FileName, strerror(errno));
+    if (hflock(kpdb->kp_Fd, rec - kpdb->kp_MapBase, XLOCK_EX) < 0)
+	KPDBLockWarn(kpdb);
 }
 
 void 
@@ -1159,10 +1181,16 @@ again:
 	}
     }
 
-    if (found == 0 && lockMe == KP_LOCK) {
+    if (found == 0 && (lockMe == KP_LOCK || lockMe == KP_LOCK_RO)) {
 	off_t lockoff = kpdb->kp_Cache - kpdb->kp_MapBase;
+	int locked = 1;
 
-	KPDBLockRec(kpdb, lockoff);
+	if (lockMe == KP_LOCK) {
+	    KPDBLockRec(kpdb, lockoff);
+	} else if (hflock(kpdb->kp_Fd, lockoff, XLOCK_EX) < 0) {
+	    KPDBLockWarn(kpdb);
+	    locked = 0;
+	}
 
 	/*
 	 * While we waited for the lock, another process may have replaced
@@ -1176,7 +1204,8 @@ again:
 	 * and this loop does not spin.
 	 */
 	if (kpdb->kp_Cache[0] != '+') {
-	    hflock(kpdb->kp_Fd, lockoff, XLOCK_UN);
+	    if (locked)
+		hflock(kpdb->kp_Fd, lockoff, XLOCK_UN);
 	    kpdb->kp_Cache = NULL;
 	    kpdb->kp_CacheLen = 0;
 	    forceCheck = 1;

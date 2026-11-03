@@ -917,7 +917,7 @@ GetOverInfo(const char *group)
 	{
 	    const char *rec;
 	    int recLen;
-	    if ((rec = KPDBReadRecord(KDBActive, group, KP_LOCK, &recLen)) == NULL) {
+	    if ((rec = KPDBReadRecord(KDBActive, group, KP_LOCK_RO, &recLen)) == NULL) {
 		FreeOverInfo(ov);
 		return(NULL);
 	    }
@@ -1461,7 +1461,7 @@ FindCanceledMsg(const char *group, const char *msgid, artno_t *partNo, int *pval
 	if ((ov = GetOverInfo(group)) != NULL) {
 	    hash_t hv = hhash(msgid);
 
-	    if ((rec = KPDBReadRecord(KDBActive, group, KP_LOCK, &recLen)) != NULL) {
+	    if ((rec = KPDBReadRecord(KDBActive, group, KP_LOCK_RO, &recLen)) != NULL) {
 		artno_t artBeg;
 		artno_t artEnd;
 
