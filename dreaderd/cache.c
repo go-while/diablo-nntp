@@ -215,15 +215,28 @@ CreateCache(Connection *conn)
     } else if (conn->co_Desc->d_Cache == CACHE_SCOREBOARD) {
 	struct CacheHitEntry *che;
 	int new;
+	int readArt;
+	uint32 hits;
 	double read;
 	/* Check cache hits ratio */
 	che = UpdateCacheHits(conn->co_SReq->sr_Group, conn->co_SReq->sr_GrpIter, conn->co_SReq->sr_endNo, 0);
 	if (che==NULL) return;
-	read = che->che_ReadArt+che->che_Hits;
-	new = che->che_NewArt+conn->co_SReq->sr_endNo-che->che_LastHi;
+	/*
+	 * Other reader processes and dexpirescoring change these counters
+	 * all the time: read each once.  The read just counted keeps
+	 * che_ReadArt at 1 or more only if nothing else touched it (the
+	 * "partly cached" correction below, a dexpirescoring decay), so
+	 * never divide by less than 1.
+	 */
+	readArt = CH_LOAD(&che->che_ReadArt);
+	hits = CH_LOAD(&che->che_Hits);
+	if (readArt < 1)
+	    readArt = 1;
+	read = readArt+hits;
+	new = CH_LOAD(&che->che_NewArt)+conn->co_SReq->sr_endNo-CH_LOAD(&che->che_LastHi);
 	if (new < 1) new=1;
 	if ( (read / new) > conn->co_Desc->d_ReadNewRatio) {
-	    if ((che->che_Hits/che->che_ReadArt) > conn->co_Desc->d_CacheReadRatio) {
+	    if ((hits/(uint32)readArt) > conn->co_Desc->d_CacheReadRatio) {
 		/* cache on */
 		if ((fd = open(tmp, O_RDWR|O_CREAT, 0644)) < 0) {
 		    return;	/* error	     */
@@ -235,8 +248,8 @@ CreateCache(Connection *conn)
 		    return;
 		} else {
 		    /* correcting stat */
-		    che->che_ReadArt--;
-		    che->che_Hits++;
+		    CH_ADD(&che->che_ReadArt, -1);
+		    CH_ADD(&che->che_Hits, 1);
 		    /* lazy cache in scoring mode, no return */
 		}
 	    }
@@ -522,18 +535,28 @@ DumpArticleFromCache(Connection *conn, const char *map, int size, int grpIter, a
     }
 }
 
+/*
+ * FindCacheHitEntry() - look a group up without the file lock (see the
+ * CH_* macros in lib/defs.h).  A link past the end of this process's
+ * mapping (another process grew the file) ends the walk; the caller then
+ * goes on to CreateCacheHitEntry(), which remaps and looks again under
+ * the lock.
+ */
 struct CacheHitEntry*
 FindCacheHitEntry(struct CacheHash_t *ch) {
     uint32 *i=NULL;
-    uint32 max=CacheHitsEnd-sizeof(struct CacheHitEntry);
+    uint32 off;
+    /* the last entry may end exactly at the end of the mapping */
+    uint32 max=(CacheHitsEnd >= sizeof(struct CacheHitEntry)) ?
+	CacheHitsEnd-sizeof(struct CacheHitEntry) : 0;
     struct CacheHitEntry *che=NULL;
     struct CacheHitHead *chh=(struct CacheHitHead *)CacheHits;
 
     i = (uint32*) (CacheHits+sizeof(struct CacheHitHead)+((ch->h1^ch->h2)%chh->chh_hashSize)*sizeof(uint32));
 
-    while ((*i != 0) && (*i < max)) {
-	che = (struct CacheHitEntry*) (CacheHits + (*i));
-	if (memcmp(ch, &(che->che_hash), sizeof(struct CacheHash_t))==0) {
+    while ((off = CH_LOAD_ACQ(i)) != 0 && off <= max) {
+	che = (struct CacheHitEntry*) (CacheHits + off);
+	if (CacheHashEqual(ch, CHE_HASH(che))) {
 	    return che;
 	}
 	i = &(che->che_Next);
@@ -592,9 +615,16 @@ CreateCacheHitEntry(struct CacheHash_t *ch, artno_t endNo) {
 
     i = (uint32 *)(CacheHits + sizeof(struct CacheHitHead) +
 	((ch->h1 ^ ch->h2) % chh->chh_hashSize) * sizeof(uint32));
+    /* Look again under the lock: another process may have added the
+     * entry since FindCacheHitEntry() missed it.
+     */
     while (*i != 0) {
+	if (*i > CacheHitsEnd - sizeof(struct CacheHitEntry)) {
+	    logit(LOG_ERR, "CreateCacheHitEntry: cache.hits link out of range");
+	    goto failed;
+	}
 	che = (struct CacheHitEntry *)(CacheHits + *i);
-	if (memcmp(ch, &che->che_hash, sizeof(struct CacheHash_t)) == 0) {
+	if (CacheHashEqual(ch, CHE_HASH(che))) {
 	    hflock(CacheHitsFD, 0, XLOCK_UN);
 	    return che;
 	}
@@ -656,7 +686,8 @@ CreateCacheHitEntry(struct CacheHash_t *ch, artno_t endNo) {
     che->che_LastHi = endNo;
     chh->chh_newEntry = next;
     chh->chh_end = newEnd;
-    *i = ne;
+    /* Publish the link last: readers walk the chains without the lock. */
+    CH_STORE_REL(i, ne);
 
     hflock(CacheHitsFD, 0, XLOCK_UN);
     return che;
@@ -686,33 +717,18 @@ UpdateCacheHits(char *groupName, int grpIter, artno_t endNo, int cachehit) {
 	}
     }
 
+    /*
+     * One update per article read, from every reader process: an atomic
+     * add on the shared map rather than the file lock (two fcntl calls on
+     * one lock for all readers).  dexpirescoring decays the counters with
+     * compare-and-swap, so neither loses the other's update.
+     */
     if (cachehit) {
-	che->che_Hits++;
+	CH_ADD(&che->che_Hits, 1);
     } else {
-	che->che_ReadArt++;
+	CH_ADD(&che->che_ReadArt, 1);
     }
     return che;
-}
-
-/*
- * CacheHitsUsable() - the header read from cache.hits (r bytes) describes a
- * scoreboard that fits in the file.
- */
-static int
-CacheHitsUsable(int fd, const struct CacheHitHead *chh, int r)
-{
-    struct stat st;
-
-    return(r == sizeof(*chh) &&
-	chh->chh_magic == CHMAGIC &&
-	chh->chh_version == CHVERSION &&
-	fstat(fd, &st) == 0 &&
-	chh->chh_hashSize != 0 &&
-	chh->chh_end >= sizeof(*chh) &&
-	chh->chh_newEntry >= sizeof(*chh) +
-	    (uint64_t)chh->chh_hashSize * sizeof(uint32) &&
-	chh->chh_end >= chh->chh_newEntry &&
-	st.st_size >= chh->chh_end);
 }
 
 static int OpenCacheHitsOnce(void);

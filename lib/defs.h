@@ -340,6 +340,33 @@ typedef struct CacheHitEntry {
     uint32	che_NewArt;	/* number of new articles */
 } CacheHitEntry;
 
+#define CHE_HASH(che)	((struct CacheHash_t *)&(che)->che_hash)
+
+/*
+ * cache.hits is mapped MAP_SHARED by every dreaderd reader process and by
+ * dexpirescoring.  The hot path (one counter update per article read) uses
+ * atomic operations instead of the file lock; hash-chain links are written
+ * only under the file lock, after the entry is filled (release), and read
+ * without it (acquire), so a reader that sees a link sees the whole entry.
+ * Entries are never removed or moved, and links only go from 0 to an offset.
+ */
+#if defined(__ATOMIC_ACQUIRE)
+#define CH_LOAD(p)		__atomic_load_n((p), __ATOMIC_RELAXED)
+#define CH_LOAD_ACQ(p)		__atomic_load_n((p), __ATOMIC_ACQUIRE)
+#define CH_STORE_REL(p, v)	__atomic_store_n((p), (v), __ATOMIC_RELEASE)
+#define CH_ADD(p, v)		((void)__atomic_fetch_add((p), (v), __ATOMIC_RELAXED))
+#define CH_CAS(p, o, n)		__atomic_compare_exchange_n((p), &(o), (n), 0, \
+				    __ATOMIC_RELAXED, __ATOMIC_RELAXED)
+#else
+#define CH_LOAD(p)		(*(volatile __typeof__(*(p)) *)(p))
+#define CH_LOAD_ACQ(p)		({ __typeof__(*(p)) ch_v_ = CH_LOAD(p); \
+				    __sync_synchronize(); ch_v_; })
+#define CH_STORE_REL(p, v)	do { __sync_synchronize(); \
+				    *(volatile __typeof__(*(p)) *)(p) = (v); } while (0)
+#define CH_ADD(p, v)		((void)__sync_fetch_and_add((p), (v)))
+#define CH_CAS(p, o, n)		__sync_bool_compare_and_swap((p), (o), (n))
+#endif
+
 /*
  * History file entry.  The filename is calculated from the gmt start
  * (calculates the directory), and file id.  Each incoming process

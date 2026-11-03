@@ -12,6 +12,7 @@
 
 int CacheHitsFD=-1;
 char *CacheHits;
+uint32 CacheHitsEnd;
 
 void Usage(char *progname)
 {
@@ -37,21 +38,56 @@ allocTmpCopy(const char *buf, int bufLen)
     return(*pptr);
 }
 
+/*
+ * We hold the cache.hits lock, so no entry is added meanwhile; dreaderd's
+ * readers still update the counters (atomically) while we run.  main()
+ * checked the header: the hash table fits and one entry fits after the
+ * header.  A damaged chain ends the walk instead of leaving the map or
+ * looping.
+ */
 struct CacheHitEntry*
 FindCacheHitEntry(struct CacheHash_t *ch) {
     uint32 *i=NULL;
-    struct CacheHitEntry *che=NULL;
     struct CacheHitHead *chh=(struct CacheHitHead *)CacheHits;
+    uint32 first=sizeof(struct CacheHitHead)+chh->chh_hashSize*sizeof(uint32);
+    uint32 max=CacheHitsEnd-sizeof(struct CacheHitEntry);
+    uint32 hops=(CacheHitsEnd-first)/sizeof(struct CacheHitEntry);
+    struct CacheHitEntry *che=NULL;
     i = (uint32*) (CacheHits+sizeof(struct CacheHitHead)+((ch->h1^ch->h2)%chh->chh_hashSize)*sizeof(uint32));
 
-    while (*i != 0) {
+    /* the last entry may end exactly at CacheHitsEnd; a chain longer
+     * than the entries that fit is a loop */
+    while (*i != 0 && *i >= first && *i <= max && hops-- > 0) {
 	che = (struct CacheHitEntry*) (CacheHits + (*i));
-	if (memcmp(ch, &(che->che_hash), sizeof(struct CacheHash_t))==0) {
+	if (CacheHashEqual(ch, CHE_HASH(che))) {
 	    return che;
 	}
 	i = &(che->che_Next);
     }
     return NULL;
+}
+
+/* Divide a counter by expire without losing a reader's concurrent add. */
+static void
+DecayReadArt(int *p, double expire)
+{
+    int o, n;
+
+    do {
+	o = CH_LOAD(p);
+	n = (int)((float)o/expire);
+    } while (!CH_CAS(p, o, n));
+}
+
+static void
+DecayHits(uint32 *p, double expire)
+{
+    uint32 o, n;
+
+    do {
+	o = CH_LOAD(p);
+	n = (int)((float)o/expire);
+    } while (!CH_CAS(p, o, n));
 }
 
 int
@@ -70,13 +106,16 @@ main(int ac, char **av) {
     }
     hflock(CacheHitsFD, 0, XLOCK_EX);
     r = read(CacheHitsFD, &chh, sizeof(struct CacheHitHead));
-    if ( (r < sizeof(struct CacheHitHead)) || (chh.chh_magic != CHMAGIC) || (chh.chh_version != CHVERSION) ) {
-	fprintf(stderr, "Wrong version, can not expire scoring\n");
+    /* the same checks as dreaderd, and room for one entry */
+    if (!CacheHitsUsable(CacheHitsFD, &chh, r) ||
+	chh.chh_end < sizeof(struct CacheHitHead) + sizeof(struct CacheHitEntry)) {
+	fprintf(stderr, "Wrong version or damaged header, can not expire scoring\n");
 	hflock(CacheHitsFD, 0, XLOCK_UN);
 	exit(1);
     }
     CacheHits = mmap(NULL, chh.chh_end, PROT_READ|PROT_WRITE, MAP_SHARED, CacheHitsFD, 0);
-    if (CacheHits == NULL) {
+    CacheHitsEnd = chh.chh_end;
+    if (CacheHits == MAP_FAILED) {
 	fprintf(stderr, "Error on cache hits mmap (%s)", strerror(errno));
 	hflock(CacheHitsFD, 0, XLOCK_UN);
 	close(CacheHitsFD);
@@ -151,8 +190,8 @@ main(int ac, char **av) {
 		new = che->che_NewArt+endNo-che->che_LastHi;
 		che->che_LastHi = endNo;
 		if (expire>1) {
-		    che->che_ReadArt = (int)((float)che->che_ReadArt/expire);
-		    che->che_Hits = (int)((float)che->che_Hits/expire);
+		    DecayReadArt(&che->che_ReadArt, expire);
+		    DecayHits(&che->che_Hits, expire);
 		    che->che_NewArt = (int)((float)new/expire);
 		    new = che->che_NewArt+endNo-che->che_LastHi;
 		} else {
