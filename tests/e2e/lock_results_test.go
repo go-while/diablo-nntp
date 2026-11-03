@@ -292,6 +292,8 @@ func TestDexpireoverLockTimeoutKept(t *testing.T) {
 //	LOCKFAULT=holdlog      no fault; with LOCKFAULT_PIDLOG=f log "pid start" before each
 //	                       blocking lock, so a test can signal the process that waits
 //	LOCKFAULT_FILE=s       eintr and enolck only for files whose path holds s
+//	LOCKFAULT_ON=f         eintr and enolck only while the file f exists
+//	LOCKFAULT_SKIP=n       eintr and enolck spare the first n locks they would fail
 //	LOCKFAULT_LOG=f        log each blocking lock (not unlocks) as "W|R start len"
 //	LOCKFAULT_SETLOG=f     log every F_SETLK/F_SETLKW as "cmd type start len path"
 func lockFaultShim(t *testing.T) string {
@@ -361,9 +363,11 @@ logline(const char *env, const char *line)
 static int
 fault(int fd, int cmd, struct flock *fl)
 {
-    static int calls;
+    static int calls, spared;
     const char *mode = getenv("LOCKFAULT");
     const char *only = getenv("LOCKFAULT_FILE");
+    const char *on = getenv("LOCKFAULT_ON");
+    const char *skip = getenv("LOCKFAULT_SKIP");
     char link[64], path[4096], line[4200];
     ssize_t n;
 
@@ -386,12 +390,18 @@ fault(int fd, int cmd, struct flock *fl)
 	return 0;
     if (only && strstr(path, only) == NULL)
 	return 0;
+    if (on && access(on, F_OK) != 0)
+	return 0;
     snprintf(line, sizeof(line), "%c %lld %lld\n", fl->l_type == F_WRLCK ? 'W' : 'R',
 	(long long)fl->l_start, (long long)fl->l_len);
     logline("LOCKFAULT_LOG", line);
     if (strcmp(mode, "holdlog") == 0) {
 	snprintf(line, sizeof(line), "%d %lld\n", (int)getpid(), (long long)fl->l_start);
 	logline("LOCKFAULT_PIDLOG", line);
+	return 0;
+    }
+    if (skip && spared < atoi(skip)) {
+	spared++;
 	return 0;
     }
     if (strcmp(mode, "eintr") == 0 && calls++ == 0)
