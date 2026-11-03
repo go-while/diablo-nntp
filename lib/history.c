@@ -554,8 +554,10 @@ HistoryClose(void)
 
     if (HFd >= 0 && !(HFlags & HGF_READONLY)) {
 	if (HFlags & HGF_FAST) {
+	    /* synced too: the file is often renamed into place next */
 	    if (HistoryWriteAt(HFd, HAry,
-		(size_t)HSize * sizeof(HistIndex), HHead.headSize) < 0) {
+		(size_t)HSize * sizeof(HistIndex), HHead.headSize) < 0 ||
+		fsync(HFd) < 0) {
 		logit(LOG_ERR, "dhistory fast-mode index write failed: %s",
 		    strerror(errno));
 		r = RCTRYAGAIN;
