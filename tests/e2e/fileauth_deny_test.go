@@ -112,8 +112,12 @@ access 127.0.0.1 rf
 	// A user that is not in the deny list is allowed.  If the worker leaked
 	// a FILE per rejection it can no longer open the list here, and this
 	// login is refused as well.
+	// Only a refused connection (400) can come from the in-flight limit; an
+	// authentication answer (481, 502) after the 100 rejections is the leak.
 	if code, line := login("alice", "anything"); code != 281 {
-		skipIfInflight()
+		if code == 400 {
+			skipIfInflight()
+		}
 		t.Errorf("the allowed user was refused after %d rejections: %s", n, line)
 	}
 }
