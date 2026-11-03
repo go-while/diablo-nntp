@@ -371,24 +371,18 @@ func TestReaderDNSOverloadProxied(t *testing.T) {
 
 // TestReaderDNSAuthFdLimit: with a descriptor limit of 100, 150 greeted clients send
 // AUTHINFO PASS at once to one DNS worker. Each gets 281 or 400 (none is dropped without a
-// reply), and once all have left "drcmd status" shows no active connection. Fails before the
-// fix: the AUTHINFO queue had no descriptor cap, descriptors handed back by the readers were
-// dropped at the limit, and those connections were never released (Act stayed above 0).
+// reply), and once all have left "drcmd status" shows no active connection. The limit is set
+// with the shell's ulimit (both soft and hard), so it runs wherever /bin/sh has ulimit -n.
+// It does not reliably reach the descriptor limit itself (the AUTHINFO queue's descriptor
+// cap stops short of it); TestReaderHandbackFdLostReleased covers a lost descriptor.
 func TestReaderDNSAuthFdLimit(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("needs prlimit (Linux)")
-	}
-	prl, err := exec.LookPath("prlimit")
-	if err != nil {
-		t.Skip("prlimit not found")
-	}
 	_, spool := spoolStore(t)
 	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: AuthReaderAccess, NoStart: true,
 		Config: map[string]string{"readerforks": "4", "readerthreads": "64"}})
 	_, port, _ := net.SplitHostPort(s.Addr)
 	s.Proc = proc.StartTCP(t, proc.Options{
-		Path: prl,
-		Args: []string{"--nofile=100:100", filepath.Join(s.Bin, "dreaderd"),
+		Path: "/bin/sh",
+		Args: []string{"-c", `ulimit -n 100 && exec "$0" "$@"`, filepath.Join(s.Bin, "dreaderd"),
 			"-d", "-p", PathHost, "-h", PathHost, "-P", "[127.0.0.1]:" + port},
 		Env: s.Env,
 		Dir: s.Dir,
