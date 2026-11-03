@@ -451,15 +451,15 @@ DoExpire(int fd, int hsize, int rsize)
 		if (hflock(fd, HDEADLOCK, XLOCK_EX|XLOCK_NB) < 0)
 		    Fail(NewFileName, "Unable to lock the history dead marker");
 		if (lseek(fd, 0, SEEK_SET) == -1)
-		    Fail(FileName, "Unable to seek to pos 0 in history");
+		    Fail(NewFileName, "Unable to seek to pos 0 in history");
 		if (read(fd, &hh, sizeof(hh)) == -1)
-		    Fail(NULL, "Unable to read history header");
+		    Fail(NewFileName, "Unable to read history header");
 		hh.hmagic = HDEADMAGIC;
 		if (lseek(fd, 0, SEEK_SET) == -1)
-		    Fail(NULL, "Unable to seek to pos 0 in history");
+		    Fail(NewFileName, "Unable to seek to pos 0 in history");
 		if (write(fd, &hh, sizeof(hh)) == -1) {
 		    perror("historyheadwrite");
-		    Fail(NULL, "Unable to write history header");
+		    Fail(NewFileName, "Unable to write history header");
 		}
 		/*
 		 * From here the history stays dead until it is replaced:
@@ -496,7 +496,7 @@ DoExpire(int fd, int hsize, int rsize)
 							XLOCK_UN) < 0)
 		    Fail(NewFileName, "Unable to unlock the history hash chains");
 		if (lseek(fd, seekpos, SEEK_SET) == -1)
-		    Fail(NULL, "Unable to seek in history");
+		    Fail(NewFileName, "Unable to seek in history");
 		DonePause = 2;
 	    }
 #else

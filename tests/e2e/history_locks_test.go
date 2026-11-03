@@ -757,3 +757,91 @@ func TestDhisexpireWriterTimeout(t *testing.T) {
 		t.Errorf("the history is not valid after the timeout: %v\n%s", err, o)
 	}
 }
+
+// lseekFailSource is an LD_PRELOAD shim: with LSEEKFAIL=path, a seek to
+// offset 0 (SEEK_SET) on a descriptor of that file fails with EIO.
+const lseekFailSource = `#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/types.h>
+
+static int
+fail(int fd, off_t off, int whence)
+{
+    const char *want = getenv("LSEEKFAIL");
+    char link[64], path[4096];
+    ssize_t n;
+
+    if (want == NULL || off != 0 || whence != SEEK_SET)
+	return 0;
+#ifdef __sun
+    snprintf(link, sizeof(link), "/proc/self/path/%d", fd);
+#else
+    snprintf(link, sizeof(link), "/proc/self/fd/%d", fd);
+#endif
+    n = readlink(link, path, sizeof(path) - 1);
+    path[n > 0 ? n : 0] = 0;
+    return strcmp(path, want) == 0;
+}
+
+off_t
+lseek(int fd, off_t off, int whence)
+{
+    off_t (*real)(int, off_t, int) = (off_t (*)(int, off_t, int))dlsym(RTLD_NEXT, "lseek");
+
+    if (fail(fd, off, whence)) {
+	errno = EIO;
+	return -1;
+    }
+    return real(fd, off, whence);
+}
+
+#ifndef __sun	/* 64-bit illumos names lseek64 lseek */
+off_t
+lseek64(int fd, off_t off, int whence)
+{
+    off_t (*real)(int, off_t, int) = (off_t (*)(int, off_t, int))dlsym(RTLD_NEXT, "lseek64");
+
+    if (fail(fd, off, whence)) {
+	errno = EIO;
+	return -1;
+    }
+    return real(fd, off, whence);
+}
+#endif
+`
+
+// TestDhisexpireSeekFailureKeepsHistory: when dhisexpire cannot seek to the
+// header of the old history to mark it dead, it gives up: the old history
+// stays and the incomplete new one goes. Fails on main: Fail() was given
+// the old history's name and removed the live dhistory.
+func TestDhisexpireSeekFailureKeepsHistory(t *testing.T) {
+	so := preloadShim(t, "lseekfail", lseekFailSource)
+	s := NewSite(t, SiteOptions{NoStart: true})
+	hist := newHistory(t, s)
+	l := exec.Command(filepath.Join(s.Bin, "diload"), hist)
+	l.Dir, l.Env = s.Dir, append(os.Environ(), s.Env...)
+	l.Stdin = strings.NewReader(dumpLine(0x9abcdef, 0x0123456))
+	if b, err := l.CombinedOutput(); err != nil {
+		t.Fatalf("diload: %v\n%s", err, b)
+	}
+	real, err := filepath.EvalSymlinks(hist)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, in, out, done := histCmd(t, s, []string{lockFaultEnv(so), "LSEEKFAIL=" + real}, "dhisexpire", "-a", hist)
+	in.Close()
+	if err := <-done; err == nil || !strings.Contains(out.String(), "Unable to seek to pos 0") {
+		t.Fatalf("dhisexpire with a failing seek: %v\n%s", err, out.String())
+	}
+	if fileExists(hist + ".new") {
+		t.Errorf("dhisexpire left %s.new", hist)
+	}
+	if _, found := histExp(t, s, hist, "09abcdef.00123456"); !found {
+		t.Errorf("the old history lost its record (or is gone)\n%s", out.String())
+	}
+}
