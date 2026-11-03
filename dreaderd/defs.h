@@ -79,6 +79,9 @@ typedef struct ForkDesc {
     struct DnsRes *d_DnsRes;	/* partial DNS reply (THREAD_DNS only) */
     size_t	d_DnsRead;	/* number of reply bytes accumulated */
     int		d_Dead;		/* worker failed; never pick it, wait3() reaps */
+    struct ReaderOut *d_OutQ;	/* main: clients still to pass to this reader */
+    struct ReaderOut **d_OutTail;
+    double	d_OutRetryMs;	/* main: after ENOBUFS, retry from then on */
     double	d_SendMs;	/* when the last DNS request went out (ms) */
     int		d_SendKnown;	/* ... and needed no lookups */
     struct sockaddr_storage d_SaveRSin;
