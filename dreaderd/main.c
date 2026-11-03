@@ -1145,8 +1145,13 @@ main(int ac, char **av)
 					if (dres.dr_ResultFlags == DR_REQUIRE_DNS) {
 					    SendDns(recv_fd, &rsin, &dres);
 					} else {
-					    dres.dr_ResultFlags = DR_SESSEXIT_RPT;
-					    SendDns(recv_fd, &rsin, &dres);
+#ifdef	NETREMOTE_ENABLED
+					    /* session-exit accounting: only netremote uses it */
+					    if (dres.dr_AuthUser[0] && dres.dr_AuthPass[0]) {
+						dres.dr_ResultFlags = DR_SESSEXIT_RPT;
+						SendDns(recv_fd, &rsin, &dres);
+					    }
+#endif
 					    close(recv_fd);
 					}
 					--NumActive;
@@ -1418,6 +1423,15 @@ DoCommand(int ufd)
 		    );
 		} else if (strcmp(s1, "version") == 0) {
 		    fprintf(fo, "200 DREADERD Version %s - %s\n", VERS, SUBREV);
+		} else if (strcmp(s1, "dnscache") == 0) {
+		    char *a2 = (s2 != NULL) ? strtok(s2, " \t\r") : NULL;
+
+		    if (a2 != NULL && strcmp(a2, "flush") == 0) {
+			DnsCacheFlush();
+			fprintf(fo, "200 DNS cache flushed\n");
+		    } else {
+			DnsCacheStats(fo);
+		    }
 		} else if (strcmp(s1, "vstats") == 0) {
 		    getVStats(fo);
 		} else if (strcmp(s1, "stats") == 0) {
@@ -1508,6 +1522,7 @@ DoCommand(int ufd)
 		    fprintf(fo,"   help      you are looking at it\n");
 		    fprintf(fo,"   status    short status line\n");
 		    fprintf(fo,"   version   return dreaderd version\n");
+		    fprintf(fo,"   dnscache  DNS cache counters; 'dnscache flush' empties it\n");
 		    fprintf(fo,"   config    view/set run-time config\n");
 		    fprintf(fo,"   stats     general server statistics\n");
 		    fprintf(fo,"   rawstats  general server statistics (without pretty printing)\n");
@@ -1623,6 +1638,26 @@ TrySendDns(int fd, struct sockaddr_in *rsin, DnsRes *dres)
 	    dreq.dr_ByteCountXhdr = dres->dr_ByteCountXhdr;
 	    dreq.dr_ByteCountOther = dres->dr_ByteCountOther;
 	    dreq.dr_SessionLength = time(NULL) - dres->dr_TimeStart;
+	}
+
+	/*
+	 * Pass a known name lookup result so the worker skips the lookups:
+	 * the connect-time result of this connection (AUTHINFO), else the
+	 * DNS cache.
+	 */
+	if (dres == NULL || dres->dr_ResultFlags != DR_SESSEXIT_RPT) {
+	    dreq.dr_CacheGen = DnsCacheGen();
+	    if (dres != NULL && (dres->dr_Lookup & DL_MASK) != DL_NONE &&
+		    (dres->dr_Lookup & DL_TEMP) == 0 &&
+		    memchr(dres->dr_RevHost, 0, sizeof(dres->dr_RevHost)) &&
+		    DnsCacheSameAddr((struct sockaddr *)&dres->dr_LookupAddr,
+					(struct sockaddr *)rsin)) {
+		dreq.dr_Lookup = dres->dr_Lookup & DL_MASK;
+		memcpy(dreq.dr_RevHost, dres->dr_RevHost, sizeof(dreq.dr_RevHost));
+	    } else {
+		DnsCacheGet((struct sockaddr *)rsin, &dreq.dr_Lookup,
+				dreq.dr_RevHost, sizeof(dreq.dr_RevHost));
+	    }
 	}
 
 	/*
@@ -1948,6 +1983,12 @@ HandleDnsThread(ForkDesc *desc)
 	--NumActive;
 	return;
     }
+
+    /* the worker did the lookups: remember the result */
+    if ((dres.dr_Lookup & (DL_FRESH | DL_TEMP)) == DL_FRESH)
+	DnsCacheStore((struct sockaddr *)&dres.dr_LookupAddr,
+			dres.dr_Lookup & DL_MASK, dres.dr_RevHost,
+			dres.dr_CacheGen);
 
     if (isdigit(dres.dr_ReaderName[0]) && isdigit(dres.dr_ReaderName[1]) && isdigit(dres.dr_ReaderName[2])) {
 	p = dres.dr_ReaderName;

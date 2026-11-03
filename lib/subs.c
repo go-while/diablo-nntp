@@ -25,7 +25,8 @@ Prototype const char *PatRunExpand(const char *pat);
 Prototype int CidrMatch(const char *cidr, const char *ip);
 Prototype int IsIpAddr(char *a);
 Prototype char *SanitiseAddr(char *addr);
-Prototype void GetIPHost(struct sockaddr *sa, char *hname, int hnamelen, char *ipname, int iplen);
+Prototype int GetIPHostNoNameDefinite(void);
+Prototype int GetIPHost(struct sockaddr *sa, char *hname, int hnamelen, char *ipname, int iplen);
 Prototype int TestForwardLookup(const char *hostName, const char *ipst, const struct sockaddr *res);
 Prototype char *NetAddrToSt(int fd, struct sockaddr *sa, int ip4conv, int port, int v6spec);
 Prototype int ValidGroupName(const char *name);
@@ -346,7 +347,31 @@ CidrMatch(const char *cidr, const char *ip)
     }
 }
 
-void
+/*
+ * Returns 0 with the name in hname, -1 if there is definitely no name, -2 if
+ * the lookup failed or may have failed temporarily, with hname empty.
+ *
+ * Only glibc's and illumos/Solaris' getnameinfo tell "no PTR record"
+ * (EAI_NONAME) from a timeout or SERVFAIL (EAI_AGAIN).  The other libcs
+ * (FreeBSD, the other BSDs, macOS, musl, uClibc) return EAI_NONAME for both,
+ * so there EAI_NONAME counts as -2 as well.
+ */
+#if (defined(__GLIBC__) && !defined(__UCLIBC__)) || defined(__sun)
+#define GNI_NONAME_IS_DEFINITE	1
+#endif
+
+/* 1 if GetIPHost can return -1 (a definite "no name") on this system */
+int
+GetIPHostNoNameDefinite(void)
+{
+#ifdef GNI_NONAME_IS_DEFINITE
+    return(1);
+#else
+    return(0);
+#endif
+}
+
+int
 GetIPHost(struct sockaddr *sa, char *hname, int hnamelen, char *ipname, int iplen)
 {
     strncpy(ipname, NetAddrToSt(0, sa, 1, 0, 0), iplen - 1);
@@ -358,8 +383,14 @@ GetIPHost(struct sockaddr *sa, char *hname, int hnamelen, char *ipname, int iple
 	int error;
 
 	if ((error = getnameinfo(sa, SA_LEN(sa), hname, hnamelen,
-					NULL, 0, NI_NAMEREQD)) != 0)
+					NULL, 0, NI_NAMEREQD)) != 0) {
 		*hname = '\0';
+#ifdef GNI_NONAME_IS_DEFINITE
+		if (error == EAI_NONAME)
+		    return(-1);
+#endif
+		return(-2);
+	}
 #else
 	struct hostent *he;
 	struct sockaddr_in *sin = (struct sockaddr_in *)sa;
@@ -373,16 +404,20 @@ GetIPHost(struct sockaddr *sa, char *hname, int hnamelen, char *ipname, int iple
 	if (he != NULL) {
 	    strncpy(hname, he->h_name, hnamelen - 1);
 	    hname[hnamelen - 1] = '\0';
+	} else {
+	    return((h_errno == HOST_NOT_FOUND || h_errno == NO_DATA) ? -1 : -2);
 	}
 #endif /* INET6 */
     }
-
+    return((*hname) ? 0 : -1);
 }
 
 /*
  * TestForwardLookup(). 
  *
- * Check that Fwd and Rev DNS entries match up
+ * Check that Fwd and Rev DNS entries match up.  Returns 0 if they do, -1 if
+ * not (no such name, or no matching address), -2 if the forward lookup
+ * failed otherwise (timeout, SERVFAIL, system error).
  */
 
 int
@@ -402,8 +437,10 @@ TestForwardLookup(const char *hostName, const char *ipst, const struct sockaddr 
     else if (strchr(ipst, '.'))
 	hints.ai_family = AF_INET;
 
-    if (getaddrinfo(hostName, NULL, &hints, &ai0) == 0) {
+    if ((r = getaddrinfo(hostName, NULL, &hints, &ai0)) == 0) {
 	struct addrinfo *ai;
+
+	r = -1;
 
 	for (ai = ai0; ai; ai = ai->ai_next) {
 	    char *st = NetAddrToSt(0, ai->ai_addr, 1, 0, 0);
@@ -417,6 +454,12 @@ TestForwardLookup(const char *hostName, const char *ipst, const struct sockaddr 
 	freeaddrinfo(ai0);
     } else {
 	logit(LOG_NOTICE, "DNS Fwd/Rev mismatch: lookup of %s failed", hostName);
+	/* only "no such name" is a definite answer */
+#ifdef EAI_NODATA
+	if (r == EAI_NODATA)
+	    r = EAI_NONAME;
+#endif
+	r = (r == EAI_NONAME) ? -1 : -2;
     }
     return(r);
 #else
@@ -438,6 +481,8 @@ TestForwardLookup(const char *hostName, const char *ipst, const struct sockaddr 
 	    logit(LOG_NOTICE, "DNS Fwd/Rev mismatch: %s/%s", hostName, ipst);
     } else {
 	logit(LOG_NOTICE, "DNS Fwd/Rev mismatch: lookup of %s failed", hostName);
+	if (h_errno != HOST_NOT_FOUND && h_errno != NO_DATA)
+	    r = -2;
     }
     return(r);
 #endif

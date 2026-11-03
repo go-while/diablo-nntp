@@ -99,7 +99,7 @@ DR_SRCS = \
     dreaderd/wildorcmp.c dreaderd/cancel.c \
     dreaderd/post-addr-ck.c dreaderd/cleanfrom.c \
     dreaderd/msg.c dreaderd/dfa.c dreaderd/filealloc.c \
-    dreaderd/crypto.c
+    dreaderd/crypto.c dreaderd/dnscache.c
 
 UTIL_PROGS = \
     dicmd drcmd didump dilookup dexpire didate \

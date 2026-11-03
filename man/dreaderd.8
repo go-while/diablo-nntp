@@ -207,10 +207,34 @@ dreaderd forks off a number of processes to handle DNS authentication,
 allowing several incoming connections to be resolved in parallel.
 They spend their time waiting for replies, so size them by lookup
 latency, not by CPUs: numdnsprocs = peak logins per second x lookups
-per login x latency.  A login does 2 lookups, 4 with AUTHINFO.  For
+per login x latency.  A login does 2 lookups (1 without a reverse
+name), a client found in the DNS cache (below) none.  For
 example, 5 processes with 75 ms DNS serve about 33 logins per second
 (5 / (2 x 0.075)).  This option will override its diablo.config
 counterpart.
+.PP
+The main process caches the lookup results per client address, so a
+client that reconnects within the TTL costs no lookup.  The diablo.config
+options
+.B readerdnscachettl
+(seconds a forward-confirmed name is kept, default 300),
+.B readerdnscachenegttl
+(seconds an address without a name, or with an unconfirmed name, is kept,
+default 60) and
+.B readerdnscachesize
+(most entries, default 16384) control it; a TTL of 0 turns that kind of
+entry off.  A TTL changed at run time applies to the entries already
+kept.  Only definite answers are cached: "no such name" and a forward
+lookup that does not give the client's address; timeouts and other
+errors are not.  With every libc except glibc and illumos/Solaris the
+reverse lookup cannot tell "no name" from a timeout, so there an address
+without a reverse name is never cached.  Access rules, auth and accounting still
+run on every login, but a name-based dreader.access line can see a name
+up to
+.B readerdnscachettl
+seconds old.  An AUTHINFO login reuses the result of its own connection,
+whatever the TTLs and also after a flush, so it does no further lookups;
+only a lookup that failed temporarily is done again.
 
 .PP
 .B \-M numreaderprocs
