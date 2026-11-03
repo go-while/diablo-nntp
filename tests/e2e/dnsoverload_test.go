@@ -9,12 +9,15 @@ import (
 	"bufio"
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -371,24 +374,18 @@ func TestReaderDNSOverloadProxied(t *testing.T) {
 
 // TestReaderDNSAuthFdLimit: with a descriptor limit of 100, 150 greeted clients send
 // AUTHINFO PASS at once to one DNS worker. Each gets 281 or 400 (none is dropped without a
-// reply), and once all have left "drcmd status" shows no active connection. Fails before the
-// fix: the AUTHINFO queue had no descriptor cap, descriptors handed back by the readers were
-// dropped at the limit, and those connections were never released (Act stayed above 0).
+// reply), and once all have left "drcmd status" shows no active connection. The limit is set
+// with the shell's ulimit (both soft and hard), so it runs wherever /bin/sh has ulimit -n.
+// It does not reliably reach the descriptor limit itself (the AUTHINFO queue's descriptor
+// cap stops short of it); TestReaderHandbackFdLostReleased covers a lost descriptor.
 func TestReaderDNSAuthFdLimit(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("needs prlimit (Linux)")
-	}
-	prl, err := exec.LookPath("prlimit")
-	if err != nil {
-		t.Skip("prlimit not found")
-	}
 	_, spool := spoolStore(t)
 	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: AuthReaderAccess, NoStart: true,
 		Config: map[string]string{"readerforks": "4", "readerthreads": "64"}})
 	_, port, _ := net.SplitHostPort(s.Addr)
 	s.Proc = proc.StartTCP(t, proc.Options{
-		Path: prl,
-		Args: []string{"--nofile=100:100", filepath.Join(s.Bin, "dreaderd"),
+		Path: "/bin/sh",
+		Args: []string{"-c", `ulimit -n 100 && exec "$0" "$@"`, filepath.Join(s.Bin, "dreaderd"),
 			"-d", "-p", PathHost, "-h", PathHost, "-P", "[127.0.0.1]:" + port},
 		Env: s.Env,
 		Dir: s.Dir,
@@ -487,6 +484,67 @@ func TestReaderDNSOverloadWarm(t *testing.T) {
 		t.Errorf("%d of %d 400 replies within 50 ms, want at least half (refused on admission)",
 			fast, busy)
 	}
+}
+
+// TestReaderListenBacklog: while the main dreaderd is stopped, the kernel completes handshakes
+// into its listen backlog, so the number of connections that complete is that backlog. dreaderd
+// must ask for as much as the kernel allows: a sharp burst past the backlog loses SYNs, and those
+// clients wait for a TCP retransmit (1 s, then 3 s) before dreaderd can even refuse them, which
+// is how TestReaderDNSOverloadWarm saw 16 of 150 refusals take a second on Alpine. Fails on main
+// with musl, whose SOMAXCONN is 128 (glibc has 4096): only 129 connections complete.
+func TestReaderListenBacklog(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("reads the kernel limit from /proc (Linux)")
+	}
+	const want = 300
+	b, err := os.ReadFile("/proc/sys/net/core/somaxconn")
+	if err != nil {
+		t.Skipf("kernel listen limit: %v", err)
+	}
+	if lim, err := strconv.Atoi(strings.TrimSpace(string(b))); err != nil || lim < want {
+		t.Skipf("net.core.somaxconn is %q, below the %d this test needs", strings.TrimSpace(string(b)), want)
+	}
+	_, spool := spoolStore(t)
+	s := NewReaderSite(t, ReaderOptions{Spool: spool})
+	if err := s.Proc.Signal(syscall.SIGSTOP); err != nil {
+		t.Fatalf("SIGSTOP dreaderd: %v", err)
+	}
+	stopped := true
+	defer func() {
+		if stopped {
+			s.Proc.Signal(syscall.SIGCONT)
+		}
+	}()
+	var cs []net.Conn
+	defer func() {
+		for _, c := range cs {
+			c.Close()
+		}
+	}()
+	for len(cs) < want {
+		// a SYN past the backlog is dropped, so the dial times out
+		c, err := net.DialTimeout("tcp", s.Addr, 2*time.Second)
+		if err != nil {
+			break
+		}
+		cs = append(cs, c)
+	}
+	n := len(cs)
+	for _, c := range cs {
+		c.Close()
+	}
+	cs = nil
+	s.Proc.Signal(syscall.SIGCONT)
+	stopped = false
+	if n < want {
+		t.Errorf("only %d connections fit in the listen backlog of the stopped dreaderd, want %d", n, want)
+	}
+	// it still serves once it has worked through the closed ones
+	var g string
+	waitFor(t, 20*time.Second, "a greeting after the backlog drained", func() bool {
+		g = readerGreeting(s.Addr)
+		return strings.HasPrefix(g, "200") || strings.HasPrefix(g, "201")
+	})
 }
 
 // TestReaderTooManyRefsHostLimit: when passing a client to a reader fails with ETOOMANYREFS
