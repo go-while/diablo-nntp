@@ -13,7 +13,10 @@ package e2e
 // with the backend and skips otherwise.
 
 import (
+	"bufio"
 	"bytes"
+	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -264,6 +267,125 @@ func TestAuthTimeoutLDAPNoAccept(t *testing.T) {
 	}
 }
 
+// ldapTLV is one BER element: tag, length, body.
+func ldapTLV(tag byte, body []byte) []byte {
+	n := len(body)
+	l := []byte{byte(n)}
+	if n >= 128 {
+		l = []byte{0x82, byte(n >> 8), byte(n)}
+	}
+	return append(append([]byte{tag}, l...), body...)
+}
+
+// ldapReadTLV reads one BER element.
+func ldapReadTLV(r *bufio.Reader) (byte, []byte, error) {
+	tag, err := r.ReadByte()
+	if err != nil {
+		return 0, nil, err
+	}
+	l, err := r.ReadByte()
+	if err != nil {
+		return 0, nil, err
+	}
+	n := int(l)
+	if l&0x80 != 0 {
+		n = 0
+		for i := 0; i < int(l&0x7f); i++ {
+			b, err := r.ReadByte()
+			if err != nil {
+				return 0, nil, err
+			}
+			n = n<<8 | int(b)
+		}
+	}
+	buf := make([]byte, n)
+	_, err = io.ReadFull(r, buf)
+	return tag, buf, err
+}
+
+// slowLDAPServer answers a bind (success), a search (one entry) and a compare (true), each
+// after its delay. Enough LDAP for the default LDAP code of dreaderd.
+func slowLDAPServer(t *testing.T, bind, search, compare time.Duration) int {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	result := func(code byte) []byte {
+		r := ldapTLV(0x0a, []byte{code})
+		r = append(r, ldapTLV(0x04, nil)...)
+		return append(r, ldapTLV(0x04, nil)...)
+	}
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				r := bufio.NewReader(c)
+				for {
+					_, msg, err := ldapReadTLV(r)
+					if err != nil || len(msg) < 3 || msg[0] != 0x02 || len(msg) < 3+int(msg[1]) {
+						return
+					}
+					id := msg[2 : 2+int(msg[1])]
+					idTLV := ldapTLV(0x02, id)
+					var out []byte
+					switch msg[2+int(msg[1])] {
+					case 0x60: // bind
+						time.Sleep(bind)
+						out = ldapTLV(0x30, append(idTLV, ldapTLV(0x61, result(0))...))
+					case 0x63: // search: one entry, then done
+						time.Sleep(search)
+						vals := ldapTLV(0x31, ldapTLV(0x04, []byte("pw")))
+						attr := ldapTLV(0x30, append(ldapTLV(0x04, []byte("userPassword")), vals...))
+						entry := ldapTLV(0x64, append(ldapTLV(0x04, []byte("uid=x,dc=e2e,dc=test")), ldapTLV(0x30, attr)...))
+						out = ldapTLV(0x30, append(idTLV, entry...))
+						out = append(out, ldapTLV(0x30, append(idTLV, ldapTLV(0x65, result(0))...))...)
+					case 0x6e: // compare: true
+						time.Sleep(compare)
+						out = ldapTLV(0x30, append(idTLV, ldapTLV(0x6f, result(6))...))
+					default:
+						continue
+					}
+					if _, err := c.Write(out); err != nil {
+						return
+					}
+				}
+			}(c)
+		}
+	}()
+	return l.Addr().(*net.TCPAddr).Port
+}
+
+// TestAuthTimeoutLDAPSlowSteps: an LDAP server that answers, but slowly. The steps share the
+// limit: when the time runs out in the bind, the search or the compare, the login is refused
+// at the limit and counted as a timeout, and the worker goes on. A quick server logs in.
+func TestAuthTimeoutLDAPSlowSteps(t *testing.T) {
+	builtWith(t, "LDAP bind failed", "LDAP support (LDAP_ENABLED)")
+	ms := time.Millisecond
+	port := slowLDAPServer(t, 0, 0, 0)
+	s := authTimeoutSite(t, slowAuthAccess(ldapURL(port)))
+	backendLogin(t, s, "x@slow")
+	for _, d := range [][3]time.Duration{
+		{3000 * ms, 0, 0},
+		{800 * ms, 800 * ms, 800 * ms},
+		{0, 1500 * ms, 1500 * ms},
+		{0, 0, 10000 * ms},
+	} {
+		t.Run(fmt.Sprintf("%v-%v-%v", d[0], d[1], d[2]), func(t *testing.T) {
+			port := slowLDAPServer(t, d[0], d[1], d[2])
+			s := authTimeoutSite(t, slowAuthAccess(ldapURL(port)))
+			slowLogin(t, s, "x@slow", "pw")
+			goodLogin(t, s)
+			wantTimeoutLog(t, s, "LDAP", 1, false)
+		})
+	}
+}
+
 // perlSite starts a reader whose x@slow logins run checkuser of script.
 func perlSite(t *testing.T, script string) *Site {
 	t.Helper()
@@ -303,8 +425,8 @@ func twoPerlAccess(a, b string) string {
 		"\nend\nreaderdef rslow2\n    read yes\n    auth slow2\nend\nreaderdef rslow\n", 1)
 }
 
-// perlLogin: user logs in through perl.
-func perlLogin(t *testing.T, s *Site, user string) {
+// backendLogin: user logs in through the backend (password pw).
+func backendLogin(t *testing.T, s *Site, user string) {
 	t.Helper()
 	c := client.DialWith(t, s.Addr, 2*authTimeoutBound)
 	defer c.Close()
@@ -329,16 +451,16 @@ func TestAuthTimeoutPerlManyTimeouts(t *testing.T) {
 	s := authTimeoutSiteN(t, twoPerlAccess(a, b), 1)
 	const n = 17
 	for i := 0; i < n; i++ {
-		perlLogin(t, s, "ok@slow")
-		perlLogin(t, s, "ok@slow2")
+		backendLogin(t, s, "ok@slow")
+		backendLogin(t, s, "ok@slow2")
 		if i%2 == 0 {
 			slowLogin(t, s, "x@slow", "pw")
 		} else {
 			slowLogin(t, s, "x@slow2", "pw")
 		}
 	}
-	perlLogin(t, s, "ok@slow")
-	perlLogin(t, s, "ok@slow2")
+	backendLogin(t, s, "ok@slow")
+	backendLogin(t, s, "ok@slow2")
 	goodLogin(t, s)
 	l := generalLog(s)
 	if got := strings.Count(l, "Perl authentication from 127.0.0.1 timed out after 1 seconds"); got != n {
@@ -367,10 +489,10 @@ func TestAuthTimeoutPerlSlowLoad(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := authTimeoutSite(t, twoPerlAccess(a, b))
-	perlLogin(t, s, "ok@slow")
+	backendLogin(t, s, "ok@slow")
 	slowLogin(t, s, "ok@slow2", "pw")
-	perlLogin(t, s, "ok@slow2")
-	perlLogin(t, s, "ok@slow")
+	backendLogin(t, s, "ok@slow2")
+	backendLogin(t, s, "ok@slow")
 	wantTimeoutLog(t, s, "Perl", 1, true)
 }
 
@@ -418,7 +540,7 @@ func TestAuthTimeoutPAM(t *testing.T) {
 	slowLogin(t, s, "x@slow", "pw")
 	// served by the new worker
 	goodLogin(t, s)
-	perlLogin(t, s, "ok@slow")
+	backendLogin(t, s, "ok@slow")
 	slowLogin(t, s, "x@slow", "pw")
 	goodLogin(t, s)
 	wantTimeoutLog(t, s, "PAM", 2, true)
