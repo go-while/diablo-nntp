@@ -9,11 +9,16 @@ import (
 	"bufio"
 	"fmt"
 	"net"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/go-while/nntp-testkit/proc"
 )
 
 // floodAccess: fred must log in from 127.0.0.1 (as AuthReaderAccess); the flood clients
@@ -79,8 +84,8 @@ func flood(t *testing.T, addr string, n int, spread time.Duration) []floodResult
 	return res
 }
 
-// countFlood checks that every flood client got a greeting or a 400 within bound, and
-// returns how many got each.
+// countFlood checks that every flood client got a greeting or a 400 within bound and that
+// at least 90 % of the 400 replies came within 0.5 s, and returns how many got each.
 func countFlood(t *testing.T, res []floodResult, bound time.Duration) (greeted, busy int) {
 	t.Helper()
 	var slowGreet, slowBusy time.Duration
@@ -106,6 +111,10 @@ func countFlood(t *testing.T, res []floodResult, bound time.Duration) (greeted, 
 	}
 	t.Logf("%d clients: %d greeted (slowest %v), %d got 400 (%d within 0.5 s, slowest %v)",
 		len(res), greeted, slowGreet, busy, quickBusy, slowBusy)
+	// a refusal is quick: at once, or as soon as a worker time shows it cannot make it
+	if quickBusy*10 < busy*9 {
+		t.Errorf("%d of %d 400 replies within 0.5 s, want at least 90 %%", quickBusy, busy)
+	}
 	return greeted, busy
 }
 
@@ -127,8 +136,9 @@ func startFloodReader(t *testing.T, delayMs int, conf map[string]string) *Site {
 }
 
 // TestReaderDNSOverload400: a burst of 150 new clients against one DNS worker that needs
-// 200 ms per login (30 s of work). Each client gets a greeting or a quick "400 Server too
-// busy" within the default readerdnswait (5 s) plus slack, and none is reset. Fails on main:
+// 200 ms per login (30 s of work). Each client gets a greeting or a "400 Server too busy"
+// within the default readerdnswait (5 s) plus slack, at least 90 % of the 400s within
+// 0.5 s, and none is reset. Fails on main:
 // dreaderd stopped accepting while its worker was busy, so the clients waited in the kernel
 // backlog for up to 30 s.
 func TestReaderDNSOverload400(t *testing.T) {
@@ -232,4 +242,217 @@ func TestReaderDNSQueueOptions(t *testing.T) {
 			t.Errorf("%d greeted and %d got 400, want some of each", greeted, busy)
 		}
 	})
+}
+
+// TestReaderDNSOverloadBurst: 150 new clients at the same moment against one DNS worker that
+// needs 200 ms per login, right after startup ("cold") and after 40 logins that were DNS
+// cache hits ("after cache hits"). The worker time learned from fast requests must not let
+// the whole burst into the queue: at least 90 % of the 400s come within 0.5 s, not after
+// readerdnswait. Fails before the per-kind worker times, the 50 ms floor and the queue trim
+// (0 of 125 quick after the cache hits).
+func TestReaderDNSOverloadBurst(t *testing.T) {
+	t.Run("cold", func(t *testing.T) {
+		s := startFloodReader(t, 100, nil)
+		countFlood(t, flood(t, s.Addr, 150, 0), 12*time.Second)
+	})
+	t.Run("after cache hits", func(t *testing.T) {
+		s := startFloodReader(t, 100, nil)
+		for i := 0; i < 40; i++ {
+			c := s.Reader(t)
+			c.TryCmd("QUIT")
+			c.Close()
+		}
+		countFlood(t, flood(t, s.Addr, 150, 0), 12*time.Second)
+	})
+}
+
+// proxyFloodAccess: 127.0.0.1 is a proxy whose clients name their real address with the
+// "proxied" command (useproxied); the real addresses in 127.1.0.0/16 read. 127.2.0.1 must
+// log in as fred.
+const proxyFloodAccess = `vserverdef DEFAULT
+    hostname ` + PathHost + `
+end
+authdef fred
+    user fred
+    pass fredspass
+end
+readerdef rpx
+    read yes
+    useproxied yes
+    proxyfrom 127.0.0.1
+end
+readerdef rp
+    read yes
+end
+readerdef userfred
+    read yes
+    auth fred
+end
+access 127.0.0.1 rpx
+access 127.1.0.0/16 rp
+access 127.2.0.1 userfred
+`
+
+// TestReaderDNSOverloadProxied: 150 clients behind a proxy (useproxied) name new real
+// addresses at the same moment, against one DNS worker that needs 200 ms per lookup pair.
+// The first lookup of a proxied client is admitted like a new connection: each gets 201 or
+// 400 within 12 s, at least 90 % of the 400s within 0.5 s, and a real AUTHINFO login meanwhile
+// gets 281 within 1.5 s. Fails before the fix: the proxied lookups went into the AUTHINFO
+// queue without admission, the 400s came after readerdnswait (5 s), and the login waited
+// behind them.
+func TestReaderDNSOverloadProxied(t *testing.T) {
+	sh := buildDNSShim(t)
+	_, spool := spoolStore(t)
+	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: proxyFloodAccess, NoStart: true,
+		Config: map[string]string{"readerthreads": "64", "readerforks": "4"}})
+	s.Env = append(s.Env, "LD_PRELOAD="+sh.so, "DSHIM_DELAY_MS=100")
+	_, port, _ := net.SplitHostPort(s.Addr)
+	startReader(t, s, "[127.0.0.1]:"+port)
+
+	fred := s.dialFrom(t, "127.2.0.1")
+	expect(t, fred, 381, "AUTHINFO USER fred")
+
+	const n = 150
+	type cl struct {
+		c  net.Conn
+		br *bufio.Reader
+	}
+	cs := make([]cl, n)
+	for i := range cs {
+		c, err := net.DialTimeout("tcp", s.Addr, 20*time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+		c.SetDeadline(time.Now().Add(60 * time.Second))
+		br := bufio.NewReader(c)
+		if l, _ := br.ReadString('\n'); !strings.HasPrefix(l, "20") {
+			t.Fatalf("proxy client %d: greeting %q", i, l)
+		}
+		cs[i] = cl{c, br}
+	}
+	res := make([]floodResult, n)
+	var wg sync.WaitGroup
+	for i := range cs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			t0 := time.Now()
+			fmt.Fprintf(cs[i].c, "proxied 127.1.%d.%d:1234\r\n", 1+i/250, 1+i%250)
+			l, err := cs[i].br.ReadString('\n')
+			res[i].wait = time.Since(t0)
+			if err != nil {
+				res[i].line = "error: " + err.Error()
+				return
+			}
+			res[i].line = strings.TrimSpace(l)
+		}(i)
+	}
+	time.Sleep(300 * time.Millisecond)
+	t0 := time.Now()
+	code, line := fred.Cmd("AUTHINFO PASS fredspass")
+	t.Logf("AUTHINFO PASS during the proxied flood: %q after %v", line, time.Since(t0))
+	if code != 281 || time.Since(t0) > 1500*time.Millisecond {
+		t.Errorf("AUTHINFO PASS during the proxied flood: %q after %v, want 281 within 1.5 s",
+			line, time.Since(t0))
+	}
+	wg.Wait()
+	greeted, busy := countFlood(t, res, 12*time.Second)
+	if greeted == 0 || busy == 0 {
+		t.Errorf("%d greeted and %d got 400, want some of each", greeted, busy)
+	}
+}
+
+// TestReaderDNSAuthFdLimit: with a descriptor limit of 100, 150 greeted clients send
+// AUTHINFO PASS at once to one DNS worker. Each gets 281 or 400 (none is dropped without a
+// reply), and once all have left "drcmd status" shows no active connection. Fails before the
+// fix: the AUTHINFO queue had no descriptor cap, descriptors handed back by the readers were
+// dropped at the limit, and those connections were never released (Act stayed above 0).
+func TestReaderDNSAuthFdLimit(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("needs prlimit (Linux)")
+	}
+	prl, err := exec.LookPath("prlimit")
+	if err != nil {
+		t.Skip("prlimit not found")
+	}
+	_, spool := spoolStore(t)
+	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: AuthReaderAccess, NoStart: true,
+		Config: map[string]string{"readerforks": "4", "readerthreads": "64"}})
+	_, port, _ := net.SplitHostPort(s.Addr)
+	s.Proc = proc.StartTCP(t, proc.Options{
+		Path: prl,
+		Args: []string{"--nofile=100:100", filepath.Join(s.Bin, "dreaderd"),
+			"-d", "-p", PathHost, "-h", PathHost, "-P", "[127.0.0.1]:" + port},
+		Env: s.Env,
+		Dir: s.Dir,
+	}, s.Addr)
+	time.Sleep(500 * time.Millisecond) // let the reader forks come up
+
+	const n = 150
+	type cl struct {
+		c  net.Conn
+		br *bufio.Reader
+	}
+	cs := make([]cl, n)
+	for i := range cs {
+		c, err := net.DialTimeout("tcp", s.Addr, 20*time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.SetDeadline(time.Now().Add(60 * time.Second))
+		br := bufio.NewReader(c)
+		if l, _ := br.ReadString('\n'); !strings.HasPrefix(l, "20") {
+			t.Fatalf("client %d: greeting %q", i, l)
+		}
+		fmt.Fprintf(c, "AUTHINFO USER fred\r\n")
+		if l, _ := br.ReadString('\n'); !strings.HasPrefix(l, "381") {
+			t.Fatalf("client %d: AUTHINFO USER: %q", i, l)
+		}
+		cs[i] = cl{c, br}
+	}
+	codes := make([]string, n)
+	var wg sync.WaitGroup
+	for i := range cs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			fmt.Fprintf(cs[i].c, "AUTHINFO PASS fredspass\r\n")
+			l, err := cs[i].br.ReadString('\n')
+			if err != nil {
+				codes[i] = "error: " + err.Error()
+				return
+			}
+			codes[i] = strings.TrimSpace(l)
+		}(i)
+	}
+	wg.Wait()
+	ok, busy := 0, 0
+	for i, l := range codes {
+		switch {
+		case strings.HasPrefix(l, "281"):
+			ok++
+		case strings.HasPrefix(l, "400"):
+			busy++
+		default:
+			t.Errorf("client %d: AUTHINFO PASS got %q, want 281 or 400", i, l)
+		}
+	}
+	t.Logf("%d logins: %d got 281, %d got 400", n, ok, busy)
+	for _, c := range cs {
+		fmt.Fprintf(c.c, "QUIT\r\n")
+		c.c.Close()
+	}
+	var st string
+	limit := time.Now().Add(15 * time.Second)
+	for {
+		st = s.Run(t, "drcmd", "status")
+		if strings.Contains(st, "Act=0/") || time.Now().After(limit) {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if !strings.Contains(st, "Act=0/") {
+		t.Errorf("drcmd status after all clients left: %q, want Act=0", strings.TrimSpace(st))
+	}
 }
