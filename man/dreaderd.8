@@ -205,21 +205,29 @@ counterpart.
 .B \-D numdnsprocs
 dreaderd forks off a number of processes to handle DNS authentication,
 allowing several incoming connections to be resolved in parallel.
-Typically you want one dns thread for every 90 or so users with a
-minimum of four.  So, for example, if you configure dreaderd to
-handle up to 750 users, you would want 8 or 9 DNS forks.  This
-option will override its diablo.config counterpart.
+They spend their time waiting for replies, so size them by lookup
+latency, not by CPUs: numdnsprocs = peak logins per second x lookups
+per login x latency.  A login does 2 lookups, 4 with AUTHINFO.  For
+example, 5 processes with 75 ms DNS serve about 33 logins per second
+(5 / (2 x 0.075)).  This option will override its diablo.config
+counterpart.
 
 .PP
 .B \-M numreaderprocs
-specify the number of reader processes, default is 10.  Each reader
+specify the number of reader processes, default is 10.  The value
+.B auto
+starts one per CPU that dreaderd may use (on Linux the affinity mask
+and a cgroup v2 CPU quota count), at most 64, and logs the number.
+Reader processes are CPU-bound, so more than the CPU count adds
+nothing.  Each reader
 process can handle several connections in parallel but opens a
 connection to each spool and post server, so be sure that the
 servers can handle the number of reader processes you fork (for
 example, if the diablo server is doing spool/post duty, make sure
 the maxconnect field in diablo.config and the maxconnect directive
-in dnewsfeeds is set high enough).  This option will override its
-diablo.config counterpart.
+in dnewsfeeds is set high enough; with several reader machines, the
+number of processes times the number of machines).  This option will
+override its diablo.config counterpart.
 
 .PP
 .B \-N maxconnectperreaderproc
