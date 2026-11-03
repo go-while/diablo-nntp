@@ -222,12 +222,18 @@ options
 default 60) and
 .B readerdnscachesize
 (most entries, default 16384) control it; a TTL of 0 turns that kind of
-entry off.  Temporary lookup failures are not cached.  Access rules, auth
-and accounting still run on every login, but a name-based dreader.access
-line can see a name up to
+entry off.  A TTL changed at run time applies to the entries already
+kept.  Only definite answers are cached: "no such name" and a forward
+lookup that does not give the client's address; timeouts and other
+errors are not.  On FreeBSD, the other BSDs and musl the reverse lookup
+cannot tell "no name" from a timeout, so there an address without a
+reverse name is never cached.  Access rules, auth and accounting still
+run on every login, but a name-based dreader.access line can see a name
+up to
 .B readerdnscachettl
-seconds old.  An AUTHINFO login reuses the result of its connection, so
-it does no further lookups.
+seconds old.  An AUTHINFO login reuses the result of its own connection,
+whatever the TTLs and also after a flush, so it does no further lookups;
+only a lookup that failed temporarily is done again.
 
 .PP
 .B \-M numreaderprocs
