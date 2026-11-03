@@ -1678,7 +1678,7 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
     if (*fdl==0) {
 	nrsignal(SIGALRM, sigAlarm);
 	alarm(LockWaitTime);
-	if (hflock(fd, 4, XLOCK_EX) < 0) {
+	if (hflock(fd, 4, XLOCK_EX|XLOCK_INTR) < 0) {
 	    nrsignal(SIGALRM, SIG_IGN);
 	    if (VerboseOpt > 2)
 		printf("unable to rewrite data for grp=%s - file in use\n",
@@ -2223,7 +2223,7 @@ ResizeGroup(Group *group, int fd, OverHead *oh, int newSize, int OldDataEntries,
     if (*fdl==0) {
 	nrsignal(SIGALRM, sigAlarm);
 	alarm(LockWaitTime);
-	if (hflock(fd, 4, XLOCK_EX) < 0) {
+	if (hflock(fd, 4, XLOCK_EX|XLOCK_INTR) < 0) {
 	    nrsignal(SIGALRM, SIG_IGN);
 	    ++NoResizedGroups;
 	    if (VerboseOpt)

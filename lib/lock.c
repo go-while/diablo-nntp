@@ -11,6 +11,25 @@
 
 Prototype int xflock(int fd, int flags);
 Prototype int hflock(int fd, off_t offset, int flags);
+Prototype int rflock(int fd, off_t offset, off_t len, int flags);
+
+/*
+ * setlock() - F_SETLK, or F_SETLKW without XLOCK_NB.  A blocking wait that
+ * a signal interrupts is started again, unless the caller passed
+ * XLOCK_INTR to end the wait with a signal (an alarm() timeout).
+ */
+static int
+setlock(int fd, struct flock *fl, int flags)
+{
+    int r;
+
+    if (flags & XLOCK_NB)
+	return(fcntl(fd, F_SETLK, fl));
+    do {
+	r = fcntl(fd, F_SETLKW, fl);
+    } while (r < 0 && errno == EINTR && (flags & XLOCK_INTR) == 0);
+    return(r);
+}
 
 /*
  * xflock() - a global lock.  
@@ -39,7 +58,7 @@ xflock(int fd, int flags)
 	fl.l_type = F_UNLCK;
 	break;
     }
-    r = fcntl(fd, ((flags & XLOCK_NB) ? F_SETLK : F_SETLKW), &fl);
+    r = setlock(fd, &fl, flags);
     return(r);
 }
 
@@ -64,9 +83,33 @@ hflock(int fd, off_t offset, int flags)
     fl.l_start = offset;
     fl.l_len = 4;
 
-    r = fcntl(fd, ((flags & XLOCK_NB) ? F_SETLK : F_SETLKW), &fl);
+    r = setlock(fd, &fl, flags);
     if (DebugOpt > 4)
 	printf("hflock fd %d offset %d flags %02x\n", fd, (int)offset, flags);
     return(r);
 }
 
+/*
+ * rflock() - lock len bytes at offset (hflock() locks 4).
+ */
+int
+rflock(int fd, off_t offset, off_t len, int flags)
+{
+    struct flock fl = { 0 };
+
+    switch(flags & 0x0F) {
+    case XLOCK_SH:
+	fl.l_type = F_RDLCK;
+	break;
+    case XLOCK_EX:
+	fl.l_type = F_WRLCK;
+	break;
+    case XLOCK_UN:
+	fl.l_type = F_UNLCK;
+	break;
+    }
+    fl.l_whence = SEEK_SET;
+    fl.l_start = offset;
+    fl.l_len = len;
+    return(setlock(fd, &fl, flags));
+}
