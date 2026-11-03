@@ -264,13 +264,13 @@ func TestReaderCacheHitsConcurrent(t *testing.T) {
 				return
 			}
 			<-start
-			cmd := strings.Repeat("ARTICLE 1\r\n", batch)
 			for done := 0; done < perSession; done += batch {
-				if _, err := io.WriteString(nc, cmd); err != nil {
+				k := min(batch, perSession-done) // the last batch may be short
+				if _, err := io.WriteString(nc, strings.Repeat("ARTICLE 1\r\n", k)); err != nil {
 					errs <- err
 					return
 				}
-				for j := 0; j < batch; j++ {
+				for j := 0; j < k; j++ {
 					l, err := r.ReadString('\n')
 					if err != nil || !strings.HasPrefix(l, "220 ") {
 						errs <- fmt.Errorf("ARTICLE: %q %v", l, err)
