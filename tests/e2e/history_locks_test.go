@@ -845,3 +845,91 @@ func TestDhisexpireSeekFailureKeepsHistory(t *testing.T) {
 		t.Errorf("the old history lost its record (or is gone)\n%s", out.String())
 	}
 }
+
+// getlkSleepSource is an LD_PRELOAD shim: with GETLKSLEEP=ms, every F_GETLK
+// waits that long first.
+const getlkSleepSource = `#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <fcntl.h>
+#include <stdarg.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+typedef int (*fcntl_fn)(int, int, ...);
+
+static int
+call(const char *name, int fd, int cmd, void *arg)
+{
+    fcntl_fn real = (fcntl_fn)dlsym(RTLD_NEXT, name);
+    const char *ms = getenv("GETLKSLEEP");
+
+    if (real == NULL)
+	real = (fcntl_fn)dlsym(RTLD_NEXT, "fcntl");
+    if (cmd == F_GETLK && ms != NULL)
+	usleep((useconds_t)atoi(ms) * 1000);
+    return real(fd, cmd, arg);
+}
+
+int
+fcntl(int fd, int cmd, ...)
+{
+    va_list va;
+    void *arg;
+
+    va_start(va, cmd);
+    arg = va_arg(va, void *);
+    va_end(va);
+    return call("fcntl", fd, cmd, arg);
+}
+
+int
+fcntl64(int fd, int cmd, ...)
+{
+    va_list va;
+    void *arg;
+
+    va_start(va, cmd);
+    arg = va_arg(va, void *);
+    va_end(va);
+    return call("fcntl64", fd, cmd, arg);
+}
+`
+
+// TestHistoryOpenDuringDhisexpireFailure: an opener reads the dead magic
+// while dhisexpire runs, and checks dhisexpire's marker lock only after
+// dhisexpire gave up (here -w 2 while the test holds every chain lock):
+// the history is valid again, the marker is gone and the name is the same
+// file. The opener must look again and use the history, not report that no
+// dhisexpire is running. The shim delays its marker check by 3s. Fails on
+// c17003e and 1ca2241.
+func TestHistoryOpenDuringDhisexpireFailure(t *testing.T) {
+	so := preloadShim(t, "getlksleep", getlkSleepSource)
+	s := NewSite(t, SiteOptions{NoStart: true})
+	hist := newHistory(t, s)
+	l := exec.Command(filepath.Join(s.Bin, "diload"), hist)
+	l.Dir, l.Env = s.Dir, append(os.Environ(), s.Env...)
+	l.Stdin = strings.NewReader(dumpLine(0xabcdef0, 0x1234567))
+	if b, err := l.CombinedOutput(); err != nil {
+		t.Fatalf("diload: %v\n%s", err, b)
+	}
+	release := holdHistLock(t, hist, 0, 0)
+	defer release()
+	xcmd, xin, xout, xdone := histCmd(t, s, nil, "dhisexpire", "-w", "2", "-a", hist)
+	xin.Close()
+	if err := waitLockWaiter(xcmd.Process.Pid, xdone); err != nil {
+		t.Fatalf("dhisexpire did not wait for the test's chain locks: %v\n%s", err, xout.String())
+	}
+	_, in, out, done := histCmd(t, s, []string{lockFaultEnv(so), "GETLKSLEEP=3000"}, "dilookup", "-h", hist, "0abcdef0.01234567")
+	in.Close()
+	if err := <-xdone; err == nil {
+		t.Fatalf("dhisexpire did not give up\n%s", xout.String())
+	}
+	select {
+	case err := <-done:
+		if err != nil || !strings.Contains(out.String(), "ex=100") {
+			t.Errorf("dilookup after dhisexpire gave up: %v\n%s", err, out.String())
+		}
+	case <-time.After(20 * time.Second):
+		t.Errorf("dilookup still waits 20s after dhisexpire gave up\n%s", out.String())
+	}
+}

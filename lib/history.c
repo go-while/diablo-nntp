@@ -137,6 +137,16 @@ deadMarkerHeld(int fd)
     return(fl.l_type != F_UNLCK);
 }
 
+/* Is the history open as fd still marked dead? */
+static int
+stillDead(int fd)
+{
+    uint32 magic;
+
+    return(pread(fd, &magic, sizeof(magic), 0) != sizeof(magic) ||
+	magic == HDEADMAGIC);
+}
+
 /* Is another file at fileName now (or none)?  Then a new one came. */
 static int
 fileReplaced(int fd, const char *fileName)
@@ -256,6 +266,17 @@ HistoryOpen(const char *fileName, int hflags)
 	if (HHead.hmagic == HDEADMAGIC && (HFlags & HGF_FAST) == 0) {
 	    int replacing = deadMarkerHeld(fd) || fileReplaced(fd, fileName);
 
+	    /*
+	     * dhisexpire drops the marker only after the history is valid
+	     * again (a failure) or another file is at the name, but it can
+	     * be between those steps: look once more before giving up.
+	     */
+	    if (!replacing) {
+		if (stillDead(fd))
+		    usleep(100000);
+		replacing = !stillDead(fd) || deadMarkerHeld(fd) ||
+		    fileReplaced(fd, fileName);
+	    }
 	    close(fd);
 	    if (!replacing) {
 		logit(LOG_ERR, "%s is marked dead and no dhisexpire is running: run dhisexpire -u",
