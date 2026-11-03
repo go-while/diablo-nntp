@@ -30,6 +30,9 @@ dhisexpire \- Diablo program to clean the history file
 .B \-v
 ]
 [
+.B \-w seconds
+]
+[
 .B \-x
 ]
 [
@@ -126,6 +129,14 @@ them that a new history file is available.
 .PP
 .B \-v
 This option turns on verbose mode.
+.PP
+.B \-w nn
+.PP
+After it marks the old history dead, dhisexpire waits for the adds and
+record updates that are still running, before it copies the last
+records. It waits at most this many seconds (default 60); then it
+marks the old history valid again, removes the new one and exits with
+an error.
 .PP
 .B -C
 allows the specification of the path of the diablo.config file to use.

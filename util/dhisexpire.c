@@ -28,6 +28,7 @@ char NewFileName[PATH_MAX];
 char OldFileName[PATH_MAX];
 int HistoryVersion = 0;
 int HeadSize = 0;
+int DeadWait = 60;	/* -w: seconds to wait for writers once dead */
 
 void DoUnDead(int fd);
 void DoExpire(int fd, int hsize, int rsize);
@@ -71,6 +72,7 @@ Usage(void)
     printf("\t-TN\t- don't dump articles older than N seconds\n");
     printf("\t-u\t- remove dead flag for a history file\n");
     printf("\t-v\t- be a little more verbose\n");
+    printf("\t-wN\t- wait at most N seconds for running writers (default 60)\n");
     printf("\t-x\t- keep records older than rememberdays old\n");
     printf("\t-Cfile\t- specify diablo.config to use\n");
     printf("\t-d[n]\t- set debug [with optional level]\n");
@@ -99,6 +101,12 @@ sigDead(int sigNo)
     _exit(1);
 }
 #endif
+
+/* SIGALRM ends the wait for running writers (-w) */
+void
+sigWait(int sigNo)
+{
+}
 
 void
 sigInt(int sigNo)
@@ -182,6 +190,11 @@ main(int ac, char **av)
 		VerboseOpt = strtol(ptr, NULL, 0);
 	    else
 		++VerboseOpt;
+	    break;
+	case 'w':
+	    DeadWait = strtol(*ptr ? ptr : av[++i], NULL, 0);
+	    if (DeadWait <= 0)
+		Usage();
 	    break;
 	case 'x':
 	    DoRemember = 0;
@@ -451,13 +464,28 @@ DoExpire(int fd, int hsize, int rsize)
 		 * Wait for the adds and updates that began before the dead
 		 * magic: they hold a hash chain lock.  Later ones find the
 		 * magic dead under their lock and wait for the new history,
-		 * so the copy below gets every record.
+		 * so the copy below gets every added record (an update finds
+		 * the magic dead after its write and does it again there).
+		 * A writer that hangs must not keep the history dead.
 		 */
+		nrsignal(SIGALRM, sigWait);
+		alarm(DeadWait);
+		r = rflock(fd, HeadSize, (off_t)hsize * sizeof(HistIndex),
+						XLOCK_EX|XLOCK_INTR);
+		alarm(0);
+		nrsignal(SIGALRM, SIG_IGN);
+		if (r < 0) {
+		    char emsg[256];
+
+		    snprintf(emsg, sizeof(emsg), "%s: %s",
+			(errno == EINTR) ? "Timed out waiting for running history writers" :
+			"Unable to lock the history hash chains", strerror(errno));
+		    logit(LOG_ERR, "dhisexpire: %s", emsg);
+		    Fail(NewFileName, emsg);
+		}
 		if (rflock(fd, HeadSize, (off_t)hsize * sizeof(HistIndex),
-							XLOCK_EX) < 0 ||
-		    rflock(fd, HeadSize, (off_t)hsize * sizeof(HistIndex),
 							XLOCK_UN) < 0)
-		    Fail(NewFileName, "Unable to lock the history hash chains");
+		    Fail(NewFileName, "Unable to unlock the history hash chains");
 		if (lseek(fd, seekpos, SEEK_SET) == -1)
 		    Fail(NULL, "Unable to seek in history");
 		DonePause = 2;
