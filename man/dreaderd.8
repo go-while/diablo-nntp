@@ -244,7 +244,8 @@ half of
 .BR readerdnswait ,
 and only up to
 .B readerdnsqueue
-connections (default 256) and three quarters of the descriptor limit.
+connections (default 256) and three quarters of the descriptor limit
+dreaderd uses (the smaller of MAXFDS and RLIMIT_NOFILE).
 Worker times are kept apart for requests with and without lookups, as
 the larger of a moving average and the median of the last three; a
 request with lookups counts at least 50 ms.  A queued connection that a
@@ -257,13 +258,12 @@ seconds (default 5, 1 to 300).
 .B readerdnsqueue 0
 queues no new connection.  dreaderd keeps accepting while the DNS
 processes are busy, so a login flood gets quick 400 replies instead of
-waiting in the kernel's listen backlog (SOMAXCONN); past 4 x
-.B readerdnsqueue
-(at least 200) refusals in 100 ms the listener pauses for the rest of
-those 100 ms.  AUTHINFO logins of connected clients wait in their own
+waiting in the kernel's listen backlog (SOMAXCONN); past 200 refusals
+in 100 ms the listener pauses for the rest of those 100 ms.  AUTHINFO logins of connected clients wait in their own
 queue, ahead of the new connections.  There is at most one per
 connection, so it has no length limit, but it is queued only up to 32
-descriptors below the descriptor limit.  At startup dreaderd raises its
+descriptors below the descriptor limit dreaderd uses (and never below
+the new-connection cap).  At startup dreaderd raises its
 soft descriptor limit to the hard limit, at most FD_SETSIZE.  Both
 options can be changed at run time with drcmd config.
 
