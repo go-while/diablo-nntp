@@ -62,6 +62,7 @@ int		HBlkGood;
 char		HistoryFileName[PATH_MAX];
 int		DoingReOpen = 0;
 static int	ReOpenLockError = 0;	/* errno of a failed lock in a reopen */
+static void	reopenWait(void);
 
 /*
  * Write an entire buffer at a fixed offset.  A successful short write is
@@ -220,10 +221,19 @@ HistoryOpen(const char *fileName, int hflags)
     ) {
 	/*
 	 * Is this history an old one and we need to wait for a new one?
+	 * dhisexpire marks it dead while it copies the last records; a
+	 * first open waits for the new file by name, as a reopen does.
 	 */
-	if (DoingReOpen && HHead.hmagic == HDEADMAGIC) {
+	if (HHead.hmagic == HDEADMAGIC && (HFlags & HGF_FAST) == 0) {
 	    close(fd);
-	    return(-2);
+	    if (DoingReOpen)
+		return(-2);
+	    logit(LOG_NOTICE, "%s is marked dead, waiting for the new history (dhisexpire -u revives it)",
+		fileName);
+	    fprintf(stderr, "%s is marked dead, waiting for the new history (dhisexpire -u revives it)\n",
+		fileName);
+	    reopenWait();
+	    return(0);
 	}
 
 	/*
@@ -248,15 +258,22 @@ HistoryOpen(const char *fileName, int hflags)
 		return(openLockFailed(fd, fileName));
 	    if (hflock(fd, 0, XLOCK_SH) < 0)
 		return(openLockFailed(fd, fileName));
+	    /*
+	     * No creator is at work while we hold the shared lock: a file
+	     * with data but no valid magic is not going to change (it fails
+	     * below), and only an empty one is worth another try.
+	     */
 	    if ((HFlags & HGF_READONLY) ||
 		(pread(fd, &hh, sizeof(hh), 0) == sizeof(hh) &&
-		hh.hmagic == HMAGIC)) {
+		hh.hmagic == HMAGIC) ||
+		fstat(fd, &st) < 0 || st.st_size > 0) {
 		openLock = XLOCK_SH;
 		break;
 	    }
 	    /* still not created: try for the creation lock again */
 	    if (hflock(fd, 0, XLOCK_UN) < 0)
 		return(openLockFailed(fd, fileName));
+	    usleep(10000);
 	}
 
 	fstat(fd, &st);
@@ -279,6 +296,8 @@ HistoryOpen(const char *fileName, int hflags)
 
 	    if (st.st_size) {
 		logit(LOG_ERR, "Incompatible history file version or corrupted history file\n");
+		fprintf(stderr, "%s: incompatible history file version or corrupted history file\n",
+		    fileName);
 		exit(1);
 	    }
 
@@ -515,10 +534,18 @@ HistoryClose(void)
 void
 historyReOpen(void)
 {
+    DoingReOpen = 1;
+    HistoryClose();
+    reopenWait();
+}
+
+/* Open HistoryFileName again, waiting up to 6 minutes for a new file. */
+static void
+reopenWait(void)
+{
     int count = 0;
 
     DoingReOpen = 1;
-    HistoryClose();
     while (HistoryOpen(HistoryFileName, HFlags) == -2 && count++ < 360)
 	sleep(1);
     if (count++ >= 360) {
