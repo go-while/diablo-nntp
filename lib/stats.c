@@ -42,7 +42,9 @@ FeedStats *
 FeedStatsFindSlot(char *hostname)
 {
     FeedStats *Stats;
+#ifndef __OpenBSD__
     FeedStats fs;
+#endif
     int count;
     int found;
 
@@ -82,6 +84,85 @@ FeedStatsFindSlot(char *hostname)
 	return(Stats);
     }
 
+#ifdef __OpenBSD__
+    /* Slot names and counters must use the same shared-map representation.
+     * A write() into a page already mapped by another process can otherwise
+     * leave the new slot invisible to every mapping of that page. */
+    {
+        struct stat st;
+        FeedStats *scan;
+        off_t size;
+
+        if (fstat(FSSFd, &st) < 0)
+            goto slot_failed;
+        size = st.st_size;
+        if (size == 0) {
+            if (ftruncate(FSSFd, sizeof(FeedStats)) < 0)
+                goto slot_failed;
+            scan = xmap(NULL, sizeof(FeedStats), PROT_READ | PROT_WRITE,
+                MAP_SHARED, FSSFd, 0);
+            if (scan == NULL)
+                goto slot_failed;
+            bzero(scan, sizeof(*scan));
+            strcpy(scan->hostname, "Outgoing Feeder Stats");
+            scan->SentStats.TimeStart = time(NULL);
+            scan->RecStats.TimeStart = time(NULL);
+            scan->SpoolStats.TimeStart = time(NULL);
+            scan->version = FS_VERSION;
+            xunmap(scan, sizeof(*scan));
+            size = sizeof(FeedStats);
+        }
+        if (size < (off_t)sizeof(FeedStats) ||
+            size % sizeof(FeedStats) != 0 ||
+            size / sizeof(FeedStats) >= 0x7fffffff) {
+            errno = EINVAL;
+            goto slot_failed;
+        }
+        scan = xmap(NULL, (size_t)size, PROT_READ | PROT_WRITE,
+            MAP_SHARED, FSSFd, 0);
+        if (scan == NULL)
+            goto slot_failed;
+        if (scan->version != FS_VERSION) {
+            xunmap(scan, (size_t)size);
+            logit(LOG_CRIT, "Feed stats db '%s' has wrong version - please delete",
+                PatDbExpand(DFeedStatsPat));
+            exit(1);
+        }
+        found = 0;
+        for (count = 1; (off_t)count < size / sizeof(FeedStats); ++count) {
+            if (strcmp(scan[count].hostname, hostname) == 0) {
+                found = 1;
+                break;
+            }
+        }
+        xunmap(scan, (size_t)size);
+        if (!found && ftruncate(FSSFd, size + sizeof(FeedStats)) < 0)
+            goto slot_failed;
+        Stats = xmap(NULL, sizeof(FeedStats), PROT_READ | PROT_WRITE,
+            MAP_SHARED, FSSFd, (off_t)count * sizeof(FeedStats));
+        if (Stats == NULL)
+            goto slot_failed;
+        if (!found) {
+            bzero(Stats, sizeof(*Stats));
+            Stats->region = count;
+            diablo_strlcpy(Stats->hostname, hostname, sizeof(Stats->hostname),
+                sizeof(Stats->hostname));
+        }
+        hflock(FSSFd, 0, XLOCK_UN);
+        return(Stats);
+    }
+
+slot_failed:
+    logit(LOG_ERR, "Unable to map feeder stats file: %s (%s)",
+        PatDbExpand(DFeedStatsPat), strerror(errno));
+    hflock(FSSFd, 0, XLOCK_UN);
+    Stats = calloc(1, sizeof(*Stats));
+    if (Stats == NULL) {
+        logit(LOG_CRIT, "Unable to allocate feeder stats");
+        exit(1);
+    }
+    return(Stats);
+#else
     /*
      * The first entry is a dummy entry
      */
@@ -123,6 +204,7 @@ FeedStatsFindSlot(char *hostname)
 			MAP_SHARED, FSSFd, count * sizeof(FeedStats));
     hflock(FSSFd, 0, XLOCK_UN);
     return(Stats);
+#endif
 }
 
 /*
