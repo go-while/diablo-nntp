@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -377,5 +378,240 @@ func TestDcancelRewriteStoresLatestRecord(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// cpuTicks is the user+system CPU time of process pid in clock ticks (Linux
+// /proc), or -1.
+func cpuTicks(pid int) int {
+	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return -1
+	}
+	s := string(b)
+	f := strings.Fields(s[strings.LastIndex(s, ")")+2:])
+	u, _ := strconv.Atoi(f[11])
+	k, _ := strconv.Atoi(f[12])
+	return u + k
+}
+
+// setMagic writes magic into the header of the history open as f.
+func setMagic(t *testing.T, f *os.File, magic uint32) {
+	t.Helper()
+	var m [4]byte
+	binary.NativeEndian.PutUint32(m[:], magic)
+	if _, err := f.WriteAt(m[:], 0); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestHistoryFirstOpenOfDeadHistory: a program that starts while dhisexpire
+// has the history marked dead (dhisexpire, an idle feeder or dlockhistory
+// still holding the open lock) waits for the new history by name, as a
+// reopen does, without using the CPU. A history with data and a wrong magic
+// is refused at once. The test holds the shared open lock. Fails on main
+// (dilookup exits at once on a dead history, writers wait for the lock and
+// never see the history come back) and on e3f746a (writers spin).
+func TestHistoryFirstOpenOfDeadHistory(t *testing.T) {
+	const hmagic, hdead, bad = 0xA1B2C3D4, 0xDEADF5E6, 0x12345678
+	for _, tool := range []string{"diload", "dhisctl", "dilookup"} {
+		for _, magic := range []uint32{hdead, bad} {
+			name := tool + "/dead"
+			if magic == bad {
+				name = tool + "/corrupt"
+			}
+			t.Run(name, func(t *testing.T) {
+				s := NewSite(t, SiteOptions{NoStart: true})
+				hist := newHistory(t, s)
+				f, err := os.OpenFile(hist, os.O_RDWR, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer f.Close()
+				setMagic(t, f, magic)
+				lk := syscall.Flock_t{Type: syscall.F_RDLCK, Start: 0, Len: 4}
+				if err := syscall.FcntlFlock(f.Fd(), syscall.F_SETLK, &lk); err != nil {
+					t.Fatal(err)
+				}
+				args := map[string][]string{
+					"diload":   {hist},
+					"dhisctl":  {"-e", hist, "<a@e2e.test>"},
+					"dilookup": {"-h", hist, "<a@e2e.test>"},
+				}[tool]
+				cmd, in, out, done := histCmd(t, s, nil, tool, args...)
+				in.Close()
+				if magic == bad {
+					select {
+					case err := <-done:
+						if err == nil || !strings.Contains(out.String(), "corrupted history file") {
+							t.Errorf("%s on a corrupt history:\n%s", tool, out.String())
+						}
+					case <-time.After(10 * time.Second):
+						t.Errorf("%s still runs 10s after it opened a corrupt history (cpu ticks %d)",
+							tool, cpuTicks(cmd.Process.Pid))
+					}
+					return
+				}
+				select {
+				case err := <-done:
+					t.Fatalf("%s did not wait for the new history: %v\n%s", tool, err, out.String())
+				case <-time.After(3 * time.Second):
+				}
+				if n := cpuTicks(cmd.Process.Pid); n > 50 {
+					t.Errorf("%s used %d cpu ticks in 3s while it waited", tool, n)
+				}
+				setMagic(t, f, hmagic) // as dhisexpire -u, or the new file
+				select {
+				case <-done:
+					if o := out.String(); strings.Contains(o, "corrupted") {
+						t.Errorf("%s did not use the history once it was valid again:\n%s", tool, o)
+					}
+				case <-time.After(15 * time.Second):
+					t.Errorf("%s still waits 15s after the history is valid again\n%s", tool, out.String())
+				}
+			})
+		}
+	}
+}
+
+// pwriteHoldSource is an LD_PRELOAD shim: with PWHOLD=dir, the first 2-byte
+// pwrite (an exp update) creates dir/reached and waits for dir/go.
+const pwriteHoldSource = `#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/types.h>
+
+static void
+hold(size_t n)
+{
+    const char *dir = getenv("PWHOLD");
+    char p[4096];
+    int i, fd;
+    static int done;
+
+    if (dir == NULL || n != 2 || done++)
+	return;
+    snprintf(p, sizeof(p), "%s/reached", dir);
+    if ((fd = open(p, O_WRONLY|O_CREAT, 0644)) >= 0)
+	close(fd);
+    snprintf(p, sizeof(p), "%s/go", dir);
+    for (i = 0; i < 6000 && access(p, F_OK) != 0; i++)
+	usleep(10000);
+}
+
+ssize_t
+pwrite64(int fd, const void *b, size_t n, off_t o)
+{
+    ssize_t (*real)(int, const void *, size_t, off_t) =
+	(ssize_t (*)(int, const void *, size_t, off_t))dlsym(RTLD_NEXT, "pwrite64");
+    hold(n);
+    return real(fd, b, n, o);
+}
+
+ssize_t
+pwrite(int fd, const void *b, size_t n, off_t o)
+{
+    ssize_t (*real)(int, const void *, size_t, off_t) =
+	(ssize_t (*)(int, const void *, size_t, off_t))dlsym(RTLD_NEXT, "pwrite");
+    hold(n);
+    return real(fd, b, n, o);
+}
+`
+
+// TestHistoryUpdateDuringDhisexpire: dcancel -h is in HistoryExpire, under
+// the chain lock and before its write, when dhisexpire -a marks the history
+// dead. dhisexpire waits for the lock, but the record was copied long
+// before: the update now sees the dead magic after its write and does it
+// again in the new history. Fails on main and on e3f746a: dcancel reports
+// the cancel and the new history does not have it.
+func TestHistoryUpdateDuringDhisexpire(t *testing.T) {
+	so := preloadShim(t, "pwhold", pwriteHoldSource)
+	s := NewSite(t, SiteOptions{})
+	ids := s.Inject(t, "e2e.test", 1)
+	hist := filepath.Join(s.Dir, "dhistory")
+	hold := t.TempDir()
+	_, in, out, done := histCmd(t, s, []string{lockFaultEnv(so), "PWHOLD=" + hold}, "dcancel", "-h")
+	io.WriteString(in, ids[0]+"\n")
+	in.Close()
+	waitFor(t, 30*time.Second, "dcancel in its update", func() bool {
+		return fileExists(filepath.Join(hold, "reached"))
+	})
+	xcmd, xin, xout, xdone := histCmd(t, s, nil, "dhisexpire", "-a", hist)
+	xin.Close()
+	_ = waitLockWaiter(xcmd.Process.Pid, xdone) // main does not wait
+	if err := os.WriteFile(filepath.Join(hold, "go"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("dcancel -h: %v\n%s", err, out.String())
+	}
+	if err := <-xdone; err != nil {
+		t.Fatalf("dhisexpire -a: %v\n%s", err, xout.String())
+	}
+	if exp, found := histExp(t, s, hist, ids[0]); !found || exp&expfExpired == 0 {
+		t.Errorf("the cancel in progress is not in the new history: found %v exp %#x\n%s", found, exp, out.String())
+	}
+}
+
+// TestHistoryUpdateLockFailure: a chain lock that keeps failing (ENOLCK
+// from the fault shim, after the retries) is an error, not "no history
+// entry" or success. Fails on main and on e3f746a: dcancel -h and dhisctl
+// -e exit 0 and the record is not expired.
+func TestHistoryUpdateLockFailure(t *testing.T) {
+	so := lockFaultShim(t)
+	s := NewSite(t, SiteOptions{})
+	ids := s.Inject(t, "e2e.test", 1)
+	hist := filepath.Join(s.Dir, "dhistory")
+	env := []string{lockFaultEnv(so), "LOCKFAULT=enolck", "LOCKFAULT_FILE=dhistory"}
+	for _, c := range []struct {
+		name string
+		args []string
+	}{
+		{"dcancel", []string{"-h"}},
+		{"dhisctl", []string{"-e", hist, ids[0]}},
+	} {
+		_, in, out, done := histCmd(t, s, env, c.name, c.args...)
+		io.WriteString(in, ids[0]+"\n")
+		in.Close()
+		err := <-done
+		if err == nil || !strings.Contains(out.String(), "Unable to update the history entry") {
+			t.Errorf("%s with a failing chain lock: %v\n%s", c.name, err, out.String())
+		}
+	}
+	if exp, _ := histExp(t, s, hist, ids[0]); exp&expfExpired != 0 {
+		t.Errorf("the record was expired without its lock (exp %#x)", exp)
+	}
+}
+
+// TestDhisexpireWriterTimeout: dhisexpire waits for running writers after it
+// marks the history dead, but at most -w seconds: a writer that hangs (here
+// the test, holding every chain lock) must not keep the history dead. It
+// gives up, marks the history valid again and removes the new one. Fails on
+// main, which has no -w.
+func TestDhisexpireWriterTimeout(t *testing.T) {
+	s := NewSite(t, SiteOptions{NoStart: true})
+	hist := newHistory(t, s)
+	release := holdHistLock(t, hist, 0, 0)
+	defer release()
+	_, in, out, done := histCmd(t, s, nil, "dhisexpire", "-w", "1", "-a", hist)
+	in.Close()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(out.String(), "Timed out waiting for running history writers") {
+			t.Errorf("dhisexpire with a hung writer: %v\n%s", err, out.String())
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatalf("dhisexpire still waits 30s for a hung writer\n%s", out.String())
+	}
+	release()
+	if fileExists(hist + ".new") {
+		t.Errorf("dhisexpire left %s.new", hist)
+	}
+	// valid again: a reader opens it at once
+	if o, err := s.TryRun("dilookup", "-h", hist, "<a@e2e.test>"); !strings.Contains(o, "Not Found") {
+		t.Errorf("the history is not valid after the timeout: %v\n%s", err, o)
 	}
 }
