@@ -6,15 +6,16 @@
 ##
 ##  Format:
 ##	<message>:<from>:<newsgroups>:<action>[=log][,<action>[=log]]*
-##  The last match found is used.  Several lines can match one message, and
+##  The last match found is used (checkgroups: every match, see below).
+##  Several lines can match one message, and
 ##  the last "=log" before a break decides where it is logged (a line without
 ##  "=log" keeps the log of the line before it).  Put a catch-all
 ##  line such as "all:*:*:log=control.log" before the lines of the message types,
 ##  never after them, or it replaces their log.  During rule matching, the
 ##  <newsgroups> pattern is tested only for newgroup and rmgroup.  For other
 ##  messages, including checkgroups, it does not restrict which rule matches.
-##  For checkgroups, the selected rule's pattern also limits which groups the
-##  action may change; see the checkgroups notes in samples/dcontrol.ctl.
+##  For checkgroups, the pattern of each matching line selects the groups that
+##  line acts on; see the checkgroups notes in samples/dcontrol.ctl.
 ##	<message>	Control message or "all" if it applies
 ##			to all control messages.
 ##	<from>		Pattern that must match the From line.

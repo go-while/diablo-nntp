@@ -6,15 +6,16 @@
 ##
 ##  Format:
 ##	<message>:<from>:<newsgroups>:<action>[=log][,<action>[=log]]*
-##  The last match found is used.  Several lines can match one message, and
+##  The last match found is used (checkgroups: every match, see below).
+##  Several lines can match one message, and
 ##  the last "=log" before a break decides where it is logged (a line without
 ##  "=log" keeps the log of the line before it).  Put a catch-all
 ##  line such as "all:*:*:log=control.log" before the lines of the message types,
 ##  never after them, or it replaces their log.  During rule matching, the
 ##  <newsgroups> pattern is tested only for newgroup and rmgroup.  For other
 ##  messages, including checkgroups, it does not restrict which rule matches.
-##  For checkgroups, the selected rule's pattern also limits which groups the
-##  action may change, as described below.
+##  For checkgroups, the pattern of each matching line selects the groups that
+##  line acts on, as described below.
 ##	<message>	Control message or "all" if it applies
 ##			to all control messages.
 ##	<from>		Pattern that must match the From line.
@@ -34,21 +35,36 @@
 ##	    verify-pgp_userid=logfile	PGP verify and log.
 ##	    break			terminate dcontrol.ctl scan
 ##
-##  checkgroups works as INN's docheckgroups does with "doit": the descriptions of
-##  the groups of the message are updated; a group it lists that does not exist is
-##  created; the moderated flag of a group that exists is corrected ("(Moderated)"
-##  in the description of the message); and a group that matches <newsgroups>, is in
-##  a top-level hierarchy of the message and is not in the message is removed.
-##  The additions, flag corrections and removals are only made when there are not
-##  more than 10 of them; a line
-##	maxcheckgroups:<from>:<newsgroups>:<number>
-##  sets another limit.  As in INN, it is for the sender that <from> matches and
-##  the first group of the message that <newsgroups> matches, and the last
-##  matching line is used:
-##	maxcheckgroups:*:*:10
-##	maxcheckgroups:group-admin@isc.org:comp.*:2000
-##  Beyond the limit they are written to the control log as the dgrpctl commands
-##  that make them (log=xxx, mail), and not made.  Groups that must never be
+##  checkgroups works as in INN (controlchan and docheckgroups).  Every
+##  checkgroups (and "all") line that matches the sender is used, not only the
+##  last one: each line acts on the groups of the message that match its
+##  <newsgroups> and the <newsgroups> of no later line, so a later line wins:
+##	doit, verify-*		the groups are checked (below); a verify line
+##				whose signature does not verify is skipped, as
+##				if it were not there
+##	drop			the groups are left out of the list: a group of
+##				them that exists is removed by an earlier doit
+##				line that covers it, e.g.
+##				    checkgroups:*:comp.*:doit
+##				    checkgroups:*:*binaries*:drop
+##				removes comp.*binaries* groups
+##	log, mail		nothing is changed; their lines of the message
+##				are written to the log (and mailed)
+##  A check: the descriptions of the groups are updated; a group that does not
+##  exist is created; the moderated flag of a group that exists is corrected
+##  ("(Moderated)" in the description of the message); and a group that the line
+##  acts on, is in a top-level hierarchy of the checked groups and is not in the
+##  message is removed.  The additions, flag corrections and removals are only
+##  made when no limit is exceeded, 10 by default; a line
+##	/maxdocheckgroups/:<from>:<newsgroups>:<number>
+##  sets another limit (maxcheckgroups: works as well).  As in INN, each change
+##  of a group counts for the last such line that matches the sender and the
+##  group:
+##	/maxdocheckgroups/:*:*:10
+##	/maxdocheckgroups/:group-admin@isc.org:comp.*|news.*|rec.*:2000
+##  Beyond a limit the changes of that line are written to the control log as
+##  the dgrpctl commands that make them (log=xxx, mail), and not made.  A site
+##  where every checkgroups line is drop never has its groups changed.  Groups that must never be
 ##  touched (kept as they are: description, flag, not removed) go in the file
 ##  localgroups next to this one, one name or wildcard per line, '#' for
 ##  comments.  A group that is not in the message is never changed except by the
