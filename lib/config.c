@@ -16,6 +16,7 @@ Prototype void SetMyHostName(char **hostname);
 Prototype void SetNewsAdmin(char **admin, char *host);
 Prototype void AddBindList(BindList **blist, char *interface, char *port, int append);
 Prototype int SetGroupHashMethod(const char *opt, GroupHashType *pmethod);
+Prototype int SetReaderForks(const char *opt, int *pforks);
 Prototype int SetCommand(FILE *fo, char *cmd, char *opt, int *cmdErr);
 Prototype int CheckConfigOptions(int which);
 Prototype void DumpConfigOptions(FILE *fo, char *cmd, int which);
@@ -318,8 +319,13 @@ LoadDiabloConfig(int ac, char **av)
 		    }
 		} else if (strcasecmp(cmd, "readerforks") == 0) {
 		    if (opt) {
-			DOpts.ReaderForks = strtol(opt, NULL, 0);
-			optErr = 0;
+			optErr = SetReaderForks(opt, &DOpts.ReaderForks);
+			if (optErr != 0) {
+			    fprintf(stderr, "readerforks must be auto or 0..%d: %s\n",
+						READERFORKS_MAX, opt);
+			    logit(LOG_CRIT, "readerforks must be auto or 0..%d: %s",
+						READERFORKS_MAX, opt);
+			}
 		    }
 		} else if (strcasecmp(cmd, "readerfeedforks") == 0) {
 		    if (opt) {
@@ -1079,6 +1085,29 @@ CheckConfigOptions(int which)
 	strdupfree(&DOpts.PgpVerifyArgs[1], PGP_VERIFY_ARG0, NULL);
 	DOpts.PgpVerifyArgs[2] = NULL;
     }
+    return(0);
+}
+
+/*
+ * SetReaderForks - 'auto' or a number 0..READERFORKS_MAX.
+ *
+ * Returns: 0 = success
+ *	    1 = error
+ */
+int
+SetReaderForks(const char *opt, int *pforks)
+{
+    char *end;
+    long n;
+
+    if (strcasecmp(opt, "auto") == 0) {
+	*pforks = READERFORKS_AUTO;
+	return(0);
+    }
+    n = strtol(opt, &end, 0);
+    if (end == opt || *end != 0 || n < 0 || n > READERFORKS_MAX)
+	return(1);
+    *pforks = (int)n;
     return(0);
 }
 

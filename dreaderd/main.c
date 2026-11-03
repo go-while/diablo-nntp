@@ -28,7 +28,19 @@
  *    for specific rights granted.
  */
 
+#if defined(__linux__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE	/* sched_getaffinity(), CPU_COUNT() */
+#endif
+
 #include "defs.h"
+
+#ifdef __linux__
+#include <sched.h>
+#endif
+#ifdef __FreeBSD__
+#include <sys/param.h>
+#include <sys/cpuset.h>
+#endif
 
 #if NEED_TERMIOS
 #include <sys/termios.h>
@@ -52,6 +64,13 @@ void HandleDnsThread(ForkDesc *desc);
 void deleteDnsResHash(DnsRes *dres, ForkDesc *desc);
 int getReaderForkSlot(void);
 void delReaderForkSlot(pid_t pid);
+static int AvailableCpus(void);
+#ifdef __linux__
+static int CgroupCpuLimit(void);
+#endif
+
+#define READERFORKS_AUTO_CAP	64	/* most forks 'readerforks auto' starts */
+
 #ifdef INET6
 void SendDns(int fd, struct sockaddr_storage *rsin, DnsRes *dres);
 #else
@@ -320,7 +339,13 @@ main(int ac, char **av)
 	    strdupfree(&DOpts.ReaderHostName, (*ptr) ? ptr : av[++i], NULL);
 	    break;
 	case 'M':
-	    DOpts.ReaderForks = strtol(((*ptr) ? ptr : av[++i]), NULL, 0);
+	    if (*ptr == 0)
+		ptr = av[++i];
+	    if (ptr == NULL || SetReaderForks(ptr, &DOpts.ReaderForks) != 0) {
+		fprintf(stderr, "-M: readerforks must be auto or 0..%d\n",
+							READERFORKS_MAX);
+		exit(1);
+	    }
 	    break;
 	case 'N':
 	    DOpts.ReaderThreads = strtol(((*ptr) ? ptr : av[++i]), NULL, 0);
@@ -439,8 +464,6 @@ main(int ac, char **av)
 	}
     }
 
-    MaxConnects = DOpts.ReaderThreads * DOpts.ReaderForks;
-
     MyGroupHome = strdup(PatExpand(GroupHomePat));
 
     /*
@@ -470,6 +493,17 @@ main(int ac, char **av)
      */
     openlog("dreaderd", (DebugOpt ? LOG_PERROR : 0) | LOG_NDELAY | LOG_PID,
             LOG_NEWS);
+
+    if (DOpts.ReaderForks == READERFORKS_AUTO) {
+	int cpus = AvailableCpus();
+
+	DOpts.ReaderForks = cpus;
+	if (DOpts.ReaderForks > READERFORKS_AUTO_CAP)
+	    DOpts.ReaderForks = READERFORKS_AUTO_CAP;
+	logit(LOG_NOTICE, "readerforks auto: %d (%d CPUs available)",
+						DOpts.ReaderForks, cpus);
+    }
+    MaxConnects = DOpts.ReaderThreads * DOpts.ReaderForks;
 
 #ifndef	CANLOCK_ENABLED
     /*
@@ -2443,6 +2477,113 @@ delReaderForkSlot(pid_t pid)
 	    ReaderPids[i] = 0;
     }
 }
+
+/*
+ * AvailableCpus - CPUs this process may use, for 'readerforks auto'.
+ *
+ * Linux: the affinity mask (taskset, cpusets), lowered to a cgroup v2
+ * CPU quota.  FreeBSD: the cpuset of the process.  Elsewhere, or when
+ * that fails: the CPUs online.  At least 1.
+ */
+static int
+AvailableCpus(void)
+{
+    int n = 0;
+
+#if defined(__linux__) && defined(CPU_COUNT)
+    {
+	cpu_set_t set;
+
+	CPU_ZERO(&set);
+	if (sched_getaffinity(0, sizeof(set), &set) == 0)
+	    n = CPU_COUNT(&set);
+    }
+#elif defined(__FreeBSD__) && defined(CPU_COUNT)
+    {
+	cpuset_t set;
+
+	CPU_ZERO(&set);
+	if (cpuset_getaffinity(CPU_LEVEL_WHICH, CPU_WHICH_PID, -1,
+						sizeof(set), &set) == 0)
+	    n = CPU_COUNT(&set);
+    }
+#endif
+#ifdef _SC_NPROCESSORS_ONLN
+    if (n <= 0) {
+	long c = sysconf(_SC_NPROCESSORS_ONLN);
+
+	if (c > 0 && c <= READERFORKS_MAX)
+	    n = (int)c;
+	else if (c > READERFORKS_MAX)
+	    n = READERFORKS_MAX;
+    }
+#endif
+#ifdef __linux__
+    {
+	int q = CgroupCpuLimit();
+
+	if (q > 0 && (n <= 0 || q < n))
+	    n = q;
+    }
+#endif
+    return((n > 0) ? n : 1);
+}
+
+#ifdef __linux__
+/*
+ * CgroupCpuLimit - the smallest cgroup v2 cpu.max quota on the path from
+ * our cgroup to the root, rounded up to whole CPUs; 0 when none is set.
+ */
+static int
+CgroupCpuLimit(void)
+{
+    static const char root[] = "/sys/fs/cgroup";
+    char path[PATH_MAX];
+    char line[PATH_MAX];
+    FILE *fi;
+    int best = 0;
+
+    if ((fi = fopen("/proc/self/cgroup", "r")) == NULL)
+	return(0);
+    path[0] = 0;
+    while (fgets(line, sizeof(line), fi) != NULL) {
+	if (strncmp(line, "0::/", 4) == 0) {
+	    line[strcspn(line, "\n")] = 0;
+	    if (snprintf(path, sizeof(path), "%s%s", root, line + 3) >=
+							(int)sizeof(path))
+		path[0] = 0;
+	    break;
+	}
+    }
+    fclose(fi);
+
+    while (path[0]) {
+	char file[PATH_MAX + 16];
+	long long quota;
+	long long period;
+	char *p;
+
+	snprintf(file, sizeof(file), "%s/cpu.max", path);
+	if ((fi = fopen(file, "r")) != NULL) {
+	    /* "max 100000" (no limit) or "<quota> <period>" */
+	    if (fscanf(fi, "%lld %lld", &quota, &period) == 2 &&
+						quota > 0 && period > 0) {
+		long long c = (quota + period - 1) / period;
+
+		if (c > READERFORKS_MAX)
+		    c = READERFORKS_MAX;
+		if (best == 0 || c < best)
+		    best = (int)c;
+	    }
+	    fclose(fi);
+	}
+	if ((p = strrchr(path, '/')) == NULL || p < path + sizeof(root) - 1)
+	    break;
+	*p = 0;
+    }
+    return(best);
+}
+#endif
 
 typedef struct vscount {
 	Vserver *vserver;
