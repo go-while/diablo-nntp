@@ -1111,8 +1111,13 @@ main(int ac, char **av)
 					if (dres.dr_ResultFlags == DR_REQUIRE_DNS) {
 					    SendDns(recv_fd, &rsin, &dres);
 					} else {
-					    dres.dr_ResultFlags = DR_SESSEXIT_RPT;
-					    SendDns(recv_fd, &rsin, &dres);
+#ifdef	NETREMOTE_ENABLED
+					    /* session-exit accounting: only netremote uses it */
+					    if (dres.dr_AuthUser[0] && dres.dr_AuthPass[0]) {
+						dres.dr_ResultFlags = DR_SESSEXIT_RPT;
+						SendDns(recv_fd, &rsin, &dres);
+					    }
+#endif
 					    close(recv_fd);
 					}
 					--NumActive;
