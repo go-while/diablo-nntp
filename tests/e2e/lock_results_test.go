@@ -296,14 +296,21 @@ func TestDexpireoverLockTimeoutKept(t *testing.T) {
 //	LOCKFAULT_SETLOG=f     log every F_SETLK/F_SETLKW as "cmd type start len path"
 func lockFaultShim(t *testing.T) string {
 	t.Helper()
+	return preloadShim(t, "lockfault", lockFaultSource)
+}
+
+// preloadShim builds the C source src into an LD_PRELOAD library (Linux, illumos) named
+// <name>.so; lockFaultEnv gives the variable that loads it.
+func preloadShim(t *testing.T, name, src string) string {
+	t.Helper()
 	if runtime.GOOS != "linux" && runtime.GOOS != "illumos" {
-		t.Skip("the lock fault injector uses LD_PRELOAD on Linux and illumos")
+		t.Skip("the fault injector uses LD_PRELOAD on Linux and illumos")
 	}
 	cc := wmCC(t)
 	dir := t.TempDir()
-	c := filepath.Join(dir, "lockfault.c")
-	so := filepath.Join(dir, "lockfault.so")
-	if err := os.WriteFile(c, []byte(lockFaultSource), 0o600); err != nil {
+	c := filepath.Join(dir, name+".c")
+	so := filepath.Join(dir, name+".so")
+	if err := os.WriteFile(c, []byte(src), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	args := []string{"-shared", "-fPIC", "-o", so, c, "-ldl"}

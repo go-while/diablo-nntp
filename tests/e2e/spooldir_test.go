@@ -11,7 +11,7 @@ import (
 // removed (as dexpire does when it expires down to the newest directory), the next article on
 // the same connection is still stored: diablo recreates the directory and changes into it
 // again. Before, it kept retrying inside the removed directory and rejected the article with
-// "IOError/Missing-dir" (436).
+// "IOError/Missing-dir" (437).
 //
 // diablo logs to a file in the site (path_generallog): on illumos, syslog has no LOG_PERROR,
 // so in -d mode the log lines never reach stderr.
