@@ -4,6 +4,7 @@
 #include <poll.h>	/* lib/defs.h includes it only when USE_POLL is set */
 
 Prototype int SendMsg(int to_fd, int send_fd, DnsRes *dres);
+Prototype int SendMsgPart(int to_fd, int send_fd, DnsRes *dres, size_t *off);
 Prototype int RecvMsg(int from_fd, int *recv_fd, DnsRes *dres);
 
 #if FDPASS_DAMN_CMSG_MACROS
@@ -17,94 +18,108 @@ Prototype int RecvMsg(int from_fd, int *recv_fd, DnsRes *dres);
  * so it is easier to see what is going on.  JG20050830
  */
 
+/*
+ * Send what is left of a fixed-size message without waiting: from *off on,
+ * with the descriptor only while nothing has gone yet (off 0).  On the
+ * SOCK_STREAM fallback a short write sends the first part, with the
+ * descriptor, and the rest needs later calls without control data.
+ *
+ * Returns 1 when the whole message is sent, 0 when the socket is full
+ * (*off tells how far it got), -1 on an error (errno set; with *off still 0
+ * nothing was sent).
+ */
 int
-SendMsg(int to_fd, int send_fd, DnsRes *dres)
+SendMsgPart(int to_fd, int send_fd, DnsRes *dres, size_t *off)
 {
     struct msghdr msg;
     struct iovec iov;
     char tbuf[CMSG_SPACE(sizeof(int))];
     struct cmsghdr *cmsg;
-    int res = 0;
-         
-    bzero(&msg, sizeof(msg));
+    ssize_t res;
 
-    iov.iov_base = (void *)dres;
-    iov.iov_len = sizeof(DnsRes);
-                
-    msg.msg_iov = &iov;
-    msg.msg_iovlen = 1;
-    msg.msg_flags = 0;
-    if (send_fd >= 0) {
-        msg.msg_control = tbuf;
-        msg.msg_controllen = sizeof(tbuf);
-        cmsg = CMSG_FIRSTHDR(&msg);
-        cmsg->cmsg_level = SOL_SOCKET;
-        cmsg->cmsg_type = SCM_RIGHTS;
-        cmsg->cmsg_len = CMSG_LEN(sizeof(int));
-        memcpy((int *)CMSG_DATA(cmsg), &send_fd, sizeof(int));
-	msg.msg_controllen = cmsg->cmsg_len;
-    }
-    errno = 0;
-        
-    /*
-     * If we do not turn off nagle, lots of little 'group' transactions
-     * can result in major delays even if nagle only kicks in on a few
-     * of them.
-     */
-        
+    if (*off == 0) {
+	if (DebugOpt)
+	    printf("SendMsg() pid= %d fd=%d size=%d\n", (int)getpid(), send_fd, (int)sizeof(DnsRes));
 #ifdef TCP_NODELAY
-    /*
-     * Turn on TCP_NODELAY
-     */
-    if (send_fd >= 0) {
-      int one = 1;
-      setsockopt(send_fd, IPPROTO_TCP, TCP_NODELAY, (void *)&one, sizeof(one));
-    }
+	/*
+	 * If we do not turn off nagle, lots of little 'group' transactions
+	 * can result in major delays even if nagle only kicks in on a few
+	 * of them.
+	 */
+	if (send_fd >= 0) {
+	    int one = 1;
+	    setsockopt(send_fd, IPPROTO_TCP, TCP_NODELAY, (void *)&one, sizeof(one));
+	}
 #endif
-     
-    /*
-     * Send the complete fixed-size message.  On SOCK_SEQPACKET each sendmsg()
-     * is atomic; on the SOCK_STREAM fallback a short write can send the first
-     * part (with the descriptor) and need another sendmsg() without control
-     * data for the tail.  Wait with poll() on EAGAIN/ENOBUFS instead of
-     * spinning at 100% CPU while the peer drains the socketpair.
-     */
-        
-    if (DebugOpt)
-      printf("SendMsg() pid= %d fd=%d size=%d\n", (int)getpid(), send_fd, (int)sizeof(DnsRes));
-    while (iov.iov_len > 0) {
-      res = sendmsg(to_fd, &msg, 0);
-      if (res > 0) {
-          iov.iov_base = (char *)iov.iov_base + res;
-          iov.iov_len -= (size_t)res;
-          msg.msg_control = NULL;
-          msg.msg_controllen = 0;
-          continue;
-      }
-      if (res == 0) {
-          errno = EIO;
-          logit(LOG_ERR, "sendmsg error (%s)", strerror(errno));
-          return(-1);
-      }
-      if (errno == EINTR)
-          continue;
-      if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS) {
-          struct pollfd pfd;
-
-          pfd.fd = to_fd;
-          pfd.events = POLLOUT;
-          pfd.revents = 0;
-          (void)poll(&pfd, 1, 50);
-          continue;
-      }
-      {
-	  int err = errno;	/* the caller may look at it */
-
-	  logit(LOG_ERR, "sendmsg error (%s)", strerror(err));
-	  errno = err;
-      }
-      return(-1);
     }
+
+    while (*off < sizeof(DnsRes)) {
+	bzero(&msg, sizeof(msg));
+	iov.iov_base = (char *)dres + *off;
+	iov.iov_len = sizeof(DnsRes) - *off;
+	msg.msg_iov = &iov;
+	msg.msg_iovlen = 1;
+	if (*off == 0 && send_fd >= 0) {
+	    bzero(tbuf, sizeof(tbuf));
+	    msg.msg_control = tbuf;
+	    msg.msg_controllen = sizeof(tbuf);
+	    cmsg = CMSG_FIRSTHDR(&msg);
+	    cmsg->cmsg_level = SOL_SOCKET;
+	    cmsg->cmsg_type = SCM_RIGHTS;
+	    cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+	    memcpy((int *)CMSG_DATA(cmsg), &send_fd, sizeof(int));
+	    msg.msg_controllen = cmsg->cmsg_len;
+	}
+	errno = 0;
+	res = sendmsg(to_fd, &msg, MSG_DONTWAIT);
+	if (res > 0) {
+	    *off += (size_t)res;
+	    continue;
+	}
+	if (res == 0) {
+	    errno = EIO;
+	    logit(LOG_ERR, "sendmsg error (%s)", strerror(errno));
+	    return(-1);
+	}
+	if (errno == EINTR)
+	    continue;
+	if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS)
+	    return(0);
+	{
+	    int err = errno;	/* the caller may look at it */
+
+	    logit(LOG_ERR, "sendmsg error (%s)", strerror(err));
+	    errno = err;
+	}
+	return(-1);
+    }
+    return(1);
+}
+
+/*
+ * Send the complete fixed-size message, waiting with poll() while the
+ * socket is full instead of spinning at 100% CPU.  Only for a sender whose
+ * peer never waits for it in turn: the dreaderd main process uses
+ * SendMsgPart() and a queue for its messages to the readers (see
+ * ReaderOutSend() in main.c), so a reader may wait here for the main
+ * process.
+ */
+int
+SendMsg(int to_fd, int send_fd, DnsRes *dres)
+{
+    size_t off = 0;
+    int r;
+
+    while ((r = SendMsgPart(to_fd, send_fd, dres, &off)) == 0) {
+	struct pollfd pfd;
+
+	pfd.fd = to_fd;
+	pfd.events = POLLOUT;
+	pfd.revents = 0;
+	(void)poll(&pfd, 1, 50);
+    }
+    if (r < 0)
+	return(-1);
     return((int)sizeof(DnsRes));
 }
 
