@@ -467,23 +467,27 @@ static char MasterSockPath[sizeof(((struct sockaddr_un *)0)->sun_path)];
 void
 sigHup(int sigNo)
 {
-    Exiting = 1;
     if (DidFork) {
 	int saved = errno;
+
+	Exiting = 1;
 
 	SessionExitReq = 1;
 	if (SessionFd >= 0)
 	    shutdown(SessionFd, SHUT_RDWR);
 	errno = saved;
-    } else {
-	if (Exiting == 0) {
-	    int i;
+    } else if (Exiting == 0) {
+	/*
+	 * The master tells its children, as "dicmd exit" does.  Before,
+	 * Exiting was set first, so this was never reached: a SIGTERM left
+	 * the master waiting on a feed session that never ended.
+	 */
+	int i;
 
-	    Exiting = 1;
-	    for (i = 0; i < MAXFDS; ++i) {
-		if (PidAry[i].tr_Pid) {
-		    Kill(PidAry[i].tr_Pid, SIGHUP);
-		}
+	Exiting = 1;
+	for (i = 0; i < MAXFDS; ++i) {
+	    if (PidAry[i].tr_Pid) {
+		Kill(PidAry[i].tr_Pid, SIGHUP);
 	    }
 	}
     }
@@ -543,6 +547,7 @@ sigAlrm(int sigNo)
  */
 
 static char PidFile[PATH_MAX];
+static int pidFileIsOurs(void);
 
 void
 DiabloServer(int lfd)
@@ -833,7 +838,8 @@ DiabloServer(int lfd)
     /*
      * Pid file <path_log>/diablo.pid, next to dreaderd.pid, so that tools
      * like diablo-ctl find this site's master even when other sites run as
-     * the same user.  Removed again on a clean exit.
+     * the same user.  Removed again on a clean exit if it still names
+     * this master.
      */
 
     {
@@ -1039,8 +1045,28 @@ DiabloServer(int lfd)
     }
     FinishRetain(RET_PAUSE);
     FinishRetain(RET_CLOSE);
-    if (PidFile[0])
+    if (PidFile[0] && pidFileIsOurs())
 	remove(PidFile);	/* last: diablo-ctl waits for this pid */
+}
+
+/*
+ * pidFileIsOurs() - the pid file still names this process.  A master that
+ *		     exits late must not remove the file of the master
+ *		     started after it.
+ */
+
+static int
+pidFileIsOurs(void)
+{
+    FILE *pf;
+    int pid = -1;
+
+    if ((pf = fopen(PidFile, "r")) == NULL)
+	return(0);
+    if (fscanf(pf, "%d", &pid) != 1)
+	pid = -1;
+    fclose(pf);
+    return(pid == (int)getpid());
 }
 
 /*
