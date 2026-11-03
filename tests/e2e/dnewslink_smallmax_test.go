@@ -14,6 +14,7 @@ import (
 // the queue file.
 func TestDnewslinkSmallMaxstream(t *testing.T) {
 	s := NewSite(t, SiteOptions{NoStart: true})
+	dnlSpool(t, s)
 	var mu sync.Mutex
 	var checks []string
 	port := dnlPeer(t, func(line string) (string, bool) {

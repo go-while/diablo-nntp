@@ -12,6 +12,7 @@ import (
 // fixed for D-63, this path was not). Compressed-spool entries then go out as raw gzip bytes.
 func TestDnewslinkQueueFieldsPerLine(t *testing.T) {
 	s := NewSite(t, SiteOptions{NoStart: true})
+	dnlSpool(t, s)
 	port := dnlPeerN(t, func(conn int, line string) (string, bool) {
 		switch {
 		case strings.HasPrefix(line, "mode stream"):

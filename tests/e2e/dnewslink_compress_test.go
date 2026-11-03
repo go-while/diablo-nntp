@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -18,6 +19,8 @@ import (
 func TestDnewslinkBadCompressLevel(t *testing.T) {
 	skipWithoutZlib(t)
 	s := NewSite(t, SiteOptions{NoStart: true})
+	dnlSpool(t, s)
+	var checked atomic.Bool
 	port := dnlPeer(t, func(line string) (string, bool) {
 		switch {
 		case strings.HasPrefix(line, "mode stream"):
@@ -25,6 +28,9 @@ func TestDnewslinkBadCompressLevel(t *testing.T) {
 		case strings.HasPrefix(line, "mode compress"):
 			return "207 compress ok\r\n", false
 		case strings.HasPrefix(line, "check "):
+			if strings.HasPrefix(line, "check <z1@") {
+				checked.Store(true)
+			}
 			return "438 " + strings.Fields(line)[1] + "\r\n", false
 		}
 		return "", false
@@ -48,6 +54,9 @@ func TestDnewslinkBadCompressLevel(t *testing.T) {
 	select {
 	case <-done:
 		t.Logf("dnewslink ended by itself:\n%s", out.String())
+		if !checked.Load() {
+			t.Errorf("the peer got no CHECK <z1@e2e.test>: nothing was offered, so the compressed write was not tested")
+		}
 	case <-time.After(8 * time.Second):
 		ps, _ := exec.Command("ps", "-o", "pid,time,pcpu,args", "-p", strconv.Itoa(cmd.Process.Pid)).CombinedOutput()
 		t.Errorf("dnewslink -Z12 still busy after 8 s against a peer that accepted MODE COMPRESS:\n%s\noutput so far:\n%s", ps, out.String())
