@@ -869,7 +869,11 @@ again:
 	    ov->ov_Size = st.st_size;
 	    ov->ov_MaxArts = (st.st_size - oh.oh_HeadSize) / sizeof(OverArt);
 	    ov->ov_DataEntryMask = oh.oh_DataEntries - 1;
+#ifdef __OpenBSD__
+	    ov->ov_Head = xreadmap(ov->ov_OFd, sizeof(OverHead), 0);
+#else
 	    ov->ov_Head = xmap(NULL, ov->ov_Size, PROT_READ, MAP_SHARED, ov->ov_OFd, 0);
+#endif
 	    if (ov->ov_Head == NULL) {
 		logit(LOG_ERR, "Error on overview mmap for group %s (%s)",
 						group, strerror(errno));
@@ -894,10 +898,20 @@ GetOverArt(OverInfo *ov, artno_t artno, off_t *ppos)
      * see if we actually have the requested information.
      */
 
-    oa = (const OverArt *)((const char *)ov->ov_Head + ovpos);
-
     if (ppos)
 	*ppos = ovpos;
+
+#ifdef __OpenBSD__
+    if (xreadat(ov->ov_OFd, &ov->ov_Record, sizeof(ov->ov_Record), ovpos) < 0) {
+        if (ppos)
+            *ppos = -1;
+        fprintf(stderr, "%s: overview read failed: %s\n", ov->ov_Group, strerror(errno));
+        return(NULL);
+    }
+    oa = &ov->ov_Record;
+#else
+    oa = (const OverArt *)((const char *)ov->ov_Head + ovpos);
+#endif
 
     if (DebugOpt > 2)
 	printf("OA %08lx %d,%lld %s\n", (long)oa, oa->oa_ArtNo, artno, OA_ARTNOEQ(artno, oa->oa_ArtNo) ? "(match)" : "(MISMATCH)");
@@ -923,7 +937,7 @@ CancelOverArt(OverInfo *ov, artno_t artNo)
 	    return(0);
 	}
 	oa = GetOverArt(ov, artNo, &ovpos);
-	if (OA_ARTNOEQ(artNo, oa->oa_ArtNo)) {
+	if (oa && OA_ARTNOEQ(artNo, oa->oa_ArtNo)) {
 	    OverArt copy = *oa;
 
 	    copy.oa_ArtNo = -1;		/* CANCELED! */

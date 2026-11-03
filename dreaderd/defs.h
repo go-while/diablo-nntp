@@ -729,6 +729,9 @@ typedef struct OverInfo {
     OverData	*ov_HCache;	/* last accessed file reference		*/
     int         ov_OFd;
     OverHead	*ov_Head;
+#ifdef __OpenBSD__
+    OverArt     ov_Record;       /* most recently read overview record */
+#endif
     off_t	ov_Size;
     int		ov_Iter;
     int		ov_endNo;
@@ -782,4 +785,3 @@ struct SharedInfo {
 #include <obj/dreaderd-protos.h>
 
 #include <lib/debug-mbuf.h>
-

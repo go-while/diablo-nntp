@@ -1076,14 +1076,20 @@ again:
 	    ov->ov_Size = st.st_size;
 	    ov->ov_MaxArts = (st.st_size - oh.oh_HeadSize) / sizeof(OverArt);
 	    ov->ov_DataEntryMask = oh.oh_DataEntries - 1;
+#ifdef __OpenBSD__
+	    ov->ov_Head = xreadmap(ov->ov_OFd, sizeof(OverHead), 0);
+#else
 	    ov->ov_Head = xmap(NULL, ov->ov_Size, PROT_READ, MAP_SHARED, ov->ov_OFd, 0);
+#endif
 	    if (ov->ov_Head == NULL) {
 		logit(LOG_ERR, "Error on overview mmap for group %s (%s)",
 						group, strerror(errno));
 		FreeOverInfo(ov);
 		ov = NULL;
 	    } else {
+#ifndef __OpenBSD__
 		xadvise(ov->ov_Head, ov->ov_Size, XADV_SEQUENTIAL);
+#endif
 		++NumOverInfo;
 		pov = &OvHash[shash(group) & OVHMASK];
 		ov->ov_Next = *pov;
@@ -1109,10 +1115,20 @@ GetOverArt(OverInfo *ov, artno_t artno, off_t *ppos)
      * see if we actually have the requested information.
      */
 
-    oa = (const OverArt *)((const char *)ov->ov_Head + ovpos);
-
     if (ppos)
 	*ppos = ovpos;
+
+#ifdef __OpenBSD__
+    if (xreadat(ov->ov_OFd, &ov->ov_Record, sizeof(ov->ov_Record), ovpos) < 0) {
+        if (ppos)
+            *ppos = -1;
+        logit(LOG_ERR, "overview record read failed for %s: %s", ov->ov_Group, strerror(errno));
+        return(NULL);
+    }
+    oa = &ov->ov_Record;
+#else
+    oa = (const OverArt *)((const char *)ov->ov_Head + ovpos);
+#endif
 
     if (DebugOpt > 2)
 	printf("OA %08lx %d,%lld %s\n", (long)oa, oa->oa_ArtNo, artno, OA_ARTNOEQ(artno, oa->oa_ArtNo) ? "(match)" : "(MISMATCH)");
@@ -1207,7 +1223,11 @@ GetOverRecord(OverInfo *ov, artno_t artno, int *plen, int *alen, TimeRestrict *t
 	if (od->od_HMapBytes + od->od_HMapPos > st.st_size)
 	    od->od_HMapBytes = st.st_size - od->od_HMapPos;
 
+#ifdef __OpenBSD__
+	od->od_HMapBase = xreadmap(od->od_HFd, od->od_HMapBytes, od->od_HMapPos);
+#else
 	od->od_HMapBase = xmap(NULL, od->od_HMapBytes, PROT_READ, MAP_SHARED, od->od_HFd, od->od_HMapPos);
+#endif
 	if (od->od_HMapBase == NULL) {
 	    logit(LOG_CRIT, "mmap() failed B %s", strerror(errno));
 	    exit(1);
@@ -1219,6 +1239,14 @@ GetOverRecord(OverInfo *ov, artno_t artno, int *plen, int *alen, TimeRestrict *t
      * if the overview starts with a nul we have a problem.
      */
 
+#ifdef __OpenBSD__
+    if (xreadat(od->od_HFd, (void *)od->od_HMapBase, od->od_HMapBytes,
+        od->od_HMapPos) < 0) {
+        logit(LOG_ERR, "overview data read failed for %s: %s", ov->ov_Group, strerror(errno));
+        *plen = 0;
+        return(NULL);
+    }
+#endif
     *plen = oa->oa_Bytes;
     {
 	const char *r = od->od_HMapBase + hvpos - od->od_HMapPos;
@@ -1359,7 +1387,9 @@ OutputOverRange(OverInfo *ov, Connection *conn)
 	if (xpos + xsize > st.st_size) {
 	    /* check if first article is inside the file */
     	    oa = GetOverArt(ov, conn->co_ListBegNo, NULL);
-	    if (oa->oa_SeekPos + oa->oa_Bytes > st.st_size) {
+	    if (oa == NULL || oa->oa_SeekPos + oa->oa_Bytes > st.st_size) {
+		if (oa == NULL)
+		    return;
 		logit(LOG_CRIT, "Group %s data file is too small to contain header #%lld (%i+%i>%i)", conn->co_GroupName, conn->co_ListBegNo, oa->oa_SeekPos, oa->oa_Bytes, st.st_size);
 		conn->co_ListBegNo++;
 		return;
@@ -1370,7 +1400,11 @@ OutputOverRange(OverInfo *ov, Connection *conn)
 	    od->od_HMapBytes= xsize;
 	}
 	
+#ifdef __OpenBSD__
+	od->od_HMapBase = xreadmap(od->od_HFd, od->od_HMapBytes, od->od_HMapPos);
+#else
 	od->od_HMapBase = xmap(NULL, od->od_HMapBytes, PROT_READ, MAP_SHARED, od->od_HFd, od->od_HMapPos);
+#endif
 	if (od->od_HMapBase == NULL) {
 	    logit(LOG_CRIT, "mmap() failed C (%s) group %s (%lld:%lld@%i:%i)", strerror(errno), conn->co_GroupName, conn->co_ListBegNo, artend, od->od_HMapPos, od->od_HMapBytes);
 	    exit(1);
@@ -1378,6 +1412,13 @@ OutputOverRange(OverInfo *ov, Connection *conn)
 	xadvise(od->od_HMapBase, od->od_HMapBytes, advise);
     }
 
+#ifdef __OpenBSD__
+    if (xreadat(od->od_HFd, (void *)od->od_HMapBase, od->od_HMapBytes,
+        od->od_HMapPos) < 0) {
+        logit(LOG_ERR, "overview data read failed for %s: %s", ov->ov_Group, strerror(errno));
+        return;
+    }
+#endif
     for( ; conn->co_ListBegNo <= artend ; conn->co_ListBegNo++) {
 
 	oa = GetOverArt(ov, conn->co_ListBegNo, NULL);
@@ -1474,7 +1515,7 @@ FindCanceledMsg(const char *group, const char *msgid, artno_t *partNo, int *pval
 		    off_t ovpos = 0;
 		    const OverArt *oa = GetOverArt(ov, artEnd, &ovpos);
 
-		    if (OA_ARTNOEQ(artEnd, oa->oa_ArtNo) && 
+		    if (oa && OA_ARTNOEQ(artEnd, oa->oa_ArtNo) &&
 			bcmp(&oa->oa_MsgHash, &hv, sizeof(hv)) == 0
 		    ) {
 			*partNo = artEnd;
@@ -1512,7 +1553,7 @@ CancelOverArt(OverInfo *ov, artno_t artNo)
 	    return(0);
 	}
 	oa = GetOverArt(ov, artNo, &ovpos);
-	if (OA_ARTNOEQ(artNo, oa->oa_ArtNo)) {
+	if (oa && OA_ARTNOEQ(artNo, oa->oa_ArtNo)) {
 	    OverArt copy = *oa;
 
 	    copy.oa_ArtNo = -1;		/* CANCELED! */
@@ -1575,7 +1616,11 @@ MakeOverHFile(OverInfo *ov, artno_t artNo, int create)
 		    st.st_size = 0;
 	    	    fstat(zfd, &st);
 
+#ifdef __OpenBSD__
+		    zmap = xreadmap(zfd, st.st_size, 0);
+#else
 		    zmap = xmap(NULL, st.st_size, PROT_READ, MAP_SHARED, zfd, 0);
+#endif
 	    	    if (! zmap) {
 		        logit(LOG_ERR, "Unable to xmap for gzcat %s/%s: %s",
 			    MyGroupHome,
@@ -1666,6 +1711,12 @@ MakeOverHFile(OverInfo *ov, artno_t artNo, int create)
 				inflateInit2(&z, -MAX_WBITS);
 			        code = inflate(&z, Z_FINISH);
 				inflateEnd(&z);
+#ifdef __OpenBSD__
+				if (code == Z_STREAM_END && msync(tmpmap, zlen, MS_SYNC) < 0) {
+				    logit(LOG_ERR, "overview decompression sync failed: %s", strerror(errno));
+				    code = Z_ERRNO;
+				}
+#endif
     
 			        if (code != Z_STREAM_END) {
 				    logit(LOG_ERR, "inflate error (%i) for gzcat %s/%s: %s",
@@ -1757,7 +1808,11 @@ FreeOverInfo(OverInfo *ov)
 	FreeOverData(od);
     }
     if (ov->ov_Head)
+#ifdef __OpenBSD__
+	xunmap((void *)ov->ov_Head, sizeof(OverHead));
+#else
 	xunmap((void *)ov->ov_Head, ov->ov_Size);
+#endif
     if (ov->ov_OFd >= 0) {
 	/*
 	 * remove shared lock and close
@@ -1872,4 +1927,3 @@ NNRetrieveHead(Connection *conn, int *povlen, const char **pmsgid, int *TimeRcvd
 	res = NULL;
     return(res);
 }
-

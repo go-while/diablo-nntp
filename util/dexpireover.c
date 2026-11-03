@@ -39,6 +39,16 @@
 
 #include <dreaderd/defs.h>
 
+static void *
+MapOverRecords(int fd, size_t len, off_t offset)
+{
+#ifdef __OpenBSD__
+    return(xreadmap(fd, len, offset));
+#else
+    return(xmap(NULL, len, PROT_READ, MAP_SHARED, fd, offset));
+#endif
+}
+
 #define GZ_MAGIC0       0x1F
 #define GZ_MAGIC1       0x8B
 #define GZ_EXTRA        0x04
@@ -1167,8 +1177,7 @@ getFirstArtAge(Group *group, int fd, OverHead *oh)
 	return(-1);
     }
 
-    oaBase = xmap(NULL, n * sizeof(OverArt), PROT_READ, MAP_SHARED, fd,
-			oh->oh_HeadSize);
+    oaBase = MapOverRecords(fd, n * sizeof(OverArt), oh->oh_HeadSize);
     if (oaBase == NULL) {
 	fprintf(stderr, "Unable to xmap over.* file for group %s (%lld) in getFirstArtAge (%s)\n",
 			group->gr_GroupName, n, strerror(errno));
@@ -1316,7 +1325,7 @@ ExpireByDays(Group *group, int fd, OverHead *oh, int expireSecs)
 	return;
     }
 
-    oaBase = xmap(NULL, n * sizeof(OverArt), PROT_READ, MAP_SHARED, fd, oh->oh_HeadSize);
+    oaBase = MapOverRecords(fd, n * sizeof(OverArt), oh->oh_HeadSize);
     if (oaBase == NULL) {
 	fprintf(stderr, "Unable to xmap over.* file for group %s (%lld) in ExpireByDays (%s)\n", group->gr_GroupName, n, strerror(errno));
 	return;
@@ -1352,6 +1361,10 @@ ExpireByDays(Group *group, int fd, OverHead *oh, int expireSecs)
 			lseek(fd, (off_t)oh->oh_HeadSize + i * sizeof(OverArt), 0);
 			if (WriteAll(fd, &copy, sizeof(OverArt)) < 0)
 			    printf("overview write failed: %s\n", strerror(errno));
+#ifdef __OpenBSD__
+			else
+			    memcpy((void *)&oaBase[i], &copy, sizeof(copy));
+#endif
 		    }
 		    ++count;
 		}
@@ -1436,7 +1449,7 @@ ExpireBySpool(Group *group, int fd, OverHead *oh)
 	return;
     }
 
-    oaBase = xmap(NULL, n * sizeof(OverArt), PROT_READ, MAP_SHARED, fd, oh->oh_HeadSize);
+    oaBase = MapOverRecords(fd, n * sizeof(OverArt), oh->oh_HeadSize);
     if (oaBase == NULL) {
 	fprintf(stderr, "Unable to xmap over.* file for group %s (%lld) in ExpireBySpool (%s)\n", group->gr_GroupName, n, strerror(errno));
 	return;
@@ -1473,6 +1486,10 @@ ExpireBySpool(Group *group, int fd, OverHead *oh)
 			lseek(fd, oh->oh_HeadSize + i * sizeof(OverArt), 0);
 			if (WriteAll(fd, &copy, sizeof(OverArt)) < 0)
 			    printf("overview write failed: %s\n", strerror(errno));
+#ifdef __OpenBSD__
+			else
+			    memcpy((void *)&oaBase[i], &copy, sizeof(copy));
+#endif
 		    }
 		    ++count;
 		}
@@ -1556,7 +1573,7 @@ ExpireFromFile(Group *group, int fd, OverHead *oh, int expireSecs)
 	return;
     }
 
-    oaBase = xmap(NULL, n * sizeof(OverArt), PROT_READ, MAP_SHARED, fd, oh->oh_HeadSize);
+    oaBase = MapOverRecords(fd, n * sizeof(OverArt), oh->oh_HeadSize);
     if (oaBase == NULL) {
 	fprintf(stderr, "Unable to xmap over.* file for group %s (%lld) in ExpireFromFile (%s)\n", group->gr_GroupName, n, strerror(errno));
 	return;
@@ -1590,6 +1607,10 @@ ExpireFromFile(Group *group, int fd, OverHead *oh, int expireSecs)
 			lseek(fd, oh->oh_HeadSize + i * sizeof(OverArt), 0);
 			if (WriteAll(fd, &copy, sizeof(OverArt)) < 0)
 			    printf("overview write failed: %s\n", strerror(errno));
+#ifdef __OpenBSD__
+			else
+			    memcpy((void *)&oaBase[i], &copy, sizeof(copy));
+#endif
 		    }
 		    ++count;
 		}
@@ -1713,7 +1734,7 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
      * Map the over map into mem
      */
 
-    oaBase = xmap(NULL, n * sizeof(OverArt), PROT_READ, MAP_SHARED, fd, oh->oh_HeadSize);
+    oaBase = MapOverRecords(fd, n * sizeof(OverArt), oh->oh_HeadSize);
     if (oaBase == NULL) {
 	fprintf(stderr, "Unable to xmap over.* file for group %s (%lld) in RewriteData (%s)\n", group->gr_GroupName, n, strerror(errno));
 	return(0);
@@ -1806,7 +1827,11 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
 		if ((cfd = open(path, O_RDONLY)) >= 0 &&
 		    fstat(cfd, &st) == 0
 		) {
+#ifdef __OpenBSD__
+		    cacheBase = xreadmap(cfd, st.st_size, 0);
+#else
 		    cacheBase = xmap(NULL, st.st_size, PROT_READ, MAP_SHARED, cfd, 0);
+#endif
 		    cacheSize = st.st_size;
 		    xadvise(cacheBase, st.st_size, XADV_WILLNEED);
 		} else {
@@ -1830,7 +1855,11 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
 			    st.st_size = 0;
 			    fstat(cfd, &st);
 
+#ifdef __OpenBSD__
+			    zmap = xreadmap(cfd, st.st_size, 0);
+#else
 			    zmap = xmap(NULL, st.st_size, PROT_READ, MAP_SHARED, cfd, 0);
+#endif
 			    if (! zmap) {
 		    		printf("Unable to xmap for gzcat %s: %s\n",
 					path, strerror(errno));
@@ -2289,7 +2318,7 @@ ResizeGroup(Group *group, int fd, OverHead *oh, int newSize, int OldDataEntries,
          */
 
         n = (st.st_size - oh->oh_HeadSize) / sizeof(OverArt);
-	oa = xmap(NULL, n * sizeof(OverArt), PROT_READ, MAP_SHARED, fd, oh->oh_HeadSize);
+	oa = MapOverRecords(fd, n * sizeof(OverArt), oh->oh_HeadSize);
 #endif
 
 	if (! oa || ! ob) {
@@ -2685,5 +2714,3 @@ void dumpovmap(OverArt *oa, long long n, char *filename)
     }
     fclose(fp);
 }
-
-

@@ -15,6 +15,7 @@
 
 Prototype void *xmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset);
 Prototype void *xreadmap(int fd, size_t len, off_t offset);
+Prototype int xreadat(int fd, void *buf, size_t len, off_t offset);
 Prototype void xadvise(const void *ptr, off_t bytes, int how);
 
 Prototype void xunmap(void *addr, size_t len);
@@ -22,6 +23,28 @@ Prototype void xunmap(void *addr, size_t len);
 static int XPageMask;
 
 #ifdef __OpenBSD__
+/* Read exactly the requested range without changing the file position. */
+int
+xreadat(int fd, void *buf, size_t len, off_t offset)
+{
+    size_t done = 0;
+    char *p = buf;
+
+    while (done < len) {
+        ssize_t n = pread(fd, p + done, len - done, offset + (off_t)done);
+        if (n > 0)
+            done += (size_t)n;
+        else if (n < 0 && errno == EINTR)
+            continue;
+        else {
+            if (n == 0)
+                errno = EIO;
+            return(-1);
+        }
+    }
+    return(0);
+}
+
 /* A private, munmap-compatible snapshot for file data that must be current.
  * Match mmap's zero-filled final partial page, but reject pages beyond EOF. */
 void *
