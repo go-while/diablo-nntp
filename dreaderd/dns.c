@@ -294,7 +294,7 @@ AuthNow(void)
 #define AUTH_GRACE	2
 
 static double AuthEnd = 0;		/* deadline (ms), 0 = none */
-static DnsRes *AuthRes = NULL;		/* the reply DnsTest() builds */
+static DnsRes * volatile AuthRes = NULL;	/* the reply DnsTest() builds */
 static volatile sig_atomic_t AuthHow = 0;
 
 static void
@@ -1840,10 +1840,30 @@ LDAPAuthenticate(char *user, char *pass, char *conf)
     r = NULL;
 #ifdef LDAP_COMPARE
     dn = ldap_get_dn(LdapLd, mptr);
-    LDAPTimeouts(LdapLd);
-    if (ldap_compare_s(LdapLd, dn, ldappassattr, pass) == LDAP_COMPARE_TRUE) {
+    {
+	struct timeval tv;
+
+	if (LDAPLeft(&tv) == 0) {
+	    rcode = LDAP_TIMEOUT;
+	} else {
+	    LDAPTimeouts(LdapLd);
+	    rcode = ldap_compare_s(LdapLd, dn, ldappassattr, pass);
+	}
+    }
+    if (rcode == LDAP_COMPARE_TRUE) {
 	strcpy(result, "100 Success");
 	r = result;
+    } else if (rcode == LDAP_TIMEOUT) {
+	/* out of time: a late answer must not meet the next login */
+	AuthTimedOut = 1;
+	free(dn);
+	free(filter);
+	ldap_msgfree(res);
+	ldap_unbind_s(LdapLd);
+	ldap_free_urldesc(ludp);
+	LdapLd = NULL;
+	ludp = NULL;
+	return(NULL);
     } else {
 	logit(LOG_INFO, "LDAP auth failed: %s\n", user);
 	r = NULL;
