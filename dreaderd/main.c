@@ -42,6 +42,11 @@
 #include <sys/param.h>
 #include <sys/cpuset.h>
 #endif
+#ifdef __sun
+#include <rctl.h>
+#include <sys/procset.h>
+#include <sys/pset.h>
+#endif
 
 #if NEED_TERMIOS
 #include <sys/termios.h>
@@ -68,6 +73,10 @@ void delReaderForkSlot(pid_t pid);
 static int AvailableCpus(void);
 #ifdef __linux__
 static int CgroupCpuLimit(void);
+#endif
+#ifdef __sun
+static int PsetCpus(psetid_t *psetp);
+static unsigned long long ZoneCpuCap(void);
 #endif
 
 #define READERFORKS_AUTO_CAP	64	/* most forks 'readerforks auto' starts */
@@ -2991,8 +3000,10 @@ delReaderForkSlot(pid_t pid)
  * AvailableCpus - CPUs this process may use, for 'readerforks auto'.
  *
  * Linux: the affinity mask (taskset, cpusets), lowered to a cgroup v2
- * CPU quota.  FreeBSD: the cpuset of the process.  Elsewhere, or when
- * that fails: the CPUs online.  At least 1.
+ * CPU quota.  FreeBSD: the cpuset of the process.  illumos and Solaris:
+ * the CPUs online (in a zone with its own pool, the pool's CPUs), lowered
+ * to the processor set the process is bound to and to the zone's CPU cap.
+ * Elsewhere, or when that fails: the CPUs online.  At least 1.
  */
 static int
 AvailableCpus(void)
@@ -3035,8 +3046,112 @@ AvailableCpus(void)
 	    n = q;
     }
 #endif
+#ifdef __sun
+    {
+	/*
+	 * Go's runtime.NumCPU on illumos is the CPUs online lowered to
+	 * zone.cpu-cap; the processor set binding is ours on top.
+	 */
+	int online = n;
+	psetid_t pset = PS_NONE;
+	int pcpus = PsetCpus(&pset);
+	unsigned long long cap = ZoneCpuCap();
+	char ps[64];
+	char cs[64];
+
+	if (pcpus > 0 && (n <= 0 || pcpus < n))
+	    n = pcpus;
+	if (cap > 0) {
+	    /* percent of one CPU, rounded up: 336 is 4 CPUs */
+	    unsigned long long c = (cap + 99) / 100;
+
+	    if (c > READERFORKS_MAX)
+		c = READERFORKS_MAX;
+	    if (n <= 0 || (int)c < n)
+		n = (int)c;
+	}
+	if (pcpus > 0)
+	    snprintf(ps, sizeof(ps), "processor set %d has %d", (int)pset, pcpus);
+	else
+	    snprintf(ps, sizeof(ps), "no processor set");
+	if (cap > 0)
+	    snprintf(cs, sizeof(cs), "zone.cpu-cap %llu", cap);
+	else
+	    snprintf(cs, sizeof(cs), "no zone.cpu-cap");
+	logit(LOG_NOTICE, "readerforks auto: %d CPUs online, %s, %s",
+							online, ps, cs);
+    }
+#endif
     return((n > 0) ? n : 1);
 }
+
+#ifdef __sun
+/*
+ * PsetCpus - the CPUs in the processor set this process is bound to
+ * (psrset -b, poolbind), and that set in *psetp; 0 when it is bound to
+ * none or the query fails.
+ */
+static int
+PsetCpus(psetid_t *psetp)
+{
+    psetid_t pset = PS_NONE;
+    uint_t ncpus = 0;
+    int type;
+
+    if (pset_bind(PS_QUERY, P_PID, P_MYID, &pset) != 0 || pset == PS_NONE)
+	return(0);
+    if (pset_info(pset, &type, &ncpus, NULL) != 0)
+	return(0);
+    *psetp = pset;
+    if (ncpus > READERFORKS_MAX)
+	ncpus = READERFORKS_MAX;
+    return((int)ncpus);
+}
+
+/*
+ * ZoneCpuCap - the zone's CPU cap (zone.cpu-cap, in percent of one CPU:
+ * 800 is 8 CPUs), or 0 when there is none.  As Go's runtime does, this
+ * is the smallest value with a deny action that is not the maximal one;
+ * an unset cap is only the system value, which is maximal.  A system
+ * without the control fails getrctl() and has no cap.
+ */
+static unsigned long long
+ZoneCpuCap(void)
+{
+    size_t size = rctlblk_size();
+    rctlblk_t *cur;
+    rctlblk_t *prev;
+    unsigned long long cap = 0;
+    uint_t flag = RCTL_FIRST;
+
+    if ((cur = calloc(1, size)) == NULL)
+	return(0);
+    if ((prev = calloc(1, size)) == NULL) {
+	free(cur);
+	return(0);
+    }
+    /* RCTL_NEXT reads the value after the one in prev */
+    while (getrctl("zone.cpu-cap", prev, cur, flag) == 0) {
+	rctlblk_t *t;
+	int sig = 0;
+
+	if ((rctlblk_get_local_flags(cur) & RCTL_LOCAL_MAXIMAL) == 0 &&
+		(rctlblk_get_local_action(cur, &sig) & RCTL_LOCAL_DENY)) {
+	    rctl_qty_t v = rctlblk_get_value(cur);
+
+	    if (v > 0 && (cap == 0 || v < cap))
+		cap = v;
+	}
+	t = prev;
+	prev = cur;
+	cur = t;
+	flag = RCTL_NEXT;
+    }
+    free(cur);
+    free(prev);
+    return(cap);
+}
+#endif
 
 #ifdef __linux__
 /*
