@@ -1,6 +1,6 @@
 /*
  * dnsshim.c - LD_PRELOAD resolver shim for the dreaderd DNS cache tests
- * (dnscache_test.go).  Linux/glibc only.
+ * (dnscache_test.go).  Linux (glibc or musl).
  *
  * Fakes reverse and forward lookups so the tests do not depend on the host
  * resolver, and logs every faked lookup:
@@ -15,7 +15,9 @@
  *   127.6.b.c: name "t-6-b-c.bench.test", whose forward lookup fails with
  *              EAI_AGAIN
  *   ::1: getnameinfo -> "v6-1.bench.test", getaddrinfo("v6-1.bench.test") -> ::1
- * Everything else goes to libc.
+ * Everything else goes to libc.  Forward results are built by the real
+ * getaddrinfo from the numeric address, so libc's freeaddrinfo can free them
+ * (musl's cannot free a hand-built block).
  *
  * Env:
  *   DSHIM_DELAY_MS  delay per faked lookup (default 0)
@@ -106,45 +108,29 @@ int getaddrinfo(const char *node, const char *service, const struct addrinfo *hi
     static int (*real)(const char *, const char *, const struct addrinfo *, struct addrinfo **);
     if (!real) real = dlsym(RTLD_NEXT, "getaddrinfo");
     unsigned a, b, c;
-    char tail[64];
+    char tail[64], num[64];
+    struct addrinfo nh;
+    memset(&nh, 0, sizeof(nh));
+    nh.ai_flags = AI_NUMERICHOST;
+    nh.ai_socktype = SOCK_STREAM;
     if (node && strcmp(node, "v6-1.bench.test") == 0) {
-        struct { struct addrinfo ai; struct sockaddr_in6 sin6; } *p = calloc(1, sizeof(*p));
         count("fwd", node);
         slow();
-        if (!p) return EAI_MEMORY;
-        p->sin6.sin6_family = AF_INET6;
-        p->sin6.sin6_addr = in6addr_loopback;
-        p->ai.ai_family = AF_INET6;
-        p->ai.ai_socktype = SOCK_STREAM;
-        p->ai.ai_protocol = IPPROTO_TCP;
-        p->ai.ai_addrlen = sizeof(p->sin6);
-        p->ai.ai_addr = (struct sockaddr *)&p->sin6;
-        *res = &p->ai;
-        return 0;
+        nh.ai_family = AF_INET6;
+        return real("::1", service, &nh, res);
     }
     char pfx;
     if (node && sscanf(node, "%c-%u-%u-%u.%63s", &pfx, &a, &b, &c, tail) == 5 &&
         (pfx == 'h' || pfx == 'x' || pfx == 't') && strcmp(tail, "bench.test") == 0) {
-        /* glibc freeaddrinfo frees the ai block: keep the sockaddr inside it */
-        struct { struct addrinfo ai; struct sockaddr_in sin; } *p = calloc(1, sizeof(*p));
         count("fwd", node);
         slow();
-        if (pfx == 't') {
-            free(p);
+        if (pfx == 't')
             return EAI_AGAIN;
-        }
         if (pfx == 'x')
             a = b = c = 66;
-        if (!p) return EAI_MEMORY;
-        p->sin.sin_family = AF_INET;
-        p->sin.sin_addr.s_addr = htonl((127u << 24) | (a << 16) | (b << 8) | c);
-        p->ai.ai_family = AF_INET;
-        p->ai.ai_socktype = SOCK_STREAM;
-        p->ai.ai_protocol = IPPROTO_TCP;
-        p->ai.ai_addrlen = sizeof(p->sin);
-        p->ai.ai_addr = (struct sockaddr *)&p->sin;
-        *res = &p->ai;
-        return 0;
+        snprintf(num, sizeof(num), "127.%u.%u.%u", a, b, c);
+        nh.ai_family = AF_INET;
+        return real(num, service, &nh, res);
     }
     return real(node, service, hints, res);
 }

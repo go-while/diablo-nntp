@@ -198,13 +198,19 @@ func TestReaderDNSCacheTTL(t *testing.T) {
 	s := startDNSCacheReader(t, sh, dnsCacheAccess, map[string]string{
 		"readerdnscachettl": "10", "readerdnscachenegttl": "3"}, "")
 	const pos, neg, refused = "127.1.0.4", "127.9.1.1", "127.9.2.1"
+	// Only some libcs tell "no name" from a timeout (glibc, illumos); elsewhere a missing
+	// reverse name is not cached and costs its lookup on every login.
+	negLookups := 1
+	if dnsCacheStat(t, s, "noname") == 1 {
+		negLookups = 0
+	}
 	start := time.Now()
 	wantLogin(t, s, sh, pos, 200, 2, "name, first login")
 	wantLogin(t, s, sh, neg, 201, 1, "no name, first login (address rule)")
 	wantLogin(t, s, sh, refused, 502, 1, "no name, no address rule, first login")
 	wantLogin(t, s, sh, pos, 200, 0, "name, cached")
-	wantLogin(t, s, sh, neg, 201, 0, "no name, cached (address rule)")
-	wantLogin(t, s, sh, refused, 502, 0, "no name, no address rule, cached")
+	wantLogin(t, s, sh, neg, 201, negLookups, "no name, cached (address rule)")
+	wantLogin(t, s, sh, refused, 502, negLookups, "no name, no address rule, cached")
 
 	time.Sleep(time.Until(start.Add(4500 * time.Millisecond)))
 	wantLogin(t, s, sh, neg, 201, 1, "no name after the negative TTL")
