@@ -347,9 +347,17 @@ CidrMatch(const char *cidr, const char *ip)
 }
 
 /*
- * Returns 0 with the name in hname, -1 if there is no name, -2 if the lookup
- * failed temporarily (EAI_AGAIN / TRY_AGAIN), with hname empty.
+ * Returns 0 with the name in hname, -1 if there is definitely no name, -2 if
+ * the lookup failed or may have failed temporarily, with hname empty.
+ *
+ * Only glibc's getnameinfo tells "no PTR record" (EAI_NONAME) from a timeout
+ * or SERVFAIL (EAI_AGAIN).  FreeBSD, the other BSDs and musl return
+ * EAI_NONAME for both, so there EAI_NONAME counts as -2 as well.
  */
+#if defined(__GLIBC__)
+#define GNI_NONAME_IS_DEFINITE	1
+#endif
+
 int
 GetIPHost(struct sockaddr *sa, char *hname, int hnamelen, char *ipname, int iplen)
 {
@@ -364,7 +372,11 @@ GetIPHost(struct sockaddr *sa, char *hname, int hnamelen, char *ipname, int iple
 	if ((error = getnameinfo(sa, SA_LEN(sa), hname, hnamelen,
 					NULL, 0, NI_NAMEREQD)) != 0) {
 		*hname = '\0';
-		return((error == EAI_AGAIN) ? -2 : -1);
+#ifdef GNI_NONAME_IS_DEFINITE
+		if (error == EAI_NONAME)
+		    return(-1);
+#endif
+		return(-2);
 	}
 #else
 	struct hostent *he;
@@ -380,7 +392,7 @@ GetIPHost(struct sockaddr *sa, char *hname, int hnamelen, char *ipname, int iple
 	    strncpy(hname, he->h_name, hnamelen - 1);
 	    hname[hnamelen - 1] = '\0';
 	} else {
-	    return((h_errno == TRY_AGAIN) ? -2 : -1);
+	    return((h_errno == HOST_NOT_FOUND || h_errno == NO_DATA) ? -1 : -2);
 	}
 #endif /* INET6 */
     }
@@ -391,7 +403,8 @@ GetIPHost(struct sockaddr *sa, char *hname, int hnamelen, char *ipname, int iple
  * TestForwardLookup(). 
  *
  * Check that Fwd and Rev DNS entries match up.  Returns 0 if they do, -1 if
- * not, -2 if the forward lookup failed temporarily.
+ * not (no such name, or no matching address), -2 if the forward lookup
+ * failed otherwise (timeout, SERVFAIL, system error).
  */
 
 int
@@ -428,7 +441,12 @@ TestForwardLookup(const char *hostName, const char *ipst, const struct sockaddr 
 	freeaddrinfo(ai0);
     } else {
 	logit(LOG_NOTICE, "DNS Fwd/Rev mismatch: lookup of %s failed", hostName);
-	r = (r == EAI_AGAIN) ? -2 : -1;
+	/* only "no such name" is a definite answer */
+#ifdef EAI_NODATA
+	if (r == EAI_NODATA)
+	    r = EAI_NONAME;
+#endif
+	r = (r == EAI_NONAME) ? -1 : -2;
     }
     return(r);
 #else
@@ -450,7 +468,7 @@ TestForwardLookup(const char *hostName, const char *ipst, const struct sockaddr 
 	    logit(LOG_NOTICE, "DNS Fwd/Rev mismatch: %s/%s", hostName, ipst);
     } else {
 	logit(LOG_NOTICE, "DNS Fwd/Rev mismatch: lookup of %s failed", hostName);
-	if (h_errno == TRY_AGAIN)
+	if (h_errno != HOST_NOT_FOUND && h_errno != NO_DATA)
 	    r = -2;
     }
     return(r);
