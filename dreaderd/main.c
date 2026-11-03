@@ -72,6 +72,17 @@ static int CgroupCpuLimit(void);
 
 #define READERFORKS_AUTO_CAP	64	/* most forks 'readerforks auto' starts */
 
+/*
+ * Listen backlog.  SOMAXCONN is the C library's constant, not the
+ * kernel's limit: musl has 128 while Linux allows 4096 by default.  A
+ * burst of new clients past the backlog loses SYNs, and each of those
+ * clients waits for a TCP retransmit (1 s, then 3 s) before dreaderd can
+ * even refuse it.  Ask for more and let the kernel cut it to its own
+ * limit (net.core.somaxconn, kern.ipc.soacceptqueue); 65535 because old
+ * Linux kernels keep the backlog in 16 bits.
+ */
+#define READER_LISTEN_BACKLOG	65535
+
 #ifdef INET6
 void SendDns(int fd, struct sockaddr_storage *rsin, DnsRes *dres);
 #else
@@ -657,7 +668,7 @@ main(int ac, char **av)
 		exit(1);
 	    }
 #endif
-	    listen(lfd, SOMAXCONN);
+	    listen(lfd, READER_LISTEN_BACKLOG);
 	    if (bl->bl_Host != NULL && strchr(bl->bl_Host, ':') != NULL)
 		syslog(LOG_INFO, "Listening on [%s]:%s",
 					bl->bl_Host ? bl->bl_Host : "ALL",
@@ -690,7 +701,7 @@ main(int ac, char **av)
 							RxBufSize, passedfd);
 	        }
 
-	    listen(passedfd, SOMAXCONN);
+	    listen(passedfd, READER_LISTEN_BACKLOG);
 	    AddThread("acceptor", passedfd, -1, THREAD_LISTEN, -1, 0);
     }
 
