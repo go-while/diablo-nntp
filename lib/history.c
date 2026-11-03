@@ -104,6 +104,56 @@ HistoryFatalIO(const char *operation)
     exit(1);
 }
 
+#ifdef __OpenBSD__
+/* A failed read must never be mistaken for an absent history entry. */
+static void
+HistoryReadAt(void *buf, size_t len, off_t offset)
+{
+    char *p = buf;
+
+    while (len != 0) {
+        ssize_t n = pread(HFd, p, len, offset);
+        if (n > 0) {
+            p += n;
+            len -= (size_t)n;
+            offset += n;
+        } else if (n < 0 && errno == EINTR) {
+            continue;
+        } else {
+            if (n == 0)
+                errno = EIO;
+            HistoryFatalIO("coherent read");
+        }
+    }
+}
+#endif
+
+static uint32
+HistoryMagic(void)
+{
+#ifdef __OpenBSD__
+    uint32 magic;
+    HistoryReadAt(&magic, sizeof(magic), offsetof(HistHead, hmagic));
+    return(magic);
+#else
+    return(HHeadMap->hmagic);
+#endif
+}
+
+static HistIndex
+HistoryIndex(HistIndex hi)
+{
+#ifdef __OpenBSD__
+    HistIndex index;
+    if (!(HFlags & HGF_FAST)) {
+        HistoryReadAt(&index, sizeof(index), HHead.headSize +
+            (off_t)hi * sizeof(index));
+        return(index);
+    }
+#endif
+    return(HAry[hi]);
+}
+
 int
 HistoryOpen(const char *fileName, int hflags)
 {
@@ -500,13 +550,13 @@ HistoryLookup(const char *msgid, History *nh)
     int counter = 0;
     int statfailed = 0;
 
-    if (HHeadMap->hmagic != HMAGIC)
+    if (HistoryMagic() != HMAGIC)
 	historyReOpen();
 
     hv = hhash(msgid);
     hi = (hv.h1 ^ hv.h2) & HMask;
     pindex = HHead.headSize + hi * sizeof(HistIndex);
-    index = HAry[hi];
+    index = HistoryIndex(hi);
 
     while (index) {
 	if (HHead.version > 1)
@@ -566,12 +616,12 @@ HistoryLookupByHash(hash_t hv, History *h)
     off_t off;
     int counter = 0;
 
-    if (HHeadMap->hmagic != HMAGIC)
+    if (HistoryMagic() != HMAGIC)
 	historyReOpen();
 
     hi = (hv.h1 ^ hv.h2) & HMask;
     pindex = HHead.headSize + hi * sizeof(HistIndex);
-    index = HAry[hi];
+    index = HistoryIndex(hi);
 
     while (index) {
 	if (HHead.version > 1)
@@ -613,7 +663,7 @@ HistoryPosLookupByHash(hash_t hv, History *h)
 
     hi = (hv.h1 ^ hv.h2) & HMask;
     pindex = HHead.headSize + hi * sizeof(HistIndex);
-    index = HAry[hi];
+    index = HistoryIndex(hi);
 
     while (index) {
 	if (HHead.version > 1)
@@ -660,7 +710,7 @@ HistoryAdd(const char *msgid, History *h)
     off_t chainlock;
     int r = RCOK;
 
-    if (HHeadMap->hmagic != HMAGIC)
+    if (HistoryMagic() != HMAGIC)
 	historyReOpen();
 
     /*
@@ -691,7 +741,7 @@ HistoryAdd(const char *msgid, History *h)
     if ((HFlags & HGF_NOSEARCH) == 0) {
 	int counter = 0;
 
-	index = HAry[hi];
+	index = HistoryIndex(hi);
 	while (index) {
 	    static History ht;
 
@@ -726,7 +776,7 @@ HistoryAdd(const char *msgid, History *h)
 
     if (r == RCOK) {
 	off_t writePos;
-	HistIndex oldIndex = HAry[hi];
+	HistIndex oldIndex = HistoryIndex(hi);
 
 	h->next = oldIndex;
 
@@ -849,4 +899,3 @@ HistoryExpire(const char *msgid, History *h, int unexp)
     }
     return(1);
 }
-
