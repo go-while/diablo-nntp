@@ -7,6 +7,7 @@ package e2e
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -20,6 +21,17 @@ import (
 // that existed and was removed, as dexpire removes one. It returns the injected ids and
 // the gone ones.
 func goneQueue(t *testing.T, s *Site, extra func(q []string) []string) (ids, gone []string) {
+	t.Helper()
+	return spoiledQueue(t, s, extra, func(dir string) {
+		if err := os.RemoveAll(dir); err != nil { // expired
+			t.Fatal(err)
+		}
+	})
+}
+
+// spoiledQueue is goneQueue with spoil doing to the other spool file's directory what
+// makes its entries unreadable.
+func spoiledQueue(t *testing.T, s *Site, extra func(q []string) []string, spoil func(dir string)) (ids, gone []string) {
 	t.Helper()
 	ids = s.Inject(t, "e2e.test", 3)
 	q := s.waitQueue(t, OutLabel, 3)
@@ -47,9 +59,7 @@ func goneQueue(t *testing.T, s *Site, extra func(q []string) []string) (ids, gon
 	if extra != nil {
 		lines = extra(lines)
 	}
-	if err := os.RemoveAll(filepath.Join(spool, "D.00000001")); err != nil { // expired
-		t.Fatal(err)
-	}
+	spoil(filepath.Join(spool, "D.00000001"))
 	s.WriteFile(t, filepath.Join("dqueue", OutLabel), strings.Join(lines, "\n")+"\n")
 	return ids, gone
 }
@@ -103,10 +113,13 @@ func (s *Site) queueFiles(t *testing.T) []string {
 	return out
 }
 
-func wantGoneLog(t *testing.T, out string, n int) {
+// wantGoneLog checks the final stats line for articles not read from the spool.
+func wantGoneLog(t *testing.T, out string, gone, bad, spoolerr int) {
 	t.Helper()
-	if want := strconv.Itoa(n) + " articles expired before they could be sent"; !strings.Contains(out, want) {
-		t.Errorf("dnewslink did not log %q:\n%s", want, out)
+	re := regexp.MustCompile(`final secs=\d+ +gone=` + strconv.Itoa(gone) + ` +bad=` + strconv.Itoa(bad) +
+		` +spoolerr=` + strconv.Itoa(spoolerr) + `\b`)
+	if !re.MatchString(out) {
+		t.Errorf("dnewslink did not log final gone=%d bad=%d spoolerr=%d:\n%s", gone, bad, spoolerr, out)
 	}
 }
 
@@ -121,7 +134,7 @@ func TestDnewslinkGoneStreaming(t *testing.T) {
 	if n := peer.Count("TAKETHIS"); n != 3 {
 		t.Errorf("TAKETHIS sent %d times, want 3 (counts %v)", n, peer.Counts())
 	}
-	wantGoneLog(t, out, 3)
+	wantGoneLog(t, out, 3, 0, 0)
 }
 
 // TestDnewslinkGoneIHAVE: the same with a peer without streaming: no IHAVE for a gone
@@ -135,7 +148,7 @@ func TestDnewslinkGoneIHAVE(t *testing.T) {
 	if n := peer.Count("IHAVE"); n != 3 {
 		t.Errorf("IHAVE sent %d times, want 3 (counts %v)", n, peer.Counts())
 	}
-	wantGoneLog(t, out, 3)
+	wantGoneLog(t, out, 3, 0, 0)
 }
 
 // TestDnewslinkGoneNoCheck: with -I (TAKETHIS without CHECK) no TAKETHIS for a gone
@@ -149,7 +162,7 @@ func TestDnewslinkGoneNoCheck(t *testing.T) {
 	if n := peer.Count("CHECK"); n != 0 {
 		t.Errorf("CHECK sent %d times with -I", n)
 	}
-	wantGoneLog(t, out, 3)
+	wantGoneLog(t, out, 3, 0, 0)
 }
 
 // TestDnewslinkGoneStat: -x (stat each spool file first) keeps working: it skips the gone
@@ -160,7 +173,7 @@ func TestDnewslinkGoneStat(t *testing.T) {
 	ids, gone := goneQueue(t, s, nil)
 	out := s.dnewslink(t, peer, OutLabel, "-d", "-x")
 	checkGone(t, s, peer, got, ids, gone, out)
-	wantGoneLog(t, out, 3)
+	wantGoneLog(t, out, 3, 0, 0)
 }
 
 // unreadable adds an entry whose spool file is there but whose article cannot be mapped
@@ -198,17 +211,122 @@ func TestDnewslinkUnreadableAfterCheck(t *testing.T) {
 		t.Errorf("no CHECK %s: the entry should pass the check before the offer (lines %q)", bad, peer.Lines())
 	}
 	checkGone(t, s, peer, got, ids, gone, out)
-	wantGoneLog(t, out, 4)
+	wantGoneLog(t, out, 3, 1, 0)
 }
 
-// TestDnewslinkUnreadableIHAVE: the same without streaming: the article is mapped before
-// the IHAVE, so the peer never waits for an article dnewslink cannot send.
+// TestDnewslinkUnreadableIHAVE: without streaming the article is mapped only after the
+// peer's 335, so an offer the peer refuses costs no read. If it then cannot be read, IHAVE
+// has no way to take the offer back: the peer gets an empty article (as innfeed sends), the
+// entry is counted bad and dropped, and the rest of the queue goes on.
 func TestDnewslinkUnreadableIHAVE(t *testing.T) {
 	const bad = "<unreadable@e2e.test>"
 	peer, got := newPeer(t, &fakeserver.PeerOptions{NoStream: true})
 	s := NewSite(t, SiteOptions{Newsfeeds: OutNewsfeeds})
 	ids, gone := goneQueue(t, s, unreadable(bad))
 	out := s.dnewslink(t, peer, OutLabel, "-d")
-	checkGone(t, s, peer, got, ids, append(gone, bad), out)
-	wantGoneLog(t, out, 4)
+	if want := append([]string{ids[0], bad}, ids[1:]...); !slices.Equal(got.list(), want) {
+		t.Errorf("peer accepted %q, want %q", got.list(), want)
+	}
+	empty := 0
+	for _, a := range peer.Articles() {
+		if len(a) == 0 {
+			empty++
+		} else if !strings.Contains(strings.Join(a, "\n"), "\nbody of <") {
+			t.Errorf("article sent without its headers and body: %q", a)
+		}
+	}
+	if empty != 1 {
+		t.Errorf("%d empty articles, want 1 (the unreadable one, after its 335)", empty)
+	}
+	for _, l := range peer.Lines() {
+		for _, id := range gone {
+			if strings.Contains(l, id) {
+				t.Errorf("peer got %q for an article that is not in the spool", l)
+			}
+		}
+	}
+	for _, f := range s.queueFiles(t) {
+		if strings.Contains(f, bad) {
+			t.Errorf("%s is still queued:\n%s", bad, f)
+		}
+	}
+	wantGoneLog(t, out, 3, 1, 0)
+}
+
+// TestDnewslinkIHAVERefusedNotRead: an IHAVE offer the peer refuses (435) does not read the
+// article. The unreadable entry is offered like any other and refused, not counted bad;
+// with -d2 no article is mapped at all.
+func TestDnewslinkIHAVERefusedNotRead(t *testing.T) {
+	const bad = "<unreadable@e2e.test>"
+	s := NewSite(t, SiteOptions{Newsfeeds: OutNewsfeeds})
+	have := map[string]bool{bad: true}
+	peer, got := newPeer(t, &fakeserver.PeerOptions{NoStream: true, Have: have})
+	ids, gone := goneQueue(t, s, unreadable(bad))
+	for _, id := range ids {
+		have[id] = true
+	}
+	out := s.dnewslink(t, peer, OutLabel, "-d2")
+	if n := peer.Count("IHAVE"); n != 4 {
+		t.Errorf("IHAVE sent %d times, want 4: the 3 articles and the unreadable entry (counts %v)", n, peer.Counts())
+	}
+	if len(got.list()) != 0 || len(peer.Articles()) != 0 {
+		t.Errorf("the peer refused everything but got %q", got.list())
+	}
+	if strings.Contains(out, ">> map ") {
+		t.Errorf("articles were mapped for offers the peer refused:\n%s", out)
+	}
+	for _, l := range peer.Lines() {
+		for _, id := range gone {
+			if strings.Contains(l, id) {
+				t.Errorf("peer got %q for an article that is not in the spool", l)
+			}
+		}
+	}
+	wantGoneLog(t, out, 3, 0, 0)
+}
+
+// TestDnewslinkSpoolErrorKept: a spool file that is there but cannot be opened (mode 000:
+// EACCES, as an I/O or permission fault) is not expiry. Its entries are not offered, are
+// logged and counted as spoolerr, and stay in the queue; the others are sent.
+func TestDnewslinkSpoolErrorKept(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root opens a file of mode 000")
+	}
+	for _, mode := range []string{"streaming", "ihave"} {
+		t.Run(mode, func(t *testing.T) {
+			peer, got := newPeer(t, &fakeserver.PeerOptions{NoStream: mode == "ihave"})
+			s := NewSite(t, SiteOptions{Newsfeeds: OutNewsfeeds})
+			ids, kept := spoiledQueue(t, s, nil, func(dir string) {
+				if err := os.Chmod(filepath.Join(dir, "B.0001"), 0); err != nil {
+					t.Fatal(err)
+				}
+			})
+			out := s.dnewslink(t, peer, OutLabel, "-d")
+			if !slices.Equal(got.list(), ids) {
+				t.Errorf("peer accepted %q, want %q\ndnewslink output:\n%s", got.list(), ids, out)
+			}
+			for _, l := range peer.Lines() {
+				for _, id := range kept {
+					if strings.Contains(l, id) {
+						t.Errorf("peer got %q for an article that cannot be read", l)
+					}
+				}
+			}
+			q := strings.Join(s.queueFiles(t), "")
+			for _, id := range kept {
+				if n := strings.Count(q, id); n != 1 {
+					t.Errorf("%s is queued %d times, want 1; queue now:\n%s", id, n, q)
+				}
+			}
+			for _, id := range ids {
+				if strings.Contains(q, id) {
+					t.Errorf("%s was sent but is still queued:\n%s", id, q)
+				}
+			}
+			if !strings.Contains(out, "permission denied") && !strings.Contains(out, "Permission denied") {
+				t.Errorf("the spool error is not logged:\n%s", out)
+			}
+			wantGoneLog(t, out, 0, 0, 3)
+		})
+	}
 }

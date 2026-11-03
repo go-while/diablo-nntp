@@ -73,13 +73,21 @@ connects to a remote host, it will attempt to negotiate a check/takethis
 streaming connection and, if that fails, will fallback to the non-streaming
 ihave protocol.
 .PP
-A queued article that has expired from the spool (or cannot be read from it)
-is not offered: no CHECK, TAKETHIS or IHAVE is sent for it, and it is dropped
-from the queue for good, not deferred or refiled.  If it goes missing between
-the CHECK and the TAKETHIS, the TAKETHIS is not sent.  These articles are
-counted and logged as
-.I "N articles expired before they could be sent"
-with the statistics.
+A queued article whose spool file cannot be opened is not offered: no
+CHECK, TAKETHIS or IHAVE is sent for it.  If the file is not there (expired),
+the entry is dropped for good, not deferred or refiled, and counted as
+.IR gone .
+On any other error (permission, I/O, too many open files) the error is
+logged, the entry stays in the queue and is counted as
+.IR spoolerr .
+An article is read only when it is to be sent.  If it cannot be read then
+(a corrupt queue entry, counted as
+.IR bad ,
+or a read error, kept as above),
+a streaming feed sends no TAKETHIS after the 238; in IHAVE mode the peer,
+which has answered 335, gets an empty article and rejects it.  The counts
+are logged with the statistics as
+.IR "gone=N bad=N spoolerr=N" .
 .PP
 DNewslink locks queue files as it processes them, allowing multiple dnewslinks
 to operate in parallel on different queue files without the possibility of
@@ -254,7 +262,8 @@ a streaming feed was negotiated.  Useful for header-only feeds.
 .PP
 This option turns on article logging to <logpath>/feedlog.<hostname>. Classes is
 is either comma-separated list of any combination of "accept", "reject", "defer",
-"refuse", "error" and "gone" (articles no longer in the spool), or "all".
+"refuse", "error" and "gone" (articles gone from the spool or bad; spool
+read errors are logged as "error"), or "all".
 Not that specifying "refuse" can generate huge logfiles. Default is "all" if classes is not specified, and no logging if this
 option is not given.
 .PP
