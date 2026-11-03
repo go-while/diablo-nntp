@@ -25,6 +25,7 @@ Prototype const char *PatRunExpand(const char *pat);
 Prototype int CidrMatch(const char *cidr, const char *ip);
 Prototype int IsIpAddr(char *a);
 Prototype char *SanitiseAddr(char *addr);
+Prototype int GetIPHostNoNameDefinite(void);
 Prototype int GetIPHost(struct sockaddr *sa, char *hname, int hnamelen, char *ipname, int iplen);
 Prototype int TestForwardLookup(const char *hostName, const char *ipst, const struct sockaddr *res);
 Prototype char *NetAddrToSt(int fd, struct sockaddr *sa, int ip4conv, int port, int v6spec);
@@ -350,13 +351,25 @@ CidrMatch(const char *cidr, const char *ip)
  * Returns 0 with the name in hname, -1 if there is definitely no name, -2 if
  * the lookup failed or may have failed temporarily, with hname empty.
  *
- * Only glibc's getnameinfo tells "no PTR record" (EAI_NONAME) from a timeout
- * or SERVFAIL (EAI_AGAIN).  FreeBSD, the other BSDs and musl return
- * EAI_NONAME for both, so there EAI_NONAME counts as -2 as well.
+ * Only glibc's and illumos/Solaris' getnameinfo tell "no PTR record"
+ * (EAI_NONAME) from a timeout or SERVFAIL (EAI_AGAIN).  The other libcs
+ * (FreeBSD, the other BSDs, macOS, musl, uClibc) return EAI_NONAME for both,
+ * so there EAI_NONAME counts as -2 as well.
  */
-#if defined(__GLIBC__)
+#if (defined(__GLIBC__) && !defined(__UCLIBC__)) || defined(__sun)
 #define GNI_NONAME_IS_DEFINITE	1
 #endif
+
+/* 1 if GetIPHost can return -1 (a definite "no name") on this system */
+int
+GetIPHostNoNameDefinite(void)
+{
+#ifdef GNI_NONAME_IS_DEFINITE
+    return(1);
+#else
+    return(0);
+#endif
+}
 
 int
 GetIPHost(struct sockaddr *sa, char *hname, int hnamelen, char *ipname, int iplen)

@@ -276,8 +276,9 @@ DnsCacheFlush(void)
 void
 DnsCacheStats(FILE *fo)
 {
-    fprintf(fo, "dnscache size=%d used=%lu hits=%lu misses=%lu stores=%lu evictions=%lu ttl=%d negttl=%d\n",
+    /* noname=1: a missing reverse name can be cached on this libc */
+    fprintf(fo, "dnscache size=%d used=%lu hits=%lu misses=%lu stores=%lu evictions=%lu ttl=%d negttl=%d noname=%d\n",
 	(DcTab != NULL) ? DcSets * DC_WAYS : 0, DcUsed, DcHits, DcMisses,
 	DcStores, DcEvicts, DOpts.ReaderDnsCacheTTL,
-	DOpts.ReaderDnsCacheNegTTL);
+	DOpts.ReaderDnsCacheNegTTL, GetIPHostNoNameDefinite());
 }
