@@ -34,8 +34,10 @@ void DoUnDead(int fd);
 void DoExpire(int fd, int hsize, int rsize);
 int ServerCmd(char *cmd);
 void Fail(char *fname, char *errmsg);
-void BackupOld(void);
+void BackupOld(int fd);
 void InstallNew(void);
+void CopyNew(void);
+char InstallTmp[PATH_MAX + 8];	/* -m: the copy of the new history */
 
 /*
  * Copy a history file name (plus suffix) into one of the PATH_MAX buffers;
@@ -404,10 +406,17 @@ DoExpire(int fd, int hsize, int rsize)
 	    if (DonePause > 0) {
 		if (DonePause == 2) {
 		    DonePause = 5;
-		    HistoryClose();
+		    if (HistoryClose() != RCOK)
+			Fail(NewFileName, "Unable to write the new history");
+		    /*
+		     * Until the rename in InstallNew() the name stays at the
+		     * old history, so a failure leaves it in place.
+		     */
 		    if (UseNewHistory) {
+			if (FileCopy)
+			    CopyNew();
 			if (OldFileName[0])
-			    BackupOld();
+			    BackupOld(fd);
 			InstallNew();
 		    }
 		    if (!UseNewHistory)
@@ -489,10 +498,17 @@ DoExpire(int fd, int hsize, int rsize)
 		    if (ServerCmd("pause") == 0)
 			Fail(NewFileName, "Unable to pause diablo server");
 		    DonePause = 4;
-		    HistoryClose();
+		    if (HistoryClose() != RCOK)
+			Fail(NewFileName, "Unable to write the new history");
+		    /*
+		     * Until the rename in InstallNew() the name stays at the
+		     * old history, so a failure leaves it in place.
+		     */
 		    if (UseNewHistory) {
+			if (FileCopy)
+			    CopyNew();
 			if (OldFileName[0])
-			    BackupOld();
+			    BackupOld(fd);
 			InstallNew();
 		    }
 		    DeadFd = -1;	/* the old history is replaced, or a backup */
@@ -585,28 +601,76 @@ DoExpire(int fd, int hsize, int rsize)
 }
 
 /*
- * Keep the old history as OldFileName: linked under a temporary name and
- * renamed over the previous backup, so that a failure keeps that one.  It
- * is not opened: closing a descriptor of it would drop all our locks on
- * it, the dead marker too.  With -m a backup on another filesystem is
- * copied (and the old history removed).
+ * Copy the open file fd to path (created or replaced) and sync it.
+ * Returns 0, or -1 with errno after removing path.
+ */
+static int
+copyToFile(int fd, const char *path)
+{
+    static char buf[65536];
+    off_t off = 0;
+    ssize_t n;
+    int error;
+    int to;
+
+    if ((to = open(path, O_CREAT|O_TRUNC|O_WRONLY, 0644)) < 0)
+	return(-1);
+    while ((n = pread(fd, buf, sizeof(buf), off)) > 0) {
+	if (WriteAll(to, buf, n) < 0)
+	    break;
+	off += n;
+    }
+    if (n == 0 && fsync(to) == 0) {
+	if (close(to) == 0)
+	    return(0);
+	to = -1;
+    }
+    error = errno;
+    if (to >= 0)
+	close(to);
+    unlink(path);
+    errno = error;
+    return(-1);
+}
+
+/* Sync the directory of path after a rename (best effort). */
+static void
+syncDir(const char *path)
+{
+    char dir[PATH_MAX];
+    char *p;
+    int dfd;
+
+    snprintf(dir, sizeof(dir), "%s", path);
+    if ((p = strrchr(dir, '/')) == NULL)
+	snprintf(dir, sizeof(dir), ".");
+    else if (p == dir)
+	p[1] = 0;
+    else
+	*p = 0;
+    if ((dfd = open(dir, O_RDONLY)) >= 0) {
+	(void)fsync(dfd);
+	close(dfd);
+    }
+}
+
+/*
+ * Keep the old history (open as fd) as OldFileName: linked under a
+ * temporary name and renamed over the previous backup, so that a failure
+ * keeps that one.  The old file is never opened by name: closing such a
+ * descriptor would drop all our locks on it, the dead marker too.  With
+ * -m a backup on another filesystem is copied from fd.
  */
 void
-BackupOld(void)
+BackupOld(int fd)
 {
     char tmpName[PATH_MAX + 8];
 
     snprintf(tmpName, sizeof(tmpName), "%s.new", OldFileName);
     remove(tmpName);
-    if (link(FileName, tmpName) == -1) {
-	if (FileCopy && errno == EXDEV) {
-	    remove(OldFileName);
-	    if (MoveFile(FileName, OldFileName) == -1)
-		Fail(NewFileName, "Unable to move history backup");
-	    return;
-	}
-	Fail(NewFileName, "Unable to link history backup");
-    }
+    if (link(FileName, tmpName) == -1 &&
+	(!FileCopy || errno != EXDEV || copyToFile(fd, tmpName) < 0))
+	Fail(NewFileName, "Unable to make the history backup");
     if (rename(tmpName, OldFileName) == -1) {
 	remove(tmpName);
 	Fail(NewFileName, "Unable to rename history backup");
@@ -614,30 +678,37 @@ BackupOld(void)
 }
 
 /*
- * Put the new history at FileName.  With -m it may be on another
- * filesystem: copy it next to FileName and rename it over, so that the
- * name never shows a partial file.
+ * -m: the new history may be on another filesystem.  Copy it next to the
+ * old one first (it is renamed over it last), so that the name never
+ * shows a partial or missing file.
  */
+void
+CopyNew(void)
+{
+    int nfd;
+
+    snprintf(InstallTmp, sizeof(InstallTmp), "%s.tmp", FileName);
+    remove(InstallTmp);
+    if ((nfd = open(NewFileName, O_RDONLY)) < 0)
+	Fail(NewFileName, "Unable to open new history");
+    if (copyToFile(nfd, InstallTmp) < 0) {
+	close(nfd);
+	InstallTmp[0] = 0;	/* removed */
+	Fail(NewFileName, "Unable to copy new history");
+    }
+    close(nfd);
+}
+
+/* Put the new history (or its -m copy) at FileName. */
 void
 InstallNew(void)
 {
-    char tmpName[PATH_MAX + 8];
-
-    if (!FileCopy) {
-	if (rename(NewFileName, FileName) == -1)
-	    Fail(NewFileName, "Unable to rename new history");
-	return;
-    }
-    snprintf(tmpName, sizeof(tmpName), "%s.tmp", FileName);
-    remove(tmpName);
-    if (MoveFile(NewFileName, tmpName) == -1) {
-	remove(tmpName);
-	Fail(NewFileName, "Unable to move new history");
-    }
-    if (rename(tmpName, FileName) == -1) {
-	remove(tmpName);
+    if (rename(FileCopy ? InstallTmp : NewFileName, FileName) == -1)
 	Fail(NewFileName, "Unable to rename new history");
-    }
+    InstallTmp[0] = 0;
+    if (FileCopy)
+	remove(NewFileName);
+    syncDir(FileName);
 }
 
 int
@@ -708,6 +779,8 @@ Fail(char *fname, char *errmsg)
     HistoryClose();
     if (fname != NULL)
 	remove(fname);
+    if (InstallTmp[0])
+	remove(InstallTmp);
     exit(1);
 }
 

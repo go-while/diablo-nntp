@@ -967,3 +967,73 @@ func TestDhisexpireCopyMode(t *testing.T) {
 		t.Errorf("the record is not in the new history")
 	}
 }
+
+// otherFSDir returns a new directory on another filesystem than dir (tmpfs
+// /dev/shm, or the test's working directory), or skips the test.
+func otherFSDir(t *testing.T, dir string) string {
+	t.Helper()
+	var a syscall.Stat_t
+	if err := syscall.Stat(dir, &a); err != nil {
+		t.Fatal(err)
+	}
+	wd, _ := os.Getwd()
+	for _, base := range []string{"/dev/shm", wd} {
+		var b syscall.Stat_t
+		if base == "" || syscall.Stat(base, &b) != nil || b.Dev == a.Dev {
+			continue
+		}
+		d, err := os.MkdirTemp(base, "dhb")
+		if err != nil {
+			continue
+		}
+		t.Cleanup(func() { os.RemoveAll(d) })
+		return d
+	}
+	t.Skip("no second filesystem for the backup")
+	return ""
+}
+
+// TestDhisexpireCopyModeBackupElsewhere: dhisexpire -m -a with the backup on
+// another filesystem copies the backup, but the live name keeps the old
+// history until the new one is renamed over it. A writer that starts while
+// dhisexpire copies (the shim stops dhisexpire at its first rename) finds
+// the history dead, waits and adds to the new history. Fails on 6c6d9ec:
+// the old history was moved away first, so the writer created a fresh
+// history at the empty name and its add was lost with it. (main has the
+// same gap, but no rename for the shim to stop at.)
+func TestDhisexpireCopyModeBackupElsewhere(t *testing.T) {
+	so := preloadShim(t, "renamehold", renameHoldSource)
+	s := NewSite(t, SiteOptions{NoStart: true})
+	hist := newHistory(t, s)
+	bak := filepath.Join(otherFSDir(t, s.Dir), "dhistory.bak")
+	hold := t.TempDir()
+	_, xin, xout, xdone := histCmd(t, s, []string{lockFaultEnv(so), "RENAMEHOLD=" + hold},
+		"dhisexpire", "-m", "-a", "-o", bak, hist)
+	xin.Close()
+	waitFor(t, 30*time.Second, "dhisexpire at its first rename", func() bool {
+		return fileExists(filepath.Join(hold, "reached"))
+	})
+	if !fileExists(hist) {
+		t.Errorf("the live name is missing while dhisexpire -m installs the new history")
+	}
+	_, in, out, done := histCmd(t, s, nil, "diload", hist)
+	io.WriteString(in, dumpLine(0x1111111, 0x2222222))
+	time.Sleep(500 * time.Millisecond)
+	if err := os.WriteFile(filepath.Join(hold, "go"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-xdone; err != nil {
+		t.Fatalf("dhisexpire -m -a: %v\n%s", err, xout.String())
+	}
+	in.Close()
+	if err := <-done; err != nil {
+		t.Fatalf("diload: %v\n%s", err, out.String())
+	}
+	if _, found := histExp(t, s, hist, "01111111.02222222"); !found {
+		t.Errorf("the add made during the -m install is not in the live history\n%s", out.String())
+	}
+	if !fileExists(bak) || fileExists(hist+".tmp") || fileExists(hist+".new") {
+		t.Errorf("after dhisexpire -m: backup there %v, .tmp left %v, .new left %v",
+			fileExists(bak), fileExists(hist+".tmp"), fileExists(hist+".new"))
+	}
+}
