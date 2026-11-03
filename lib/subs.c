@@ -25,7 +25,7 @@ Prototype const char *PatRunExpand(const char *pat);
 Prototype int CidrMatch(const char *cidr, const char *ip);
 Prototype int IsIpAddr(char *a);
 Prototype char *SanitiseAddr(char *addr);
-Prototype void GetIPHost(struct sockaddr *sa, char *hname, int hnamelen, char *ipname, int iplen);
+Prototype int GetIPHost(struct sockaddr *sa, char *hname, int hnamelen, char *ipname, int iplen);
 Prototype int TestForwardLookup(const char *hostName, const char *ipst, const struct sockaddr *res);
 Prototype char *NetAddrToSt(int fd, struct sockaddr *sa, int ip4conv, int port, int v6spec);
 Prototype int ValidGroupName(const char *name);
@@ -346,7 +346,11 @@ CidrMatch(const char *cidr, const char *ip)
     }
 }
 
-void
+/*
+ * Returns 0 with the name in hname, -1 if there is no name, -2 if the lookup
+ * failed temporarily (EAI_AGAIN / TRY_AGAIN), with hname empty.
+ */
+int
 GetIPHost(struct sockaddr *sa, char *hname, int hnamelen, char *ipname, int iplen)
 {
     strncpy(ipname, NetAddrToSt(0, sa, 1, 0, 0), iplen - 1);
@@ -358,8 +362,10 @@ GetIPHost(struct sockaddr *sa, char *hname, int hnamelen, char *ipname, int iple
 	int error;
 
 	if ((error = getnameinfo(sa, SA_LEN(sa), hname, hnamelen,
-					NULL, 0, NI_NAMEREQD)) != 0)
+					NULL, 0, NI_NAMEREQD)) != 0) {
 		*hname = '\0';
+		return((error == EAI_AGAIN) ? -2 : -1);
+	}
 #else
 	struct hostent *he;
 	struct sockaddr_in *sin = (struct sockaddr_in *)sa;
@@ -373,16 +379,19 @@ GetIPHost(struct sockaddr *sa, char *hname, int hnamelen, char *ipname, int iple
 	if (he != NULL) {
 	    strncpy(hname, he->h_name, hnamelen - 1);
 	    hname[hnamelen - 1] = '\0';
+	} else {
+	    return((h_errno == TRY_AGAIN) ? -2 : -1);
 	}
 #endif /* INET6 */
     }
-
+    return((*hname) ? 0 : -1);
 }
 
 /*
  * TestForwardLookup(). 
  *
- * Check that Fwd and Rev DNS entries match up
+ * Check that Fwd and Rev DNS entries match up.  Returns 0 if they do, -1 if
+ * not, -2 if the forward lookup failed temporarily.
  */
 
 int
@@ -402,8 +411,10 @@ TestForwardLookup(const char *hostName, const char *ipst, const struct sockaddr 
     else if (strchr(ipst, '.'))
 	hints.ai_family = AF_INET;
 
-    if (getaddrinfo(hostName, NULL, &hints, &ai0) == 0) {
+    if ((r = getaddrinfo(hostName, NULL, &hints, &ai0)) == 0) {
 	struct addrinfo *ai;
+
+	r = -1;
 
 	for (ai = ai0; ai; ai = ai->ai_next) {
 	    char *st = NetAddrToSt(0, ai->ai_addr, 1, 0, 0);
@@ -417,6 +428,7 @@ TestForwardLookup(const char *hostName, const char *ipst, const struct sockaddr 
 	freeaddrinfo(ai0);
     } else {
 	logit(LOG_NOTICE, "DNS Fwd/Rev mismatch: lookup of %s failed", hostName);
+	r = (r == EAI_AGAIN) ? -2 : -1;
     }
     return(r);
 #else
@@ -438,6 +450,8 @@ TestForwardLookup(const char *hostName, const char *ipst, const struct sockaddr 
 	    logit(LOG_NOTICE, "DNS Fwd/Rev mismatch: %s/%s", hostName, ipst);
     } else {
 	logit(LOG_NOTICE, "DNS Fwd/Rev mismatch: lookup of %s failed", hostName);
+	if (h_errno == TRY_AGAIN)
+	    r = -2;
     }
     return(r);
 #endif
