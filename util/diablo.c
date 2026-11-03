@@ -102,6 +102,7 @@ void FeedCommit(FILE *fo);
 void FeedAddDel(FILE *fo, char *gwild, int add);
 
 void FinishRetain(int what);
+void CloseRetain(void);
 int QueueRange(const char *label, int *pqnum, int *pqarts, int *pqrun);
 int countFds(fd_set *rfds);
 int ArticleOpen(History *h, const char *msgid, char **pfi, int32 *rsize, int *pmart, int *pheadOnly, int *compressed);
@@ -1286,6 +1287,7 @@ DoAccept(int lfd)
 		    stprintf("%s", addrst);
 
 		CloseLog(NULL, 1);
+		CloseRetain();
 
 		for (i = 0; i < MaxFds; ++i) {
 		    if (i > 2 && i != fds[1] && i != fd && i != ZoneFd && i != BodyFilterFd && i != NphFilterFd) {
@@ -4241,8 +4243,16 @@ DoCommand(int ufd)
 	if ((fd = accept(ufd, (struct sockaddr *)&asin, &alen)) <= 0)
 	    break;
 	fcntl(fd, F_SETFL, 0);
+	/*
+	 * A program diablo runs (shutdown_cleanup, an external filter)
+	 * must not inherit the connection: a pause or exit keeps it
+	 * open until done, and a copy would keep the client waiting.
+	 */
+	fcntl(fd, F_SETFD, FD_CLOEXEC);
 	fo = fdopen(dup(fd), "w");
 	fi = fdopen(fd, "r");
+	if (fo)
+	    fcntl(fileno(fo), F_SETFD, FD_CLOEXEC);
 
 	if (fi && fo) {
 	    char buf[MAXLINE];
@@ -4656,6 +4666,28 @@ FeedAddDel(FILE *fo, char *gwild, int add)
 		 (add == -1) ? "delgroup" :
 		 /* add == -2 */ "delgroupany"), gwild);
 	++FtNumCommit;
+    }
+}
+
+/*
+ * In a feed child: close the child's copies of the control connections
+ * the master keeps for a pause, readonly or exit.  They need not be below
+ * MaxFds, so the close loop after the fork may miss them; only the master
+ * answers them.  The master flushed each one after its reply, so fclose()
+ * writes nothing.
+ */
+void
+CloseRetain(void)
+{
+    Retain *ret;
+
+    while ((ret = ReBase) != NULL) {
+	ReBase = ret->re_Next;
+	if (ret->re_Fi)
+	    fclose(ret->re_Fi);
+	if (ret->re_Fo)
+	    fclose(ret->re_Fo);
+	zfree(&ParProcMemPool, ret, sizeof(Retain));
     }
 }
 

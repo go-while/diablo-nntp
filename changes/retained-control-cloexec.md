@@ -1,0 +1,1 @@
+- `diablo`: the control connection of a `dicmd pause`, `readonly` or `exit` is no longer inherited by `path_shutdown_cleanup`, programs it starts, or feed children forked meanwhile; a client reading to the end of the connection no longer waits for them (D-172).
