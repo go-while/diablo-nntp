@@ -4,6 +4,7 @@ package e2e
 // stop; and the init wrappers in samples/init.
 
 import (
+	"bytes"
 	"encoding/xml"
 	"errors"
 	"net"
@@ -329,6 +330,25 @@ func TestInitWrappers(t *testing.T) {
 	}
 }
 
+// runInit runs an init script and returns its output and exit status. A start leaves the daemon
+// with the script's output pipe open, as in ctl(): without WaitDelay the run waits for the daemon
+// to exit, which hung TestInitSysV (seen under ASan, where the daemon starts more slowly).
+func runInit(t *testing.T, cmd *exec.Cmd) (string, int) {
+	t.Helper()
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	cmd.WaitDelay = 3 * time.Second
+	err := cmd.Run()
+	code := 0
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		code = ee.ExitCode()
+	} else if err != nil && !errors.Is(err, exec.ErrWaitDelay) {
+		t.Fatal(err)
+	}
+	return out.String(), code
+}
+
 // TestInitSysV: the SysV script of samples/init starts, checks and stops diablo through
 // diablo-ctl, with DIABLO_CTL and DIABLO_CTL_OPTS from /etc/default/diablo replaced by the
 // environment.
@@ -347,14 +367,7 @@ func TestInitSysV(t *testing.T) {
 		cmd := exec.Command("/bin/sh", script, arg)
 		cmd.Dir = t.TempDir()
 		cmd.Env = append(os.Environ(), "DIABLO_CTL="+ctlp, "DIABLO_CTL_OPTS=-C "+filepath.Join(s.Dir, "diablo.config")+" -f "+conf)
-		out, err := cmd.CombinedOutput()
-		code := 0
-		if ee, ok := err.(*exec.ExitError); ok {
-			code = ee.ExitCode()
-		} else if err != nil {
-			t.Fatal(err)
-		}
-		return string(out), code
+		return runInit(t, cmd)
 	}
 	// /etc/default/diablo would override DIABLO_CTL; a host that has one is not tested
 	if _, err := os.Stat("/etc/default/diablo"); err == nil {
@@ -403,14 +416,7 @@ func TestInitRcdFreeBSD(t *testing.T) {
 		cmd.Dir = t.TempDir()
 		cmd.Env = append(os.Environ(), "diablo_ctl="+ctlp,
 			"diablo_flags=-C "+filepath.Join(s.Dir, "diablo.config")+" -f "+conf)
-		out, err := cmd.CombinedOutput()
-		code := 0
-		if ee, ok := err.(*exec.ExitError); ok {
-			code = ee.ExitCode()
-		} else if err != nil {
-			t.Fatal(err)
-		}
-		return string(out), code
+		return runInit(t, cmd)
 	}
 	if out, code := run("onestatus"); code == 0 {
 		t.Fatalf("onestatus before start: exit 0\n%s", out)

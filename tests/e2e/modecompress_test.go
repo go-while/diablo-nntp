@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"bytes"
 	"compress/zlib"
 	"strings"
 	"testing"
@@ -18,7 +19,11 @@ func TestFeederModeCompressTwiceRefused(t *testing.T) {
 	p := s.Peer(t)
 	expect(t, p, 207, "MODE COMPRESS")
 
-	zw := zlib.NewWriter(p.Conn)
+	// Each command is compressed into buf and sent in one write: written straight to the
+	// socket, zlib's flush can need a second write, and after QUIT diablo may already have
+	// closed (a broken pipe under load).
+	var buf bytes.Buffer
+	zw := zlib.NewWriter(&buf)
 	zsend := func(cmd string) {
 		t.Helper()
 		if _, err := zw.Write([]byte(cmd + "\r\n")); err != nil {
@@ -27,6 +32,10 @@ func TestFeederModeCompressTwiceRefused(t *testing.T) {
 		if err := zw.Flush(); err != nil {
 			t.Fatalf("%s: %v", cmd, err)
 		}
+		if _, err := p.Conn.Write(buf.Bytes()); err != nil {
+			t.Fatalf("%s: %v", cmd, err)
+		}
+		buf.Reset()
 	}
 	zsend("MODE STREAM")
 	status(t, p, 203, "MODE STREAM (compressed)")
