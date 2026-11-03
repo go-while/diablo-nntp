@@ -11,6 +11,7 @@
 #include "defs.h"
 
 Prototype const char *PGPVerify(Control *ctl, const char *art, int artLen);
+Prototype const char *PGPSigner(const char *art, int artLen, char *signer, int signerSize, int *pcannot);
 
 /*
  * PGPVerify()
@@ -29,7 +30,28 @@ Prototype const char *PGPVerify(Control *ctl, const char *art, int artLen);
 const char *
 PGPVerify(Control *ctl, const char *art, int artLen)
 {
+    char signer[256];
+    const char *badCmd = PGPSigner(art, artLen, signer, sizeof(signer), NULL);
+
+    if (badCmd == NULL && strcmp(signer, ctl->ct_Verify) != 0) {
+	if (DebugOpt)
+	    printf("pgp label mismatch:%s:%s:\n", signer, ctl->ct_Verify);
+	badCmd = "pgp parsed ok, but label did not match\n";
+    }
+    return(badCmd);
+}
+
+/*
+ * PGPSigner() - run pgpverify on the article once: NULL and the user id of the
+ * key that made a good signature in signer, or the failure.  *pcannot (if not
+ * NULL) is set when the signature could not be checked at all (pgpverify not
+ * runnable, or its exit status 2), as opposed to a missing or bad signature.
+ */
+const char *
+PGPSigner(const char *art, int artLen, char *signer, int signerSize, int *pcannot)
+{
     const char *badCmd = "Unable to exec pgp verification program\n";
+    int cannot = 1;
     int fds[3];
     pid_t pid;
 
@@ -98,9 +120,11 @@ PGPVerify(Control *ctl, const char *art, int artLen)
 		    switch (WEXITSTATUS(status)) {
 		    case 1:
 			badCmd = "pgp signature header (X-PGP-Sig) missing\n";
+			cannot = 0;
 			break;
 		    case 3:
 			badCmd = "pgp signature bad, or signer key not in keyring\n";
+			cannot = 0;
 			break;
 		    default:
 			badCmd = "pgp header parsing failed, or verifier not runnable\n";
@@ -113,13 +137,9 @@ PGPVerify(Control *ctl, const char *art, int artLen)
 	     * if non-null answer, pgp-verify succeeded
 	     */
 	    if (n) {
-		if (strcmp(buf, ctl->ct_Verify) == 0) {
-		    badCmd = NULL;
-		} else {
-		    if (DebugOpt)
-			printf("pgp label mismatch:%s:%s:\n", buf, ctl->ct_Verify);
-		    badCmd = "pgp parsed ok, but label did not match\n";
-		}
+		snprintf(signer, signerSize, "%s", buf);
+		badCmd = NULL;
+		cannot = 0;
 	    }
 	}
 	if (fds[0] >= 0)
@@ -129,6 +149,8 @@ PGPVerify(Control *ctl, const char *art, int artLen)
     } else {
 	logit(LOG_ERR, "Unable to run %s", DOpts.PgpVerifyArgs[0]);
     }
+    if (pcannot)
+	*pcannot = (badCmd != NULL && cannot);
     return(badCmd);
 }
 

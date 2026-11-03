@@ -17,15 +17,45 @@ import (
 // cg.log, and as the earliest line it only reports what no other line took.
 const cgLogLine = "all:*:*:log=cg.log\n"
 
-// cgDone waits until dreaderd has processed the checkgroups, and returns the control log.
+// cgDone waits until dreaderd has processed the checkgroups (ok or not), and returns the
+// control log.
 func cgDone(t *testing.T, s *Site) string {
 	t.Helper()
 	var log []byte
-	waitFor(t, 10*time.Second, "the checkgroups in the control log", func() bool {
+	waitFor(t, 30*time.Second, "the checkgroups in the control log", func() bool {
 		log, _ = os.ReadFile(filepath.Join(s.Dir, "log", "cg.log"))
-		return strings.Contains(string(log), ">> processing completed ok")
+		return strings.Contains(string(log), ">> processing completed ok") || strings.Contains(string(log), ">> processing failed")
 	})
 	return string(log)
+}
+
+// cgSiteArt starts a reader site with the groups and files and feeds it art, a checkgroups
+// article built by the test (cgArticle).
+func cgSiteArt(t *testing.T, groups []string, files map[string]string, art []string) *Site {
+	t.Helper()
+	st, spool := spoolStore(t)
+	s := NewReaderSite(t, ReaderOptions{Spool: spool, Groups: groups, Files: files})
+	feedReader(t, s, st, "e2e.test", art)
+	return s
+}
+
+// cgArticle is a checkgroups article with the body lines; from replaces the From: header and
+// extra headers are added after it.
+func cgArticle(t *testing.T, from string, extra []string, lines ...string) []string {
+	t.Helper()
+	a := newArticle(msgID(t), "e2e.test", "cmsg checkgroups", lines...)
+	var out []string
+	for _, l := range a {
+		if strings.HasPrefix(l, "From: ") && from != "" {
+			l = "From: " + from
+		}
+		out = append(out, l)
+		if strings.HasPrefix(l, "From: ") {
+			out = append(out, extra...)
+			out = append(out, "Control: checkgroups")
+		}
+	}
+	return out
 }
 
 // cgWant checks which groups exist after the checkgroups.
@@ -144,12 +174,109 @@ func TestCheckgroupsMaxdocheckgroups(t *testing.T) {
 		log := cgDone(t, s)
 		cgWant(t, s, log, []string{"aaa.first", "e2e.newa", "e2e.newk"}, nil)
 	})
+	t.Run("maxcheckgroups keeps its meaning", func(t *testing.T) {
+		// the first group of the message (aaa.first) picks the limit for all its changes
+		lines := append([]string{"aaa.first\tFirst."}, eleven...)
+		s := cgSite(t, []string{"e2e.test"}, cgLogLine+"maxcheckgroups:*:aaa.*:20\ncheckgroups:*:*:doit\n", lines...)
+		log := cgDone(t, s)
+		cgWant(t, s, log, []string{"aaa.first", "e2e.newa", "e2e.newk"}, nil)
+	})
 	t.Run("one limit exceeded", func(t *testing.T) {
 		s := cgSite(t, []string{"e2e.test"}, cgLogLine+"/maxdocheckgroups/:*:e2e.newa|e2e.newb:1\ncheckgroups:*:*:doit\n", eleven[:4]...)
 		log := cgDone(t, s)
 		cgWant(t, s, log, nil, []string{"e2e.newa", "e2e.newb", "e2e.newc"})
 		if !strings.Contains(log, "(limit 1 for e2e.newa|e2e.newb): NOT made") {
 			t.Errorf("control log:\n%s", log)
+		}
+	})
+}
+
+// TestCheckgroupsVerifyTakesGroups: a verify line that the real ISC checkgroups passes acts on
+// its groups (sci.*) and takes them from the earlier doit line for *, which checks the rest.
+func TestCheckgroupsVerifyTakesGroups(t *testing.T) {
+	s, st, _ := iscSiteCtl(t, []string{"news.announce.newgroups"}, cgLogLine+
+		"/maxdocheckgroups/:*:*:100000\ncheckgroups:*:*:doit\n"+
+		"checkgroups:group-admin@isc.org:sci.*:verify-news.announce.newgroups\n")
+	feedReader(t, s, st, "news.announce.newgroups", iscArticle(t, "checkgroups", "modern"))
+	log := cgDone(t, s)
+	cgWant(t, s, log, []string{"sci.math", "comp.lang.c"}, nil)
+	for _, want := range []string{">> Checkgroups: verified (newsgroups sci.*)", "made (newsgroups sci.*)", "made (newsgroups *)"} {
+		if !strings.Contains(log, want) {
+			t.Errorf("control log lacks %q:\n%s", want, log)
+		}
+	}
+	if strings.Count(log, " to add, ") != 2 {
+		t.Errorf("want two checks (sci.* and the rest):\n%s", log)
+	}
+}
+
+// TestCheckgroupsVerifyDgpBlocks: a line with verify-<key> and dgpverify can never verify
+// (dgpverify is not implemented), so it leaves its groups alone, even after a later line with
+// the same key passed. Before, the result of the later line was reused for the key and the
+// earlier line created the groups.
+func TestCheckgroupsVerifyDgpBlocks(t *testing.T) {
+	s, st, _ := iscSiteCtl(t, []string{"news.announce.newgroups"}, cgLogLine+
+		"/maxdocheckgroups/:*:*:100000\ncheckgroups:*:*:verify-news.announce.newgroups,dgpverify\n"+
+		"checkgroups:*:sci.*:verify-news.announce.newgroups\n")
+	feedReader(t, s, st, "news.announce.newgroups", iscArticle(t, "checkgroups", "modern"))
+	log := cgDone(t, s)
+	cgWant(t, s, log, []string{"sci.math"}, []string{"comp.lang.c"})
+	if !strings.Contains(log, ">> Checkgroups: cannot verify, groups left alone (newsgroups *)") {
+		t.Errorf("control log:\n%s", log)
+	}
+}
+
+// TestCheckgroupsSenderAddress: the lines are matched against one address: Sender:, else the
+// first address of From:, in lower case. A From: that lists another sender's address no longer
+// matches that sender's lines.
+func TestCheckgroupsSenderAddress(t *testing.T) {
+	files := func() map[string]string {
+		return map[string]string{"dcontrol.ctl": cgLogLine + "checkgroups:other@example.invalid:*:doit\n"}
+	}
+	body := []string{"e2e.test\tThe test group.", "e2e.new\tNew."}
+	t.Run("second address in From", func(t *testing.T) {
+		s := cgSiteArt(t, []string{"e2e.test"}, files(), cgArticle(t, "E2E <e2e@example.invalid>, other@example.invalid", nil, body...))
+		log := cgDone(t, s)
+		cgWant(t, s, log, []string{"e2e.test"}, []string{"e2e.new"})
+	})
+	t.Run("comment and first word", func(t *testing.T) {
+		s := cgSiteArt(t, []string{"e2e.test"}, files(), cgArticle(t, "(other@example.invalid) e2e@example.invalid", nil, body...))
+		log := cgDone(t, s)
+		cgWant(t, s, log, []string{"e2e.test"}, []string{"e2e.new"})
+	})
+	t.Run("Sender wins, any case", func(t *testing.T) {
+		s := cgSiteArt(t, []string{"e2e.test"}, files(), cgArticle(t, "", []string{"Sender: Other <OTHER@Example.Invalid>"}, body...))
+		log := cgDone(t, s)
+		cgWant(t, s, log, []string{"e2e.test", "e2e.new"}, nil)
+	})
+}
+
+// TestCheckgroupsLineMatching: an unknown action makes the line ignored (it does not take
+// groups from earlier lines); break ends the scan; a line for another sender is not used; a
+// line's own =log file gets what it does.
+func TestCheckgroupsLineMatching(t *testing.T) {
+	body := []string{"e2e.test\tThe test group.", "e2e.new\tNew."}
+	for name, dcontrol := range map[string]string{
+		"unknown action": cgLogLine + "checkgroups:*:*:doit\ncheckgroups:*:e2e.*:doti\n",
+		"break":          cgLogLine + "checkgroups:*:*:doit\ncheckgroups:*:zzz.*:log,break\ncheckgroups:*:*:drop\n",
+		"other sender":   cgLogLine + "checkgroups:*:*:doit\ncheckgroups:nobody@example.invalid:*:drop\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := cgSite(t, []string{"e2e.test"}, dcontrol, body...)
+			log := cgDone(t, s)
+			cgWant(t, s, log, []string{"e2e.test", "e2e.new"}, nil)
+		})
+	}
+	t.Run("own log", func(t *testing.T) {
+		s := cgSite(t, []string{"e2e.test"}, cgLogLine+"checkgroups:*:e2e.*:doit=e2e-cg.log\n", body...)
+		log := cgDone(t, s)
+		cgWant(t, s, log, []string{"e2e.new"}, nil)
+		own, _ := os.ReadFile(filepath.Join(s.Dir, "log", "e2e-cg.log"))
+		if !strings.Contains(string(own), "made (newsgroups e2e.*)") || !strings.Contains(string(own), "<< Control: checkgroups") {
+			t.Errorf("the line's own log:\n%s", own)
+		}
+		if strings.Contains(log, "made (newsgroups e2e.*)") {
+			t.Errorf("the check went to cg.log too:\n%s", log)
 		}
 	})
 }

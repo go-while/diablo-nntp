@@ -42,6 +42,7 @@ const char *CtlNewGroup(Connection *conn, Control *ctl, const char **cmd, const 
 const char *CtlRmGroup(Connection *conn, Control *ctl, const char **cmd, const char *body, int bodyLen);
 const char *CgRun(Connection *conn, Control *ctl, const char *art, int artLen, const char *body, int bodyLen, const char *from, int hasPGP, int hasDGP);
 int CtlFromMatches(const char *pat, const char *from);
+static void CtlLogArticle(FILE *fo, const char *art, int artLen);
 const char *locateXTrace(const char *art, int headLen, int *pxtLen);
 
 void
@@ -50,6 +51,7 @@ ExecuteControl(Connection *conn, const char *ctlMsg, const char *art, int artLen
     const char *body;
     const char *newsgroup = NULL;
     char *from = NULL;
+    char *sender = NULL;
     char *groups = NULL;
     char *cmdBuf;
     const char *cmd[MAXCMDARGS];
@@ -133,6 +135,9 @@ ExecuteControl(Connection *conn, const char *ctlMsg, const char *art, int artLen
 	    } else if (strncasecmp(line, "From:", 5) == 0) {
 		++nFrom;
 		from = zallocStrTrim2(&conn->co_MemPool, 0, line + 5, l - 5);
+	    } else if (strncasecmp(line, "Sender:", 7) == 0) {
+		zfreeStr(&conn->co_MemPool, &sender);
+		sender = zallocStrTrim2(&conn->co_MemPool, 0, line + 7, l - 7);
 	    } else if (strncasecmp(line, "Newsgroups:", 11) == 0) {
 		++nNewsgroups;
 		groups = zallocStrTrim2(&conn->co_MemPool, ',', line + 11, l - 11);
@@ -204,29 +209,8 @@ ExecuteControl(Connection *conn, const char *ctlMsg, const char *art, int artLen
 	 * log control message content
 	 */
 
-	if (ctl->ct_LogFo) {
-	    int i;
-	    int phead = 1;
-	    time_t t = time(NULL);
-	    struct tm *tp = localtime(&t);
-	    char tbuf[64];
-
-	    strftime(tbuf, sizeof(tbuf), "%c", tp);
-	    fprintf(ctl->ct_LogFo, "\nCONTROL %s\n", tbuf);
-
-	    for (i = 0; i < artLen; ++i) {
-		if (art[i] == '\r')
-		    continue;
-		if (phead) {
-		    fprintf(ctl->ct_LogFo, "<< ");
-		    phead = 0;
-		}
-		fputc((int)(uint8)art[i], ctl->ct_LogFo);
-		if (art[i] == '\n')
-		    phead = 1;
-	    }
-	    fprintf(ctl->ct_LogFo, "\n");
-	}
+	if (ctl->ct_LogFo)
+	    CtlLogArticle(ctl->ct_LogFo, art, artLen);
 
 	/*
 	 * options
@@ -253,7 +237,7 @@ ExecuteControl(Connection *conn, const char *ctlMsg, const char *art, int artLen
 	    hasDGP = hasXDGPSig;
 #endif
 	    if (badCmd == NULL)
-		badCmd = CgRun(conn, ctl, art, artLen, body, artLen - (body - art), from, hasPGP, hasDGP);
+		badCmd = CgRun(conn, ctl, art, artLen, body, artLen - (body - art), sender ? sender : from, hasPGP, hasDGP);
 	} else if (ctl->ct_Flags & CTFF_VERIFY) {
 	    /*
 	     * On success, verification routine will clear other CTFF_VERIFY
@@ -361,9 +345,45 @@ ExecuteControl(Connection *conn, const char *ctlMsg, const char *art, int artLen
      */
 
     zfreeStr(&conn->co_MemPool, &from);
+    zfreeStr(&conn->co_MemPool, &sender);
     zfreeStr(&conn->co_MemPool, &groups);
     zfree(&conn->co_MemPool, cmdBuf, cmdBufLen);
     FreeControl(conn);
+}
+
+/*
+ * The log=/doit= file that ParseControl() opened for the message, as named in
+ * dcontrol.ctl ("" for none).
+ */
+static char CtlLogName[256];
+
+/*
+ * CtlLogArticle() - the article, as the control log starts each message.
+ */
+static void
+CtlLogArticle(FILE *fo, const char *art, int artLen)
+{
+    int i;
+    int phead = 1;
+    time_t t = time(NULL);
+    struct tm *tp = localtime(&t);
+    char tbuf[64];
+
+    strftime(tbuf, sizeof(tbuf), "%c", tp);
+    fprintf(fo, "\nCONTROL %s\n", tbuf);
+
+    for (i = 0; i < artLen; ++i) {
+	if (art[i] == '\r')
+	    continue;
+	if (phead) {
+	    fprintf(fo, "<< ");
+	    phead = 0;
+	}
+	fputc((int)(uint8)art[i], fo);
+	if (art[i] == '\n')
+	    phead = 1;
+    }
+    fprintf(fo, "\n");
 }
 
 /*
@@ -430,6 +450,7 @@ ParseControl(Connection *conn, const char *cmd, const char *from, const char *ne
     }
 
     FreeControl(conn);
+    CtlLogName[0] = 0;
 
     /*
      * Check From: before opening dcontrol.ctl: returning without the
@@ -547,6 +568,7 @@ ParseControl(Connection *conn, const char *cmd, const char *from, const char *ne
 		    fd = xopen(O_RDWR|O_CREAT, 0640, "%s", logFile);
 		else
 		    fd = xopen(O_RDWR|O_CREAT, 0640, "%s/%s", PatExpand(LogHomePat), logFile);
+		snprintf(CtlLogName, sizeof(CtlLogName), "%s", (fd >= 0) ? logFile : "");
 
 		if (DebugOpt)
 		    printf("creating log file %s fd = %d\n", logFile, fd);
@@ -954,22 +976,33 @@ CtlRmGroup(Connection *conn, Control *ctl, const char **cmd, const char *body, i
 }
 
 /*
- * checkgroups, as INN's controlchan and docheckgroups do it.
+ * checkgroups, as INN documents control.ctl and docheckgroups.
  *
- *	Every checkgroups (or "all") line of dcontrol.ctl that matches the sender is
- *	used, not only the last one.  As in INN they are taken from the last line to
- *	the first, and a line acts on the groups that match its <newsgroups> pattern
- *	and the pattern of no later line that was used, so that a later line wins:
+ *	The sender is the address of Sender: (else From:), reduced to one address in
+ *	lower case as INN's controlchan does.  Every checkgroups (or "all") line of
+ *	dcontrol.ctl whose <from> matches it is used, not only the last one; a line
+ *	with an action this does not know is ignored.  The lines are taken from the
+ *	last to the first, and a line acts on the groups that match its <newsgroups>
+ *	pattern and the pattern of no later line that was used, so that a later line
+ *	wins:
  *
- *	    doit, verify-*, dgpverify	the groups are checked (below).  A verify
- *					line whose signature does not verify is
- *					skipped, as if it were not there.
+ *	    doit, verify-*		the groups are checked (below).  A verify line
+ *					whose signature is missing or bad is skipped,
+ *					as if it were not there.  One whose signature
+ *					cannot be checked (no pgpverify, its exit
+ *					status 2) leaves its groups alone, as a log
+ *					line does.
+ *	    dgpverify			not implemented: leaves its groups alone.
  *	    drop			the groups are left out of the list, so that
  *					a group of them that exists is removed by an
  *					earlier doit line that covers it.
  *	    log, mail			nothing is changed; the lines of the message
  *					for the groups are written to the control log
  *					(and mailed with mail).
+ *
+ *	A line's =xxx log gets what that line does.  INN 2.7's docheckgroups also
+ *	removes a group that a later line covers; this follows INN's documentation
+ *	and leaves it.
  *
  *	A check is INN's docheckgroups.  The body has 'groupname description' lines
  *	(a description with "(Moderated)" is a moderated group), and every group in
@@ -987,9 +1020,11 @@ CtlRmGroup(Connection *conn, Control *ctl, const char **cmd, const char *body, i
  *	are written to the control log as the dgrpctl commands that make them, and not
  *	made.  A limit is a line of INN's
  *		/maxdocheckgroups/:<from>:<newsgroups>:<number>
- *	(or "maxcheckgroups:<from>:<newsgroups>:<number>"): each change of a group
- *	counts for the last such line that matches the sender and the group; the
- *	default is 10.
+ *	each change of a group counts for the last such line that matches the sender
+ *	and the group; the default is 10.  When no such line matches the sender, the
+ *	older "maxcheckgroups:<from>:<newsgroups>:<number>" lines keep their meaning:
+ *	the last one that matches the sender and the first group of the message
+ *	limits all its changes.
  *
  *	A group that matches a line of the file "localgroups" (path_lib, one group or
  *	wildcard per line, '#' comments) is left alone: its description and flag are
@@ -1007,6 +1042,7 @@ CtlRmGroup(Connection *conn, Control *ctl, const char **cmd, const char *body, i
 typedef struct CgRule {
     char *cr_Groups;
     char *cr_Verify;		/* the key of verify-<key>, or NULL */
+    char *cr_Log;		/* the line's =xxx log, or NULL */
     int   cr_Kind;
     int   cr_Flags;		/* CTF_PGPVERIFY, CTF_DGPVERIFY, CTF_MAIL */
 } CgRule;
@@ -1014,6 +1050,7 @@ typedef struct CgRule {
 typedef struct CgLimit {
     char *cl_Groups;
     int   cl_Max;
+    int   cl_Legacy;		/* a maxcheckgroups: line */
 } CgLimit;
 
 typedef struct CgEnt {
@@ -1029,11 +1066,68 @@ CgCompare(const void *a, const void *b)
 }
 
 /*
- * The checkgroups lines and the limits of dcontrol.ctl that match the sender, in
- * file order.  A matching line with "break" ends the scan, as in ParseControl().
+ * CgSenderAddr() - the one address of a Sender: or From: header that the
+ * checkgroups lines are matched against, as INN's controlchan reduces it: the
+ * address in <...>, else the first word that is not a (comment); in lower case.
  */
 static void
-CgReadRules(const char *from, CgRule **prules, int *pnRules, CgLimit **plimits, int *pnLimits)
+CgSenderAddr(const char *hdr, char *buf, int size)
+{
+    const char *b = hdr ? strchr(hdr, '<') : NULL;
+    const char *e = NULL;
+    int n = 0;
+
+    if (b && (e = strchr(b + 1, '>')) != NULL) {
+	++b;
+    } else if ((b = hdr) != NULL) {
+	for (;;) {
+	    while (*b == ' ' || *b == '\t' || *b == ',')
+		++b;
+	    if (*b != '(')
+		break;
+	    {
+		int depth = 0;
+
+		do {
+		    if (*b == '(')
+			++depth;
+		    else if (*b == ')')
+			--depth;
+		    ++b;
+		} while (*b && depth > 0);
+	    }
+	}
+	for (e = b; *e && *e != ' ' && *e != '\t' && *e != ',' && *e != '('; ++e)
+	    ;
+    }
+    while (b && b < e && n < size - 1)
+	buf[n++] = tolower((int)(uint8)*b++);
+    buf[n] = 0;
+}
+
+/*
+ * The <from> pattern of a line matches the sender's address (lower case both).
+ */
+static int
+CgSenderMatches(const char *pat, const char *addr)
+{
+    char lpat[256];
+    int i;
+
+    for (i = 0; pat[i] && i < (int)sizeof(lpat) - 1; ++i)
+	lpat[i] = tolower((int)(uint8)pat[i]);
+    lpat[i] = 0;
+    return(pat[i] == 0 && WildOrCmp(lpat, addr) == 0);
+}
+
+/*
+ * The checkgroups lines and the limits of dcontrol.ctl that match the sender's
+ * address, in file order.  A line with an action it does not know is ignored,
+ * with a warning, as INN does.  A matching line with "break" ends the scan, as in
+ * ParseControl().  Returns -1 when memory runs out (nothing is returned then).
+ */
+static int
+CgReadRules(const char *addr, CgRule **prules, int *pnRules, CgLimit **plimits, int *pnLimits)
 {
     FILE *fi = fopen(PatLibExpand(DControlCtlPat), "r");
     char buf[256];
@@ -1041,8 +1135,10 @@ CgReadRules(const char *from, CgRule **prules, int *pnRules, CgLimit **plimits, 
     CgLimit *limits = NULL;
     int nRules = 0;
     int nLimits = 0;
+    int failed = 0;
+    int i;
 
-    while (fi != NULL && fgets(buf, sizeof(buf), fi) != NULL) {
+    while (fi != NULL && !failed && fgets(buf, sizeof(buf), fi) != NULL) {
 	char *smsg;
 	char *sfrom;
 	char *sgroups;
@@ -1065,7 +1161,7 @@ CgReadRules(const char *from, CgRule **prules, int *pnRules, CgLimit **plimits, 
 		   strcasecmp(smsg, "maxcheckgroups") == 0);
 	if (!isLimit && strcmp(smsg, "all") != 0 && strcasecmp(smsg, "checkgroups") != 0)
 	    continue;
-	if (!CtlFromMatches(sfrom, from))
+	if (!CgSenderMatches(sfrom, addr))
 	    continue;
 
 	if (isLimit) {
@@ -1074,72 +1170,111 @@ CgReadRules(const char *from, CgRule **prules, int *pnRules, CgLimit **plimits, 
 
 	    if (v < 0 || v >= 100000000)
 		continue;
-	    if ((nl = realloc(limits, (nLimits + 1) * sizeof(CgLimit))) == NULL)
+	    if ((nl = realloc(limits, (nLimits + 1) * sizeof(CgLimit))) == NULL) {
+		failed = 1;
 		break;
+	    }
 	    limits = nl;
-	    if ((limits[nLimits].cl_Groups = strdup(sgroups)) == NULL)
+	    if ((limits[nLimits].cl_Groups = strdup(sgroups)) == NULL) {
+		failed = 1;
 		break;
+	    }
 	    limits[nLimits].cl_Max = (int)v;
+	    limits[nLimits].cl_Legacy = (strcasecmp(smsg, "maxcheckgroups") == 0);
 	    ++nLimits;
 	} else {
 	    CgRule r;
 	    CgRule *nr;
 	    char *a;
+	    char *logName = NULL;
 	    int check = 0;
 	    int drop = 0;
 	    int brk = 0;
+	    int known = 0;
+	    int unknown = 0;
 
 	    memset(&r, 0, sizeof(r));
 	    for (a = strtok(saction, ",\n"); a; a = strtok(NULL, ",\n")) {
 		char *logFile;
 
 		if ((logFile = strchr(a, '=')) != NULL)
-		    *logFile = 0;
+		    *logFile++ = 0;
 		if (strcmp(a, "doit") == 0) {
-		    check = 1;
+		    check = known = 1;
 		} else if (strcmp(a, "drop") == 0) {
-		    drop = 1;
+		    drop = known = 1;
+		} else if (strcmp(a, "log") == 0) {
+		    known = 1;
 		} else if (strcmp(a, "mail") == 0) {
 		    r.cr_Flags |= CTF_MAIL;
+		    known = 1;
 		} else if (strcmp(a, "break") == 0) {
 		    brk = 1;
-		} else if (strncmp(a, "verify-", 7) == 0) {
-		    check = 1;
+		} else if (strncmp(a, "verify-", 7) == 0 && a[7]) {
+		    check = known = 1;
 		    r.cr_Flags |= CTF_PGPVERIFY;
 		    free(r.cr_Verify);
-		    r.cr_Verify = strdup(a + 7);
+		    if ((r.cr_Verify = strdup(a + 7)) == NULL)
+			failed = 1;
 		} else if (strcmp(a, "dgpverify") == 0) {
-		    check = 1;
+		    check = known = 1;
 		    r.cr_Flags |= CTF_DGPVERIFY;
+		} else {
+		    logit(LOG_ERR, "dcontrol.ctl: unknown action \"%s\", checkgroups line for %s ignored",
+			a, sgroups);
+		    unknown = 1;
+		}
+		if (logFile)
+		    logName = logFile;
+	    }
+	    if (!failed && known && !unknown) {
+		r.cr_Kind = drop ? CGR_DROP : check ? CGR_CHECK : CGR_REPORT;
+		r.cr_Groups = strdup(sgroups);
+		if (logName)
+		    r.cr_Log = strdup(logName);
+		if (r.cr_Groups == NULL || (logName && r.cr_Log == NULL) ||
+		    (nr = realloc(rules, (nRules + 1) * sizeof(CgRule))) == NULL
+		) {
+		    failed = 1;
+		} else {
+		    rules = nr;
+		    rules[nRules++] = r;
+		    memset(&r, 0, sizeof(r));
 		}
 	    }
-	    r.cr_Kind = drop ? CGR_DROP : check ? CGR_CHECK : CGR_REPORT;
-	    r.cr_Groups = strdup(sgroups);
-	    if (r.cr_Groups == NULL ||
-		((r.cr_Flags & CTF_PGPVERIFY) && r.cr_Verify == NULL) ||
-		(nr = realloc(rules, (nRules + 1) * sizeof(CgRule))) == NULL
-	    ) {
-		free(r.cr_Groups);
-		free(r.cr_Verify);
-		break;
-	    }
-	    rules = nr;
-	    rules[nRules++] = r;
+	    free(r.cr_Groups);
+	    free(r.cr_Verify);
+	    free(r.cr_Log);
 	    if (brk)
 		break;
 	}
     }
     if (fi != NULL)
 	fclose(fi);
+    if (failed) {
+	for (i = 0; i < nRules; ++i) {
+	    free(rules[i].cr_Groups);
+	    free(rules[i].cr_Verify);
+	    free(rules[i].cr_Log);
+	}
+	for (i = 0; i < nLimits; ++i)
+	    free(limits[i].cl_Groups);
+	free(rules);
+	free(limits);
+	rules = NULL;
+	limits = NULL;
+	nRules = nLimits = 0;
+    }
     *prules = rules;
     *pnRules = nRules;
     *plimits = limits;
     *pnLimits = nLimits;
+    return(failed ? -1 : 0);
 }
 
 /*
- * The limit that a change of the group counts for: the last line that matches it,
- * or nLimits for the default.
+ * The limit that a change of the group counts for: the last /maxdocheckgroups/
+ * line that matches it, or nLimits for the default.
  */
 static int
 CgLimitFor(const CgLimit *limits, int nLimits, const char *group)
@@ -1147,7 +1282,7 @@ CgLimitFor(const CgLimit *limits, int nLimits, const char *group)
     int i;
 
     for (i = nLimits - 1; i >= 0; --i) {
-	if (WildOrCmp(limits[i].cl_Groups, group) == 0)
+	if (!limits[i].cl_Legacy && WildOrCmp(limits[i].cl_Groups, group) == 0)
 	    return(i);
     }
     return(nLimits);
@@ -1171,41 +1306,48 @@ CgActsOn(const char *group, const char *include, const char *exclude, const char
 }
 
 /*
- * Add a pattern to a '|' separated list.
+ * Add a pattern to a '|' separated list; -1 when memory runs out.
  */
-static void
+static int
 CgAppend(char **plist, const char *pat)
 {
     size_t len = *plist ? strlen(*plist) : 0;
     char *nl = realloc(*plist, len + strlen(pat) + 2);
 
     if (nl == NULL)
-	return;
+	return(-1);
     sprintf(nl + len, "%s%s", len ? "|" : "", pat);
     *plist = nl;
+    return(0);
 }
 
 /*
- * The patterns of the file "localgroups" (path_lib), as one '|' separated wildcard, or NULL.
+ * The patterns of the file "localgroups" (path_lib), as one '|' separated
+ * wildcard in *ppat (NULL for none); -1 when memory runs out.
  */
-static char *
-CgLocalGroups(void)
+static int
+CgLocalGroups(char **ppat)
 {
     FILE *fi = fopen(PatLibExpand("%s/localgroups"), "r");
     char buf[256];
-    char *pat = NULL;
+    int r = 0;
 
+    *ppat = NULL;
     if (fi == NULL)
-	return(NULL);
-    while (fgets(buf, sizeof(buf), fi) != NULL) {
+	return(0);
+    while (r == 0 && fgets(buf, sizeof(buf), fi) != NULL) {
 	char *g = strtok(buf, " \t\r\n");
 
 	if (g == NULL || g[0] == '#')
 	    continue;
-	CgAppend(&pat, g);
+	r = CgAppend(ppat, g);
     }
     fclose(fi);
-    return(pat);
+    if (r < 0) {
+	free(*ppat);
+	*ppat = NULL;
+    }
+    return(r);
 }
 
 /*
@@ -1288,7 +1430,12 @@ CgCreate(const char *group, char flags, const char *description)
 
 /*
  * The check of one doit or verify line (see above) for the groups of the message
- * that CgActsOn() takes.  Returns the number of those groups.
+ * that CgActsOn() takes.  Returns the number of those groups, or -1 when memory
+ * runs out (the check stops there).
+ *
+ * A change counts for its /maxdocheckgroups/ line.  When no such line matches
+ * the sender, maxcheckgroups: lines keep their earlier meaning: the last one that
+ * matches the first group of the message limits all its changes.
  */
 static int
 CgCheck(Control *ctl, const char *body, int bodyLen, const char *include, const char *exclude, const char *drop, const CgLimit *limits, int nLimits)
@@ -1311,7 +1458,15 @@ CgCheck(Control *ctl, const char *body, int bodyLen, const char *include, const 
     int doit;
     int recOff;
     int recLen;
-    char *local = CgLocalGroups();
+    int failed = 1;		/* until the end */
+    int nNew = 0;		/* /maxdocheckgroups/ lines */
+    int legacy = -1;		/* the maxcheckgroups: line for the message */
+    char first[MAXGNAME];	/* the first group of the message */
+    char *local;
+
+    first[0] = 0;
+    if (CgLocalGroups(&local) < 0)
+	return(-1);
 
     for (;;) {
 	char tmp[CG_MAXLINE];
@@ -1342,14 +1497,26 @@ CgCheck(Control *ctl, const char *body, int bodyLen, const char *include, const 
 	ents[nEnts].ce_Group = strdup(newsgroup);
 	ents[nEnts].ce_Desc = strdup(description);
 	ents[nEnts].ce_Flags = strstr(description, "(Moderated)") ? 'm' : 'y';
-	if (ents[nEnts].ce_Group == NULL || ents[nEnts].ce_Desc == NULL)
+	if (ents[nEnts].ce_Group == NULL || ents[nEnts].ce_Desc == NULL) {
+	    ++nEnts;			/* freed at out */
 	    goto out;
+	}
+	if (nEnts == 0)
+	    strcpy(first, newsgroup);
 	++nEnts;
     }
-    if (nEnts == 0)
+    if (nEnts == 0) {
+	failed = 0;
 	goto out;
+    }
     if ((counts = calloc(nLimits + 1, sizeof(int))) == NULL)
 	goto out;
+    for (i = 0; i < nLimits; ++i) {
+	if (!limits[i].cl_Legacy)
+	    ++nNew;
+	else if (WildOrCmp(limits[i].cl_Groups, first) == 0)
+	    legacy = i;
+    }
 
     /*
      * Sorted by name, a name twice in the list counts once (the first).
@@ -1467,15 +1634,22 @@ CgCheck(Control *ctl, const char *body, int bodyLen, const char *include, const 
      */
     doit = 1;
     shown = nLimits;
-    for (i = 0; i <= nLimits; ++i) {
-	int max = (i < nLimits) ? limits[i].cl_Max : CG_MAXDOCHECKGROUPS;
+    if (nNew == 0 && legacy >= 0) {
+	shown = legacy;
+	doit = (nAdd + nFlags + nGone <= limits[legacy].cl_Max);
+    } else {
+	for (i = 0; i <= nLimits; ++i) {
+	    int max = (i < nLimits) ? limits[i].cl_Max : CG_MAXDOCHECKGROUPS;
 
-	if (counts[i] > max) {
-	    if (doit)
+	    if (i < nLimits && limits[i].cl_Legacy)
+		continue;
+	    if (counts[i] > max) {
+		if (doit)
+		    shown = i;
+		doit = 0;
+	    } else if (doit && counts[i] > counts[shown]) {
 		shown = i;
-	    doit = 0;
-	} else if (doit && counts[i] > counts[shown]) {
-	    shown = i;
+	    }
 	}
     }
     if (ctl->ct_LogFo && (nAdd + nFlags + nGone)) {
@@ -1550,8 +1724,9 @@ CgCheck(Control *ctl, const char *body, int bodyLen, const char *include, const 
 	    fprintf(ctl->ct_LogFo, "dgrpctl rmgroup %s\n", gone[i]);
 	}
     }
+    failed = 0;
 out:
-    r = nEnts;
+    r = failed ? -1 : nEnts;
     for (i = 0; i < nEnts; ++i) {
 	free(ents[i].ce_Group);
 	free(ents[i].ce_Desc);
@@ -1599,140 +1774,174 @@ CgReport(Control *ctl, const char *body, int bodyLen, const char *include, const
 }
 
 /*
- * The verification that a verify-* or dgpverify line asks for; NULL when the
- * message passes it.
+ * CgOpenLog() - a line's own =xxx log (as in ParseControl()), locked, after the
+ * article; NULL when it cannot be opened or locked.
  */
-static const char *
-CgVerify(Control *ctl, const CgRule *rule, const char *art, int artLen, int hasPGP, int hasDGP)
+static FILE *
+CgOpenLog(const char *name, const char *art, int artLen)
 {
-    const char *bad = NULL;
+    FILE *fo;
+    int fd;
 
-    if (rule->cr_Flags & CTF_DGPVERIFY) {
-#if DIABLO_DGP_SUPPORT
-	if (hasDGP)
-	    bad = DGPVerify(ctl, art, artLen);
-	else
-	    bad = "dgp verification required, signature missing\n";
-#else
-	(void)hasDGP;
-	bad = "dgp verification required, not compiled in\n";
-#endif
+    if (name[0] == '/')
+	fd = xopen(O_RDWR|O_CREAT, 0640, "%s", name);
+    else
+	fd = xopen(O_RDWR|O_CREAT, 0640, "%s/%s", PatExpand(LogHomePat), name);
+    if (fd < 0)
+	return(NULL);
+    if (hflock(fd, 0, XLOCK_EX) < 0) {
+	logit(LOG_ERR, "Unable to lock control log %s: %s", name, strerror(errno));
+	close(fd);
+	return(NULL);
     }
-    if (bad == NULL && (rule->cr_Flags & CTF_PGPVERIFY)) {
-#if DIABLO_PGP_SUPPORT
-	if (hasPGP) {
-	    char *saved = ctl->ct_Verify;
-
-	    ctl->ct_Verify = rule->cr_Verify;
-	    bad = PGPVerify(ctl, art, artLen);
-	    ctl->ct_Verify = saved;
-	} else {
-	    bad = "pgp verification required, signature missing\n";
-	}
-#else
-	(void)hasPGP;
-	bad = "pgp verification required, not compiled in\n";
-#endif
+    if ((fo = fdopen(fd, "a")) == NULL) {
+	hflock(fd, 0, XLOCK_UN);
+	close(fd);
+	return(NULL);
     }
-    return(bad);
+    CtlLogArticle(fo, art, artLen);
+    return(fo);
 }
 
 /*
  * CgRun() - a checkgroups control message: the lines of dcontrol.ctl that match the
- * sender, from the last to the first (see above).
+ * sender (Sender:, else From:, reduced to one address), from the last to the first
+ * (see above).  pgpverify runs at most once.  A verify line whose signature is
+ * missing or bad is skipped; one whose signature cannot be checked at all (no
+ * pgpverify, its exit status 2, dgpverify, which is not implemented) blocks: its
+ * groups are left alone, as by a log line.
  */
 const char *
-CgRun(Connection *conn, Control *ctl, const char *art, int artLen, const char *body, int bodyLen, const char *from, int hasPGP, int hasDGP)
+CgRun(Connection *conn, Control *ctl, const char *art, int artLen, const char *body, int bodyLen, const char *sender, int hasPGP, int hasDGP)
 {
     CgRule *rules;
     CgLimit *limits;
     int nRules;
     int nLimits;
+    char addr[256];
     char *exclude = NULL;	/* the patterns of the later lines used */
     char *drop = NULL;		/* the patterns of the later drop lines */
-    char **keys = NULL;		/* verify keys tried, and their result */
-    const char **results = NULL;
-    int nKeys = 0;
+    char signer[256];
+    const char *pgpBad = NULL;
+    int pgpDone = 0;
+    int pgpCannot = 0;
+    const char *bad = NULL;
+    int acted = 0;
     int mail = 0;
     int i;
 
-    CgReadRules(from, &rules, &nRules, &limits, &nLimits);
+    CgSenderAddr(sender, addr, sizeof(addr));
+    if (CgReadRules(addr, &rules, &nRules, &limits, &nLimits) < 0)
+	return("checkgroups: out of memory\n");
 
     for (i = 0; i < nRules; ++i) {
-	if ((rules[i].cr_Flags & CTF_MAIL) && ctl->ct_LogFo == NULL)
-	    CtlTempLog(conn, ctl);
+	if (rules[i].cr_Flags & CTF_MAIL)
+	    mail = 1;
     }
-    ctl->ct_Flags &= ~CTF_MAIL;		/* the lines used decide */
+    if (mail && ctl->ct_LogFo == NULL) {
+	CtlTempLog(conn, ctl);
+	if (ctl->ct_LogFo)
+	    CtlLogArticle(ctl->ct_LogFo, art, artLen);
+    }
 
-    for (i = nRules - 1; i >= 0; --i) {
+    for (i = nRules - 1; i >= 0 && bad == NULL; --i) {
 	CgRule *rule = &rules[i];
-	int n;
+	FILE *saved = ctl->ct_LogFo;
+	FILE *own = NULL;
+	int n = 0;
+
+	/*
+	 * A line's own log, when it is not the one ParseControl() chose.
+	 */
+	if (rule->cr_Log && strcmp(rule->cr_Log, CtlLogName) != 0) {
+	    if (rule->cr_Log[0] == 0)
+		ctl->ct_LogFo = NULL;
+	    else if ((own = CgOpenLog(rule->cr_Log, art, artLen)) != NULL)
+		ctl->ct_LogFo = own;
+	}
 
 	if (rule->cr_Kind == CGR_DROP) {
 	    if (ctl->ct_LogFo)
 		fprintf(ctl->ct_LogFo, ">> Checkgroups: dropped (newsgroups %s)\n", rule->cr_Groups);
-	    CgAppend(&drop, rule->cr_Groups);
-	    continue;
-	}
-	if (rule->cr_Flags & CTFF_VERIFY) {
-	    const char *bad = NULL;
-	    int k;
+	    if (CgAppend(&drop, rule->cr_Groups) < 0)
+		bad = "checkgroups: out of memory\n";
+	} else {
+	    const char *vbad = NULL;
+	    int cannot = 0;
 
-	    /*
-	     * Each key is verified once.
-	     */
-	    for (k = 0; k < nKeys; ++k) {
-		if (strcmp(keys[k], rule->cr_Verify ? rule->cr_Verify : "") == 0)
-		    break;
+	    if (rule->cr_Flags & CTF_DGPVERIFY) {
+		(void)hasDGP;
+		vbad = "dgp verification is not implemented\n";
+		cannot = 1;
 	    }
-	    if (k < nKeys) {
-		bad = results[k];
-	    } else {
-		char **nk = realloc(keys, (nKeys + 1) * sizeof(char *));
-		const char **nr = nk ? realloc(results, (nKeys + 1) * sizeof(char *)) : NULL;
-
-		if (nk)
-		    keys = nk;
-		if (nr)
-		    results = nr;
-		bad = CgVerify(ctl, rule, art, artLen, hasPGP, hasDGP);
-		if (nk && nr && (keys[nKeys] = strdup(rule->cr_Verify ? rule->cr_Verify : "")) != NULL)
-		    results[nKeys++] = bad;
+	    if (vbad == NULL && (rule->cr_Flags & CTF_PGPVERIFY)) {
+#if DIABLO_PGP_SUPPORT
+		if (!hasPGP) {
+		    vbad = "pgp verification required, signature missing\n";
+		} else {
+		    if (!pgpDone) {
+			pgpBad = PGPSigner(art, artLen, signer, sizeof(signer), &pgpCannot);
+			pgpDone = 1;
+		    }
+		    if (pgpBad) {
+			vbad = pgpBad;
+			cannot = pgpCannot;
+		    } else if (strcmp(signer, rule->cr_Verify) != 0) {
+			vbad = "pgp parsed ok, but label did not match\n";
+		    }
+		}
+#else
+		(void)hasPGP;
+		vbad = "pgp verification required, not compiled in\n";
+		cannot = 1;
+#endif
 	    }
-	    if (bad) {
+	    if (vbad && cannot) {
 		if (ctl->ct_LogFo)
-		    fprintf(ctl->ct_LogFo, ">> Checkgroups: skipped (newsgroups %s): %s", rule->cr_Groups, bad);
-		continue;
+		    fprintf(ctl->ct_LogFo, ">> Checkgroups: cannot verify, groups left alone (newsgroups %s): %s",
+			rule->cr_Groups, vbad);
+		if (CgAppend(&exclude, rule->cr_Groups) < 0)
+		    bad = "checkgroups: out of memory\n";
+	    } else if (vbad) {
+		if (ctl->ct_LogFo)
+		    fprintf(ctl->ct_LogFo, ">> Checkgroups: skipped (newsgroups %s): %s", rule->cr_Groups, vbad);
+	    } else {
+		if ((rule->cr_Flags & CTFF_VERIFY) && ctl->ct_LogFo)
+		    fprintf(ctl->ct_LogFo, ">> Checkgroups: verified (newsgroups %s)\n", rule->cr_Groups);
+		if (rule->cr_Kind == CGR_CHECK)
+		    n = CgCheck(ctl, body, bodyLen, rule->cr_Groups, exclude, drop, limits, nLimits);
+		else
+		    n = CgReport(ctl, body, bodyLen, rule->cr_Groups, exclude, drop);
+		if (n < 0 || CgAppend(&exclude, rule->cr_Groups) < 0)
+		    bad = "checkgroups: out of memory\n";
+		acted = 1;
 	    }
-	    if (ctl->ct_LogFo)
-		fprintf(ctl->ct_LogFo, ">> Checkgroups: verified (newsgroups %s)\n", rule->cr_Groups);
 	}
-	if (rule->cr_Kind == CGR_CHECK)
-	    n = CgCheck(ctl, body, bodyLen, rule->cr_Groups, exclude, drop, limits, nLimits);
-	else
-	    n = CgReport(ctl, body, bodyLen, rule->cr_Groups, exclude, drop);
-	if (n && (rule->cr_Flags & CTF_MAIL))
-	    mail = 1;
-	CgAppend(&exclude, rule->cr_Groups);
+	if (own) {
+	    fflush(own);
+	    hflock(fileno(own), 0, XLOCK_UN);
+	    fclose(own);
+	}
+	ctl->ct_LogFo = saved;
     }
+    if (bad == NULL && !acted)
+	bad = "checkgroups: no line of dcontrol.ctl acted on it\n";
+    ctl->ct_Flags &= ~CTF_MAIL;		/* the checkgroups lines decide */
     if (mail)
 	ctl->ct_Flags |= CTF_MAIL;
 
     for (i = 0; i < nRules; ++i) {
 	free(rules[i].cr_Groups);
 	free(rules[i].cr_Verify);
+	free(rules[i].cr_Log);
     }
     free(rules);
     for (i = 0; i < nLimits; ++i)
 	free(limits[i].cl_Groups);
     free(limits);
-    for (i = 0; i < nKeys; ++i)
-	free(keys[i]);
-    free(keys);
-    free(results);
     free(exclude);
     free(drop);
-    return(NULL);
+    return(bad);
 }
 
 /*

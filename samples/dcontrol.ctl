@@ -35,13 +35,17 @@
 ##	    verify-pgp_userid=logfile	PGP verify and log.
 ##	    break			terminate dcontrol.ctl scan
 ##
-##  checkgroups works as in INN (controlchan and docheckgroups).  Every
-##  checkgroups (and "all") line that matches the sender is used, not only the
+##  checkgroups works as INN documents it (control.ctl, docheckgroups).  The
+##  sender is the one address of Sender: (else From:), in lower case.  Every
+##  checkgroups (and "all") line whose <from> matches it is used, not only the
 ##  last one: each line acts on the groups of the message that match its
-##  <newsgroups> and the <newsgroups> of no later line, so a later line wins:
+##  <newsgroups> and the <newsgroups> of no later line, so a later line wins.
+##  A line with an unknown action is ignored (logged).
 ##	doit, verify-*		the groups are checked (below); a verify line
-##				whose signature does not verify is skipped, as
-##				if it were not there
+##				whose signature is missing or bad is skipped,
+##				as if it were not there; one that cannot be
+##				checked at all (no pgpverify, dgpverify) leaves
+##				its groups alone
 ##	drop			the groups are left out of the list: a group of
 ##				them that exists is removed by an earlier doit
 ##				line that covers it, e.g.
@@ -57,14 +61,17 @@
 ##  message is removed.  The additions, flag corrections and removals are only
 ##  made when no limit is exceeded, 10 by default; a line
 ##	/maxdocheckgroups/:<from>:<newsgroups>:<number>
-##  sets another limit (maxcheckgroups: works as well).  As in INN, each change
-##  of a group counts for the last such line that matches the sender and the
-##  group:
+##  sets another limit.  As in INN, each change of a group counts for the last
+##  such line that matches the sender and the group:
 ##	/maxdocheckgroups/:*:*:10
-##	/maxdocheckgroups/:group-admin@isc.org:comp.*|news.*|rec.*:2000
+##	/maxdocheckgroups/:group-admin@isc.org:comp.*|humanities.*|misc.*|news.*|rec.*|sci.*|soc.*|talk.*:2000
+##  Older maxcheckgroups:<from>:<newsgroups>:<number> lines keep their meaning
+##  when no /maxdocheckgroups/ line matches the sender: the last one that matches
+##  the first group of the message limits all its changes.
 ##  Beyond a limit the changes of that line are written to the control log as
-##  the dgrpctl commands that make them (log=xxx, mail), and not made.  A site
-##  where every checkgroups line is drop never has its groups changed.  Groups that must never be
+##  the dgrpctl commands that make them (log=xxx, mail), and not made.  A line's
+##  own =xxx log gets what that line does.  A site where every checkgroups line
+##  is drop never has its groups changed.  Groups that must never be
 ##  touched (kept as they are: description, flag, not removed) go in the file
 ##  localgroups next to this one, one name or wildcard per line, '#' for
 ##  comments.  A group that is not in the message is never changed except by the
