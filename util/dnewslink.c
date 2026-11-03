@@ -50,22 +50,79 @@
 #define NDEBUG
 #include <assert.h>
 
+void dl_logit(const char *ctl, ...);
+
 /*
- * Rewrite the batch queue in place: fopen(path, "w") would create it 0666
- * (world-writable under the usual umask), and PrivateFOpen() unlinks, which
- * would lose the shared queue.  A private mode with O_TRUNC keeps the file.
+ * Rewrite a batch queue, or append pipe-mode leftovers to the existing queue.
+ * A normal batch is rewritten to a separate temporary file; pipe mode writes
+ * directly to the queue and must neither truncate earlier leftovers nor race
+ * a batch worker replacing that queue after taking its lock.
  */
 static FILE *
-rewriteBatchFile(const char *path)
+rewriteBatchFile(const char *path, int pipeMode)
 {
-    int fd = open(path, O_WRONLY|O_CREAT|O_TRUNC, 0640);
+    int fd;
+    int tries;
     FILE *fo;
 
-    if (fd < 0)
-	return(NULL);
-    fo = fdopen(fd, "w");
-    if (fo == NULL)
+    for (tries = 0; ; ++tries) {
+	struct stat openst, pathst;
+
+	fd = open(path, O_WRONLY|O_CREAT|(pipeMode ? O_APPEND : O_TRUNC), 0640);
+	if (fd < 0)
+	    return(NULL);
+	if (!pipeMode)
+	    break;
+	/*
+	 * A batch worker holds this lock until it has renamed its rewrite
+	 * over the queue, a realtime worker for as long as it runs: say
+	 * why we stop here.
+	 */
+	if (xflock(fd, XLOCK_EX|XLOCK_NB) < 0) {
+	    if (tries == 0)
+		dl_logit("%s is locked by another dnewslink, waiting", path);
+	    if (xflock(fd, XLOCK_EX) < 0) {
+		int error = errno;
+		close(fd);
+		errno = error;
+		return(NULL);
+	    }
+	}
+	if (fstat(fd, &openst) != 0) {
+	    int error = errno;
+	    close(fd);
+	    errno = error;
+	    return(NULL);
+	}
+	if (stat(path, &pathst) == 0) {
+	    if (openst.st_nlink != 0 && openst.st_dev == pathst.st_dev &&
+		openst.st_ino == pathst.st_ino)
+		break;
+	} else if (errno != ENOENT) {
+	    int error = errno;
+	    close(fd);
+	    errno = error;
+	    return(NULL);
+	}
 	close(fd);
+	if (tries == 9) {
+	    errno = EAGAIN;
+	    return(NULL);
+	}
+    }
+    fo = fdopen(fd, pipeMode ? "a" : "w");
+    if (fo == NULL) {
+	int error = errno;
+	close(fd);
+	errno = error;
+    } else if (pipeMode) {
+	/*
+	 * diablo appends to its queue files without this lock.  Write
+	 * each line with one write() so that O_APPEND keeps it whole
+	 * instead of a full buffer ending in the middle of a line.
+	 */
+	setvbuf(fo, NULL, _IOLBF, 0);
+    }
     return(fo);
 }
 
@@ -1191,7 +1248,7 @@ main(int ac, char **av)
 
 			if (RealTimeOpt == 0) {
 			    if (fo == NULL)
-				fo = rewriteBatchFile(path);
+				fo = rewriteBatchFile(path, PipeOpt);
 			    if (fo != NULL) {
 				/*
 				 * The entry in buf may be one of the pending
@@ -1307,7 +1364,7 @@ main(int ac, char **av)
 	    if (RealTimeOpt == 0) {
 		if (StreamPend) {
 		    if (fo == NULL)
-			fo = rewriteBatchFile(path);
+			fo = rewriteBatchFile(path, PipeOpt);
 		    if (fo) {
 			(void)RefilePendingStreams(fo);
 		    } else {
@@ -1320,7 +1377,7 @@ main(int ac, char **av)
 		 * yet go back into the queue with the unsent ones.
 		 */
 		if (deferbegin < deferend && fo == NULL) {
-		    fo = rewriteBatchFile(path);
+		    fo = rewriteBatchFile(path, PipeOpt);
 		    if (fo == NULL)
 			keepOld = 1;
 		}
@@ -1354,7 +1411,7 @@ main(int ac, char **av)
 		    int writeFailed = 0;
 
 		    if (fo == NULL)
-			fo = rewriteBatchFile(path);
+			fo = rewriteBatchFile(path, PipeOpt);
 		    if (fo == NULL) {
 			writeFailed = 1;
 		    } else {
