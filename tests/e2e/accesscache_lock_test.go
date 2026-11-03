@@ -100,10 +100,11 @@ func firstLine(t *testing.T, addr string) string {
 // while they open the five files. The installer took a shared lock too, so a reader could open
 // some old files and some new ones. It now takes the lock exclusively: while a reader holds
 // its shared lock (here a helper process), the files stay as they are; once it lets go, the
-// new rules are installed and apply.
+// new rules are installed and apply. A wait of more than 10 s is logged.
 func TestReaderAccessCacheRenameWaitsForReaders(t *testing.T) {
 	_, spool := spoolStore(t)
-	s := NewReaderSite(t, ReaderOptions{Spool: spool})
+	s := NewReaderSite(t, ReaderOptions{Spool: spool,
+		Config: map[string]string{"path_generallog": "%s/general.log"}})
 	if l := firstLine(t, s.Addr); !strings.HasPrefix(l, "20") {
 		t.Fatalf("greeting: %q", l)
 	}
@@ -135,8 +136,21 @@ func TestReaderAccessCacheRenameWaitsForReaders(t *testing.T) {
 		time.Sleep(300 * time.Millisecond)
 	}
 
+	// after 10 s the wait is logged
+	deadline := time.Now().Add(15 * time.Second)
+	for !strings.Contains(generalLog(s), "access cache install waits") {
+		if time.Now().After(deadline) {
+			t.Fatalf("the long wait for the lock was not logged:\n%s", generalLog(s))
+		}
+		firstLine(t, s.Addr)
+		if ino() != before {
+			t.Fatalf("the cache files were renamed while a reader held the shared lock")
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
 	release()
-	deadline := time.Now().Add(10 * time.Second)
+	deadline = time.Now().Add(10 * time.Second)
 	for {
 		l := firstLine(t, s.Addr)
 		if ino() != before && !strings.HasPrefix(l, "20") {

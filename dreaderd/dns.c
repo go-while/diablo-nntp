@@ -3388,6 +3388,22 @@ accessValue(char *dst, size_t size, const char *val, const char *opt, int lineco
  * than wait.  Returns 1 when done, 0 when the lock is busy, -1 on error.
  */
 static int AccessRenamePending = 0;
+static time_t AccessRenameSince = 0;	/* when the renames were first put off */
+static time_t AccessRenameLogged = 0;
+
+/* log a wait of more than 10 s, then once a minute */
+static void
+AccessRenameWaits(void)
+{
+    time_t now = time(NULL);
+
+    if (now - AccessRenameSince < 10 ||
+		(AccessRenameLogged && now - AccessRenameLogged < 60))
+	return;
+    logit(LOG_WARNING, "access cache install waits %d s: a process holds a lock on %s",
+		(int)(now - AccessRenameSince), PatDbExpand(DRAccessLockPat));
+    AccessRenameLogged = now;
+}
 
 static int
 RenameAccessCache(void)
@@ -3459,6 +3475,7 @@ InstallAccessCache(void) {
     if (AccessRenamePending) {
 	switch (RenameAccessCache()) {
 	case 0:
+	    AccessRenameWaits();
 	    return;
 	case -1:
 	    Access_LastUpdate = 0;
@@ -4329,6 +4346,8 @@ InstallAccessCache(void) {
     switch (RenameAccessCache()) {
     case 0:
 	AccessRenamePending = 1;
+	AccessRenameSince = time(NULL);
+	AccessRenameLogged = 0;
 	break;
     case -1:
 	Access_LastUpdate = 0;
