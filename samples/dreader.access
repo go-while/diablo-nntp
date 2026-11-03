@@ -157,6 +157,9 @@
 # 
 # The radius option specifies a radius configuration file. This option
 # needs to be enabled at compile time - see lib/vendor.h
+# Its timeout and tries per server come from that file, not from
+# "readerauthtimeout" in diablo.config, which bounds the netremote, ldap,
+# pam and perl options below.
 #
 # The cdb option specifies a CDB database for username/pass lookup. This
 # option needs to be enabled at compile time - see lib/vendor.h.
