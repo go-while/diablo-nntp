@@ -13,6 +13,7 @@ import (
 // rewrite and removes the queue file with every entry behind the bad line.
 func TestDnewslinkOverlongQueueLine(t *testing.T) {
 	s := NewSite(t, SiteOptions{NoStart: true})
+	dnlSpool(t, s)
 	var mu sync.Mutex
 	var taken []string
 	port := dnlPeer(t, func(line string) (string, bool) {
