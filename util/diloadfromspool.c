@@ -635,6 +635,13 @@ ScanSpoolFileMap(const char *base, int bytes, int gmt, int iter, char *dpath, ui
 	    long len = ah.ArtLen;
 
 	    artbase = (char *)malloc(ah.ArtLen + 2);
+#ifdef __OpenBSD__
+	    if (artbase == NULL) {
+		printf("\tUnable to allocate compressed article at %d: %s\n",
+		    SpoolFragmentBase + b, strerror(errno));
+		return;
+	    }
+#endif
 	    bzero(artbase, ah.ArtLen + 2);
 	    lseek(fd, b + ah.HeadLen
 #ifdef __OpenBSD__
