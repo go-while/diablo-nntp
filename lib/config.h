@@ -163,6 +163,11 @@
 #define HAS_USLEEP		1	/* < 1 second sleeps		 */
 #define HAS_SA_LEN		1
 #define USE_POLL		1	/* poll() syscall		 */
+#define USE_KP_RW_MAP		1	/* use r/w map for KPDB		 */
+#define USE_PCOMMIT_SHM		1	/* use sharedmem r/w map vs file map */
+#define USE_PCOMMIT_RW_MAP	1	/* use r/w map for pcommit cache */
+#define USE_SPAM_SHM		1	/* use sharedmem r/w map vs file map */
+#define USE_SPAM_RW_MAP		1	/* use r/w map for spam cache	 */
 #endif
 #ifdef __NetBSD__
 #define USE_SUN_STATVFS		1
