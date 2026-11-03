@@ -248,16 +248,16 @@ LoadDiabloConfig(int ac, char **av)
 	    }
 	    if ((cmd = strchr(buf, '#')) != NULL)
 		*cmd = 0;
-	    while (isspace((int)*opt))
+	    while (isspace((unsigned char)*opt))
 		opt++;
-	    while ((i = strlen(opt) - 1) >= 0 && isspace((int)opt[i]))
+	    while ((i = strlen(opt) - 1) >= 0 && isspace((unsigned char)opt[i]))
 		opt[i] = 0;
 	    if (strlen(opt) == 0)
 		continue;
 	    if ((cmd = strsep(&opt, " \t\n")) != NULL && (opt != NULL)) {
 		int optErr = 1;
 
-		while (isspace((int)*opt))
+		while (isspace((unsigned char)*opt))
 		    opt++;
 		cmdErr = 0;
 		if (strcasecmp(cmd, "version") == 0) {
