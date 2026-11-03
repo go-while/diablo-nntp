@@ -171,9 +171,20 @@ HistoryOpen(const char *fileName, int hflags)
 
 	/*
 	 * lock after finding the history file to be invalid and recheck.
+	 * A read-only descriptor can only take a shared lock (an exclusive
+	 * one fails at once with EBADF); it still waits for a creator.
 	 */
 
-	hflock(fd, 0, XLOCK_EX);
+	if (hflock(fd, 0, (HFlags & HGF_READONLY) ? XLOCK_SH : XLOCK_EX) < 0) {
+	    int error = errno;
+
+	    close(fd);
+	    if (DoingReOpen)
+		return(-2);
+	    logit(LOG_ERR, "lock %s failed (%s)", fileName, strerror(error));
+	    fprintf(stderr, "lock %s failed (%s)\n", fileName, strerror(error));
+	    exit(1);
+	}
 
 	fstat(fd, &st);
 	lseek(fd, 0L, 0);
