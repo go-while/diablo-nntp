@@ -188,6 +188,60 @@ func TestHistoryOpenWaitsForFastWriter(t *testing.T) {
 	}
 }
 
+// TestHistoryWriterWaitsForCreator: a writer that finds the history not yet
+// created waits for the creator with a shared lock, like a reader. The
+// creator now keeps a shared lock while it has the file open, so a wait for
+// the exclusive creation lock would last until the creator closes. The test
+// is the creator: it holds bytes 0-3, writes a valid history and keeps a
+// shared lock; diload must then load its record.
+func TestHistoryWriterWaitsForCreator(t *testing.T) {
+	s := NewSite(t, SiteOptions{NoStart: true})
+	dir := t.TempDir()
+	ref := filepath.Join(dir, "ref")
+	if out, err := s.TryRun("dhisctl", ref); err != nil && !fileExists(ref) {
+		t.Fatalf("dhisctl %s: %v\n%s", ref, err, out)
+	}
+	valid, err := os.ReadFile(ref)
+	if err != nil || len(valid) == 0 {
+		t.Fatalf("no history from dhisctl: %v", err)
+	}
+	hist := filepath.Join(dir, "dhistory")
+	f, err := os.OpenFile(hist, os.O_RDWR|os.O_CREATE, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	lk := syscall.Flock_t{Type: syscall.F_WRLCK, Whence: 0, Start: 0, Len: 4}
+	if err := syscall.FcntlFlock(f.Fd(), syscall.F_SETLK, &lk); err != nil {
+		t.Fatalf("lock %s: %v", hist, err)
+	}
+
+	cmd, in, out, done := histCmd(t, s, nil, "diload", hist)
+	io.WriteString(in, dumpLine(0x56789ab, 0xcdef012))
+	in.Close()
+	if err := waitLockWaiter(cmd.Process.Pid, done); err != nil {
+		t.Fatalf("diload did not wait for the history creator: %v\n%s", err, out.String())
+	}
+	if _, err := f.WriteAt(valid, 0); err != nil {
+		t.Fatal(err)
+	}
+	lk.Type = syscall.F_RDLCK // the creator keeps the history open
+	if err := syscall.FcntlFlock(f.Fd(), syscall.F_SETLK, &lk); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("diload: %v\n%s", err, out.String())
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatalf("diload still waits 20s after the creator finished\n%s", out.String())
+	}
+	if _, found := histExp(t, s, hist, "056789ab.0cdef012"); !found {
+		t.Errorf("diload did not load its record\n%s", out.String())
+	}
+}
+
 // holdHistLock takes a write lock on [start, start+n) of hist in the test
 // process; n 0 means the hash chain locks (all of the hash table).
 func holdHistLock(t *testing.T, hist string, start, n int64) (release func()) {

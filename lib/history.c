@@ -230,11 +230,32 @@ HistoryOpen(const char *fileName, int hflags)
 	 * lock after finding the history file to be invalid and recheck.
 	 * A read-only descriptor can only take a shared lock (an exclusive
 	 * one fails at once with EBADF); it still waits for a creator.
+	 * So does a writer that cannot get the exclusive lock at once: the
+	 * creator keeps a shared lock while it has the file open, and an
+	 * exclusive wait would last until it closes.
 	 */
 
-	if (openLock == 0) {
-	    openLock = (HFlags & HGF_READONLY) ? XLOCK_SH : XLOCK_EX;
-	    if (hflock(fd, 0, openLock) < 0)
+	while (openLock == 0) {
+	    HistHead hh;
+
+	    if ((HFlags & HGF_READONLY) == 0 &&
+		hflock(fd, 0, XLOCK_EX|XLOCK_NB) == 0) {
+		openLock = XLOCK_EX;
+		break;
+	    }
+	    if ((HFlags & HGF_READONLY) == 0 &&
+		errno != EAGAIN && errno != EACCES)
+		return(openLockFailed(fd, fileName));
+	    if (hflock(fd, 0, XLOCK_SH) < 0)
+		return(openLockFailed(fd, fileName));
+	    if ((HFlags & HGF_READONLY) ||
+		(pread(fd, &hh, sizeof(hh), 0) == sizeof(hh) &&
+		hh.hmagic == HMAGIC)) {
+		openLock = XLOCK_SH;
+		break;
+	    }
+	    /* still not created: try for the creation lock again */
+	    if (hflock(fd, 0, XLOCK_UN) < 0)
 		return(openLockFailed(fd, fileName));
 	}
 
