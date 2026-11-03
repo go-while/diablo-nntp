@@ -53,6 +53,12 @@ type floodResult struct {
 // reads the first line of each. Every address is new to the DNS cache.
 func flood(t *testing.T, addr string, n int, spread time.Duration) []floodResult {
 	t.Helper()
+	return floodAt(t, addr, 0, n, spread)
+}
+
+// floodAt is flood with the addresses of clients first .. first+n-1.
+func floodAt(t *testing.T, addr string, first, n int, spread time.Duration) []floodResult {
+	t.Helper()
 	res := make([]floodResult, n)
 	var wg sync.WaitGroup
 	for i := 0; i < n; i++ {
@@ -60,7 +66,7 @@ func flood(t *testing.T, addr string, n int, spread time.Duration) []floodResult
 		go func(i int) {
 			defer wg.Done()
 			time.Sleep(spread * time.Duration(i) / time.Duration(n))
-			ip := fmt.Sprintf("127.1.%d.%d", 1+i/250, 1+i%250)
+			ip := fmt.Sprintf("127.1.%d.%d", 1+(first+i)/250, 1+(first+i)%250)
 			d := net.Dialer{LocalAddr: &net.TCPAddr{IP: net.ParseIP(ip)}, Timeout: 60 * time.Second}
 			t0 := time.Now()
 			c, err := d.Dial("tcp", addr)
@@ -454,5 +460,90 @@ func TestReaderDNSAuthFdLimit(t *testing.T) {
 	}
 	if !strings.Contains(st, "Act=0/") {
 		t.Errorf("drcmd status after all clients left: %q, want Act=0", strings.TrimSpace(st))
+	}
+}
+
+// TestReaderDNSOverloadWarm: once the worker time is known (a first, spread flood), a sharp
+// burst of 150 new clients is refused by the admission estimate itself: at least half of
+// the 400s come within 50 ms, well under one worker time (200 ms). The queue trim alone
+// would answer them only after the first worker time.
+func TestReaderDNSOverloadWarm(t *testing.T) {
+	s := startFloodReader(t, 100, nil)
+	countFlood(t, floodAt(t, s.Addr, 0, 40, 2*time.Second), 12*time.Second)
+	time.Sleep(6 * time.Second) // the queue drains; the worker time stays
+	res := floodAt(t, s.Addr, 1000, 150, 0)
+	countFlood(t, res, 12*time.Second)
+	busy, fast := 0, 0
+	for _, r := range res {
+		if strings.HasPrefix(r.line, "400") {
+			busy++
+			if r.wait < 50*time.Millisecond {
+				fast++
+			}
+		}
+	}
+	t.Logf("%d of %d 400 replies within 50 ms", fast, busy)
+	if busy == 0 || fast*2 < busy {
+		t.Errorf("%d of %d 400 replies within 50 ms, want at least half (refused on admission)",
+			fast, busy)
+	}
+}
+
+// TestReaderTooManyRefsHostLimit: when passing a client to a reader fails with ETOOMANYREFS
+// (shim: the first 3 fd passes of the main process), the client gets 400 and its entry in
+// the per-host count is removed again. With maxconnperhost 2, two later clients from the
+// same host are greeted and a third is refused. Fails before the fix: the entry was looked
+// for under the DNS worker instead of the reader and stayed, so every later client got "Too
+// many connections from your host".
+func TestReaderTooManyRefsHostLimit(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the ETOOMANYREFS shim needs Linux (LD_PRELOAD)")
+	}
+	cc := wmCC(t)
+	so := filepath.Join(t.TempDir(), "tmrshim.so")
+	src, err := filepath.Abs(filepath.Join("testdata", "tmrshim", "tmrshim.c"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(cc, "-O2", "-shared", "-fPIC", "-o", so, src, "-ldl").CombinedOutput(); err != nil {
+		t.Skipf("cannot build the shim: %v\n%s", err, out)
+	}
+	_, spool := spoolStore(t)
+	access := strings.Replace(DefaultReaderAccess, "readerdef rp\n", "readerdef rp\n    maxconnperhost 2\n", 1)
+	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: access, NoStart: true})
+	s.Env = append(s.Env, "LD_PRELOAD="+so, "TMR_N=3")
+	_, port, _ := net.SplitHostPort(s.Addr)
+	startReader(t, s, "[127.0.0.1]:"+port)
+
+	greet := func() (net.Conn, string) {
+		c, err := net.DialTimeout("tcp", s.Addr, 20*time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.SetReadDeadline(time.Now().Add(20 * time.Second))
+		l, _ := bufio.NewReader(c).ReadString('\n')
+		return c, strings.TrimSpace(l)
+	}
+	// use up the failing fd passes (the start-up probe may have taken some)
+	for i := 0; i < 3; i++ {
+		c, l := greet()
+		c.Close()
+		t.Logf("client %d: %q", i, l)
+		if strings.HasPrefix(l, "20") {
+			break
+		}
+	}
+	time.Sleep(200 * time.Millisecond)
+	for i := 0; i < 2; i++ {
+		c, l := greet()
+		defer c.Close()
+		if !strings.HasPrefix(l, "200") {
+			t.Errorf("client %d after the failed passes: %q, want 200 (maxconnperhost 2)", i, l)
+		}
+	}
+	c, l := greet()
+	c.Close()
+	if !strings.Contains(l, "Too many connections from your host") {
+		t.Errorf("third open client: %q, want the per-host limit", l)
 	}
 }
