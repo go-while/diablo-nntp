@@ -694,8 +694,12 @@ DoArticle(History *h, const char *id, char *nglist, char *dist,
 		uint32 pos = HistoryPosLookupByHash(h->hv, &htmp);
 		htmp.exp &= ~EXPF_EXPIRED;
 		if (pos != -1 && ForReal && htmp.iter == h->iter &&
-						htmp.boffset == h->boffset)
-		    HistoryStoreExp(&htmp, (HistIndex)pos);
+					htmp.boffset == h->boffset &&
+					HistoryStoreExp(&htmp, (HistIndex)pos) < 0) {
+		    fprintf(stderr, "Unable to update the history entry for %s: %s\n",
+						id, strerror(errno));
+		    exit(1);
+		}
 	    }
 	    ++LoadDupCount;
 	} else {

@@ -452,6 +452,16 @@ Kill(pid_t pid, int sig)
  */
 static volatile sig_atomic_t SessionFd = -1;
 static volatile sig_atomic_t SessionExitReq = 0;
+
+/*
+ * Spool files this session could not create in a row (a full disk, an I/O
+ * error, no descriptors).  Each such article is answered try-again; after
+ * SPOOL_FAIL_BACKOFF in a row the session answers 400 and ends, so the peer
+ * backs off and reconnects later instead of offering one article after
+ * another that cannot be stored (each costs a second in ArticleFile()).
+ */
+#define SPOOL_FAIL_BACKOFF	10
+static int SpoolFailRun = 0;
 static volatile sig_atomic_t ReadOnlyNotifyErr = 0;
 static char MasterSockPath[sizeof(((struct sockaddr_un *)0)->sun_path)];
 
@@ -1238,7 +1248,8 @@ DoAccept(int lfd)
 	SpoolAllocTime = time(NULL);
 	if (AllocateSpools(SpoolAllocTime) == -1) {
 	    char buf[256];
-	    snprintf(buf, sizeof(buf), "502 %s: temporary server error\r\n",
+	    /* no spool directory (a full disk): temporary, so 400, not 502 */
+	    snprintf(buf, sizeof(buf), "400 %s: temporary server error\r\n",
 						DOpts.FeederHostName);
 	    WriteBestEffort(fd, buf, strlen(buf));
 	    sleep(2);
@@ -1928,6 +1939,14 @@ DoSession(int fd, int count)
     while (!SessionExitReq) {
 	char *cmd;
 
+	if (SpoolFailRun >= SPOOL_FAIL_BACKOFF) {
+	    logit(LOG_NOTICE, "%s: %d spool files in a row could not be created, asking the peer to back off",
+		HName, SpoolFailRun);
+	    xfprintf(fo, "400 %s: no space in the spool, try again later\r\n",
+		DOpts.FeederHostName);
+	    fflush(fo);
+	    break;
+	}
 	ArticleFileIdle(bi);
 	if ((buf = bgets(bi, NULL)) == NULL || buf == (char *)-1)
 	    break;
@@ -3819,6 +3838,7 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		DEBUGLOG(msgid, "IOError/Missing-dir");
 		SETREJECT("IOError/Missing-dir");
 		tryAgain = 1;
+		++SpoolFailRun;
 	    } else if (artError & LAERR_NOHDREND) {
 		(void)PreCommit(msgid, PC_DELCOMM);
 		DoArtStats(STATS_REJECTED, STATS_REJ_NOHDREND, size);
@@ -3922,6 +3942,8 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		LogIncoming("%s + %s %s", HLabel, msgid, rejBuf);
 	    } else if (rhist == RCOK) {
 		char cSize[20];
+
+		SpoolFailRun = 0;	/* the spool takes articles again */
 		if (compressedSize != -1)
 		    sprintf(cSize, "%d", compressedSize);
 		else

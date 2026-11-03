@@ -232,8 +232,11 @@ DoEntry(char *msgid)
 	fprintf(stderr, "History lookup failed for %s\n", msgid);
 	return;
     }
-    if (FixEntry(&h, msgid) && ForReal)
-	HistoryStoreExp(&h, (HistIndex)pos);
+    if (FixEntry(&h, msgid) && ForReal && HistoryStoreExp(&h, (HistIndex)pos) < 0) {
+	fprintf(stderr, "Unable to update the history entry for %s: %s\n",
+						msgid, strerror(errno));
+	exit(1);
+    }
 }
 
 void

@@ -27,11 +27,17 @@ char *FileName = NULL;
 char NewFileName[PATH_MAX];
 char OldFileName[PATH_MAX];
 int HistoryVersion = 0;
+int HeadSize = 0;
+int DeadWait = 60;	/* -w: seconds to wait for writers once dead */
 
 void DoUnDead(int fd);
 void DoExpire(int fd, int hsize, int rsize);
 int ServerCmd(char *cmd);
 void Fail(char *fname, char *errmsg);
+void BackupOld(int fd);
+void InstallNew(void);
+void CopyNew(void);
+char InstallTmp[PATH_MAX + 8];	/* -m: the copy of the new history */
 
 /*
  * Copy a history file name (plus suffix) into one of the PATH_MAX buffers;
@@ -70,6 +76,7 @@ Usage(void)
     printf("\t-TN\t- don't dump articles older than N seconds\n");
     printf("\t-u\t- remove dead flag for a history file\n");
     printf("\t-v\t- be a little more verbose\n");
+    printf("\t-wN\t- wait at most N seconds for running writers (default 60)\n");
     printf("\t-x\t- keep records older than rememberdays old\n");
     printf("\t-Cfile\t- specify diablo.config to use\n");
     printf("\t-d[n]\t- set debug [with optional level]\n");
@@ -98,6 +105,12 @@ sigDead(int sigNo)
     _exit(1);
 }
 #endif
+
+/* SIGALRM ends the wait for running writers (-w) */
+void
+sigWait(int sigNo)
+{
+}
 
 void
 sigInt(int sigNo)
@@ -182,6 +195,11 @@ main(int ac, char **av)
 	    else
 		++VerboseOpt;
 	    break;
+	case 'w':
+	    DeadWait = strtol(*ptr ? ptr : av[++i], NULL, 0);
+	    if (DeadWait <= 0)
+		Usage();
+	    break;
 	case 'x':
 	    DoRemember = 0;
 	    break;
@@ -234,6 +252,10 @@ main(int ac, char **av)
 	    fprintf(stderr, "Corrupted history file - bad magic\n");
 	    exit(1);
 	}
+	if (HistoryShareLock(fd, FileName) < 0) {
+	    perror("History lock failed");
+	    exit(1);
+	}
 	if (hh.version != HVERSION) {
 	    fprintf(stderr, "WARNING! Version mismatch file V%d, expecting V%d\n", hh.version, HVERSION);
 	    fprintf(stderr, "dump may be invalid\n");
@@ -241,6 +263,7 @@ main(int ac, char **av)
 	rsize = hh.henSize;
 	hsize = hh.hashSize;
 	HistoryVersion = hh.version;
+	HeadSize = hh.headSize;
 
 	lseek(fd, hh.headSize, 0);
 
@@ -383,66 +406,85 @@ DoExpire(int fd, int hsize, int rsize)
 	    if (DonePause > 0) {
 		if (DonePause == 2) {
 		    DonePause = 5;
-		    HistoryClose();
+		    if (HistoryClose() != RCOK)
+			Fail(NewFileName, "Unable to write the new history");
+		    /*
+		     * Until the rename in InstallNew() the name stays at the
+		     * old history, so a failure leaves it in place.
+		     */
 		    if (UseNewHistory) {
-			if (FileCopy) {
-			    if (OldFileName[0])
-				remove(OldFileName);
-			    if (OldFileName[0] && MoveFile(FileName, OldFileName) == -1)
-				Fail(NewFileName, "Unable to move history backup");
-			    if (MoveFile(NewFileName, FileName) == -1)
-				Fail(NewFileName, "Unable to move new history");
-			} else {
-			    /*
-			     * Link the backup under a temporary name and
-			     * rename it over the previous one, so that a
-			     * failure keeps the previous backup.
-			     */
-			    if (OldFileName[0]) {
-				char tmpName[PATH_MAX + 8];
-
-				snprintf(tmpName, sizeof(tmpName), "%s.new", OldFileName);
-				remove(tmpName);
-				if (link(FileName, tmpName) == -1)
-				    Fail(NewFileName, "Unable to link history backup");
-				if (rename(tmpName, OldFileName) == -1) {
-				    remove(tmpName);
-				    Fail(NewFileName, "Unable to rename history backup");
-				}
-			    }
-			    if (rename(NewFileName, FileName) == -1)
-				Fail(NewFileName, "Unable to rename new history");
-			}
+			if (FileCopy)
+			    CopyNew();
+			if (OldFileName[0])
+			    BackupOld(fd);
+			InstallNew();
 		    }
 		    if (!UseNewHistory)
 			OldStaysDead = 1;
 		    DeadFd = -1;	/* the old history is replaced, or a backup */
+		    hflock(fd, HDEADLOCK, XLOCK_UN);
 		}
 		finished = 1;
 	    } else {
 		off_t seekpos = lseek(fd, 0, SEEK_CUR);
 		HistHead hh = { 0 };
+
+		/*
+		 * Held while the history is dead, until it is replaced or
+		 * alive again (also when we die): openers that find it dead
+		 * wait only while it is held.
+		 */
+		if (hflock(fd, HDEADLOCK, XLOCK_EX|XLOCK_NB) < 0)
+		    Fail(NewFileName, "Unable to lock the history dead marker");
 		if (lseek(fd, 0, SEEK_SET) == -1)
-		    Fail(FileName, "Unable to seek to pos 0 in history");
+		    Fail(NewFileName, "Unable to seek to pos 0 in history");
 		if (read(fd, &hh, sizeof(hh)) == -1)
-		    Fail(NULL, "Unable to read history header");
+		    Fail(NewFileName, "Unable to read history header");
 		hh.hmagic = HDEADMAGIC;
 		if (lseek(fd, 0, SEEK_SET) == -1)
-		    Fail(NULL, "Unable to seek to pos 0 in history");
-		if (write(fd, &hh, sizeof(hh)) == -1) {
-		    perror("historyheadwrite");
-		    Fail(NULL, "Unable to write history header");
-		}
+		    Fail(NewFileName, "Unable to seek to pos 0 in history");
 		/*
-		 * From here the history stays dead until it is replaced:
-		 * Fail() and the signal handler mark it alive again.
+		 * From the write on the history stays dead until it is
+		 * replaced: Fail() and the signal handler mark it alive again.
+		 * Set them up first, so that no signal leaves it dead; both
+		 * change only a magic that is dead.
 		 */
 		DeadFd = fd;
 		rsignal(SIGINT, sigDead);
 		rsignal(SIGHUP, sigDead);
 		rsignal(SIGTERM, sigDead);
+		if (write(fd, &hh, sizeof(hh)) == -1) {
+		    perror("historyheadwrite");
+		    Fail(NewFileName, "Unable to write history header");
+		}
+		/*
+		 * Wait for the adds and updates that began before the dead
+		 * magic: they hold a hash chain lock.  Later ones find the
+		 * magic dead under their lock and wait for the new history,
+		 * so the copy below gets every added record (an update finds
+		 * the magic dead after its write and does it again there).
+		 * A writer that hangs must not keep the history dead.
+		 */
+		nrsignal(SIGALRM, sigWait);
+		alarm(DeadWait);
+		r = rflock(fd, HeadSize, (off_t)hsize * sizeof(HistIndex),
+						XLOCK_EX|XLOCK_INTR);
+		alarm(0);
+		nrsignal(SIGALRM, SIG_IGN);
+		if (r < 0) {
+		    char emsg[256];
+
+		    snprintf(emsg, sizeof(emsg), "%s: %s",
+			(errno == EINTR) ? "Timed out waiting for running history writers" :
+			"Unable to lock the history hash chains", strerror(errno));
+		    logit(LOG_ERR, "dhisexpire: %s", emsg);
+		    Fail(NewFileName, emsg);
+		}
+		if (rflock(fd, HeadSize, (off_t)hsize * sizeof(HistIndex),
+							XLOCK_UN) < 0)
+		    Fail(NewFileName, "Unable to unlock the history hash chains");
 		if (lseek(fd, seekpos, SEEK_SET) == -1)
-		    Fail(NULL, "Unable to seek in history");
+		    Fail(NewFileName, "Unable to seek in history");
 		DonePause = 2;
 	    }
 #else
@@ -456,36 +498,18 @@ DoExpire(int fd, int hsize, int rsize)
 		    if (ServerCmd("pause") == 0)
 			Fail(NewFileName, "Unable to pause diablo server");
 		    DonePause = 4;
-		    HistoryClose();
+		    if (HistoryClose() != RCOK)
+			Fail(NewFileName, "Unable to write the new history");
+		    /*
+		     * Until the rename in InstallNew() the name stays at the
+		     * old history, so a failure leaves it in place.
+		     */
 		    if (UseNewHistory) {
-			if (FileCopy) {
-			    if (OldFileName[0])
-				remove(OldFileName);
-			    if (OldFileName[0] && MoveFile(FileName, OldFileName) == -1)
-				Fail(NewFileName, "Unable to move history backup");
-			    if (MoveFile(NewFileName, FileName) == -1)
-				Fail(NewFileName, "Unable to move new history");
-			} else {
-			    /*
-			     * Link the backup under a temporary name and
-			     * rename it over the previous one, so that a
-			     * failure keeps the previous backup.
-			     */
-			    if (OldFileName[0]) {
-				char tmpName[PATH_MAX + 8];
-
-				snprintf(tmpName, sizeof(tmpName), "%s.new", OldFileName);
-				remove(tmpName);
-				if (link(FileName, tmpName) == -1)
-				    Fail(NewFileName, "Unable to link history backup");
-				if (rename(tmpName, OldFileName) == -1) {
-				    remove(tmpName);
-				    Fail(NewFileName, "Unable to rename history backup");
-				}
-			    }
-			    if (rename(NewFileName, FileName) == -1)
-				Fail(NewFileName, "Unable to rename new history");
-			}
+			if (FileCopy)
+			    CopyNew();
+			if (OldFileName[0])
+			    BackupOld(fd);
+			InstallNew();
 		    }
 		    DeadFd = -1;	/* the old history is replaced, or a backup */
 		    if (ServerCmd("go") == 0)
@@ -576,6 +600,117 @@ DoExpire(int fd, int hsize, int rsize)
 #endif
 }
 
+/*
+ * Copy the open file fd to path (created or replaced) and sync it.
+ * Returns 0, or -1 with errno after removing path.
+ */
+static int
+copyToFile(int fd, const char *path)
+{
+    static char buf[65536];
+    off_t off = 0;
+    ssize_t n;
+    int error;
+    int to;
+
+    if ((to = open(path, O_CREAT|O_TRUNC|O_WRONLY, 0644)) < 0)
+	return(-1);
+    while ((n = pread(fd, buf, sizeof(buf), off)) > 0) {
+	if (WriteAll(to, buf, n) < 0)
+	    break;
+	off += n;
+    }
+    if (n == 0 && fsync(to) == 0) {
+	if (close(to) == 0)
+	    return(0);
+	to = -1;
+    }
+    error = errno;
+    if (to >= 0)
+	close(to);
+    unlink(path);
+    errno = error;
+    return(-1);
+}
+
+/* Sync the directory of path after a rename (best effort). */
+static void
+syncDir(const char *path)
+{
+    char dir[PATH_MAX];
+    char *p;
+    int dfd;
+
+    snprintf(dir, sizeof(dir), "%s", path);
+    if ((p = strrchr(dir, '/')) == NULL)
+	snprintf(dir, sizeof(dir), ".");
+    else if (p == dir)
+	p[1] = 0;
+    else
+	*p = 0;
+    if ((dfd = open(dir, O_RDONLY)) >= 0) {
+	(void)fsync(dfd);
+	close(dfd);
+    }
+}
+
+/*
+ * Keep the old history (open as fd) as OldFileName: linked under a
+ * temporary name and renamed over the previous backup, so that a failure
+ * keeps that one.  The old file is never opened by name: closing such a
+ * descriptor would drop all our locks on it, the dead marker too.  With
+ * -m a backup on another filesystem is copied from fd.
+ */
+void
+BackupOld(int fd)
+{
+    char tmpName[PATH_MAX + 8];
+
+    snprintf(tmpName, sizeof(tmpName), "%s.new", OldFileName);
+    remove(tmpName);
+    if (link(FileName, tmpName) == -1 &&
+	(!FileCopy || errno != EXDEV || copyToFile(fd, tmpName) < 0))
+	Fail(NewFileName, "Unable to make the history backup");
+    if (rename(tmpName, OldFileName) == -1) {
+	remove(tmpName);
+	Fail(NewFileName, "Unable to rename history backup");
+    }
+}
+
+/*
+ * -m: the new history may be on another filesystem.  Copy it next to the
+ * old one first (it is renamed over it last), so that the name never
+ * shows a partial or missing file.
+ */
+void
+CopyNew(void)
+{
+    int nfd;
+
+    snprintf(InstallTmp, sizeof(InstallTmp), "%s.tmp", FileName);
+    remove(InstallTmp);
+    if ((nfd = open(NewFileName, O_RDONLY)) < 0)
+	Fail(NewFileName, "Unable to open new history");
+    if (copyToFile(nfd, InstallTmp) < 0) {
+	close(nfd);
+	InstallTmp[0] = 0;	/* removed */
+	Fail(NewFileName, "Unable to copy new history");
+    }
+    close(nfd);
+}
+
+/* Put the new history (or its -m copy) at FileName. */
+void
+InstallNew(void)
+{
+    if (rename(FileCopy ? InstallTmp : NewFileName, FileName) == -1)
+	Fail(NewFileName, "Unable to rename new history");
+    InstallTmp[0] = 0;
+    if (FileCopy)
+	remove(NewFileName);
+    syncDir(FileName);
+}
+
 int
 ServerCmd(char *cmd)
 {
@@ -644,6 +779,8 @@ Fail(char *fname, char *errmsg)
     HistoryClose();
     if (fname != NULL)
 	remove(fname);
+    if (InstallTmp[0])
+	remove(InstallTmp);
     exit(1);
 }
 
