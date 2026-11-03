@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -126,6 +127,12 @@ func TestWildmatUnterminatedClass(t *testing.T) {
 		"-fno-omit-frame-pointer", "-std=gnu99", "-o", bin, csrc).CombinedOutput()
 	if err != nil {
 		wmSkipf(t, "no AddressSanitizer support: %v\n%s", err, out)
+	}
+	if runtime.GOOS == "netbsd" {
+		// NetBSD's ASan refuses to run with ASLR on: turn it off for this binary.
+		if out, err := exec.Command("paxctl", "+a", bin).CombinedOutput(); err != nil {
+			t.Skipf("ASan needs ASLR off, and paxctl +a failed: %v\n%s", err, out)
+		}
 	}
 	got, err := exec.Command(bin).CombinedOutput()
 	if err != nil {
