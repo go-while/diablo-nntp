@@ -1853,9 +1853,10 @@ MonoMs(void)
 /*
  * Descriptor limits, at startup: raise the soft RLIMIT_NOFILE up to the
  * hard limit, but not past FD_SETSIZE (the readers select() on their
- * clients).  New connections are queued only below three quarters of
- * the limit; AUTHINFO logins up to 32 below it, so that a descriptor a
- * reader hands back can still be received.
+ * clients).  The limit used is the smaller of MAXFDS and RLIMIT_NOFILE.
+ * New connections are queued only below three quarters of it; AUTHINFO
+ * logins up to 32 below it (never less than new connections), so that a
+ * descriptor a reader hands back can still be received.
  */
 static void
 DnsQInitLimits(void)
@@ -1881,7 +1882,9 @@ DnsQInitLimits(void)
 	    lim = rl.rlim_cur;
     }
     DnsQFdCap = (int)(lim * 3 / 4);
-    DnsQAuthFdCap = (lim > 64) ? (int)lim - 32 : (int)lim / 2;
+    DnsQAuthFdCap = (int)lim - 32;
+    if (DnsQAuthFdCap < DnsQFdCap)
+	DnsQAuthFdCap = DnsQFdCap;
 }
 
 /*
@@ -2030,27 +2033,25 @@ DnsQAdd(DnsQList *ql, int fd, struct sockaddr_in *rsin, DnsRes *dres, int known)
 }
 
 /*
- * Refusals of new connections per 100 ms: past the budget the listener
- * pauses until the tick ends, so a reconnect storm costs little CPU and
- * its clients wait at most 100 ms in the backlog for their 400.
+ * Refusals of new connections per 100 ms: past DNSQ_REFUSE_BUDGET the
+ * listener pauses until the tick ends, so a reconnect storm costs little
+ * CPU and its clients wait at most 100 ms in the backlog for their 400.
  */
+#define DNSQ_REFUSE_BUDGET	200
 static void
 DnsRefuseNew(int fd, int r)
 {
     static double tick;
     static int count;
     double now = MonoMs();
-    int budget = 4 * DOpts.ReaderDnsQueue;
 
     DnsRefuseLog(r);
     DnsTooBusy(fd);
-    if (budget < 200)
-	budget = 200;
     if (now - tick >= 100) {
 	tick = now;
 	count = 0;
     }
-    if (++count >= budget && ListenPauseUntil < tick + 100)
+    if (++count >= DNSQ_REFUSE_BUDGET && ListenPauseUntil < tick + 100)
 	ListenPauseUntil = tick + 100;
 }
 
@@ -2800,7 +2801,7 @@ HandleDnsThread(ForkDesc *desc)
 	    DnsTooBusy(desc->d_FdPend);
 	    desc->d_FdPend = -1;
 	    --NumActive;
-	    deleteDnsResHash(&dres, desc);
+	    deleteDnsResHash(&dres, reader);	/* stored under the reader */
 	    return;
 	}
 #endif
@@ -2820,7 +2821,7 @@ HandleDnsThread(ForkDesc *desc)
 	desc->d_FdPend = -1;
 	++FailCount;
 	--NumActive;
-	deleteDnsResHash(&dres, desc);
+	deleteDnsResHash(&dres, reader);
 
 	if (reader->d_Pid > 0)
 	    kill(reader->d_Pid, SIGQUIT);
