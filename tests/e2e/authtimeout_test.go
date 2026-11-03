@@ -1,9 +1,12 @@
 package e2e
 
 // readerauthtimeout: an auth backend that does not answer in time refuses the login, and the
-// DNS worker (readerdns 1 here) serves the next login. Before, a backend that hung held the
-// worker for good (LDAP, Perl, PAM, the NetRemote read) or for minutes (the NetRemote
-// connect), and logins stopped once every worker was held.
+// next login is served (readerdns 1 here). Before, a backend that hung held the DNS worker
+// for good (LDAP, Perl, PAM, the NetRemote read) or for minutes (the NetRemote connect), and
+// logins stopped once every worker was held.
+//
+// LDAP and NetRemote run into their own timeouts and the worker goes on. Perl and PAM are cut
+// off by the worker's alarm: the worker sends the refusal, exits, and main starts a new one.
 //
 // The slow backend sits on its own access line behind "realm slow", so only "x@slow" logins
 // reach it; pat logs in with user and pass on the line before. Each test needs dreaderd built
@@ -69,14 +72,26 @@ access 127.0.0.1 rslow
 }
 
 // authTimeoutSite starts a reader with dreader.access access, readerauthtimeout and the
-// extra environment env (e.g. an LD_PRELOAD shim).
+// extra environment env (e.g. an LD_PRELOAD shim). It logs to log/general.log (stderr does
+// not get the syslog lines everywhere: illumos has no LOG_PERROR).
 func authTimeoutSite(t *testing.T, access string, env ...string) *Site {
+	t.Helper()
+	return authTimeoutSiteN(t, access, authTimeout, env...)
+}
+
+// authTimeoutSiteN is authTimeoutSite with readerauthtimeout secs.
+func authTimeoutSiteN(t *testing.T, access string, secs int, env ...string) *Site {
 	t.Helper()
 	_, spool := spoolStore(t)
 	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: access, NoStart: true,
-		Config: map[string]string{"readerauthtimeout": strconv.Itoa(authTimeout),
+		Config: map[string]string{"readerauthtimeout": strconv.Itoa(secs),
 			"path_generallog": "%s/general.log"}})
 	s.Env = append(s.Env, env...)
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("general.log:\n%s", generalLog(s))
+		}
+	})
 	_, port, err := net.SplitHostPort(s.Addr)
 	if err != nil {
 		t.Fatal(err)
@@ -106,32 +121,39 @@ func slowLogin(t *testing.T, s *Site, user, pass string) {
 	t.Logf("%s refused after %v: %d %s %v", user, took.Round(time.Millisecond), code, line, err)
 }
 
-// goodLogin: pat logs in, on the same (only) DNS worker: it did not die and get replaced.
+// goodLogin: pat logs in.
 func goodLogin(t *testing.T, s *Site) {
 	t.Helper()
 	c := client.DialWith(t, s.Addr, 2*authTimeoutBound)
 	defer c.Close()
 	expect(t, c, 381, "AUTHINFO USER pat")
 	expect(t, c, 281, "AUTHINFO PASS patspass")
-	if strings.Contains(s.Proc.Stderr(), "Lost dns resolver") {
-		t.Errorf("the DNS worker died")
-	}
 }
 
-// wantTimeoutLog: dreaderd logged the timeout of backend what in log/general.log (stderr
-// does not get the syslog lines everywhere: illumos has no LOG_PERROR).
-func wantTimeoutLog(t *testing.T, s *Site, what string) {
+// wantTimeoutLog: dreaderd logged n timeouts of backend what (n > 0), and replaced the DNS
+// worker for each when replaced is true (the alarm cut the backend off), else never. A
+// worker is never lost otherwise.
+func wantTimeoutLog(t *testing.T, s *Site, what string, n int, replaced bool) {
 	t.Helper()
-	want := what + " authentication from 127.0.0.1 timed out after " + strconv.Itoa(authTimeout) + " seconds"
-	path := filepath.Join(s.Dir, "log", "general.log")
+	want := what + " authentication from 127.0.0.1 timed out after "
+	const repl = "replaced after an auth timeout"
+	nrepl := 0
+	if replaced {
+		nrepl = n
+	}
 	deadline := time.Now().Add(3 * time.Second)
 	for {
-		b, _ := os.ReadFile(path)
-		if strings.Contains(string(b), want) {
+		l := generalLog(s)
+		got, gotRepl := strings.Count(l, want), strings.Count(l, repl)
+		if got == n && gotRepl == nrepl {
+			if strings.Contains(l, "Lost dns resolver") {
+				t.Errorf("a DNS worker was lost:\n%s", l)
+			}
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Errorf("no %q in %s:\n%s", want, path, b)
+			t.Errorf("%d times %q (want %d) and %d times %q (want %d) in general.log:\n%s",
+				got, want, n, gotRepl, repl, nrepl, l)
 			return
 		}
 		time.Sleep(50 * time.Millisecond)
@@ -196,10 +218,10 @@ func TestAuthTimeoutNetRemoteSilent(t *testing.T) {
 	port := silentServer(t)
 	s := authTimeoutSite(t, slowAuthAccess("netremote secret@127.0.0.1:"+strconv.Itoa(port)))
 	slowLogin(t, s, "x@slow", "pw")
-	wantTimeoutLog(t, s, "NetRemote")
 	goodLogin(t, s)
 	slowLogin(t, s, "y@slow", "pw")
 	goodLogin(t, s)
+	wantTimeoutLog(t, s, "NetRemote", 2, false)
 }
 
 // TestAuthTimeoutNetRemoteNoAccept: a NetRemote server whose connects hang (about 127 s per
@@ -209,8 +231,8 @@ func TestAuthTimeoutNetRemoteNoAccept(t *testing.T) {
 	port := deafServer(t)
 	s := authTimeoutSite(t, slowAuthAccess("netremote secret@127.0.0.1:"+strconv.Itoa(port)))
 	slowLogin(t, s, "x@slow", "pw")
-	wantTimeoutLog(t, s, "NetRemote")
 	goodLogin(t, s)
+	wantTimeoutLog(t, s, "NetRemote", 1, false)
 }
 
 // ldapURL is an LDAP URL for the authdef of the build (the default form: a filter with %s, escaped).
@@ -224,10 +246,10 @@ func TestAuthTimeoutLDAPSilent(t *testing.T) {
 	port := silentServer(t)
 	s := authTimeoutSite(t, slowAuthAccess(ldapURL(port)))
 	slowLogin(t, s, "x@slow", "pw")
-	wantTimeoutLog(t, s, "LDAP")
 	goodLogin(t, s)
 	slowLogin(t, s, "y@slow", "pw")
 	goodLogin(t, s)
+	wantTimeoutLog(t, s, "LDAP", 2, false)
 }
 
 // TestAuthTimeoutLDAPNoAccept: an LDAP server whose connects hang.
@@ -237,6 +259,9 @@ func TestAuthTimeoutLDAPNoAccept(t *testing.T) {
 	s := authTimeoutSite(t, slowAuthAccess(ldapURL(port)))
 	slowLogin(t, s, "x@slow", "pw")
 	goodLogin(t, s)
+	if l := generalLog(s); strings.Contains(l, "Lost dns resolver") || strings.Contains(l, "replaced after") {
+		t.Errorf("the DNS worker was replaced:\n%s", l)
+	}
 }
 
 // perlSite starts a reader whose x@slow logins run checkuser of script.
@@ -250,8 +275,8 @@ func perlSite(t *testing.T, script string) *Site {
 	return authTimeoutSite(t, slowAuthAccess("perl "+path))
 }
 
-// TestAuthTimeoutPerlSleep: a checkuser that sleeps dies at the limit, and the script keeps
-// serving.
+// TestAuthTimeoutPerlSleep: a checkuser that sleeps is cut off at the limit; the next worker
+// loads the script again and serves the next logins.
 func TestAuthTimeoutPerlSleep(t *testing.T) {
 	s := perlSite(t, `sub checkuser {
     my ($user, $pass) = @_;
@@ -262,36 +287,91 @@ func TestAuthTimeoutPerlSleep(t *testing.T) {
 1;
 `)
 	slowLogin(t, s, "x@slow", "pw")
-	wantTimeoutLog(t, s, "Perl")
 	goodLogin(t, s)
-	// the same interpreter still answers
 	c := client.DialWith(t, s.Addr, 2*authTimeoutBound)
 	defer c.Close()
 	expect(t, c, 381, "AUTHINFO USER ok@slow")
+	expect(t, c, 281, "AUTHINFO PASS pw")
+	wantTimeoutLog(t, s, "Perl", 1, true)
+}
+
+// twoPerlAccess: x@slow and ok@slow go to perl script a, x@slow2 and ok@slow2 to b.
+func twoPerlAccess(a, b string) string {
+	access := strings.Replace(slowAuthAccess("perl "+a), "access 127.0.0.1 rslow\n",
+		"access 127.0.0.1 rslow\naccess 127.0.0.1 rslow2\n", 1)
+	return strings.Replace(access, "readerdef rslow\n", "authdef slow2\n    realm slow2\n    perl "+b+
+		"\nend\nreaderdef rslow2\n    read yes\n    auth slow2\nend\nreaderdef rslow\n", 1)
+}
+
+// perlLogin: user logs in through perl.
+func perlLogin(t *testing.T, s *Site, user string) {
+	t.Helper()
+	c := client.DialWith(t, s.Addr, 2*authTimeoutBound)
+	defer c.Close()
+	expect(t, c, 381, "AUTHINFO USER %s", user)
 	expect(t, c, 281, "AUTHINFO PASS pw")
 }
 
-// TestAuthTimeoutPerlBackstop: a checkuser that catches the timeout die and goes on sleeping
-// is cut off by the worker's alarm; the next login loads the script anew.
-func TestAuthTimeoutPerlBackstop(t *testing.T) {
-	s := perlSite(t, `sub checkuser {
-    my ($user, $pass) = @_;
-    if ($user eq "x") {
-        eval { sleep 60 };
-        sleep 60;
-    }
-    return "100 Success" if $user eq "ok";
-    return "0";
-}
-1;
-`)
-	slowLogin(t, s, "x@slow", "pw")
-	wantTimeoutLog(t, s, "Perl")
+// TestAuthTimeoutPerlManyTimeouts: two perl authdefs and more timeouts than a worker keeps
+// interpreters (16). Each timeout costs the worker, not the scripts: the logins of both
+// scripts keep working. Before the worker kept going after a cut-off and abandoned an
+// interpreter each time; after 16 every perl login was refused.
+func TestAuthTimeoutPerlManyTimeouts(t *testing.T) {
+	builtWith(t, "PERL auth request", "Perl support (PERL_ENABLED)")
+	dir := t.TempDir()
+	sc := "sub checkuser { sleep 60 if $_[0] eq 'x'; return \"100 Success\" if $_[0] eq 'ok'; return '0'; }\n1;\n"
+	a, b := filepath.Join(dir, "a.pl"), filepath.Join(dir, "b.pl")
+	for _, f := range []string{a, b} {
+		if err := os.WriteFile(f, []byte(sc), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := authTimeoutSiteN(t, twoPerlAccess(a, b), 1)
+	const n = 17
+	for i := 0; i < n; i++ {
+		perlLogin(t, s, "ok@slow")
+		perlLogin(t, s, "ok@slow2")
+		if i%2 == 0 {
+			slowLogin(t, s, "x@slow", "pw")
+		} else {
+			slowLogin(t, s, "x@slow2", "pw")
+		}
+	}
+	perlLogin(t, s, "ok@slow")
+	perlLogin(t, s, "ok@slow2")
 	goodLogin(t, s)
-	c := client.DialWith(t, s.Addr, 2*authTimeoutBound)
-	defer c.Close()
-	expect(t, c, 381, "AUTHINFO USER ok@slow")
-	expect(t, c, 281, "AUTHINFO PASS pw")
+	l := generalLog(s)
+	if got := strings.Count(l, "Perl authentication from 127.0.0.1 timed out after 1 seconds"); got != n {
+		t.Errorf("%d Perl timeouts logged, want %d", got, n)
+	}
+	if got := strings.Count(l, "replaced after an auth timeout"); got != n {
+		t.Errorf("%d workers replaced, want %d", got, n)
+	}
+	if strings.Contains(l, "Lost dns resolver") || strings.Contains(l, "more than 16") {
+		t.Errorf("general.log:\n%s", l)
+	}
+}
+
+// TestAuthTimeoutPerlSlowLoad: a script whose loading hangs (here a BEGIN block, the first
+// time only) is cut off; the next login loads it again in the new worker.
+func TestAuthTimeoutPerlSlowLoad(t *testing.T) {
+	builtWith(t, "PERL auth request", "Perl support (PERL_ENABLED)")
+	dir := t.TempDir()
+	a, b := filepath.Join(dir, "a.pl"), filepath.Join(dir, "b.pl")
+	mark := filepath.Join(dir, "loaded")
+	if err := os.WriteFile(a, []byte("sub checkuser { return \"100 Success\" if $_[0] eq 'ok'; return '0'; }\n1;\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(b, []byte("BEGIN { unless (-e '"+mark+"') { open(F, '>"+mark+"'); close F; sleep 60 } }\n"+
+		"sub checkuser { return \"100 Success\" if $_[0] eq 'ok'; return '0'; }\n1;\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := authTimeoutSite(t, twoPerlAccess(a, b))
+	perlLogin(t, s, "ok@slow")
+	slowLogin(t, s, "ok@slow2", "pw")
+	perlLogin(t, s, "ok@slow2")
+	perlLogin(t, s, "ok@slow")
+	wantTimeoutLog(t, s, "Perl", 1, true)
 }
 
 // pamShimSource replaces the PAM calls of dreaderd: pam_authenticate never returns for user
@@ -329,18 +409,21 @@ pam_end(void *pamh, int status)
 `
 
 // TestAuthTimeoutPAM: a PAM module that never returns (here a preloaded stand-in for the PAM
-// library) is cut off by the worker's alarm.
+// library) is cut off by the worker's alarm; main replaces the worker, and the new one serves
+// the next logins.
 func TestAuthTimeoutPAM(t *testing.T) {
 	builtWith(t, "Unable to release PAM authentication", "PAM support (PAM_ENABLED)")
 	so := preloadShim(t, "pamshim", pamShimSource)
 	s := authTimeoutSite(t, slowAuthAccess("pam diablo"), lockFaultEnv(so))
 	slowLogin(t, s, "x@slow", "pw")
-	wantTimeoutLog(t, s, "PAM")
+	// served by the new worker
 	goodLogin(t, s)
-	c := client.DialWith(t, s.Addr, 2*authTimeoutBound)
-	defer c.Close()
-	expect(t, c, 381, "AUTHINFO USER ok@slow")
-	expect(t, c, 281, "AUTHINFO PASS pw")
+	perlLogin(t, s, "ok@slow")
 	slowLogin(t, s, "x@slow", "pw")
 	goodLogin(t, s)
+	wantTimeoutLog(t, s, "PAM", 2, true)
+	// a new worker is a fork of main: dreader.access is not parsed again
+	if n := strings.Count(generalLog(s), "Installing access cache"); n != 1 {
+		t.Errorf("dreader.access parsed %d times, want 1", n)
+	}
 }
