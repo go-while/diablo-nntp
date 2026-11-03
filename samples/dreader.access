@@ -159,7 +159,8 @@
 # needs to be enabled at compile time - see lib/vendor.h
 # Its timeout and tries per server come from that file, not from
 # "readerauthtimeout" in diablo.config, which bounds the netremote, ldap,
-# pam and perl options below.
+# pam and perl options below.  A login whose backend runs out of time is
+# refused, and no later access line is tried for it.
 #
 # The cdb option specifies a CDB database for username/pass lookup. This
 # option needs to be enabled at compile time - see lib/vendor.h.
