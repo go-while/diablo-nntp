@@ -71,6 +71,7 @@ typedef struct Group {
 #define GRF_MODIFIED    0x00008000
 #define GRF_EDITEDBEG   0x00010000
 #define GRF_GONE        0x00020000	/* left dactive.kp during the run */
+#define GRF_NEEDZLIB    0x00040000	/* -R left it alone: .gz data, no zlib */
 
 #define GHSIZE		1024
 #define GHMASK		(GHSIZE-1)
@@ -117,6 +118,9 @@ void ExpireFromFile(Group *group, int fd, OverHead *oh, int expireSecs);
 int RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldDataEntries, int newDataEntries, int *fdl);
 void rewriteDataFile(Group *group, const char *cacheBase, int cacheSize, const OverArt *oa, OverArt *ob, const char *dirPath, int oldDataEntriesMask, int newDataEntriesMask, artno_t artNo);
 int ResizeGroup(Group *group, int fd, OverHead *oh, int maxArts, int OldDataEntries, int *fdl);
+#ifndef USE_ZLIB
+static int gzipOnlyData(Group *group, const char *dirPath, artno_t startNo, artno_t endNo, int dataEntries);
+#endif
 static void groupGone(Group *group, const char *what);
 static int writeActiveField(Group *group, const char *tok, const char *data);
 int nearestPower(int n);
@@ -153,6 +157,7 @@ int CompressDataOpt = 0;
 int CompressedFiles = 0;
 int CompressFailed = 0;
 int CompressEligible = 0;
+int NeedZlibGroups = 0;
 char *Wild;
 bucket_t *dexpover_msgid_hash;
 int ParallelIdx = 0;
@@ -295,7 +300,12 @@ main(int ac, char **av)
 	    UseExpireByDays = (*ptr) ? strtol(ptr, NULL, 0) : 1;
 	    break;
 	case 'z':
+#ifdef USE_ZLIB
 	    CompressDataOpt = 1;
+#else
+	    fprintf(stderr, "-z: dexpireover was built without zlib\n");
+	    exit(1);
+#endif
 	    break;
 	/* Common options */
 	case 'C':           /* parsed by LoadDiabloConfig */
@@ -580,7 +590,7 @@ main(int ac, char **av)
     if (UseExpireBySpool)
 	HistoryClose();
 
-    return(CompressFailed ? 1 : 0);
+    return((CompressFailed || NeedZlibGroups) ? 1 : 0);
 }
 
 /*
@@ -687,6 +697,9 @@ ScanDirectories(void)
     }
     if (CompressEligible) {
 	printf("%d files would be compressed\n", CompressEligible);
+    }
+    if (NeedZlibGroups) {
+	printf("%d group(s) not rewritten: compressed overview data needs a zlib build\n", NeedZlibGroups);
     }
 
 }
@@ -835,7 +848,7 @@ ProcessOverviewFile(const char *dirPath, const char *name, int type)
 	printf("Maps to group: %s\n", group->gr_GroupName);
 
     /* found missing while working on another of its files */
-    if (group->gr_State & GRF_GONE)
+    if (group->gr_State & (GRF_GONE | GRF_NEEDZLIB))
 	return;
 
     if (type == 1) {
@@ -904,6 +917,21 @@ ProcessOverviewFile(const char *dirPath, const char *name, int type)
 		    group->gr_StartNo = group->gr_EndNo - oh.oh_MaxArts + 1;
 		    group->gr_State |= GRF_EDITEDBEG | GRF_MODIFIED;
 		}
+
+#ifndef USE_ZLIB
+		/*
+		 * -R cannot read a .gz data file without zlib and would
+		 * delete it: leave all files of the group as they are.
+		 */
+		if (RewriteDataOpt > 0 &&
+		    gzipOnlyData(group, dirPath, group->gr_StartNo,
+					group->gr_EndNo, OldDataEntries)) {
+		    group->gr_State |= GRF_NEEDZLIB;
+		    group->gr_State &= ~GRF_MODIFIED;	/* no NB write-back */
+		    close(fd);
+		    return;
+		}
+#endif
 
 		/*
 		 * Figure out expire values
@@ -1626,11 +1654,13 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
     int rblt;
     long long n;
     int ok = 1;
+#ifdef USE_ZLIB
     int tmpfd, gzflags;
     unsigned char *zmap, *tmpmap, *zpos;
     unsigned long zlen;
     z_stream z;
     int code;
+#endif
 
     /*
      * If not for real, do not do anything
@@ -1719,6 +1749,16 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
     if (group->gr_State & GRF_MODIFIED)
 	startNo = group->gr_StartNo;
 
+#ifndef USE_ZLIB
+    /* the range may have moved since the check before the resize */
+    if (gzipOnlyData(group, dirPath, startNo, endNo, oldDataEntries)) {
+	group->gr_State |= GRF_NEEDZLIB;
+	xunmap((void *)oaBase, n * sizeof(OverArt));
+	free(oaBaseNew);
+	return(0);
+    }
+#endif
+
     /*
      * Scan entire overview index, building replacement data.* files on the
      * fly.  We have already cleaned it up, so there should not be any
@@ -1772,8 +1812,10 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
 		} else {
 		    if (cfd >= 0) {
 			close(cfd);
+			cfd = -1;
 		    }
 
+#ifdef USE_ZLIB
 		    snprintf(path, sizeof(path), "%s/%s.gz", dirPath,
 					GFName(group->gr_GroupName,
 					GRPFTYPE_DATA, cacheArtBase, 0,
@@ -1884,6 +1926,7 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
 				tmpfile, strerror(errno));
 			}
 		    }
+#endif
 		}
 		if (cfd >= 0)
 		    close(cfd);
@@ -2395,6 +2438,42 @@ ResizeGroup(Group *group, int fd, OverHead *oh, int newSize, int OldDataEntries,
     }
     return(0);
 }
+
+#ifndef USE_ZLIB
+/*
+ * gzipOnlyData() - without zlib a .gz data file (made by dexpireover -z)
+ * cannot be read.  Return 1, with a message, if a data file in the range
+ * exists only as .gz.
+ */
+static int
+gzipOnlyData(Group *group, const char *dirPath, artno_t startNo, artno_t endNo, int dataEntries)
+{
+    char path[PATH_MAX];
+    struct stat st;
+    artno_t artNo;
+
+    if (dataEntries <= 0 || startNo > endNo)
+	return(0);
+    for (artNo = startNo & ~((artno_t)dataEntries - 1); artNo <= endNo;
+						artNo += dataEntries) {
+	const char *name = GFName(group->gr_GroupName, GRPFTYPE_DATA, artNo,
+					0, group->gr_Iter,
+					&DOpts.ReaderGroupHashMethod);
+
+	snprintf(path, sizeof(path), "%s/%s", dirPath, name);
+	if (stat(path, &st) == 0)
+	    continue;
+	snprintf(path, sizeof(path), "%s/%s.gz", dirPath, name);
+	if (stat(path, &st) != 0)
+	    continue;
+	fprintf(stderr, "group %s not rewritten: compressed overview data %s needs a zlib build\n",
+					group->gr_GroupName, path);
+	++NeedZlibGroups;
+	return(1);
+    }
+    return(0);
+}
+#endif
 
 int
 nearestPower(int n)

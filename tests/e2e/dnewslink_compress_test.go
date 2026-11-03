@@ -16,6 +16,7 @@ import (
 // write then spins in flushCompressBuffer() forever (deflate keeps failing, avail_in never
 // drops), logging an error on every pass.
 func TestDnewslinkBadCompressLevel(t *testing.T) {
+	skipWithoutZlib(t)
 	s := NewSite(t, SiteOptions{NoStart: true})
 	port := dnlPeer(t, func(line string) (string, bool) {
 		switch {

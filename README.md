@@ -96,7 +96,7 @@ All of these options are `#undef` in `lib/vendor.h` as shipped, so a build witho
 
 | Option in `lib/vendor.h` | `./configure` name | Needs | Used for |
 |---|---|---|---|
-| `USE_ZLIB` | `zlib` | zlib (`zlib.h`, `-lz`) | compressed spool objects and feeds (zlib itself is needed to build) |
+| `USE_ZLIB` | `zlib` | zlib (`zlib.h`, `-lz`) | compressed spool objects and feeds (needed to build unless `./configure --without-zlib`, which leaves compression out) |
 | `CANLOCK_ENABLED` | `canlock` | libcanlock 3.3.0 or later (`libcanlock-3/canlock.h`) | Cancel-Lock checks and generation (RFC 8315) |
 | `DB_ENABLED`, `REJECT_DB` | `db` | Berkeley DB with the 1.85 interface, `dbopen()`: `db_185.h` and `-ldb` (`db4`, `db5`) on Linux and illumos, the C library on FreeBSD | DB authentication and the reject database |
 | `CDB_ENABLED` | `cdb` | a cdb library with `cdb_seek()`: tinycdb (`libcdb-dev` on Debian and Ubuntu); the cdb of FreeBSD ports and pkgsrc no longer has it | CDB authentication |

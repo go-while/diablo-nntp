@@ -293,10 +293,13 @@ decide() {
     esac
 }
 
-# zlib is required by lib/dgzip.c; USE_ZLIB only adds compressed spool objects and feeds
+# zlib is required unless --without-zlib leaves out compression (compressed spool objects,
+# MODE COMPRESS and compressed feeds, XZVER, dexpireover -z and reading its .gz overview files):
+# a site with compressed spool files cannot read them without it, so it is not turned off
+# silently when missing
 if [ "$mode_zlib" = off ]; then
     set_option USE_ZLIB off
-    note "zlib: USE_ZLIB off (--without-zlib); lib/dgzip.c still needs zlib.h and -lz"
+    note "zlib: off (--without-zlib): no compression"
 elif probe_zlib; then
     note "zlib: on"
     set_option USE_ZLIB on; add_flags zlib

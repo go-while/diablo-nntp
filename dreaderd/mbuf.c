@@ -251,6 +251,43 @@ MBWrite(MBufHead *mh, const void *data, int len)
 	FD_SET(mh->mh_Fd, &WFds); 
 }
 
+#ifndef USE_ZLIB
+
+/*
+ * Built without zlib: XZVER answers 500 "not enabled" before it gets here.
+ */
+int
+MZInit(Connection *conn, MBufHead *mh, int level)
+{
+    logit(LOG_CRIT, "MZInit: built without zlib");
+    return(-1);
+}
+
+int
+MZWriteIt(Connection *conn, const void *data, int len, int flush)
+{
+    return(-1);
+}
+
+void
+MZWrite(Connection *conn, const void *data, int len)
+{
+}
+
+void
+MZPrintf(Connection *conn, const char *ctl, ...)
+{
+}
+
+void
+MZFinish(Connection *conn)
+{
+    conn->co_ZStream = NULL;
+    conn->co_TMZBufP = NULL;
+}
+
+#else
+
 int
 MZInit(Connection *conn, MBufHead *mh, int level)
 {
@@ -348,6 +385,7 @@ MZFinish(Connection *conn)
     conn->co_TMZBufP = NULL;
 }
 
+#endif /* USE_ZLIB */
 
 /*
  * MBWriteDecode() - write buffer out but decode % escapes while

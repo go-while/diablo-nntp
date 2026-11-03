@@ -33,7 +33,7 @@ CFLAGS ?= -O2 -g -Wall -Wstrict-prototypes -fno-common
 CFLAGS += -MMD -MP
 
 LDFLAGS += -Lobj
-LDLIBS += -lfilter -ldiablo -lm -lz -lcrypto
+LDLIBS += -lfilter -ldiablo -lm -lcrypto
 
 # The libraries behind the optional features (zlib, libcanlock, Berkeley DB, cdb, PAM, LDAP,
 # Perl, RADIUS) are found by ./configure, which sets the options in lib/vendor.h and writes

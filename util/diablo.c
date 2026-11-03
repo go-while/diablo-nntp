@@ -4644,10 +4644,24 @@ QueueRange(const char *label, int *pqnum, int *pqarts, int *pqrun)
 		    if (fj) {
 			char buf[256];
 
+			struct flock fl = { 0 };
+
 			while (fgets(buf, sizeof(buf), fj) != NULL) {
 			    ++*pqarts;
 			}
-			if (xflock(fileno(fj), XLOCK_EX|XLOCK_NB) < 0)
+			/*
+			 * A dnewslink working on the file holds a write lock
+			 * on all of it (xflock XLOCK_EX).  Ask with F_GETLK:
+			 * taking the lock ourselves needs a descriptor open
+			 * for writing (on this read-only one F_SETLK fails
+			 * with EBADF, so every file counted as running), and
+			 * would make a dnewslink starting on the file in that
+			 * moment skip it.
+			 */
+			fl.l_type = F_WRLCK;
+			fl.l_whence = SEEK_SET;
+			if (fcntl(fileno(fj), F_GETLK, &fl) == 0 &&
+			    fl.l_type != F_UNLCK)
 			    ++*pqrun;
 			fclose(fj);
 		    }

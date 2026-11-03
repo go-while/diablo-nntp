@@ -12,6 +12,17 @@
 
 #include <dreaderd/defs.h>
 
+#ifndef USE_ZLIB
+/*
+ * Built without zlib: read the data file with stdio (gzopen reads a plain
+ * file the same way); a .gz data file cannot be read.
+ */
+#define gzopen(path, mode)	((gzFile)fopen(path, mode))
+#define gzclose(f)		fclose((FILE *)(f))
+#define gzseek(f, pos, whence)	fseeko((FILE *)(f), pos, whence)
+#define gzread(f, buf, n)	((int)fread(buf, 1, n, (FILE *)(f)))
+#endif
+
 char * allocTmpCopy(const char *buf, int bufLen);
 void ShowHeader(char *path);
 void DReadOver(char *data);
@@ -278,9 +289,11 @@ DReadOver(char *data)
 	printf("\t%s", gfname);
 	if (! ((zfd2 = gzopen(path, "r")))) {
 
+#ifdef USE_ZLIB
 	    snprintf(path, sizeof(path), "%s/%s.gz",
 				    PatExpand(GroupHomePat), gfname);
 	    zfd2 = gzopen(path, "r");
+#endif
 	    if (! (zfd2)) {
 		printf("\t(data open fail)\n");
 	        close(fd1);

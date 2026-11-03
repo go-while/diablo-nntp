@@ -482,7 +482,11 @@ typedef struct Connection {
     MemPool	*co_BufPool;
     MBufHead	co_TMBuf;
     MBufHead	co_RMBuf;
+#ifdef USE_ZLIB
     z_streamp	co_ZStream;
+#else
+    void	*co_ZStream;	/* unused without zlib (no XZVER) */
+#endif
     MBufHead	*co_TMZBufP;
     time_t	co_SessionStartTime;
     time_t	co_LastActiveTime;

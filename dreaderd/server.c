@@ -844,7 +844,7 @@ NNFinishSReq(Connection *conn, const char *ctl, int requeue)
 	     */
 	    if (sreq->sr_CConn) {
 		if (ctl) {
-		    if (ctl[1] == '4' || ctl[0] == '4') {
+		    if (ctl[0] == '4' || (ctl[0] != 0 && ctl[1] == '4')) {
 			/*
 			 * x4x codes are POST results of some sort -
 			 * this result only appears here via NNPostResponseX.

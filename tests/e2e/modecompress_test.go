@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"compress/zlib"
+	"strings"
 	"testing"
 )
 
@@ -12,6 +13,7 @@ import (
 // state is set up (each one used to be allocated and never freed), so the following commands
 // on the stream still work.
 func TestFeederModeCompressTwiceRefused(t *testing.T) {
+	skipWithoutZlib(t)
 	s := NewSite(t, SiteOptions{})
 	p := s.Peer(t)
 	expect(t, p, 207, "MODE COMPRESS")
@@ -37,4 +39,23 @@ func TestFeederModeCompressTwiceRefused(t *testing.T) {
 	status(t, p, 203, "MODE STREAM after the refused MODE COMPRESS")
 	zsend("QUIT")
 	status(t, p, 205, "QUIT (compressed)")
+}
+
+// TestNoZlibCompressionOff: a build with ./configure --without-zlib has no compression. MODE
+// COMPRESS gets 500 and the session goes on uncompressed, and dexpireover -z stops with a
+// message instead of leaving the data files as they are. Skipped on a build with zlib.
+func TestNoZlibCompressionOff(t *testing.T) {
+	if builtWithZlib(t) {
+		t.Skip("built with zlib")
+	}
+	s := NewSite(t, SiteOptions{})
+	p := s.Peer(t)
+	expect(t, p, 500, "MODE COMPRESS")
+	expect(t, p, 203, "MODE STREAM")
+	expect(t, p, 205, "QUIT")
+
+	out, err := s.TryRun("dexpireover", "-z")
+	if err == nil || !strings.Contains(out, "built without zlib") {
+		t.Errorf("dexpireover -z without zlib: err=%v\n%s", err, out)
+	}
 }
