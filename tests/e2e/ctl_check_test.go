@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -398,6 +399,9 @@ func TestInitSysV(t *testing.T) {
 
 // TestInitRcdFreeBSD: the rc.d script runs with rc.subr (FreeBSD only) against its own site.
 func TestInitRcdFreeBSD(t *testing.T) {
+	if runtime.GOOS != "freebsd" {
+		t.Skip("FreeBSD only (NetBSD has an rc.subr of its own)")
+	}
 	if _, err := os.Stat("/etc/rc.subr"); err != nil {
 		t.Skip("no /etc/rc.subr")
 	}
