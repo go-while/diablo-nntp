@@ -502,6 +502,7 @@ hold(size_t n)
 	usleep(10000);
 }
 
+#ifndef __sun	/* 64-bit illumos names pwrite64 pwrite */
 ssize_t
 pwrite64(int fd, const void *b, size_t n, off_t o)
 {
@@ -510,6 +511,7 @@ pwrite64(int fd, const void *b, size_t n, off_t o)
     hold(n);
     return real(fd, b, n, o);
 }
+#endif
 
 ssize_t
 pwrite(int fd, const void *b, size_t n, off_t o)
