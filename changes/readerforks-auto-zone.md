@@ -1,0 +1,1 @@
+- `readerforks auto` on illumos and Solaris counts the CPUs online lowered to the processor set dreaderd is bound to and to the zone's `zone.cpu-cap`, rounded up, and logs all three. Before, a zone capped at 8 CPUs on a 56-CPU host started 56 reader forks.

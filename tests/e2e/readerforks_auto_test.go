@@ -1,8 +1,9 @@
 package e2e
 
 // readerforks auto: dreaderd sizes its reader forks from the CPUs it may use (the affinity
-// mask and a cgroup v2 quota on Linux, the cpuset on FreeBSD, the CPUs online elsewhere),
-// capped at 64. A number still works as before, and a value that is neither is refused.
+// mask and a cgroup v2 quota on Linux, the cpuset on FreeBSD, the CPUs online lowered to the
+// processor set and zone.cpu-cap on illumos and Solaris, the CPUs online elsewhere), capped
+// at 64. A number still works as before, and a value that is neither is refused.
 
 import (
 	"context"
@@ -110,19 +111,128 @@ func cgroupCPULimit() int {
 }
 
 // expectedAuto is what readerforks auto should pick for a process allowed cpus CPUs.
-func expectedAuto(cpus int) int {
+func expectedAuto(t *testing.T, cpus int) int {
 	if q := cgroupCPULimit(); q > 0 && q < cpus {
 		cpus = q
+	}
+	if isSun() {
+		if n, _ := psetCPUs(t); n > 0 && n < cpus {
+			cpus = n
+		}
+		if c, _ := zoneCPUCap(t); c > 0 && (c+99)/100 < cpus {
+			cpus = (c + 99) / 100
+		}
 	}
 	return max(1, min(cpus, readerForksAutoCap))
 }
 
+func isSun() bool { return runtime.GOOS == "illumos" || runtime.GOOS == "solaris" }
+
+// sunTool finds an illumos/Solaris tool in PATH or its usual directories; "" when missing.
+func sunTool(name string) string {
+	if p, err := exec.LookPath(name); err == nil {
+		return p
+	}
+	for _, d := range []string{"/usr/bin", "/usr/sbin"} {
+		if p := filepath.Join(d, name); fileExists(p) {
+			return p
+		}
+	}
+	return ""
+}
+
+// zoneCPUCap returns zone.cpu-cap for this process (percent of one CPU: 800 is 8 CPUs) as
+// prctl -P shows it, and that output. As dreaderd and Go's runtime do, it is the smallest
+// basic or privileged value with a deny action that is not the maximal one ("max" or "inf"
+// in the flag column); 0 when there is none or prctl is missing.
+func zoneCPUCap(t *testing.T) (int, string) {
+	prctl := sunTool("prctl")
+	if prctl == "" {
+		return 0, ""
+	}
+	out, err := exec.Command(prctl, "-P", "-n", "zone.cpu-cap", strconv.Itoa(os.Getpid())).CombinedOutput()
+	if err != nil {
+		t.Logf("prctl -P -n zone.cpu-cap: %v %q", err, out)
+		return 0, string(out)
+	}
+	best := 0
+	// "zone.cpu-cap privileged 800 - deny -": name, privilege, value, flag, action, recipient
+	for _, l := range strings.Split(string(out), "\n") {
+		f := strings.Fields(l)
+		if len(f) < 5 || f[0] != "zone.cpu-cap" || (f[1] != "basic" && f[1] != "privileged") ||
+			f[3] == "max" || f[3] == "inf" || !strings.HasPrefix(f[4], "deny") {
+			continue
+		}
+		if v, err := strconv.Atoi(f[2]); err == nil && v > 0 && (best == 0 || v < best) {
+			best = v
+		}
+	}
+	return best, string(out)
+}
+
+// psetCPUs returns the CPUs in the processor set this process is bound to (psrset -q, then
+// psrset -i), and what psrset printed; 0 when it is bound to none or psrset is missing.
+func psetCPUs(t *testing.T) (int, string) {
+	psrset := sunTool("psrset")
+	if psrset == "" {
+		return 0, ""
+	}
+	q, err := exec.Command(psrset, "-q", strconv.Itoa(os.Getpid())).CombinedOutput()
+	// "process id 1234: 1", or "process id 1234: not bound"
+	m := regexp.MustCompile(`process id \d+: (\d+)`).FindSubmatch(q)
+	if err != nil || m == nil {
+		return 0, string(q)
+	}
+	i, err := exec.Command(psrset, "-i", string(m[1])).CombinedOutput()
+	out := string(q) + string(i)
+	if err != nil {
+		t.Logf("psrset -i %s: %v %q", m[1], err, i)
+		return 0, out
+	}
+	// "user processor set 1: processors 2 3" (or "processor 2"): count the numbers after
+	// the colon
+	list := string(i)
+	if k := strings.LastIndex(list, ":"); k >= 0 {
+		list = list[k+1:]
+	}
+	n := 0
+	for _, f := range strings.Fields(list) {
+		if _, err := strconv.Atoi(f); err == nil {
+			n++
+		}
+	}
+	return n, out
+}
+
+// psrinfoOnline counts the CPUs psrinfo shows on-line or no-intr (what
+// sysconf(_SC_NPROCESSORS_ONLN) counts; in a zone with its own pool, only the pool's CPUs),
+// and returns that output; 0 when psrinfo is missing.
+func psrinfoOnline(t *testing.T) (int, string) {
+	psrinfo := sunTool("psrinfo")
+	if psrinfo == "" {
+		return 0, ""
+	}
+	out, err := exec.Command(psrinfo).CombinedOutput()
+	if err != nil {
+		t.Logf("psrinfo: %v %q", err, out)
+		return 0, string(out)
+	}
+	n := 0
+	for _, l := range strings.Split(string(out), "\n") {
+		if f := strings.Fields(l); len(f) >= 2 && (f[1] == "on-line" || f[1] == "no-intr") {
+			n++
+		}
+	}
+	return n, string(out)
+}
+
 // TestReaderForksAuto: with readerforks auto and no affinity set, dreaderd starts one
-// reader fork per CPU it may use (Go's runtime.NumCPU counts the same mask), logs the
-// number, and its connection limit is that many forks times readerthreads.
+// reader fork per CPU it may use (Go's runtime.NumCPU counts the same mask, and on illumos
+// the same zone.cpu-cap), logs the number, and its connection limit is that many forks
+// times readerthreads.
 // Fails on main: "auto" was read as 0, so no reader fork started.
 func TestReaderForksAuto(t *testing.T) {
-	want := expectedAuto(runtime.NumCPU())
+	want := expectedAuto(t, runtime.NumCPU())
 	_, spool := spoolStore(t)
 	s := NewReaderSite(t, ReaderOptions{Spool: spool,
 		Config: map[string]string{"readerforks": "auto", "readerfeedforks": "0"}})
@@ -147,7 +257,7 @@ func TestReaderForksAutoTaskset(t *testing.T) {
 	if len(cpus) < 2 {
 		t.Skipf("this process may use %d CPU(s), the test needs 2", len(cpus))
 	}
-	want := expectedAuto(2)
+	want := expectedAuto(t, 2)
 
 	_, spool := spoolStore(t)
 	s := NewReaderSite(t, ReaderOptions{Spool: spool, NoStart: true,
@@ -200,6 +310,50 @@ func TestReaderForksAutoCgroupQuota(t *testing.T) {
 		t.Errorf("readerforks auto log line gives %d, want 2; output:\n%s", n, s.Proc.Stderr())
 	}
 	expectReaderForks(t, s, 2)
+}
+
+// TestReaderForksAutoZone: on illumos and Solaris, readerforks auto starts one reader fork
+// per CPU online (psrinfo), lowered to the processor set the process is bound to (psrset)
+// and to the zone's CPU cap (prctl zone.cpu-cap, rounded up). It reads these with the
+// system tools rather than trusting runtime.NumCPU. Where no cap or set applies (as on the
+// OmniOS CI VM), it checks the CPUs online. Fails on main in a capped zone: a zone with
+// 56 CPUs and zone.cpu-cap 800 started 56 reader forks, not 8.
+func TestReaderForksAutoZone(t *testing.T) {
+	if !isSun() {
+		t.Skip("illumos and Solaris only")
+	}
+	if sunTool("psrinfo") == "" || sunTool("prctl") == "" {
+		t.Skip("psrinfo or prctl not installed")
+	}
+	online, info := psrinfoOnline(t)
+	if online == 0 {
+		t.Skipf("psrinfo shows no CPU on-line:\n%s", info)
+	}
+	pset, psout := psetCPUs(t)
+	capPct, prout := zoneCPUCap(t)
+	t.Logf("psrinfo: %d on-line; psrset: %d CPUs; zone.cpu-cap: %d; runtime.NumCPU: %d\n%s%s%s",
+		online, pset, capPct, runtime.NumCPU(), info, psout, prout)
+
+	cpus := online
+	if pset > 0 && pset < cpus {
+		cpus = pset
+	}
+	if c := (capPct + 99) / 100; capPct > 0 && c < cpus {
+		cpus = c
+	}
+	want := max(1, min(cpus, readerForksAutoCap))
+	if goWant := expectedAuto(t, runtime.NumCPU()); goWant != want {
+		t.Logf("runtime.NumCPU gives %d reader forks, the system tools %d", goWant, want)
+	}
+
+	_, spool := spoolStore(t)
+	s := NewReaderSite(t, ReaderOptions{Spool: spool,
+		Config: map[string]string{"readerforks": "auto", "readerfeedforks": "0"}})
+	if n := autoForks(t, s); n != -2 && n != want {
+		t.Errorf("readerforks auto log line gives %d, want %d; output:\n%s", n, want, s.Proc.Stderr())
+	}
+	expectReaderForks(t, s, want)
+	expectMaxConnects(t, s, want*4)
 }
 
 // allowedCPUs returns the CPU numbers this process may run on (Cpus_allowed_list).
