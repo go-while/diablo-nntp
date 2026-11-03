@@ -3979,7 +3979,11 @@ cdmap(const char *path, off_t off, int *psize, int cSize, int *multiArtFile)
 	    logit(LOG_CRIT, "Queue batch file indicates compressed file and compression not enabled");
 #endif
 	} else {
+#ifdef __OpenBSD__
+	    ptr = xreadmap(mc->mc_Fd, (size_t)*psize + *multiArtFile, off);
+#else
 	    ptr = xmap(NULL, *psize + *multiArtFile, PROT_READ, MAP_SHARED, mc->mc_Fd, off);
+#endif
 	    if (ptr == NULL)
 		return(ptr);
 	    if (ptr && HeaderOnlyFeed==0) {
@@ -4152,4 +4156,3 @@ dtstamp(void)
     sprintf(buf, "%4d.%03d ", dt / 1000, dt % 1000);
     return(buf);
 }
-

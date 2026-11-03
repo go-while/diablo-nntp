@@ -5242,6 +5242,9 @@ MapArticle(int fd, char *fname, char **base, History *h, int *extra, int *artSiz
         logit(LOG_ERR, "Article was stored compressed and compression support has not been enabled\n");
 #endif
     } else {
+#ifdef __OpenBSD__
+	    *base = xreadmap(fd, (size_t)h->bsize + 1, h->boffset);
+#else
 	    *base = xmap(
 		NULL, 
 		h->bsize + 1, 
@@ -5250,6 +5253,7 @@ MapArticle(int fd, char *fname, char **base, History *h, int *extra, int *artSiz
 		fd, 
 		h->boffset
 	    );
+#endif
 	    *artSize = h->bsize;
     }
 
@@ -5395,4 +5399,3 @@ DoSpoolStats(int which) {
 	LockFeedRegion(HostStats, XLOCK_UN, FSTATS_SPOOL);
     }
 }
-

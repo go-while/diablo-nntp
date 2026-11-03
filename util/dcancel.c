@@ -406,7 +406,11 @@ MapArticle(int fd, char *fname, off_t offset, uint32 size, int exp, int *artSize
 #endif
     } else {
 	mmapLen = size;
+#ifdef __OpenBSD__
+	mmapBase = xreadmap(fd, mmapLen, offset);
+#else
 	mmapBase = xmap(NULL, mmapLen, PROT_READ, MAP_SHARED, fd, offset);
+#endif
 	if (mmapBase != NULL) {
 	    *artSize = size;
 	    *compressed = 0;
@@ -931,4 +935,3 @@ CancelOverArt(OverInfo *ov, artno_t artNo)
     }
     return(r);
 }
-

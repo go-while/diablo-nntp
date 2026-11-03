@@ -294,6 +294,10 @@ MapArticle(int fd, char *fname, char **base, History *h, int *extra, int *artSiz
         fprintf(LogFo, "Article is on a compressed spool and compression support has not been enabled\n");
 #endif
     } else {
+#ifdef __OpenBSD__
+	    *base = xreadmap(fd, (size_t)h->bsize + *extra + 1,
+		h->boffset - *extra);
+#else
 	    *base = xmap(
 		NULL, 
 		h->bsize + *extra + 1, 
@@ -302,6 +306,7 @@ MapArticle(int fd, char *fname, char **base, History *h, int *extra, int *artSiz
 		fd, 
 		h->boffset - *extra
 	    );
+#endif
 	    *artSize = h->bsize;
     }
 
@@ -550,4 +555,3 @@ LookupHash(hash_t hv, const char *msgid, History *ph)
     }
     return(rv);
 }
-

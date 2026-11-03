@@ -14,11 +14,58 @@
 #include "defs.h"
 
 Prototype void *xmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset);
+Prototype void *xreadmap(int fd, size_t len, off_t offset);
 Prototype void xadvise(const void *ptr, off_t bytes, int how);
 
 Prototype void xunmap(void *addr, size_t len);
 
 static int XPageMask;
+
+#ifdef __OpenBSD__
+/* A private, munmap-compatible snapshot for file data that must be current.
+ * Match mmap's zero-filled final partial page, but reject pages beyond EOF. */
+void *
+xreadmap(int fd, size_t len, off_t offset)
+{
+    struct stat st;
+    size_t page, available, padding, done = 0;
+    char *p;
+
+    if (fstat(fd, &st) < 0)
+        return(NULL);
+    page = (size_t)getpagesize();
+    if (offset < 0 || len == 0 || offset >= st.st_size || page == 0 ||
+        (uint64_t)(st.st_size - offset) > (uint64_t)((size_t)-1)) {
+        errno = EINVAL;
+        return(NULL);
+    }
+    available = (size_t)(st.st_size - offset);
+    padding = (page - (size_t)(st.st_size % (off_t)page)) % page;
+    if (len > available && len - available > padding) {
+        errno = EINVAL;
+        return(NULL);
+    }
+    p = mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    if (p == MAP_FAILED)
+        return(NULL);
+    if (available > len)
+        available = len;
+    while (done < available) {
+        ssize_t n = pread(fd, p + done, available - done, offset + (off_t)done);
+        if (n > 0) {
+            done += (size_t)n;
+        } else if (n < 0 && errno == EINTR) {
+            continue;
+        } else {
+            int error = n == 0 ? EIO : errno;
+            munmap(p, len);
+            errno = error;
+            return(NULL);
+        }
+    }
+    return(p);
+}
+#endif
 
 void *
 xmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset)
@@ -121,4 +168,3 @@ xunmap(void *ptr, size_t len)
 	logit(LOG_CRIT, "munmap fails");
     }
 }
-
