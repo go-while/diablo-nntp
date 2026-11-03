@@ -544,7 +544,7 @@ typedef struct ArtTypeList {
 
 #define HGF_FAST	0x01
 #define HGF_NOSEARCH	0x02
-#define HGF_MLOCK	0x03
+#define HGF_MLOCK	0x10
 #define HGF_READONLY	0x04
 #define HGF_EXCHECK	0x08
 
