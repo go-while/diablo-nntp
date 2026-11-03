@@ -1,17 +1,22 @@
 package e2e
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/go-while/nntp-testkit/fakeserver"
 )
 
 // TestHistoryReadOnlyWaitsForCreator: a program that opens the history
@@ -94,7 +99,7 @@ func TestHistoryFastCreatorKeepsLock(t *testing.T) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, filepath.Join(s.Bin, "diload"), "-f", "-h", "1m", hist)
 	cmd.Dir = s.Dir
-	cmd.Env = append(append(os.Environ(), s.Env...), "LD_PRELOAD="+so, "LOCKFAULT=unlocksleep")
+	cmd.Env = append(append(os.Environ(), s.Env...), lockFaultEnv(so), "LOCKFAULT=unlocksleep")
 	cmd.Stdin = strings.NewReader("")
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
@@ -209,7 +214,7 @@ end
 	t.Run("NoLockTaken", func(t *testing.T) {
 		so := lockFaultShim(t)
 		log := filepath.Join(t.TempDir(), "setlocks")
-		if got := running(t, "LD_PRELOAD="+so, "LOCKFAULT_SETLOG="+log); got != "00001" {
+		if got := running(t, lockFaultEnv(so), "LOCKFAULT_SETLOG="+log); got != "00001" {
 			t.Errorf("doutq with peer.S00001 locked: running %q, want 00001", got)
 		}
 		b, _ := os.ReadFile(log)
@@ -278,18 +283,21 @@ func TestDexpireoverLockTimeoutKept(t *testing.T) {
 	}
 }
 
-// lockFaultShim builds an LD_PRELOAD library (Linux) for fcntl locks.
+// lockFaultShim builds an LD_PRELOAD library (Linux, illumos) for fcntl locks; lockFaultEnv
+// gives the variable that loads it.
 //
 //	LOCKFAULT=eintr        fail the first blocking lock (F_SETLKW) with EINTR
 //	LOCKFAULT=enolck       fail every blocking lock with ENOLCK
 //	LOCKFAULT=unlocksleep  sleep 300 ms before and after unlocking bytes 0-3
+//	LOCKFAULT=holdlog      no fault; with LOCKFAULT_PIDLOG=f log "pid start" before each
+//	                       blocking lock, so a test can signal the process that waits
 //	LOCKFAULT_FILE=s       eintr and enolck only for files whose path holds s
 //	LOCKFAULT_LOG=f        log each blocking lock (not unlocks) as "W|R start len"
 //	LOCKFAULT_SETLOG=f     log every F_SETLK/F_SETLKW as "cmd type start len path"
 func lockFaultShim(t *testing.T) string {
 	t.Helper()
-	if runtime.GOOS != "linux" {
-		t.Skip("the lock fault injector uses LD_PRELOAD on Linux")
+	if runtime.GOOS != "linux" && runtime.GOOS != "illumos" {
+		t.Skip("the lock fault injector uses LD_PRELOAD on Linux and illumos")
 	}
 	cc := wmCC(t)
 	dir := t.TempDir()
@@ -298,13 +306,28 @@ func lockFaultShim(t *testing.T) string {
 	if err := os.WriteFile(c, []byte(lockFaultSource), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command(cc, "-shared", "-fPIC", "-o", so, c, "-ldl").CombinedOutput(); err != nil {
+	args := []string{"-shared", "-fPIC", "-o", so, c, "-ldl"}
+	if runtime.GOOS == "illumos" {
+		args = append([]string{"-m64"}, args...) // the Diablo programs are 64-bit
+	}
+	if out, err := exec.Command(cc, args...).CombinedOutput(); err != nil {
 		t.Fatalf("build fault injector: %v\n%s", err, out)
 	}
 	return so
 }
 
+// lockFaultEnv is the environment entry that preloads the fault injector so: LD_PRELOAD, or on
+// illumos LD_PRELOAD_64, so that a 32-bit program (/bin/sh there can be one) is not given the
+// 64-bit library.
+func lockFaultEnv(so string) string {
+	if runtime.GOOS == "illumos" {
+		return "LD_PRELOAD_64=" + so
+	}
+	return "LD_PRELOAD=" + so
+}
+
 const lockFaultSource = `#define _GNU_SOURCE
+#define __EXTENSIONS__
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -339,7 +362,11 @@ fault(int fd, int cmd, struct flock *fl)
 
     if (cmd != F_SETLK && cmd != F_SETLKW)
 	return 0;
+#ifdef __sun
+    snprintf(link, sizeof(link), "/proc/self/path/%d", fd);
+#else
     snprintf(link, sizeof(link), "/proc/self/fd/%d", fd);
+#endif
     n = readlink(link, path, sizeof(path) - 1);
     path[n > 0 ? n : 0] = 0;
     snprintf(line, sizeof(line), "%s %c %lld %lld %s\n",
@@ -355,6 +382,11 @@ fault(int fd, int cmd, struct flock *fl)
     snprintf(line, sizeof(line), "%c %lld %lld\n", fl->l_type == F_WRLCK ? 'W' : 'R',
 	(long long)fl->l_start, (long long)fl->l_len);
     logline("LOCKFAULT_LOG", line);
+    if (strcmp(mode, "holdlog") == 0) {
+	snprintf(line, sizeof(line), "%d %lld\n", (int)getpid(), (long long)fl->l_start);
+	logline("LOCKFAULT_PIDLOG", line);
+	return 0;
+    }
     if (strcmp(mode, "eintr") == 0 && calls++ == 0)
 	return EINTR;
     if (strcmp(mode, "enolck") == 0)
@@ -444,7 +476,7 @@ func TestKPDBLockInterrupted(t *testing.T) {
 	log := filepath.Join(t.TempDir(), "locks")
 
 	cmd := exec.Command(dkp, "-w", db, "e2e.test", "NE=0000000301")
-	cmd.Env = append(os.Environ(), "LD_PRELOAD="+so, "LOCKFAULT=eintr", "LOCKFAULT_LOG="+log)
+	cmd.Env = append(os.Environ(), lockFaultEnv(so), "LOCKFAULT=eintr", "LOCKFAULT_LOG="+log)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("dkp -w: %v\n%s", err, out)
 	}
@@ -470,7 +502,7 @@ func TestKPDBLockInterrupted(t *testing.T) {
 func TestKPDBReadLockFailureKeepsReader(t *testing.T) {
 	so := lockFaultShim(t)
 	s := NewReaderSite(t, ReaderOptions{SpoolAddr: "127.0.0.1:1", NoStart: true})
-	s.Env = append(s.Env, "LD_PRELOAD="+so, "LOCKFAULT=enolck", "LOCKFAULT_FILE=dactive.kp")
+	s.Env = append(s.Env, lockFaultEnv(so), "LOCKFAULT=enolck", "LOCKFAULT_FILE=dactive.kp")
 	_, port, _ := strings.Cut(s.Addr, ":")
 	startReader(t, s, "[127.0.0.1]:"+port)
 
@@ -502,7 +534,7 @@ func TestKPDBLockFailureStops(t *testing.T) {
 				t.Fatal(err)
 			}
 			cmd := exec.Command(dkp, "-w", db, tc.key, tc.tokval)
-			cmd.Env = append(os.Environ(), "LD_PRELOAD="+so, "LOCKFAULT=enolck")
+			cmd.Env = append(os.Environ(), lockFaultEnv(so), "LOCKFAULT=enolck")
 			out, err := cmd.CombinedOutput()
 			if err == nil {
 				t.Errorf("dkp -w %s %s exited 0 without its lock:\n%s", tc.key, tc.tokval, out)
@@ -515,4 +547,162 @@ func TestKPDBLockFailureStops(t *testing.T) {
 			}
 		})
 	}
+}
+
+// lockHolder builds and starts a program that takes a write lock on 4 bytes of file at off
+// (as hflock does) and holds it until the returned release function is called.
+func lockHolder(t *testing.T, file string, off int64) (release func()) {
+	t.Helper()
+	cc := wmCC(t)
+	dir := t.TempDir()
+	c := filepath.Join(dir, "holder.c")
+	bin := filepath.Join(dir, "holder")
+	src := `#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+int
+main(int ac, char **av)
+{
+    struct flock fl;
+    char c;
+    int fd = open(av[1], O_RDWR);
+
+    memset(&fl, 0, sizeof(fl));
+    fl.l_type = F_WRLCK;
+    fl.l_whence = SEEK_SET;
+    fl.l_start = atoll(av[2]);
+    fl.l_len = 4;
+    if (fd < 0 || fcntl(fd, F_SETLKW, &fl) < 0) {
+	perror("lock");
+	return 1;
+    }
+    printf("locked\n");
+    fflush(stdout);
+    while (read(0, &c, 1) > 0)
+	;
+    return 0;
+}
+`
+	if err := os.WriteFile(c, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(cc, "-o", bin, c).CombinedOutput(); err != nil {
+		t.Fatalf("build lock holder: %v\n%s", err, out)
+	}
+	cmd := exec.Command(bin, file, strconv.FormatInt(off, 10))
+	in, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	line, err := bufio.NewReader(out).ReadString('\n')
+	if err != nil || line != "locked\n" {
+		t.Fatalf("lock holder: %q %v", line, err)
+	}
+	done := false
+	release = func() {
+		if !done {
+			done = true
+			in.Close()
+			cmd.Wait()
+		}
+	}
+	t.Cleanup(release)
+	return release
+}
+
+// TestKPDBLockWaitSignal: a dreaderd fork that waits for a record lock to give a fed article
+// its number, and gets a signal meanwhile (SIGUSR1, which the reader handles), keeps waiting:
+// the group's NE changes only once the lock is free. On illumos dreaderd's signal() has no
+// SA_RESTART, so the signal ends the wait with EINTR, and before #260 the fork then updated NE
+// without the lock. The shim (holdlog) logs which process waits on the record, so only that one
+// is signalled. On Linux the wait restarts by itself, so this passes there either way.
+func TestKPDBLockWaitSignal(t *testing.T) {
+	so := lockFaultShim(t)
+	pidlog := filepath.Join(t.TempDir(), "pids")
+	st, spool := spoolStore(t)
+	s := NewReaderSite(t, ReaderOptions{Spool: spool, NoStart: true})
+	s.Env = append(s.Env, lockFaultEnv(so), "LOCKFAULT=holdlog", "LOCKFAULT_FILE=dactive.kp", "LOCKFAULT_PIDLOG="+pidlog)
+	_, port, _ := strings.Cut(s.Addr, ":")
+	startReader(t, s, "[127.0.0.1]:"+port)
+
+	r := s.Reader(t)
+	expect(t, r, 211, "GROUP e2e.test") // the database is open (and sorted)
+	expect(t, r, 205, "QUIT")
+	db := filepath.Join(s.Dir, "dactive.kp")
+	live := regexp.MustCompile(`(?m)^\+[0-9a-f]+\.[0-9a-f]+:e2e\.test\b.*$`)
+	record := func() (int64, string) {
+		data, err := os.ReadFile(db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m := live.FindIndex(data)
+		if m == nil {
+			t.Fatalf("no live e2e.test record in dactive.kp:\n%s", data)
+		}
+		ne := regexp.MustCompile(`NE=([0-9]+)`).FindSubmatch(data[m[0]:m[1]])
+		if ne == nil {
+			return int64(m[0]), ""
+		}
+		return int64(m[0]), string(ne[1])
+	}
+	off, ne0 := record()
+	release := lockHolder(t, db, off)
+	os.Remove(pidlog)
+
+	p := s.dialFrom(t, PeerIP)
+	a := newArticle(msgID(t), "e2e.test", "lock wait", "body")
+	head, body := splitArticle(a)
+	id := headerValue(head, "Message-ID")
+	st.AddArticle("e2e.test", fakeserver.Article{MessageID: id, Headers: head, Body: body})
+	expect(t, p, 335, "IHAVE %s", id)
+	time.Sleep(time.Second) // other waits on the record are logged by now
+	// The waits on the record logged before the article was sent (the reader fork of the
+	// GROUP above may wait there too) are left alone; each process that starts a wait on it
+	// after that gets the signal. All are dreaderd forks that handle SIGUSR1 (the DNS fork,
+	// which does not, never locks a record).
+	waits := func() []int {
+		var pids []int
+		b, _ := os.ReadFile(pidlog)
+		for _, l := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+			var pp int
+			var start int64
+			if n, _ := fmt.Sscanf(l, "%d %d", &pp, &start); n == 2 && start == off {
+				pids = append(pids, pp)
+			}
+		}
+		return pids
+	}
+	before := len(waits())
+	if _, err := p.Conn.Write([]byte(wire(a))); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 10*time.Second, "the feed fork waiting for the record lock", func() bool { return len(waits()) > before })
+	time.Sleep(300 * time.Millisecond) // into the wait
+	for _, pid := range waits()[before:] {
+		if err := syscall.Kill(pid, syscall.SIGUSR1); err != nil && err != syscall.ESRCH {
+			t.Fatal(err)
+		}
+	}
+	// before #260 the unlocked update came about a second after the signal
+	for end := time.Now().Add(3 * time.Second); time.Now().Before(end); time.Sleep(100 * time.Millisecond) {
+		if _, ne := record(); ne != ne0 {
+			t.Fatalf("NE went from %s to %s while the record lock was held (the signal ended the wait)", ne0, ne)
+		}
+	}
+	release()
+	p.Conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	if line, err := p.R.ReadString('\n'); err != nil || !strings.HasPrefix(line, "235") {
+		t.Fatalf("IHAVE after the lock was released: %q %v", line, err)
+	}
+	p.Conn.SetReadDeadline(time.Time{})
+	waitFor(t, 10*time.Second, "NE after the lock was released", func() bool { _, ne := record(); return ne != ne0 })
 }
