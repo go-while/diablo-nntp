@@ -12,6 +12,46 @@
 
 #include "defs.h"
 
+/*
+ * Read one line of any length from fi into *pbuf (grown as needed), without
+ * its newline.  Returns 0 at the end of the input, else 1 (also for a last
+ * line without a newline).  A line that cannot be stored (out of memory) is
+ * skipped whole and reported, so its tail is never read as a line of its own.
+ */
+static int
+readLine(FILE *fi, char **pbuf, size_t *psize)
+{
+    size_t len = 0;
+    int c;
+    int lost = 0;
+
+    while ((c = getc(fi)) != EOF && c != '\n') {
+	if (lost)
+	    continue;
+	if (len + 1 >= *psize) {
+	    size_t nsize = (*psize) ? *psize * 2 : 1024;
+	    char *nbuf = realloc(*pbuf, nsize);
+
+	    if (nbuf == NULL) {
+		lost = 1;
+		continue;
+	    }
+	    *pbuf = nbuf;
+	    *psize = nsize;
+	}
+	(*pbuf)[len++] = c;
+    }
+    if (c == EOF && len == 0 && !lost)
+	return(0);
+    if (lost) {
+	fprintf(stderr, "Input line too long for memory, skipped\n");
+	len = 0;
+    }
+    if (*pbuf != NULL)
+	(*pbuf)[len] = 0;
+    return(1);
+}
+
 int
 main(int ac, char **av)
 {
@@ -184,10 +224,15 @@ main(int ac, char **av)
     }
 
     if (key == NULL && (readMode || writeMode)) {
-	char buf[1024];
+	char *buf = NULL;
+	size_t bufSize = 0;
 
-	while (fgets(buf, sizeof(buf), stdin) != NULL) {
-	    char *key = strtok(buf, " \t\n");
+	/*
+	 * A line of any length is one record: with fgets() into a fixed
+	 * buffer the rest of a long line was taken as a record of its own.
+	 */
+	while (readLine(stdin, &buf, &bufSize)) {
+	    char *key = (buf != NULL) ? strtok(buf, " \t\n") : NULL;
 	    char *tokval = (key) ? strtok(NULL, " \t\n") : NULL;
 
 	    if (deleteMode && key) {
@@ -206,6 +251,7 @@ main(int ac, char **av)
 		}
 	    }
 	}
+	free(buf);
     } else if (deleteMode && key) {
 	KPDBDelete(db, key);
     } else if (writeMode && key && tokval && (val = strchr(tokval, '='))) {
