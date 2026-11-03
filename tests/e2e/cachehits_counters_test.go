@@ -28,11 +28,14 @@ package e2e
 
 import (
 	"bufio"
+	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -390,4 +393,65 @@ func TestDexpirescoringLastEntry(t *testing.T) {
 	if e := es[n-1]; e.readArt < 195 || e.readArt > 200 || e.hits < 395 || e.hits > 400 {
 		t.Errorf("last entry ReadArt=%d Hits=%d, want about 200 and 400 (not decayed)", e.readArt, e.hits)
 	}
+}
+
+// TestDexpirescoringDamaged: dexpirescoring walks the scoreboard's chains under the
+// file lock.  A damaged file must not make it loop or read past the file:
+//
+//	loop        every bucket and the one entry's che_Next point to that entry
+//	short file  the header claims 8192 bytes, the file holds 4096, and the links
+//	            point into the missing page (SIGBUS before)
+func TestDexpirescoringDamaged(t *testing.T) {
+	s, feed := scoringReaderSite(t, nil)
+	path := filepath.Join(s.Dir, "cache.hits")
+	feed("e2e.test", newArticle(msgID(t), "e2e.test", "damaged", "body"))
+
+	// write builds a 16-bucket scoreboard of fileLen bytes whose header says end,
+	// with every bucket and che_Next of the entry at 96 set to link.
+	write := func(end, fileLen, link uint32) {
+		b := make([]byte, fileLen)
+		le := binary.LittleEndian
+		le.PutUint32(b[0:], 0xD1C2B3A4)
+		le.PutUint32(b[4:], 1)
+		le.PutUint32(b[8:], 16)
+		le.PutUint32(b[12:], 96+cheSize)
+		le.PutUint32(b[16:], end)
+		for k := 0; k < 16; k++ {
+			le.PutUint32(b[32+4*k:], link)
+		}
+		le.PutUint32(b[96+32:], link)
+		if err := os.WriteFile(path+".new", b, 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(path+".new", path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run := func() (string, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, filepath.Join(s.Bin, "dexpirescoring"), "-v")
+		cmd.Dir = s.Dir
+		cmd.Env = append(os.Environ(), s.Env...)
+		out, err := cmd.CombinedOutput()
+		if ctx.Err() != nil {
+			return string(out), fmt.Errorf("still running after 15s")
+		}
+		return string(out), err
+	}
+
+	t.Run("loop", func(t *testing.T) {
+		write(4096, 4096, 96)
+		if out, err := run(); err != nil {
+			t.Errorf("dexpirescoring on a looping chain: %v\n%s", err, out)
+		}
+	})
+	t.Run("short file", func(t *testing.T) {
+		write(8192, 4096, 6000)
+		out, err := run()
+		var ee *exec.ExitError
+		if !errors.As(err, &ee) || ee.ExitCode() != 1 || !strings.Contains(out, "damaged header") {
+			t.Errorf("dexpirescoring on a header past the file: %v, want exit 1 and \"damaged header\"\n%s", err, out)
+		}
+	})
 }

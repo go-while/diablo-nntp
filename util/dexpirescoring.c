@@ -40,19 +40,24 @@ allocTmpCopy(const char *buf, int bufLen)
 
 /*
  * We hold the cache.hits lock, so no entry is added meanwhile; dreaderd's
- * readers still update the counters (atomically) while we run.
+ * readers still update the counters (atomically) while we run.  main()
+ * checked the header: the hash table fits and one entry fits after the
+ * header.  A damaged chain ends the walk instead of leaving the map or
+ * looping.
  */
 struct CacheHitEntry*
 FindCacheHitEntry(struct CacheHash_t *ch) {
     uint32 *i=NULL;
-    /* main() checked that the end leaves room for one entry */
-    uint32 max=CacheHitsEnd-sizeof(struct CacheHitEntry);
-    struct CacheHitEntry *che=NULL;
     struct CacheHitHead *chh=(struct CacheHitHead *)CacheHits;
+    uint32 first=sizeof(struct CacheHitHead)+chh->chh_hashSize*sizeof(uint32);
+    uint32 max=CacheHitsEnd-sizeof(struct CacheHitEntry);
+    uint32 hops=(CacheHitsEnd-first)/sizeof(struct CacheHitEntry);
+    struct CacheHitEntry *che=NULL;
     i = (uint32*) (CacheHits+sizeof(struct CacheHitHead)+((ch->h1^ch->h2)%chh->chh_hashSize)*sizeof(uint32));
 
-    /* the last entry may end exactly at CacheHitsEnd */
-    while ((*i != 0) && (*i <= max)) {
+    /* the last entry may end exactly at CacheHitsEnd; a chain longer
+     * than the entries that fit is a loop */
+    while (*i != 0 && *i >= first && *i <= max && hops-- > 0) {
 	che = (struct CacheHitEntry*) (CacheHits + (*i));
 	if (CacheHashEqual(ch, CHE_HASH(che))) {
 	    return che;
@@ -101,8 +106,9 @@ main(int ac, char **av) {
     }
     hflock(CacheHitsFD, 0, XLOCK_EX);
     r = read(CacheHitsFD, &chh, sizeof(struct CacheHitHead));
-    if ( (r < sizeof(struct CacheHitHead)) || (chh.chh_magic != CHMAGIC) || (chh.chh_version != CHVERSION) ||
-	 chh.chh_hashSize == 0 || chh.chh_end < sizeof(struct CacheHitHead) + sizeof(struct CacheHitEntry) ) {
+    /* the same checks as dreaderd, and room for one entry */
+    if (!CacheHitsUsable(CacheHitsFD, &chh, r) ||
+	chh.chh_end < sizeof(struct CacheHitHead) + sizeof(struct CacheHitEntry)) {
 	fprintf(stderr, "Wrong version or damaged header, can not expire scoring\n");
 	hflock(CacheHitsFD, 0, XLOCK_UN);
 	exit(1);

@@ -37,6 +37,7 @@ Prototype int ExtractGroupHashInfo(const char *name, char *Hash, artno_t *artBas
 Prototype char *GetHash(GroupHashType *Hash, char *hashStr);
 Prototype void SetCacheHash(struct CacheHash_t* ch, const char *group, int iter, GroupHashType *method);
 Prototype int CacheHashEqual(const struct CacheHash_t *a, const struct CacheHash_t *b);
+Prototype int CacheHitsUsable(int fd, const struct CacheHitHead *chh, int r);
 
 #define P1	7834891
 #define P2	6017489
@@ -555,6 +556,27 @@ int
 CacheHashEqual(const struct CacheHash_t *a, const struct CacheHash_t *b)
 {
     return(a->h1 == b->h1 && a->h2 == b->h2 && a->iter == b->iter);
+}
+
+/*
+ * CacheHitsUsable() - the header read from cache.hits (r bytes) describes a
+ * scoreboard that fits in the file.
+ */
+int
+CacheHitsUsable(int fd, const struct CacheHitHead *chh, int r)
+{
+    struct stat st;
+
+    return(r == sizeof(*chh) &&
+	chh->chh_magic == CHMAGIC &&
+	chh->chh_version == CHVERSION &&
+	fstat(fd, &st) == 0 &&
+	chh->chh_hashSize != 0 &&
+	chh->chh_end >= sizeof(*chh) &&
+	chh->chh_newEntry >= sizeof(*chh) +
+	    (uint64_t)chh->chh_hashSize * sizeof(uint32) &&
+	chh->chh_end >= chh->chh_newEntry &&
+	st.st_size >= chh->chh_end);
 }
 
 static void

@@ -731,27 +731,6 @@ UpdateCacheHits(char *groupName, int grpIter, artno_t endNo, int cachehit) {
     return che;
 }
 
-/*
- * CacheHitsUsable() - the header read from cache.hits (r bytes) describes a
- * scoreboard that fits in the file.
- */
-static int
-CacheHitsUsable(int fd, const struct CacheHitHead *chh, int r)
-{
-    struct stat st;
-
-    return(r == sizeof(*chh) &&
-	chh->chh_magic == CHMAGIC &&
-	chh->chh_version == CHVERSION &&
-	fstat(fd, &st) == 0 &&
-	chh->chh_hashSize != 0 &&
-	chh->chh_end >= sizeof(*chh) &&
-	chh->chh_newEntry >= sizeof(*chh) +
-	    (uint64_t)chh->chh_hashSize * sizeof(uint32) &&
-	chh->chh_end >= chh->chh_newEntry &&
-	st.st_size >= chh->chh_end);
-}
-
 static int OpenCacheHitsOnce(void);
 
 /*
