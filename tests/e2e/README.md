@@ -331,7 +331,8 @@ its headers are present, off otherwise. The test binary can be built elsewhere
 with `CGO_ENABLED=0 go test -c` and copied to a machine without Go.
 `.github/workflows/ci-matrix.yml` does the same across a broad matrix on
 GitHub's runners (Ubuntu x64 and arm64, a libcanlock-less build, eight distro
-containers, FreeBSD, and best effort illumos, OpenBSD and NetBSD).
+containers, FreeBSD, and best effort illumos and NetBSD; OpenBSD is built but
+not tested, see ISSUES.md D-171).
 
 ### One distro container, locally
 
