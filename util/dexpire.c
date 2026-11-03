@@ -1011,6 +1011,7 @@ findSize(char *pathname, char *dirname)
 /*
  * Set or clear the expired flag of the record at pos from the flags on
  * disk now, under its hash chain lock as lib/history.c updates records.
+ * h is the copy read before the spool scan.
  */
 static int
 setExpired(const HistHead *hh, off_t pos, const History *h, int expired)
@@ -1024,7 +1025,9 @@ setExpired(const HistHead *hh, off_t pos, const History *h, int expired)
     if (hflock(HistoryFd, chainlock, XLOCK_EX) < 0)
 	return(-1);
     n = pread(HistoryFd, &cur, sizeof(cur), pos);
-    if (n == sizeof(cur) && cur.hv.h1 == h->hv.h1 && cur.hv.h2 == h->hv.h2) {
+    /* a record moved since the spool scan (dcancel -s) is left alone */
+    if (n == sizeof(cur) && cur.hv.h1 == h->hv.h1 && cur.hv.h2 == h->hv.h2 &&
+	cur.iter == h->iter && cur.boffset == h->boffset) {
 	if (expired)
 	    cur.exp |= EXPF_EXPIRED;
 	else
