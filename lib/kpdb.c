@@ -134,6 +134,30 @@ KPDBFatalIO(KPDB *kpdb, const char *operation)
     exit(1);
 }
 
+#ifdef __OpenBSD__
+/* kp_MapBase is an anonymous snapshot on OpenBSD.  Refresh in place so
+ * offsets and returned record pointers retain the existing API semantics. */
+static void
+KPDBRefresh(KPDB *kpdb)
+{
+    size_t done = 0, len = (size_t)kpdb->kp_MapSize;
+    char *p = (char *)kpdb->kp_MapBase;
+
+    while (done < len) {
+        ssize_t n = pread(kpdb->kp_Fd, p + done, len - done, (off_t)done);
+        if (n > 0) {
+            done += (size_t)n;
+        } else if (n < 0 && errno == EINTR) {
+            continue;
+        } else {
+            if (n == 0)
+                errno = EIO;
+            KPDBFatalIO(kpdb, "snapshot refresh");
+        }
+    }
+}
+#endif
+
 /*
  * KPDBLockRec() - lock a record, or the append lock at offset 4, for a
  * read-modify-write.  Without the lock a number could be handed out twice
@@ -330,6 +354,9 @@ KPDBReOpen(KPDB *kpdb)
 		}
 	    }
 
+#ifdef __OpenBSD__
+	    kpdb->kp_MapBase = xreadmap(kpdb->kp_Fd, st.st_size, 0);
+#else
 	    kpdb->kp_MapBase = xmap(
 		NULL,
 		st.st_size, 
@@ -338,6 +365,7 @@ KPDBReOpen(KPDB *kpdb)
 		kpdb->kp_Fd,
 		0
 	    );
+#endif
 	    if (failed == 0 && kpdb->kp_MapBase != NULL) {
 		kpdb->kp_MapSize = (int)st.st_size;
 
@@ -432,12 +460,19 @@ KPDBReadRecordAt(KPDB *kpdb, int offset, int lockMe, int *preclen)
     if (offset >= kpdb->kp_MapSize)
 	return(NULL);
 
+#ifdef __OpenBSD__
+    KPDBRefresh(kpdb);
+#endif
     for (sl = 0; sl < sm && rec[sl] != '\n'; ++sl)
 	;
     if (sl < sm)
 	++sl;
     if (lockMe)
 	KPDBLockRec(kpdb, rec - kpdb->kp_MapBase);
+#ifdef __OpenBSD__
+    if (lockMe)
+        KPDBRefresh(kpdb);
+#endif
     if (preclen)
 	*preclen = sl;
     return(rec);
@@ -568,6 +603,9 @@ KPDBLock(KPDB *kpdb, const char *rec)
 {
     if (hflock(kpdb->kp_Fd, rec - kpdb->kp_MapBase, XLOCK_EX) < 0)
 	KPDBLockWarn(kpdb);
+#ifdef __OpenBSD__
+    KPDBRefresh(kpdb);
+#endif
 }
 
 void 
@@ -592,12 +630,19 @@ KPDBScanFirst(KPDB *kpdb, int lockMe, int *preclen)
     int sl;
     int sm = kpdb->kp_MapSize - (rec - kpdb->kp_MapBase);
 
+#ifdef __OpenBSD__
+    KPDBRefresh(kpdb);
+#endif
     for (sl = 0; sl < sm && rec[sl] != '\n'; ++sl)
 	;
     if (sl < sm)
 	++sl;
     if (lockMe)
 	KPDBLockRec(kpdb, rec - kpdb->kp_MapBase);
+#ifdef __OpenBSD__
+    if (lockMe)
+        KPDBRefresh(kpdb);
+#endif
 
     *preclen = sl;
 
@@ -613,6 +658,9 @@ KPDBScanNext(KPDB *kpdb, int offset, int lockMe, int *preclen)
     if (lockMe) {
 	hflock(kpdb->kp_Fd, offset, XLOCK_UN);
     }
+#ifdef __OpenBSD__
+    KPDBRefresh(kpdb);
+#endif
     for (;;) {
 	const char *rec = kpdb->kp_MapBase + offset;
 
@@ -631,6 +679,10 @@ KPDBScanNext(KPDB *kpdb, int offset, int lockMe, int *preclen)
 	    if (rec[0] == '+') {
 		if (lockMe)
 		    KPDBLockRec(kpdb, rec - kpdb->kp_MapBase);
+#ifdef __OpenBSD__
+		if (lockMe)
+		    KPDBRefresh(kpdb);
+#endif
 		if (rec[0] == '+') {
 		    return(rec - kpdb->kp_MapBase);
 		}
@@ -762,8 +814,8 @@ KPDBDeleteTornLine(KPDB *kpdb, off_t nl)
     }
 }
 
-int
-KPDBWrite(KPDB *kpdb, const char *key, const char *tok, const char *data, int lockMe)
+static int
+KPDBWriteImpl(KPDB *kpdb, const char *key, const char *tok, const char *data, int lockMe)
 {
     /*
      * Best case - simple replacement of existing data, no append required
@@ -863,6 +915,9 @@ KPDBWrite(KPDB *kpdb, const char *key, const char *tok, const char *data, int lo
 
 	KPDBLockRec(kpdb, 4);			/* append lock		*/
 	kpdb->kp_Lock4 = 1;			/* locked thru remap	*/
+#ifdef __OpenBSD__
+	KPDBRefresh(kpdb);
+#endif
 
 	/*
 	 * Bump aaaaaaaa and cccccccc, resort if necessary (we are already
@@ -1038,6 +1093,25 @@ append_done:
     return(0);
 }
 
+int
+KPDBWrite(KPDB *kpdb, const char *key, const char *tok, const char *data, int lockMe)
+{
+#ifdef __OpenBSD__
+    /* Any argument can point into the snapshot that lookup refreshes. */
+    char *k = strdup(key), *t = tok ? strdup(tok) : NULL, *d = strdup(data);
+    int result;
+    if (k == NULL || (tok != NULL && t == NULL) || d == NULL)
+        KPDBFatalIO(kpdb, "write argument allocation");
+    result = KPDBWriteImpl(kpdb, k, t, d, lockMe);
+    free(k);
+    free(t);
+    free(d);
+    return(result);
+#else
+    return(KPDBWriteImpl(kpdb, key, tok, data, lockMe));
+#endif
+}
+
 /*
  * KPDBDelete() - delete a KP record
  */
@@ -1078,10 +1152,19 @@ int KPDBLookupBinary(KPDB *kpdb, const char *key, int l, int b, int e);
 int
 KPDBLookup(KPDB *kpdb, const char *key, int lockMe, int forceCheck)
 {
+#ifdef __OpenBSD__
+    char *savedKey = strdup(key);
+    if (savedKey == NULL)
+        KPDBFatalIO(kpdb, "lookup key allocation");
+    key = savedKey;
+#endif
     int l = strlen(key);
     int found;
 
 again:
+#ifdef __OpenBSD__
+    KPDBRefresh(kpdb);
+#endif
     found = -1;
 
     /*
@@ -1191,6 +1274,9 @@ again:
 	    KPDBLockWarn(kpdb);
 	    locked = 0;
 	}
+#ifdef __OpenBSD__
+	KPDBRefresh(kpdb);
+#endif
 
 	/*
 	 * While we waited for the lock, another process may have replaced
@@ -1212,6 +1298,9 @@ again:
 	    goto again;
 	}
     }
+#ifdef __OpenBSD__
+    free(savedKey);
+#endif
     return(found);
 }
 
@@ -1466,12 +1555,17 @@ KPDBSort(KPDB *kpdb)
 	KPDBFatalIO(kpdb, "sort completion write");
     pagefree(ary, nal * sizeof(char *));
     kpdb->kp_Modified = 1;
+#ifdef __OpenBSD__
+    KPDBRefresh(kpdb);
+#endif
     return(0);
 }
 
 int
 KPDBAppendCount(KPDB *kpdb)
 {
+#ifdef __OpenBSD__
+    KPDBRefresh(kpdb);
+#endif
     return strtol(kpdb->kp_MapBase + A_OFF, NULL, 16);
 }
-

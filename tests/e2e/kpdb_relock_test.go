@@ -146,6 +146,7 @@ extern volatile int DebugOpt;
 void *zalloc(MemPool **mp, int bytes);
 void zfree(MemPool **mp, void *ptr, int bytes);
 void *xmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset);
+void *xreadmap(int fd, size_t len, off_t offset);
 void xunmap(void *addr, size_t len);
 void logit(int priority, const char *ctl, ...);
 int hflock(int fd, off_t offset, int flags);
@@ -181,6 +182,29 @@ xmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset)
     void *p = mmap(addr, len ? len : 1, prot, flags, fd, offset);
     return (p == MAP_FAILED) ? NULL : p;
 }
+
+#ifdef __OpenBSD__
+void *
+xreadmap(int fd, size_t len, off_t offset)
+{
+    size_t done = 0;
+    char *p = mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    if (p == MAP_FAILED)
+        return NULL;
+    while (done < len) {
+        ssize_t n = pread(fd, p + done, len - done, offset + (off_t)done);
+        if (n > 0)
+            done += (size_t)n;
+        else if (n < 0 && errno == EINTR)
+            continue;
+        else {
+            munmap(p, len);
+            return NULL;
+        }
+    }
+    return p;
+}
+#endif
 
 void xunmap(void *addr, size_t len) { munmap(addr, len ? len : 1); }
 
