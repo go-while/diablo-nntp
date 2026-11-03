@@ -27,6 +27,24 @@ int SetCacheDirs(const char *opt, CacheDirType *cachedir);
 
 struct DiabloOpts DOpts;
 
+/*
+ * Parse a whole decimal number in lo..hi into *out.  Returns 1 if valid,
+ * 0 (and leaves *out alone) otherwise.
+ */
+static int
+confRange(const char *opt, long lo, long hi, int *out)
+{
+    char *end;
+    long v;
+
+    errno = 0;
+    v = strtol(opt, &end, 10);
+    if (end == opt || *end != 0 || errno != 0 || v < lo || v > hi)
+	return(0);
+    *out = (int)v;
+    return(1);
+}
+
 void
 PrintVersion(void)
 {
@@ -113,6 +131,9 @@ initDOpts(void)
     DOpts.ReaderThreads = 40;
     DOpts.ReaderFeedForks = 2;
     DOpts.ReaderDns = 5;
+    DOpts.ReaderDnsCacheTTL = 300;
+    DOpts.ReaderDnsCacheNegTTL = 60;
+    DOpts.ReaderDnsCacheSize = 16384;
     DOpts.ReaderCacheMode = 1;
     DOpts.ReaderCacheHashSize = 4096;
     DOpts.ReaderXOverMode = 1;
@@ -326,6 +347,9 @@ LoadDiabloConfig(int ac, char **av)
 			DOpts.ReaderFeedForks = strtol(opt, NULL, 0);
 			optErr = 0;
 		    }
+		} else if (strcasecmp(cmd, "readerdnscachesize") == 0) {
+		    if (opt && confRange(opt, 0, 1048576, &DOpts.ReaderDnsCacheSize))
+			optErr = 0;
 		} else if (strncasecmp(cmd, "path_", 5) == 0) {
 		    /*
 		     * Paths (defaults already preset in globals)
@@ -644,6 +668,12 @@ SetCommand(FILE *fo, char *cmd, char *opt, int *cmdErr)
 		DOpts.ReaderThreads = strtol(opt, NULL, 0);
 		optErr = 0;
 	    }
+	} else if (strcasecmp(cmd, "readerdnscachettl") == 0) {
+	    if (opt && confRange(opt, 0, 86400, &DOpts.ReaderDnsCacheTTL))
+		optErr = 0;
+	} else if (strcasecmp(cmd, "readerdnscachenegttl") == 0) {
+	    if (opt && confRange(opt, 0, 86400, &DOpts.ReaderDnsCacheNegTTL))
+		optErr = 0;
 	} else if (strcasecmp(cmd, "readercache") == 0) {
 	    if (opt) {
 		DOpts.ReaderCacheMode = enabled(opt);
@@ -968,6 +998,12 @@ dumpConfigReader(FILE *fo, char *cmd)
 	fprintf(fo, "*readerforks: %d\n", DOpts.ReaderForks);
     if (cmd == NULL || strcasecmp(cmd, "readerfeedforks") == 0)
 	fprintf(fo, "*readerfeedforks: %d\n", DOpts.ReaderFeedForks);
+    if (cmd == NULL || strcasecmp(cmd, "readerdnscachettl") == 0)
+	fprintf(fo, "readerdnscachettl: %d\n", DOpts.ReaderDnsCacheTTL);
+    if (cmd == NULL || strcasecmp(cmd, "readerdnscachenegttl") == 0)
+	fprintf(fo, "readerdnscachenegttl: %d\n", DOpts.ReaderDnsCacheNegTTL);
+    if (cmd == NULL || strcasecmp(cmd, "readerdnscachesize") == 0)
+	fprintf(fo, "*readerdnscachesize: %d\n", DOpts.ReaderDnsCacheSize);
     if (cmd == NULL || strcasecmp(cmd, "readerbindhost") == 0)
 	fprintf(fo, "*readerbindhost: %s\n",
 					safestr(DOpts.ReaderBindHost, "ANY"));
