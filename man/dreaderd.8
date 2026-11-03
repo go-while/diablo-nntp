@@ -207,8 +207,8 @@ dreaderd forks off a number of processes to handle DNS authentication,
 allowing several incoming connections to be resolved in parallel.
 They spend their time waiting for replies, so size them by lookup
 latency, not by CPUs: numdnsprocs = peak logins per second x lookups
-per login x latency.  A login does 2 lookups, a client found in the
-DNS cache (below) none.  For
+per login x latency.  A login does 2 lookups (1 without a reverse
+name), a client found in the DNS cache (below) none.  For
 example, 5 processes with 75 ms DNS serve about 33 logins per second
 (5 / (2 x 0.075)).  This option will override its diablo.config
 counterpart.
@@ -226,9 +226,9 @@ default 60) and
 entry off.  A TTL changed at run time applies to the entries already
 kept.  Only definite answers are cached: "no such name" and a forward
 lookup that does not give the client's address; timeouts and other
-errors are not.  On FreeBSD, the other BSDs and musl the reverse lookup
-cannot tell "no name" from a timeout, so there an address without a
-reverse name is never cached.  Access rules, auth and accounting still
+errors are not.  With every libc except glibc and illumos/Solaris the
+reverse lookup cannot tell "no name" from a timeout, so there an address
+without a reverse name is never cached.  Access rules, auth and accounting still
 run on every login, but a name-based dreader.access line can see a name
 up to
 .B readerdnscachettl

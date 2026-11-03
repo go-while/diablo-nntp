@@ -43,7 +43,8 @@ the maximum (readerforks times readerthreads).
 .B flush
 ]
 \- prints the DNS cache counters (size, used, hits, misses, stores,
-evictions and the two TTLs); with
+evictions, the two TTLs, and noname=1 if a missing reverse name can be
+cached on this system); with
 .B flush
 empties and frees the cache.  Existing connections keep their own
 lookup result for AUTHINFO.
