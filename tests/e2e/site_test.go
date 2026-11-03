@@ -46,6 +46,10 @@ type SiteOptions struct {
 	// file's mode.
 	Setup func(tb testing.TB, s *Site)
 
+	// Env is added to diablo's environment (not to that of the programs the test runs),
+	// e.g. to preload a fault injector.
+	Env []string
+
 	// NoStart writes the site but doesn't start diablo (s.Proc stays nil), e.g. for a test
 	// that starts it with diablo-ctl.
 	NoStart bool
@@ -164,7 +168,7 @@ func NewSite(tb testing.TB, o SiteOptions) *Site {
 	s.Proc = proc.StartTCP(tb, proc.Options{
 		Path: filepath.Join(s.Bin, "diablo"),
 		Args: append(args, "server"),
-		Env:  s.Env,
+		Env:  append(slices.Clone(s.Env), o.Env...),
 		Dir:  s.Dir,
 	}, s.Addr)
 	tb.Cleanup(func() { s.shutdown(tb) }) // runs before proc's cleanup (SIGTERM, then SIGKILL)
