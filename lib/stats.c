@@ -137,7 +137,7 @@ FeedStatsFindSlot(char *hostname)
 void
 LockFeedRegion(FeedStats *Stats, int locktype, int stype)
 {
-    static int logged;
+    static unsigned int fails;
     off_t base;
     int r = 0;
 
@@ -158,13 +158,16 @@ LockFeedRegion(FeedStats *Stats, int locktype, int stype)
 	}
 	/*
 	 * The lock only keeps counter updates whole.  If it fails the
-	 * caller still counts: at worst a count is lost.  Say so once.
+	 * caller still counts: at worst a count is lost.  Logged the 1st,
+	 * 2nd, 4th, 8th, ... time.
 	 */
-	if (r < 0 && locktype != XLOCK_UN && logged++ == 0) {
+	if (r < 0 && locktype != XLOCK_UN) {
 	    int error = errno;
 
-	    logit(LOG_ERR, "Unable to lock feeder stats file: %s (%s)",
-			PatDbExpand(DFeedStatsPat), strerror(error));
+	    ++fails;
+	    if ((fails & (fails - 1)) == 0)
+		logit(LOG_ERR, "Unable to lock feeder stats file: %s (%s, %u times)",
+			PatDbExpand(DFeedStatsPat), strerror(error), fails);
 	}
     }
 }
@@ -668,9 +671,13 @@ FeedStatsSnapShot(FILE *fo, char *hostname, char *ext)
 	if (LockFeedRecord(oldf, count, XLOCK_SH) < 0) {
 	    int error = errno;
 
-	    fprintf(fo, "Unable to lock feeder stats file: %s (%s)\n",
+	    /* no partial snapshot */
+	    fprintf(fo, "Unable to lock feeder stats file: %s (%s), no snapshot written\n",
 			PatDbExpand(DFeedStatsPat), strerror(error));
-	    break;
+	    close(oldf);
+	    close(newf);
+	    remove(fnameout);
+	    return;
 	}
 	res = read(oldf, &fs, sizeof(fs));
 	if (res == sizeof(fs) &&

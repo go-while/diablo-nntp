@@ -84,8 +84,12 @@ hflock(int fd, off_t offset, int flags)
     fl.l_len = 4;
 
     r = setlock(fd, &fl, flags);
-    if (DebugOpt > 4)
+    if (DebugOpt > 4) {
+	int error = errno;	/* callers report errno */
+
 	printf("hflock fd %d offset %d flags %02x\n", fd, (int)offset, flags);
+	errno = error;
+    }
     return(r);
 }
 

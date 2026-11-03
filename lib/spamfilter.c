@@ -480,13 +480,15 @@ spamFilterTable(time_t t, FilterInfo *fi, hash_t mhv, md5hash_t *hv, int lines)
      * article and leave the slot alone.
      */
     if (hflock(fi->Fd, off, XLOCK_EX) < 0) {
-	static int logged;
+	static unsigned int fails;
 	int error = errno;
 
-	if (logged++ == 0)
-	    logit(LOG_ERR, "SpamFilter: unable to lock slot %d of %s: %s", i,
-		PatDbExpand((fi == &NphFilter) ? SpamNphCachePat :
-		SpamBodyCachePat), strerror(error));
+	/* logged the 1st, 2nd, 4th, 8th, ... time */
+	++fails;
+	if ((fails & (fails - 1)) == 0)
+	    logit(LOG_ERR, "SpamFilter: unable to lock slot %d of %s: %s (%u times)",
+		i, PatDbExpand((fi == &NphFilter) ? SpamNphCachePat :
+		SpamBodyCachePat), strerror(error), fails);
 	return(0);
     }
 
