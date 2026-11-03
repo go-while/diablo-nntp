@@ -50,11 +50,11 @@ func cgSiteWith(t *testing.T, groups []string, files map[string]string, describe
 	return s
 }
 
-// TestCheckgroupsInn: a group the list names is created (moderated if the description says
+// TestCheckgroupsChanges: a group the list names is created (moderated if the description says
 // "(Moderated)"); a group that exists gets the description and the moderated flag of the list; a
 // group of a hierarchy of the list that it does not name is removed; the groups of other
 // hierarchies are not touched.
-func TestCheckgroupsInn(t *testing.T) {
+func TestCheckgroupsChanges(t *testing.T) {
 	s := cgSite(t,
 		[]string{"e2e.test", "e2e.obsolete", "e2e.flip", "other.keep"},
 		"checkgroups:*:e2e.*:doit=checkgroups.log\n",
@@ -92,12 +92,12 @@ func TestCheckgroupsInn(t *testing.T) {
 	}
 }
 
-// TestCheckgroupsInnLimit: as INN, more than "maxcheckgroups" (default 10) additions, status
+// TestCheckgroupsLimit: as INN, more than "maxcheckgroups" (default 10) additions, status
 // (moderated flag) changes and removals are not made but written to the control log as the
 // commands that make them; the descriptions of the groups that exist are updated all the same. A
 // maxcheckgroups line in dcontrol.ctl sets the limit, for the sender and the group it matches; the
 // last matching line is used.
-func TestCheckgroupsInnLimit(t *testing.T) {
+func TestCheckgroupsLimit(t *testing.T) {
 	lines := []string{"e2e.test\tDescribed."}
 	for _, n := range []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"} {
 		lines = append(lines, "e2e.new"+n+"\tNew group "+n+".")
@@ -135,7 +135,7 @@ func TestCheckgroupsInnLimit(t *testing.T) {
 }
 
 // more ways to set the limit, and what it covers
-func TestCheckgroupsInnLimitLines(t *testing.T) {
+func TestCheckgroupsLimitLines(t *testing.T) {
 	eleven := []string{"e2e.test\tDescribed."}
 	for _, n := range []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"} {
 		eleven = append(eleven, "e2e.new"+n+"\tNew group "+n+".")
@@ -193,9 +193,9 @@ func TestCheckgroupsInnLimitLines(t *testing.T) {
 	})
 }
 
-// TestCheckgroupsInnLocal: a group of the file localgroups (a name or a wildcard per line) is
+// TestCheckgroupsLocal: a group of the file localgroups (a name or a wildcard per line) is
 // left alone by checkgroups: no description, no flag change, never removed.
-func TestCheckgroupsInnLocal(t *testing.T) {
+func TestCheckgroupsLocal(t *testing.T) {
 	s := cgSiteWith(t, []string{"e2e.test", "e2e.priv.a"},
 		map[string]string{"dcontrol.ctl": "checkgroups:*:*:doit\n", "localgroups": "# groups of this site\ne2e.local\ne2e.priv.*\n"},
 		[]string{"e2e.local=Our own description.", "e2e.obsolete=Obsolete group."},
@@ -218,10 +218,10 @@ func TestCheckgroupsInnLocal(t *testing.T) {
 	}
 }
 
-// TestCheckgroupsInnKeepsDescriptions: the description of a group that still exists is never
+// TestCheckgroupsKeepsDescriptions: the description of a group that still exists is never
 // removed or changed when the message does not list it: a group not removed because the limit is
 // exceeded, one outside the dcontrol.ctl pattern, one of another hierarchy.
-func TestCheckgroupsInnKeepsDescriptions(t *testing.T) {
+func TestCheckgroupsKeepsDescriptions(t *testing.T) {
 	lines := []string{"e2e.test\tDescribed."}
 	for _, n := range []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"} {
 		lines = append(lines, "e2e.new"+n+"\tNew group "+n+".")
