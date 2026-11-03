@@ -595,6 +595,20 @@ InitConnection(ForkDesc *desc, DnsRes *dres)
     return(conn);
 }
 
+/*
+ * Did the last SendMsg() fail only because the descriptor could not be
+ * passed (too many in flight)?  Then nothing was sent.
+ */
+static int
+SendMsgFdRefused(void)
+{
+#ifdef ETOOMANYREFS
+    return(errno == ETOOMANYREFS);
+#else
+    return(0);
+#endif
+}
+
 void
 DeleteConnection(Connection *conn)
 {
@@ -637,11 +651,12 @@ DeleteConnection(Connection *conn)
 	 * connection terminates.
 	 */
 	conn->co_Auth.dr_ByteCount = conn->co_TMBuf.mh_TotalBytes;
-	if (SendMsg(TFd, conn->co_Desc->d_Fd, &conn->co_Auth) < 0) {
+	if (SendMsg(TFd, conn->co_Desc->d_Fd, &conn->co_Auth) < 0 &&
+	    SendMsgFdRefused()) {
 	    /*
-	     * The descriptor cannot go along (e.g. ETOOMANYREFS, too many
-	     * in flight): answer an AUTHINFO login here and still tell the
-	     * main server that the connection is gone.
+	     * The descriptor cannot go along (ETOOMANYREFS, too many in
+	     * flight; nothing was sent): answer an AUTHINFO login here and
+	     * still tell the main server that the connection is gone.
 	     */
 	    if (conn->co_Auth.dr_ResultFlags & DR_REQUIRE_DNS) {
 		char errbuf[512];

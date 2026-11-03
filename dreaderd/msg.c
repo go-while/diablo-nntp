@@ -96,7 +96,12 @@ SendMsg(int to_fd, int send_fd, DnsRes *dres)
           (void)poll(&pfd, 1, 50);
           continue;
       }
-      logit(LOG_ERR, "sendmsg error (%s)", strerror(errno));
+      {
+	  int err = errno;	/* the caller may look at it */
+
+	  logit(LOG_ERR, "sendmsg error (%s)", strerror(err));
+	  errno = err;
+      }
       return(-1);
     }
     return((int)sizeof(DnsRes));
