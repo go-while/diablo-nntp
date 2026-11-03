@@ -3097,12 +3097,61 @@ accessValue(char *dst, size_t size, const char *val, const char *opt, int lineco
     return(0);
 }
 
+/*
+ * RenameAccessCache() - install the .new cache files.  The lock file means
+ * no other processes should make updates from the cache; its time is also
+ * checked to cater for possible race conditions.
+ *
+ * The renames are done under an exclusive lock: ReadAccessCache() opens
+ * the five files under a shared one, so it gets all old or all new files.
+ * While a reader holds it, the caller tries again on its next pass rather
+ * than wait.  Returns 1 when done, 0 when the lock is busy, -1 on error.
+ */
+static int AccessRenamePending = 0;
+
+static int
+RenameAccessCache(void)
+{
+    const char *pats[5];
+    char newbuf[PATH_MAX];
+    int tfp;
+    int i;
+
+    pats[0] = DRVserverCachePat;
+    pats[1] = DRGroupCachePat;
+    pats[2] = DRAuthCachePat;
+    pats[3] = DRReaderCachePat;
+    pats[4] = DRAccessCachePat;
+
+    if ((tfp = open(PatDbExpand(DRAccessLockPat), O_RDWR|O_CREAT, 0600)) < 0) {
+	logit(LOG_CRIT, "Cannot create access lock %s",
+		PatDbExpand(DRAccessLockPat));
+	return(-1);
+    }
+    if (xflock(tfp, XLOCK_EX|XLOCK_NB) < 0) {
+	int busy = (errno == EAGAIN || errno == EACCES || errno == EWOULDBLOCK);
+
+	if (DebugOpt)
+	    printf("Unable to obtain access lock (%s)\n", strerror(errno));
+	close(tfp);
+	return(busy ? 0 : -1);
+    }
+    for (i = 0; i < 5; ++i) {
+	snprintf(newbuf, sizeof(newbuf), "%s.new", PatDbExpand(pats[i]));
+	rename(newbuf, PatDbExpand(pats[i]));
+    }
+
+    WriteBestEffort(tfp, &tfp, 1);
+    xflock(tfp, XLOCK_UN);
+    close(tfp);
+    return(1);
+}
+
 void
 InstallAccessCache(void) {
     struct stat st;
     char buf[1024];
     int linecount = 0;
-    int tfp;
     FILE *fp;
     FILE *vsf;
     FILE *grf;
@@ -3125,6 +3174,18 @@ InstallAccessCache(void) {
     char aunewbuf[PATH_MAX];
     char rdnewbuf[PATH_MAX];
     char ranewbuf[PATH_MAX];
+
+    /* the last build is waiting for its renames */
+    if (AccessRenamePending) {
+	switch (RenameAccessCache()) {
+	case 0:
+	    return;
+	case -1:
+	    Access_LastUpdate = 0;
+	    break;
+	}
+	AccessRenamePending = 0;
+    }
 
     /*
      * Rebuild when dreader.access changed in any way, not only when it got
@@ -3985,35 +4046,14 @@ InstallAccessCache(void) {
 	    Access_LastUpdate = 0;
 	return;
     }
-    /*
-     * We create a lock file that means no other processes should make
-     * updates from the cache. The lock file time is also checked to
-     * cater for possible race conditions.
-     */
-
-    if ((tfp = open(PatDbExpand(DRAccessLockPat), O_RDWR|O_CREAT, 0600)) < 0) {
-	logit(LOG_CRIT, "Cannot create access lock %s",
-		PatDbExpand(DRAccessLockPat));
+    switch (RenameAccessCache()) {
+    case 0:
+	AccessRenamePending = 1;
+	break;
+    case -1:
 	Access_LastUpdate = 0;
-	return;
+	break;
     }
-    if (xflock(tfp, XLOCK_SH) < 0) {
-	if (DebugOpt)
-	    printf("Unable to obtain access lock (%s)\n", strerror(errno));
-	close(tfp);
-	Access_LastUpdate = 0;
-	return;
-    }
-
-    rename(vsnewbuf, PatDbExpand(DRVserverCachePat));
-    rename(grnewbuf, PatDbExpand(DRGroupCachePat));
-    rename(aunewbuf, PatDbExpand(DRAuthCachePat));
-    rename(rdnewbuf, PatDbExpand(DRReaderCachePat));
-    rename(ranewbuf, PatDbExpand(DRAccessCachePat));
-
-    WriteBestEffort(tfp, &tfp, 1);
-    xflock(tfp, XLOCK_UN);
-    close(tfp);
 }
 
 /*
