@@ -5048,8 +5048,14 @@ ArticleFileIdle(Buffer *bi)
     if (i == MAXDIABLOFDCACHE || bi->bu_Beg < bi->bu_End)
 	return;
 #ifdef	USE_ZLIB
-    if (bi->bu_CBuf && bi->bu_CBuf->z_str.avail_in > 0)
-	return;		/* compressed input not yet inflated */
+    /*
+     * Compressed input not yet inflated, or inflated output still pending
+     * (bgets() sets avail_out to -1 when the last inflate filled its buffer):
+     * a line may be there without any new socket input.
+     */
+    if (bi->bu_CBuf && (bi->bu_CBuf->z_str.avail_in > 0 ||
+	bi->bu_CBuf->z_str.avail_out == (uInt)-1))
+	return;
 #endif
     pfd.fd = bi->bu_Fd;
     pfd.events = POLLIN;
