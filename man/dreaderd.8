@@ -274,6 +274,11 @@ specify the number of reader processes, default is 10.  The value
 .B auto
 starts one per CPU that dreaderd may use (on Linux the affinity mask
 and a cgroup v2 CPU quota count), at most 64, and logs the number.
+On illumos and Solaris it is the CPUs online (in a zone with its own
+pool, the pool's CPUs), lowered to the processor set dreaderd is bound
+to (psrset, poolbind) and to the zone's CPU cap (zone.cpu-cap, in
+percent of one CPU, rounded up: a cap of 800 gives 8); dreaderd logs
+the three.
 Reader processes are CPU-bound, so more than the CPU count adds
 nothing.  Each reader
 process can handle several connections in parallel but opens a
