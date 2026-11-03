@@ -1085,20 +1085,28 @@ CgCompare(const void *a, const void *b)
  * CgSenderAddr() - the sender as the checkgroups lines are matched against it,
  * made as INN's controlchan (cleanaddr) makes it from Sender: or From:: the
  * comment, from the first '(' to the last ')' with the white space around it,
- * is removed; of a <...> the address in the last one is taken; every character
- * but letters, digits and -+_.@% becomes '_', a leading '-' too; lower case.
+ * is removed; of a <...> the text from the last '<' before the last '>' to
+ * that '>' is taken; every character but letters, digits and -+_.@% becomes
+ * '_', a leading '-' too; lower case.  The result is malloc()ed, NULL when out
+ * of memory.
  */
-static void
-CgSenderAddr(const char *hdr, char *buf, int size)
+static char *
+CgSenderAddr(const char *hdr)
 {
-    char tmp[1024];
+    char *tmp;
+    char *buf;
     const char *lp;
     const char *rp;
     const char *b;
     const char *e;
     int n = 0;
 
-    snprintf(tmp, sizeof(tmp), "%s", hdr ? hdr : "");
+    if ((tmp = strdup(hdr ? hdr : "")) == NULL)
+	return(NULL);
+    if ((buf = malloc(strlen(tmp) + 1)) == NULL) {
+	free(tmp);
+	return(NULL);
+    }
     {
 	char *open = strchr(tmp, '(');
 	char *close = open ? strrchr(open, ')') : NULL;
@@ -1114,11 +1122,15 @@ CgSenderAddr(const char *hdr, char *buf, int size)
     }
     b = tmp;
     e = tmp + strlen(tmp);
-    if ((lp = strrchr(tmp, '<')) != NULL && (rp = strrchr(lp, '>')) != NULL) {
-	b = lp + 1;
-	e = rp;
+    if ((rp = strrchr(tmp, '>')) != NULL) {
+	for (lp = rp; lp > tmp && lp[-1] != '<'; --lp)
+	    ;
+	if (lp > tmp) {
+	    b = lp;
+	    e = rp;
+	}
     }
-    for (; b < e && n < size - 1; ++b) {
+    for (; b < e; ++b) {
 	int c = (uint8)*b;
 
 	if (!isalnum(c) && strchr("-+_.@%", c) == NULL)
@@ -1128,6 +1140,8 @@ CgSenderAddr(const char *hdr, char *buf, int size)
 	buf[n++] = tolower(c);
     }
     buf[n] = 0;
+    free(tmp);
+    return(buf);
 }
 
 /*
@@ -1843,7 +1857,7 @@ CgRun(Connection *conn, Control *ctl, const char *art, int artLen, const char *b
     CgLimit *limits;
     int nRules;
     int nLimits;
-    char addr[256];
+    char *addr;
     char *exclude = NULL;	/* the patterns of the later lines used */
     char *drop = NULL;		/* the patterns of the later drop lines */
     char signer[256];
@@ -1855,8 +1869,11 @@ CgRun(Connection *conn, Control *ctl, const char *art, int artLen, const char *b
     int mail = 0;
     int i;
 
-    CgSenderAddr(sender, addr, sizeof(addr));
-    if (CgReadRules(addr, &rules, &nRules, &limits, &nLimits) < 0)
+    if ((addr = CgSenderAddr(sender)) == NULL)
+	return("checkgroups: out of memory\n");
+    i = CgReadRules(addr, &rules, &nRules, &limits, &nLimits);
+    free(addr);
+    if (i < 0)
 	return("checkgroups: out of memory\n");
 
     for (i = 0; i < nRules; ++i) {

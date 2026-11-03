@@ -14,7 +14,8 @@
  * is piped into "pgp -f" instead.
  *
  * Exit status: 0 good signature, 1 no X-PGP-Sig header, 2 malformed
- * header or verifier not runnable, 3 bad or unverifiable signature.
+ * header, verifier not runnable or bad options, 3 bad or unverifiable
+ * signature.
  *
  * (c)Copyright 1998, Matthew Dillon, All Rights Reserved.  Refer to
  *    the COPYRIGHT file in the base directory of this distribution
@@ -60,7 +61,7 @@ void
 Usage(void)
 {
     printf("Usage: pgpverify [-d] [-k keyring] [program [args]]\n");
-    exit(1);
+    exit(2);		/* a bad pgpverifyargs cannot verify: fail closed */
 }
 
 int

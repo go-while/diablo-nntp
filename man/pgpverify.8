@@ -55,8 +55,8 @@ Show the verifier command and its status output on standard error.  Level 2
 also keeps the temporary files pgpverify.msg.* and pgpverify.sig.* in
 $TMPDIR (default /tmp).
 .SH "EXIT STATUS"
-0 good signature; 1 no X-PGP-Sig header; 2 malformed header or verifier not
-runnable; 3 bad signature or signer key not in the keyring.
+0 good signature; 1 no X-PGP-Sig header; 2 malformed header, verifier not
+runnable or bad options; 3 bad signature or signer key not in the keyring.
 .SH FILES
 /news/pgp/trustedkeys.gpg
 .SH "SEE ALSO"
