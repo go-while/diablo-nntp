@@ -138,13 +138,21 @@ KPDBFatalIO(KPDB *kpdb, const char *operation)
 /* kp_MapBase is an anonymous snapshot on OpenBSD.  Refresh in place so
  * offsets and returned record pointers retain the existing API semantics. */
 static void
-KPDBRefresh(KPDB *kpdb)
+KPDBRefreshRange(KPDB *kpdb, size_t offset, size_t len)
 {
-    size_t done = 0, len = (size_t)kpdb->kp_MapSize;
-    char *p = (char *)kpdb->kp_MapBase;
+    size_t done = 0;
+    char *p;
+
+    if (offset > (size_t)kpdb->kp_MapSize ||
+        len > (size_t)kpdb->kp_MapSize - offset) {
+        errno = EINVAL;
+        KPDBFatalIO(kpdb, "snapshot range");
+    }
+    p = (char *)kpdb->kp_MapBase + offset;
 
     while (done < len) {
-        ssize_t n = pread(kpdb->kp_Fd, p + done, len - done, (off_t)done);
+        ssize_t n = pread(kpdb->kp_Fd, p + done, len - done,
+            (off_t)offset + (off_t)done);
         if (n > 0) {
             done += (size_t)n;
         } else if (n < 0 && errno == EINTR) {
@@ -155,6 +163,20 @@ KPDBRefresh(KPDB *kpdb)
             KPDBFatalIO(kpdb, "snapshot refresh");
         }
     }
+}
+
+static void
+KPDBRefresh(KPDB *kpdb)
+{
+    KPDBRefreshRange(kpdb, 0, (size_t)kpdb->kp_MapSize);
+}
+
+static void
+KPDBRefreshCache(KPDB *kpdb)
+{
+    if (kpdb->kp_Cache != NULL)
+        KPDBRefreshRange(kpdb, (size_t)(kpdb->kp_Cache - kpdb->kp_MapBase),
+            (size_t)kpdb->kp_CacheLen);
 }
 #endif
 
@@ -1163,7 +1185,10 @@ KPDBLookup(KPDB *kpdb, const char *key, int lockMe, int forceCheck)
 
 again:
 #ifdef __OpenBSD__
-    KPDBRefresh(kpdb);
+    /* Most lookups hit the cached record.  Refresh it and the append
+     * sequence first; only a search through the database needs a full read. */
+    KPDBRefreshRange(kpdb, 0, (size_t)kpdb->kp_HeadLen);
+    KPDBRefreshCache(kpdb);
 #endif
     found = -1;
 
@@ -1189,6 +1214,9 @@ again:
      */
 
     if (found < 0) {
+#ifdef __OpenBSD__
+        KPDBRefresh(kpdb);
+#endif
 	found = KPDBLookupBinary(
 	    kpdb, 
 	    key,
@@ -1275,7 +1303,7 @@ again:
 	    locked = 0;
 	}
 #ifdef __OpenBSD__
-	KPDBRefresh(kpdb);
+	KPDBRefreshCache(kpdb);
 #endif
 
 	/*
