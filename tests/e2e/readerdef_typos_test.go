@@ -21,6 +21,20 @@ end
 `
 }
 
+// activeNames returns the sorted, distinct group names of LIST ACTIVE lines. Distinct, as
+// on OpenBSD a stale map can list a group more than once (ISSUES.md D-171); these tests are
+// about which groups a readerdef gets, not about that.
+func activeNames(lines []string) []string {
+	var names []string
+	for _, l := range lines {
+		if f := strings.Fields(l); len(f) > 0 {
+			names = append(names, f[0])
+		}
+	}
+	slices.Sort(names)
+	return slices.Compact(names)
+}
+
 // TestReaderdefUnknownGroupList (D-164): a readerdef whose groups, listgroups or postgroups
 // names a group list that dreader.access does not define makes the file invalid: it is not
 // installed (logged), and on a first start dreaderd gives no service. Before, the name was
@@ -50,10 +64,7 @@ func TestReaderdefUnknownGroupList(t *testing.T) {
 		s := NewReaderSite(t, ReaderOptions{SpoolAddr: "127.0.0.1:1", Access: groupListAccess("groups testonly")})
 		c := s.Reader(t)
 		expect(t, c, 215, "LIST ACTIVE")
-		var names []string
-		for _, l := range c.ReadDotLines() {
-			names = append(names, strings.Fields(l)[0])
-		}
+		names := activeNames(c.ReadDotLines())
 		expect(t, c, 205, "QUIT")
 		if !slices.Equal(names, []string{"e2e.test"}) {
 			t.Errorf("LIST ACTIVE with groups testonly: %v, want [e2e.test]", names)
@@ -63,7 +74,7 @@ func TestReaderdefUnknownGroupList(t *testing.T) {
 		s := NewReaderSite(t, ReaderOptions{SpoolAddr: "127.0.0.1:1", Access: groupListAccess("read yes")})
 		c := s.Reader(t)
 		expect(t, c, 215, "LIST ACTIVE")
-		n := len(c.ReadDotLines())
+		n := len(activeNames(c.ReadDotLines()))
 		expect(t, c, 205, "QUIT")
 		if n != 2 {
 			t.Errorf("LIST ACTIVE without a groups setting: %d groups, want 2 (the first list, everything)", n)
