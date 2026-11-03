@@ -355,6 +355,11 @@ CleanAllSpools(void)
 	    exit(1);
 	}
 	HistoryEnd = sb.st_size;
+	if (HistoryShareLock(HistoryFd, HistoryFile) < 0) {
+	    fprintf(stderr, "Unable to lock history(%s): %s\n",
+						HistoryFile, strerror(errno));
+	    exit(1);
+	}
     }
 
     /*

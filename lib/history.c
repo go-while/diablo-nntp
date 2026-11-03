@@ -32,6 +32,7 @@
 
 Prototype int HistoryOpen(const char *fileName, int fastMode);
 Prototype int HistoryClose(void);
+Prototype int HistoryShareLock(int fd, const char *fileName);
 Prototype int HistoryLookup(const char *msgid, History *h);
 Prototype int HistoryLookupByHash(hash_t hv, History *h);
 Prototype HistIndex HistoryPosLookupByHash(hash_t hv, History *h);
@@ -104,13 +105,45 @@ HistoryFatalIO(const char *operation)
     exit(1);
 }
 
+/*
+ * Take the shared lock on bytes 0-3 that every history opener holds
+ * while it has the file open, waiting for a fast-mode writer to finish.
+ */
+int
+HistoryShareLock(int fd, const char *fileName)
+{
+    if (hflock(fd, 0, XLOCK_SH|XLOCK_NB) == 0)
+	return(0);
+    if (errno != EAGAIN && errno != EACCES)
+	return(-1);
+    logit(LOG_NOTICE, "%s is in use by a fast-mode writer, waiting", fileName);
+    fprintf(stderr, "%s is in use by a fast-mode writer, waiting\n", fileName);
+    return(hflock(fd, 0, XLOCK_SH));
+}
+
+/* A failed lock in HistoryOpen: -2 in a reopen (it is retried), else exit. */
+static int
+openLockFailed(int fd, const char *fileName)
+{
+    int error = errno;
+
+    close(fd);
+    if (DoingReOpen) {
+	ReOpenLockError = error;
+	return(-2);
+    }
+    logit(LOG_ERR, "lock %s failed (%s)", fileName, strerror(error));
+    fprintf(stderr, "lock %s failed (%s)\n", fileName, strerror(error));
+    exit(1);
+}
+
 int
 HistoryOpen(const char *fileName, int hflags)
 {
     int fd;
     struct stat st;
     int openflags;
-    int fastLocked = 0;
+    int openLock = 0;	/* our lock on bytes 0-3: XLOCK_SH or XLOCK_EX */
 
     ReOpenLockError = 0;
 
@@ -158,6 +191,24 @@ HistoryOpen(const char *fileName, int hflags)
     }
 
     /*
+     * Every opener holds a lock on bytes 0-3 while it has the history
+     * open: fast mode an exclusive one (it caches the hash table, so it
+     * needs the file to itself), the others a shared one.
+     */
+    if ((HFlags & (HGF_FAST|HGF_READONLY)) == HGF_FAST) {
+	if (hflock(fd, 0, XLOCK_EX|XLOCK_NB) < 0) {
+	    if (errno != EAGAIN && errno != EACCES)
+		return(openLockFailed(fd, fileName));
+	    logit(LOG_ERR, "%s is in use by another process: fast mode needs it to itself",
+		fileName);
+	    fprintf(stderr, "%s is in use by another process: fast mode needs it to itself\n",
+		fileName);
+	    exit(1);
+	}
+	openLock = XLOCK_EX;
+    }
+
+    /*
      * initial history file creation, if necessary
      */
 
@@ -181,17 +232,10 @@ HistoryOpen(const char *fileName, int hflags)
 	 * one fails at once with EBADF); it still waits for a creator.
 	 */
 
-	if (hflock(fd, 0, (HFlags & HGF_READONLY) ? XLOCK_SH : XLOCK_EX) < 0) {
-	    int error = errno;
-
-	    close(fd);
-	    if (DoingReOpen) {
-		ReOpenLockError = error;
-		return(-2);
-	    }
-	    logit(LOG_ERR, "lock %s failed (%s)", fileName, strerror(error));
-	    fprintf(stderr, "lock %s failed (%s)\n", fileName, strerror(error));
-	    exit(1);
+	if (openLock == 0) {
+	    openLock = (HFlags & HGF_READONLY) ? XLOCK_SH : XLOCK_EX;
+	    if (hflock(fd, 0, openLock) < 0)
+		return(openLockFailed(fd, fileName));
 	}
 
 	fstat(fd, &st);
@@ -284,14 +328,21 @@ HistoryOpen(const char *fileName, int hflags)
 	}
 
 	/*
-	 * Fast mode wants this lock for the whole run: keep it.  Released
-	 * and taken again, a reader waiting for the creation could get in
-	 * between and the fast-mode lock below would fail.
+	 * Fast mode keeps its exclusive lock for the whole run; other
+	 * openers turn the creation lock into their shared one, so that
+	 * no fast-mode writer gets in between.
 	 */
-	if ((HFlags & (HGF_FAST|HGF_READONLY)) == HGF_FAST)
-	    fastLocked = 1;
-	else
-	    hflock(fd, 0, XLOCK_UN);
+	if ((HFlags & HGF_FAST) == 0 && openLock == XLOCK_EX) {
+	    if (hflock(fd, 0, XLOCK_SH) < 0)
+		return(openLockFailed(fd, fileName));
+	    openLock = XLOCK_SH;
+	}
+    }
+
+    if (openLock == 0) {
+	if (HistoryShareLock(fd, fileName) < 0)
+	    return(openLockFailed(fd, fileName));
+	openLock = XLOCK_SH;
     }
 
     if (HHead.version < 1) {
@@ -344,7 +395,7 @@ HistoryOpen(const char *fileName, int hflags)
     HMask = HSize - 1;
 
     /*
-     * In FAST mode we leave the history file locked in order to
+     * In FAST mode we hold the history file locked (above) in order to
      * cache the hash table array at the beginning, which in turn
      * allows us to essentially append new entries to the end of
      * the file without having to seek back and forth updating
@@ -354,15 +405,8 @@ HistoryOpen(const char *fileName, int hflags)
      * portion of the history file.
      */
 
-    if (HFlags & HGF_FAST) {
-	if (HFlags & HGF_READONLY) {
-	    fprintf(stderr, "Ignoring fast mode for readonly history open\n");
-	} else if (!fastLocked && hflock(fd, 0, XLOCK_EX|XLOCK_NB) == -1) {
-	    fprintf(stderr, "Unable to lock history file in fast mode (%s)\n",
-							strerror(errno));
-	    exit(1);
-	}
-    }
+    if ((HFlags & (HGF_FAST|HGF_READONLY)) == (HGF_FAST|HGF_READONLY))
+	fprintf(stderr, "Ignoring fast mode for readonly history open\n");
 
     if (HFlags & HGF_FAST) {
 	HAry = calloc(HSize, sizeof(HistIndex));
@@ -439,8 +483,7 @@ HistoryClose(void)
 	    HHeadMap = NULL;
 	}
 	if (HFd >= 0) {
-	    if (HFlags & HGF_FAST)
-		hflock(HFd, 0, XLOCK_UN);
+	    hflock(HFd, 0, XLOCK_UN);
 	    close(HFd);
 	}
 	HFd = -1;

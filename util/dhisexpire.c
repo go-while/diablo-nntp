@@ -234,6 +234,10 @@ main(int ac, char **av)
 	    fprintf(stderr, "Corrupted history file - bad magic\n");
 	    exit(1);
 	}
+	if (HistoryShareLock(fd, FileName) < 0) {
+	    perror("History lock failed");
+	    exit(1);
+	}
 	if (hh.version != HVERSION) {
 	    fprintf(stderr, "WARNING! Version mismatch file V%d, expecting V%d\n", hh.version, HVERSION);
 	    fprintf(stderr, "dump may be invalid\n");
