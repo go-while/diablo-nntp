@@ -74,7 +74,8 @@ func authTimeoutSite(t *testing.T, access string, env ...string) *Site {
 	t.Helper()
 	_, spool := spoolStore(t)
 	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: access, NoStart: true,
-		Config: map[string]string{"readerauthtimeout": strconv.Itoa(authTimeout)}})
+		Config: map[string]string{"readerauthtimeout": strconv.Itoa(authTimeout),
+			"path_generallog": "%s/general.log"}})
 	s.Env = append(s.Env, env...)
 	_, port, err := net.SplitHostPort(s.Addr)
 	if err != nil {
@@ -117,14 +118,20 @@ func goodLogin(t *testing.T, s *Site) {
 	}
 }
 
-// wantTimeoutLog: dreaderd logged the timeout of backend what.
+// wantTimeoutLog: dreaderd logged the timeout of backend what in log/general.log (stderr
+// does not get the syslog lines everywhere: illumos has no LOG_PERROR).
 func wantTimeoutLog(t *testing.T, s *Site, what string) {
 	t.Helper()
 	want := what + " authentication from 127.0.0.1 timed out after " + strconv.Itoa(authTimeout) + " seconds"
+	path := filepath.Join(s.Dir, "log", "general.log")
 	deadline := time.Now().Add(3 * time.Second)
-	for !strings.Contains(s.Proc.Stderr(), want) {
+	for {
+		b, _ := os.ReadFile(path)
+		if strings.Contains(string(b), want) {
+			return
+		}
 		if time.Now().After(deadline) {
-			t.Errorf("no %q in the log", want)
+			t.Errorf("no %q in %s:\n%s", want, path, b)
 			return
 		}
 		time.Sleep(50 * time.Millisecond)
