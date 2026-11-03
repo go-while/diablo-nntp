@@ -2436,7 +2436,7 @@ HandleDnsThread(ForkDesc *desc)
 			dres.dr_Lookup & DL_MASK, dres.dr_RevHost,
 			dres.dr_CacheGen);
 
-    if (isdigit(dres.dr_ReaderName[0]) && isdigit(dres.dr_ReaderName[1]) && isdigit(dres.dr_ReaderName[2])) {
+    if (isdigit((unsigned char)dres.dr_ReaderName[0]) && isdigit((unsigned char)dres.dr_ReaderName[1]) && isdigit((unsigned char)dres.dr_ReaderName[2])) {
 	p = dres.dr_ReaderName;
 	if (! strncmp(p, "600 ", 4)) {
 	    /* 
@@ -3265,22 +3265,22 @@ SetBanList(char *ban)
 		break;
 	    case 's':
 		bi->BanHashSize = atoi(++ban);
-		while (isdigit((int)*ban))
+		while (isdigit((unsigned char)*ban))
 		    ban++;
 		break;
 	    case 'l':
 		bi->BanLinkSize = atoi(++ban);
-		while (isdigit((int)*ban))
+		while (isdigit((unsigned char)*ban))
 		    ban++;
 		break;
 	    case 'c':
 		bi->BanCount = atoi(++ban);
-		while (isdigit((int)*ban))
+		while (isdigit((unsigned char)*ban))
 		    ban++;
 		break;
 	    case 't':
 		bi->BanTime = atoi(++ban);
-		while (isdigit((int)*ban))
+		while (isdigit((unsigned char)*ban))
 		    ban++;
 		break;
 	    default:
