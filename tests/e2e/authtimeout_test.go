@@ -19,6 +19,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -417,6 +418,16 @@ func TestAuthTimeoutPerlSleep(t *testing.T) {
 	wantTimeoutLog(t, s, "Perl", 1, true)
 }
 
+// perlMultiplicity skips the test unless perl can run more than one interpreter (a perl
+// without MULTIPLICITY, as on OpenBSD, runs one script per DNS worker only).
+func perlMultiplicity(t *testing.T) {
+	t.Helper()
+	out, err := exec.Command("perl", "-MConfig", "-e", "print $Config{usemultiplicity}").Output()
+	if err != nil || strings.TrimSpace(string(out)) != "define" {
+		t.Skip("perl is built without MULTIPLICITY: one perl script per worker")
+	}
+}
+
 // twoPerlAccess: x@slow and ok@slow go to perl script a, x@slow2 and ok@slow2 to b.
 func twoPerlAccess(a, b string) string {
 	access := strings.Replace(slowAuthAccess("perl "+a), "access 127.0.0.1 rslow\n",
@@ -440,6 +451,7 @@ func backendLogin(t *testing.T, s *Site, user string) {
 // interpreter each time; after 16 every perl login was refused.
 func TestAuthTimeoutPerlManyTimeouts(t *testing.T) {
 	builtWith(t, "PERL auth request", "Perl support (PERL_ENABLED)")
+	perlMultiplicity(t)
 	dir := t.TempDir()
 	sc := "sub checkuser { sleep 60 if $_[0] eq 'x'; return \"100 Success\" if $_[0] eq 'ok'; return '0'; }\n1;\n"
 	a, b := filepath.Join(dir, "a.pl"), filepath.Join(dir, "b.pl")
@@ -478,6 +490,7 @@ func TestAuthTimeoutPerlManyTimeouts(t *testing.T) {
 // time only) is cut off; the next login loads it again in the new worker.
 func TestAuthTimeoutPerlSlowLoad(t *testing.T) {
 	builtWith(t, "PERL auth request", "Perl support (PERL_ENABLED)")
+	perlMultiplicity(t)
 	dir := t.TempDir()
 	a, b := filepath.Join(dir, "a.pl"), filepath.Join(dir, "b.pl")
 	mark := filepath.Join(dir, "loaded")
