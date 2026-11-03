@@ -268,7 +268,8 @@ func TestCheckgroupsLineMatching(t *testing.T) {
 		})
 	}
 	t.Run("own log", func(t *testing.T) {
-		s := cgSite(t, []string{"e2e.test"}, cgLogLine+"checkgroups:*:e2e.*:doit=e2e-cg.log\n", body...)
+		// the last =log (cg.log) is the message's log; the e2e.* line has its own
+		s := cgSite(t, []string{"e2e.test"}, "checkgroups:*:e2e.*:doit=e2e-cg.log\ncheckgroups:*:zzz.*:log=cg.log\n", body...)
 		log := cgDone(t, s)
 		cgWant(t, s, log, []string{"e2e.new"}, nil)
 		own, _ := os.ReadFile(filepath.Join(s.Dir, "log", "e2e-cg.log"))

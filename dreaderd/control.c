@@ -1851,12 +1851,16 @@ CgRun(Connection *conn, Control *ctl, const char *art, int artLen, const char *b
 	int n = 0;
 
 	/*
-	 * A line's own log, when it is not the one ParseControl() chose.
+	 * A line's own log, when it is not the one ParseControl() chose, and
+	 * only for a line that has groups of the message to act on (a catch-all
+	 * line whose groups later lines took logs nothing).
 	 */
-	if (rule->cr_Log && strcmp(rule->cr_Log, CtlLogName) != 0) {
-	    if (rule->cr_Log[0] == 0)
-		ctl->ct_LogFo = NULL;
-	    else if ((own = CgOpenLog(rule->cr_Log, art, artLen)) != NULL)
+	if (rule->cr_Kind != CGR_DROP && rule->cr_Log && strcmp(rule->cr_Log, CtlLogName) != 0) {
+	    int some;
+
+	    ctl->ct_LogFo = NULL;
+	    some = CgReport(ctl, body, bodyLen, rule->cr_Groups, exclude, drop);
+	    if (rule->cr_Log[0] && some > 0 && (own = CgOpenLog(rule->cr_Log, art, artLen)) != NULL)
 		ctl->ct_LogFo = own;
 	}
 
