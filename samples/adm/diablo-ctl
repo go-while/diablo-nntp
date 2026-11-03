@@ -222,7 +222,8 @@ masterpid() {
     if [ -r "/proc/$p/comm" ]; then
 	c=$(cat "/proc/$p/comm")		# Linux
     else
-	c=$(ps -o comm= -p "$p" 2>/dev/null)	# BSD, illumos
+	# BSD, illumos; NetBSD pads the name with blanks
+	c=$(ps -o comm= -p "$p" 2>/dev/null | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
     fi
     c=${c##*/}
     [ "$c" = "$1" ] || return 0
