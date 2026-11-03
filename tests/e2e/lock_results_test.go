@@ -75,13 +75,87 @@ func TestHistoryReadOnlyWaitsForCreator(t *testing.T) {
 	}
 }
 
+// TestHistoryFastCreatorKeepsLock: a fast-mode creator (diload -f; also
+// diloadfromspool -f and dhisexpire on dhistory.new) keeps the creation lock
+// for its fast-mode lock. It used to release it and take it again with
+// XLOCK_NB; a read-only opener waiting for the creation (here the test, with
+// a shared lock) got in between and the creator exited with "Unable to lock
+// history file in fast mode". The LD_PRELOAD shim sleeps around that unlock
+// so the test waits on the creation lock and wins the gap every time.
+// Fails on a7cfecc (the first version of this branch), where a reader could
+// wait, and on main, where only the test could (a reader got EBADF, see
+// TestHistoryReadOnlyWaitsForCreator).
+func TestHistoryFastCreatorKeepsLock(t *testing.T) {
+	so := lockFaultShim(t)
+	s := NewSite(t, SiteOptions{NoStart: true})
+	hist := filepath.Join(t.TempDir(), "dhistory.new")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, filepath.Join(s.Bin, "diload"), "-f", "-h", "1m", hist)
+	cmd.Dir = s.Dir
+	cmd.Env = append(append(os.Environ(), s.Env...), "LD_PRELOAD="+so, "LOCKFAULT=unlocksleep")
+	cmd.Stdin = strings.NewReader("")
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	// wait until diload holds the creation lock on bytes 0-3
+	var f *os.File
+	held := false
+	for deadline := time.Now().Add(30 * time.Second); !held && time.Now().Before(deadline); {
+		select {
+		case err := <-done:
+			t.Fatalf("diload exited before the test saw its creation lock: %v\n%s", err, out.String())
+		default:
+		}
+		if f == nil {
+			f, _ = os.Open(hist)
+		}
+		if f != nil {
+			lk := syscall.Flock_t{Type: syscall.F_RDLCK, Whence: 0, Start: 0, Len: 4}
+			if syscall.FcntlFlock(f.Fd(), syscall.F_GETLK, &lk) == nil &&
+				lk.Type == syscall.F_WRLCK && int(lk.Pid) == cmd.Process.Pid {
+				held = true
+				break
+			}
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if !held {
+		t.Fatalf("diload never held the creation lock\n%s", out.String())
+	}
+	defer f.Close()
+
+	// wait for the creation with a shared lock, as a read-only opener does
+	got := make(chan error, 1)
+	go func() {
+		lk := syscall.Flock_t{Type: syscall.F_RDLCK, Whence: 0, Start: 0, Len: 4}
+		got <- syscall.FcntlFlock(f.Fd(), syscall.F_SETLKW, &lk)
+	}()
+	err := <-done
+	if err != nil || strings.Contains(out.String(), "Unable to lock") {
+		t.Errorf("diload -f lost its history lock to a waiting reader: %v\n%s", err, out.String())
+	}
+	select {
+	case <-got:
+	case <-time.After(30 * time.Second):
+		t.Error("the shared lock was not granted after diload exited")
+	}
+}
+
 // TestDoutqRunning: doutq lists the queue files a dnewslink works on, which
 // it sees by the write lock dnewslink holds on all of the file. The test
-// holds such a lock on one of three files: exactly that one is listed, also
-// when the queue files are read-only for the user running doutq. Before the
-// fix doutq took the lock itself on a descriptor opened for writing: a
-// dnewslink starting on the file in that moment skipped it, and on read-only
-// queue files the open failed and nothing was listed (fails on main).
+// holds such a lock on one of three files: exactly that one is listed.
+// Before the fix doutq took the lock itself (F_SETLK on a descriptor opened
+// for writing): a dnewslink starting on the file in that moment skipped it,
+// and on queue files the user can only read the open failed and nothing was
+// listed. The subtests fail on main: NoLockTaken (with an LD_PRELOAD shim
+// that logs lock calls, also as root) and ReadOnlyQueue (not as root).
 func TestDoutqRunning(t *testing.T) {
 	s := NewSite(t, SiteOptions{NoStart: true, Newsfeeds: GlobalLabel + `label peer
     inhost ` + PeerIP + `
@@ -96,20 +170,26 @@ end
 		s.WriteFile(t, rel, "D.00000001/B.0001 <q@e2e.test> 0,100\n")
 		files = append(files, filepath.Join(s.Dir, rel))
 	}
-	running := func() string {
+	running := func(t *testing.T, env ...string) string {
 		t.Helper()
-		out := s.Run(t, "doutq", "peer")
-		for _, l := range strings.Split(out, "\n") {
+		cmd := exec.Command(filepath.Join(s.Bin, "doutq"), "peer")
+		cmd.Dir = s.Dir
+		cmd.Env = append(append(os.Environ(), s.Env...), env...)
+		b, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("doutq peer: %v\n%s", err, b)
+		}
+		for _, l := range strings.Split(string(b), "\n") {
 			if strings.HasPrefix(l, "peer ") {
 				_, list, _ := strings.Cut(l, "\t")
 				return strings.TrimSpace(list)
 			}
 		}
-		t.Fatalf("no line for peer in doutq output:\n%s", out)
+		t.Fatalf("no line for peer in doutq output:\n%s", b)
 		return ""
 	}
 
-	if got := running(); got != "" {
+	if got := running(t); got != "" {
 		t.Errorf("doutq with no lock held: running %q, want none", got)
 	}
 
@@ -122,22 +202,37 @@ end
 	if err := syscall.FcntlFlock(f.Fd(), syscall.F_SETLK, &lk); err != nil {
 		t.Fatalf("lock %s: %v", files[1], err)
 	}
-	if got := running(); got != "00001" {
+	if got := running(t); got != "00001" {
 		t.Errorf("doutq with peer.S00001 locked: running %q, want 00001", got)
 	}
 
-	if os.Geteuid() == 0 {
-		t.Log("root opens read-only files for writing: read-only case skipped")
-		return
-	}
-	for _, p := range files {
-		if err := os.Chmod(p, 0o444); err != nil {
-			t.Fatal(err)
+	t.Run("NoLockTaken", func(t *testing.T) {
+		so := lockFaultShim(t)
+		log := filepath.Join(t.TempDir(), "setlocks")
+		if got := running(t, "LD_PRELOAD="+so, "LOCKFAULT_SETLOG="+log); got != "00001" {
+			t.Errorf("doutq with peer.S00001 locked: running %q, want 00001", got)
 		}
-	}
-	if got := running(); got != "00001" {
-		t.Errorf("doutq on read-only queue files with peer.S00001 locked: running %q, want 00001", got)
-	}
+		b, _ := os.ReadFile(log)
+		for _, l := range strings.Split(string(b), "\n") {
+			if strings.Contains(l, "/dqueue/peer.S") {
+				t.Errorf("doutq set a lock on a queue file: %s", l)
+			}
+		}
+	})
+
+	t.Run("ReadOnlyQueue", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root opens read-only files for writing")
+		}
+		for _, p := range files {
+			if err := os.Chmod(p, 0o444); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if got := running(t); got != "00001" {
+			t.Errorf("doutq on read-only queue files with peer.S00001 locked: running %q, want 00001", got)
+		}
+	})
 }
 
 // TestDexpireoverLockTimeoutKept: the blocking lock wrappers now start a wait
@@ -183,10 +278,14 @@ func TestDexpireoverLockTimeoutKept(t *testing.T) {
 	}
 }
 
-// lockFaultShim builds an LD_PRELOAD library that changes blocking fcntl
-// locks (F_SETLKW, not unlocks): LOCKFAULT=eintr fails the first with EINTR,
-// LOCKFAULT=enolck fails all with ENOLCK. With LOCKFAULT_LOG each such call
-// is logged as "W|R start len".
+// lockFaultShim builds an LD_PRELOAD library (Linux) for fcntl locks.
+//
+//	LOCKFAULT=eintr        fail the first blocking lock (F_SETLKW) with EINTR
+//	LOCKFAULT=enolck       fail every blocking lock with ENOLCK
+//	LOCKFAULT=unlocksleep  sleep 300 ms before and after unlocking bytes 0-3
+//	LOCKFAULT_FILE=s       eintr and enolck only for files whose path holds s
+//	LOCKFAULT_LOG=f        log each blocking lock (not unlocks) as "W|R start len"
+//	LOCKFAULT_SETLOG=f     log every F_SETLK/F_SETLKW as "cmd type start len path"
 func lockFaultShim(t *testing.T) string {
 	t.Helper()
 	if runtime.GOOS != "linux" {
@@ -213,27 +312,49 @@ const lockFaultSource = `#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 typedef int (*fcntl_fn)(int, int, ...);
 
+static void
+logline(const char *env, const char *line)
+{
+    const char *p = getenv(env);
+    FILE *f;
+
+    if (p && (f = fopen(p, "a")) != NULL) {
+	fputs(line, f);
+	fclose(f);
+    }
+}
+
 static int
-fault(int cmd, void *arg)
+fault(int fd, int cmd, struct flock *fl)
 {
     static int calls;
-    struct flock *fl = arg;
     const char *mode = getenv("LOCKFAULT");
-    const char *log = getenv("LOCKFAULT_LOG");
+    const char *only = getenv("LOCKFAULT_FILE");
+    char link[64], path[4096], line[4200];
+    ssize_t n;
+
+    if (cmd != F_SETLK && cmd != F_SETLKW)
+	return 0;
+    snprintf(link, sizeof(link), "/proc/self/fd/%d", fd);
+    n = readlink(link, path, sizeof(path) - 1);
+    path[n > 0 ? n : 0] = 0;
+    snprintf(line, sizeof(line), "%s %c %lld %lld %s\n",
+	cmd == F_SETLKW ? "SETLKW" : "SETLK",
+	fl->l_type == F_WRLCK ? 'W' : fl->l_type == F_RDLCK ? 'R' : 'U',
+	(long long)fl->l_start, (long long)fl->l_len, path);
+    logline("LOCKFAULT_SETLOG", line);
 
     if (cmd != F_SETLKW || mode == NULL || fl->l_type == F_UNLCK)
 	return 0;
-    if (log) {
-	FILE *f = fopen(log, "a");
-	if (f) {
-	    fprintf(f, "%c %lld %lld\n", fl->l_type == F_WRLCK ? 'W' : 'R',
-		(long long)fl->l_start, (long long)fl->l_len);
-	    fclose(f);
-	}
-    }
+    if (only && strstr(path, only) == NULL)
+	return 0;
+    snprintf(line, sizeof(line), "%c %lld %lld\n", fl->l_type == F_WRLCK ? 'W' : 'R',
+	(long long)fl->l_start, (long long)fl->l_len);
+    logline("LOCKFAULT_LOG", line);
     if (strcmp(mode, "eintr") == 0 && calls++ == 0)
 	return EINTR;
     if (strcmp(mode, "enolck") == 0)
@@ -245,7 +366,11 @@ static int
 call(const char *name, int fd, int cmd, void *arg)
 {
     fcntl_fn real = (fcntl_fn)dlsym(RTLD_NEXT, name);
-    int e = fault(cmd, arg);
+    const char *mode = getenv("LOCKFAULT");
+    struct flock *fl = arg;
+    int slow = 0;
+    int e = fault(fd, cmd, arg);
+    int r;
 
     if (e) {
 	errno = e;
@@ -253,7 +378,19 @@ call(const char *name, int fd, int cmd, void *arg)
     }
     if (real == NULL)
 	real = (fcntl_fn)dlsym(RTLD_NEXT, "fcntl");
-    return real(fd, cmd, arg);
+    if ((cmd == F_SETLK || cmd == F_SETLKW) && mode &&
+	strcmp(mode, "unlocksleep") == 0 && fl->l_type == F_UNLCK &&
+	fl->l_start == 0 && fl->l_len == 4)
+	slow = 1;
+    if (slow)
+	usleep(300000);
+    r = real(fd, cmd, arg);
+    if (slow) {
+	e = errno;
+	usleep(300000);
+	errno = e;
+    }
+    return r;
 }
 
 int
@@ -322,6 +459,26 @@ func TestKPDBLockInterrupted(t *testing.T) {
 	if live, _, _ := kpRecords(t, db, "e2e.test"); len(live) != 1 || !strings.Contains(live[0], "NE=0000000301") {
 		t.Errorf("record after dkp -w: %q", live)
 	}
+}
+
+// TestKPDBReadLockFailureKeepsReader: a dreaderd command that only reads a
+// group's record (GROUP) goes on when the record lock fails (ENOLCK from the
+// shim, for dactive.kp only): the worst case is a torn read. The first
+// version of this branch (a7cfecc) made every record lock failure fatal, so
+// GROUP ended the reader process and its connections. On main the result
+// was not checked at all, so this passes there.
+func TestKPDBReadLockFailureKeepsReader(t *testing.T) {
+	so := lockFaultShim(t)
+	s := NewReaderSite(t, ReaderOptions{SpoolAddr: "127.0.0.1:1", NoStart: true})
+	s.Env = append(s.Env, "LD_PRELOAD="+so, "LOCKFAULT=enolck", "LOCKFAULT_FILE=dactive.kp")
+	_, port, _ := strings.Cut(s.Addr, ":")
+	startReader(t, s, "[127.0.0.1]:"+port)
+
+	r := s.Reader(t)
+	for i := 0; i < 2; i++ {
+		expect(t, r, 211, "GROUP e2e.test")
+	}
+	expect(t, r, 205, "QUIT")
 }
 
 // TestKPDBLockFailureStops: when a record lock or the append lock of a KP
