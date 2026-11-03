@@ -679,7 +679,29 @@ FeedStatsSnapShot(FILE *fo, char *hostname, char *ext)
 	    remove(fnameout);
 	    return;
 	}
+#ifdef __OpenBSD__
+	/* Counters are updated through shared mappings, not through write(). */
+	{
+	    struct stat st;
+	    off_t pos = (off_t)count * sizeof(fs);
+	    FeedStats *mapped = NULL;
+
+	    if (fstat(oldf, &st) < 0) {
+		res = -1;
+	    } else if (pos > st.st_size || st.st_size - pos < (off_t)sizeof(fs)) {
+		res = 0;
+	    } else if ((mapped = xmap(NULL, sizeof(fs), PROT_READ,
+		MAP_SHARED, oldf, pos)) == NULL) {
+		res = -1;
+	    } else {
+		memcpy(&fs, mapped, sizeof(fs));
+		xunmap(mapped, sizeof(fs));
+		res = sizeof(fs);
+	    }
+	}
+#else
 	res = read(oldf, &fs, sizeof(fs));
+#endif
 	if (res == sizeof(fs) &&
 		(hostname == NULL || strcmp(fs.hostname, hostname) == 0)) {
 	    if (write(newf, &fs, sizeof(fs)) != sizeof(fs)) {
