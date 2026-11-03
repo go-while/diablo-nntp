@@ -38,7 +38,7 @@ Prototype int HistoryLookupByHash(hash_t hv, History *h);
 Prototype HistIndex HistoryPosLookupByHash(hash_t hv, History *h);
 Prototype int HistoryAdd(const char *msgid, History *h);
 Prototype int HistoryStore(History *h);
-Prototype void HistoryStoreExp(History *h, HistIndex index);
+Prototype int HistoryStoreExp(History *h, HistIndex index);
 Prototype int HistoryExpire(const char *msgid, History *h, int unexp);
 Prototype void PrintHistory(History *h);
 
@@ -735,6 +735,19 @@ HistoryPosLookupByHash(hash_t hv, History *h)
     return(-1);
 }
 
+#define HIST_LOCK_TRIES	5	/* tries for a chain lock that fails with ENOLCK */
+
+/*
+ * After an update under the chain lock: was the history marked dead in
+ * the meantime?  dhisexpire copied the record long before, so the update
+ * must be done again in the new history.  Fast mode has its own file.
+ */
+static int
+updateLost(void)
+{
+    return((HFlags & HGF_FAST) == 0 && HHeadMap->hmagic != HMAGIC);
+}
+
 /* File offset of the record at index. */
 static off_t
 recordOffset(HistIndex index)
@@ -761,6 +774,8 @@ unlockChain(off_t chainlock)
 static off_t
 lockChain(hash_t hv)
 {
+    int tries = 0;
+
     for (;;) {
 	off_t chainlock;
 
@@ -770,9 +785,17 @@ lockChain(hash_t hv)
 	    return(0);
 	chainlock = HHead.headSize +
 	    (off_t)((hv.h1 ^ hv.h2) & HMask) * sizeof(HistIndex);
-	if (hflock(HFd, chainlock, XLOCK_EX) < 0) {
+	while (hflock(HFd, chainlock, XLOCK_EX) < 0) {
+	    int error = errno;
+
+	    /* ENOLCK can pass (as in KPDBLockRec); other errors do not */
+	    if (error == ENOLCK && ++tries < HIST_LOCK_TRIES) {
+		usleep(100000);
+		continue;
+	    }
 	    logit(LOG_ERR, "Unable to lock dhistory chain: %s",
-		strerror(errno));
+		strerror(error));
+	    errno = error;
 	    return(-1);
 	}
 	if (HHeadMap->hmagic == HMAGIC)
@@ -921,7 +944,8 @@ HistoryAdd(const char *msgid, History *h)
 /*
  * Replace the record of h->hv with *h, under its chain lock.  The link
  * and an expired flag on disk are kept: *h can be an old copy, read
- * before the history was replaced or the record was expired.
+ * before the history was replaced or the record was expired.  Returns
+ * 1 when stored, 0 when not found, -1 when the lock failed (errno).
  */
 int
 HistoryStore(History *h)
@@ -929,20 +953,24 @@ HistoryStore(History *h)
     HistIndex index;
     History th;
     off_t chainlock;
+    int lost;
 
-    if ((chainlock = lockChain(h->hv)) < 0)
-	return(0);
-    index = HistoryPosLookupByHash(h->hv, &th);
-    if (index != (HistIndex)-1) {
-	History nh = *h;
+    do {
+	if ((chainlock = lockChain(h->hv)) < 0)
+	    return(-1);
+	index = HistoryPosLookupByHash(h->hv, &th);
+	if (index != (HistIndex)-1) {
+	    History nh = *h;
 
-	nh.next = th.next;
-	if (H_EXPIRED(th.exp))
-	    nh.exp |= EXPF_EXPIRED;
-	if (HistoryWriteAt(HFd, &nh, sizeof(nh), recordOffset(index)) < 0)
-	    HistoryFatalIO("record update");
-    }
-    unlockChain(chainlock);
+	    nh.next = th.next;
+	    if (H_EXPIRED(th.exp))
+		nh.exp |= EXPF_EXPIRED;
+	    if (HistoryWriteAt(HFd, &nh, sizeof(nh), recordOffset(index)) < 0)
+		HistoryFatalIO("record update");
+	}
+	lost = updateLost();
+	unlockChain(chainlock);
+    } while (lost);
     return(index != (HistIndex)-1);
 }
 
@@ -958,27 +986,34 @@ storeExp(uint16 exp, HistIndex index)
 /*
  * Store h->exp in the record at index (from a lookup of h->hv), under
  * its chain lock.  When that record is no longer h->hv (the history was
- * replaced since), it is looked up again.
+ * replaced since), it is looked up again.  Returns 1 when stored, 0
+ * when not found, -1 when the lock failed (errno).
  */
-void
+int
 HistoryStoreExp(History *h, HistIndex index)
 {
     History th;
     off_t chainlock;
+    int lost;
 
-    if ((chainlock = lockChain(h->hv)) < 0)
-	return;
-    if (pread(HFd, &th, sizeof(th), recordOffset(index)) != sizeof(th) ||
-	th.hv.h1 != h->hv.h1 || th.hv.h2 != h->hv.h2)
-	index = HistoryPosLookupByHash(h->hv, &th);
-    if (index != (HistIndex)-1)
-	storeExp(h->exp, index);
-    unlockChain(chainlock);
+    do {
+	if ((chainlock = lockChain(h->hv)) < 0)
+	    return(-1);
+	if (pread(HFd, &th, sizeof(th), recordOffset(index)) != sizeof(th) ||
+	    th.hv.h1 != h->hv.h1 || th.hv.h2 != h->hv.h2)
+	    index = HistoryPosLookupByHash(h->hv, &th);
+	if (index != (HistIndex)-1)
+	    storeExp(h->exp, index);
+	lost = updateLost();
+	unlockChain(chainlock);
+    } while (lost);
+    return(index != (HistIndex)-1);
 }
 
 /*
  * Cancel/expire article in history.  The lookup and the update are
- * done under the chain lock.
+ * done under the chain lock.  Returns 1 when found, 0 when not, -1
+ * when the lock failed (errno).
  */
 int
 HistoryExpire(const char *msgid, History *h, int unexp)
@@ -986,23 +1021,27 @@ HistoryExpire(const char *msgid, History *h, int unexp)
     HistIndex index;
     hash_t hv;
     off_t chainlock;
+    int lost;
 
     if (msgid == NULL)
 	hv = h->hv;
     else
 	hv = hhash(msgid);
-    if ((chainlock = lockChain(hv)) < 0)
-	return(0);
-    index = HistoryPosLookupByHash(hv, h);
-    if (index != (HistIndex)-1) {
-	if (unexp && H_EXPIRED(h->exp)) {
-	    h->exp &= ~EXPF_EXPIRED;
-	    storeExp(h->exp, index);
-	} else if (!H_EXPIRED(h->exp)) {
-	    h->exp |= EXPF_EXPIRED;
-	    storeExp(h->exp, index);
+    do {
+	if ((chainlock = lockChain(hv)) < 0)
+	    return(-1);
+	index = HistoryPosLookupByHash(hv, h);
+	if (index != (HistIndex)-1) {
+	    if (unexp && H_EXPIRED(h->exp)) {
+		h->exp &= ~EXPF_EXPIRED;
+		storeExp(h->exp, index);
+	    } else if (!H_EXPIRED(h->exp)) {
+		h->exp |= EXPF_EXPIRED;
+		storeExp(h->exp, index);
+	    }
 	}
-    }
-    unlockChain(chainlock);
+	lost = updateLost();
+	unlockChain(chainlock);
+    } while (lost);
     return(index != (HistIndex)-1);
 }

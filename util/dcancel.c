@@ -30,6 +30,7 @@ int ReaderCancel = 0;
 int SpoolCancel = 0;
 HistoryList *CancelList = NULL;
 int CancelCount = 0;
+int HistoryFailed = 0;	/* a history update failed: exit 1 */
 int RewriteCount = 0;
 int RemoveCount = 0;
 int ReaderCount = 0;
@@ -158,7 +159,13 @@ main(int ac, char **av)
 		printf("No history entry for: %s\n", msgid);
 	    }
 	} else if (HistoryCancel) {
-	    if (HistoryExpire(msgid, &h, UnExpire)) {
+	    int r = HistoryExpire(msgid, &h, UnExpire);
+
+	    if (r < 0) {
+		fprintf(stderr, "Unable to update the history entry for %s: %s\n",
+						msgid, strerror(errno));
+		HistoryFailed = 1;
+	    } else if (r > 0) {
 		if (h.iter == (uint16)-1) {
 		    fprintf(stderr, "Already removed %s\n", msgid);
 		    continue;
@@ -186,7 +193,7 @@ main(int ac, char **av)
     if (VerboseOpt)
 	printf("Rewrote %d spool files with %d articles removed\n",
 						RewriteCount, RemoveCount);
-    exit(0);
+    exit(HistoryFailed ? 1 : 0);
 }
 
 /*
@@ -432,8 +439,11 @@ HistoryStoreQueue(HistoryList *pl, int installed)
 
     for (; pl != NULL; pl = next) {
 	next = pl->nextent;
-	if (installed)
-	    HistoryStore(&pl->h);
+	if (installed && HistoryStore(&pl->h) < 0) {
+	    fprintf(stderr, "Unable to store the history entry %08x.%08x: %s\n",
+		pl->h.hv.h1, pl->h.hv.h2, strerror(errno));
+	    HistoryFailed = 1;
+	}
 	free(pl);
     }
 }
