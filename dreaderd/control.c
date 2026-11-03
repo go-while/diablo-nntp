@@ -491,9 +491,22 @@ ParseControl(Connection *conn, const char *cmd, const char *from, const char *ne
 		if (DebugOpt)
 		    printf("creating log file %s fd = %d\n", logFile, fd);
 
+		/*
+		 * Other readers append to the same log: without the lock
+		 * do not log this message there.
+		 */
+		if (fd >= 0 && hflock(fd, 0, XLOCK_EX) < 0) {
+		    logit(LOG_ERR, "Unable to lock control log %s: %s",
+			logFile, strerror(errno));
+		    close(fd);
+		    fd = -1;
+		}
+		if (fd >= 0 && (ctl->ct_LogFo = fdopen(fd, "r+")) == NULL) {
+		    hflock(fd, 0, XLOCK_UN);
+		    close(fd);
+		    fd = -1;
+		}
 		if (fd >= 0) {
-		    ctl->ct_LogFo = fdopen(fd, "r+");
-		    hflock(fileno(ctl->ct_LogFo), 0, XLOCK_EX);
 		    fseek(ctl->ct_LogFo, 0L, 2);
 		    ctl->ct_LogSeekPos = ftell(ctl->ct_LogFo);
 		    ctl->ct_Flags |= CTF_LOG;

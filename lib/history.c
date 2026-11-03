@@ -60,6 +60,7 @@ int		HBlkIncr = HBLKINCR;
 int		HBlkGood;
 char		HistoryFileName[PATH_MAX];
 int		DoingReOpen = 0;
+static int	ReOpenLockError = 0;	/* errno of a failed lock in a reopen */
 
 /*
  * Write an entire buffer at a fixed offset.  A successful short write is
@@ -109,6 +110,9 @@ HistoryOpen(const char *fileName, int hflags)
     int fd;
     struct stat st;
     int openflags;
+    int fastLocked = 0;
+
+    ReOpenLockError = 0;
 
     if (fileName == NULL)
 	fileName = strdup(PatDbExpand(DHistoryPat));
@@ -171,9 +175,22 @@ HistoryOpen(const char *fileName, int hflags)
 
 	/*
 	 * lock after finding the history file to be invalid and recheck.
+	 * A read-only descriptor can only take a shared lock (an exclusive
+	 * one fails at once with EBADF); it still waits for a creator.
 	 */
 
-	hflock(fd, 0, XLOCK_EX);
+	if (hflock(fd, 0, (HFlags & HGF_READONLY) ? XLOCK_SH : XLOCK_EX) < 0) {
+	    int error = errno;
+
+	    close(fd);
+	    if (DoingReOpen) {
+		ReOpenLockError = error;
+		return(-2);
+	    }
+	    logit(LOG_ERR, "lock %s failed (%s)", fileName, strerror(error));
+	    fprintf(stderr, "lock %s failed (%s)\n", fileName, strerror(error));
+	    exit(1);
+	}
 
 	fstat(fd, &st);
 	lseek(fd, 0L, 0);
@@ -264,7 +281,15 @@ HistoryOpen(const char *fileName, int hflags)
 	    logit(LOG_INFO, "History file creation complete");
 	}
 
-	hflock(fd, 0, XLOCK_UN);
+	/*
+	 * Fast mode wants this lock for the whole run: keep it.  Released
+	 * and taken again, a reader waiting for the creation could get in
+	 * between and the fast-mode lock below would fail.
+	 */
+	if ((HFlags & (HGF_FAST|HGF_READONLY)) == HGF_FAST)
+	    fastLocked = 1;
+	else
+	    hflock(fd, 0, XLOCK_UN);
     }
 
     if (HHead.version < 1) {
@@ -330,7 +355,7 @@ HistoryOpen(const char *fileName, int hflags)
     if (HFlags & HGF_FAST) {
 	if (HFlags & HGF_READONLY) {
 	    fprintf(stderr, "Ignoring fast mode for readonly history open\n");
-	} else if (hflock(fd, 0, XLOCK_EX|XLOCK_NB) == -1) {
+	} else if (!fastLocked && hflock(fd, 0, XLOCK_EX|XLOCK_NB) == -1) {
 	    fprintf(stderr, "Unable to lock history file in fast mode (%s)\n",
 							strerror(errno));
 	    exit(1);
@@ -431,8 +456,15 @@ historyReOpen(void)
     while (HistoryOpen(HistoryFileName, HFlags) == -2 && count++ < 360)
 	sleep(1);
     if (count++ >= 360) {
-	fprintf(stderr, "Unable to reopen history file due to old magic\n");
-	logit(LOG_ERR, "Unable to reopen history file due to old magic");
+	if (ReOpenLockError) {
+	    fprintf(stderr, "Unable to reopen history file: lock failed (%s)\n",
+		strerror(ReOpenLockError));
+	    logit(LOG_ERR, "Unable to reopen history file: lock failed (%s)",
+		strerror(ReOpenLockError));
+	} else {
+	    fprintf(stderr, "Unable to reopen history file due to old magic\n");
+	    logit(LOG_ERR, "Unable to reopen history file due to old magic");
+	}
 	exit(1);
     }
     DoingReOpen = 0;

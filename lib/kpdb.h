@@ -23,4 +23,5 @@ typedef struct KPDB {
 #define KP_LOCK			1
 #define KP_LOCK_CONTINUE	2
 #define KP_UNLOCK		3
+#define KP_LOCK_RO		4	/* lock to read only: on a lock error read unlocked */
 

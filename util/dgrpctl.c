@@ -213,7 +213,11 @@ GrpCtlMassCancel(char *group)
 
 				copy.oa_ArtNo = -1;	/* Flag as cancelled */
 
-				hflock(ov->ov_OFd, 0, XLOCK_EX);
+				if (hflock(ov->ov_OFd, 0, XLOCK_EX) < 0) {
+				    printf(">> masscancel: overview lock failed: %s\n",
+							strerror(errno));
+				    break;
+				}
 				lseek(ov->ov_OFd, ovpos, 0);
 				if (WriteAll(ov->ov_OFd, &copy, sizeof(copy)) < 0)
 				    printf(">> masscancel: overview write failed: %s\n",
@@ -1004,7 +1008,16 @@ again:
 	     * we have to re-open it.
 	     */
 
-	    hflock(ov->ov_OFd, 4, XLOCK_SH);
+	    if (hflock(ov->ov_OFd, 4, XLOCK_SH) < 0) {
+		int error = errno;
+
+		logit(LOG_ERR, "Error on overview lock for group %s: %s (%s)",
+						group, path, strerror(error));
+		fprintf(stderr, "%s: overview lock failed: %s\n",
+						group, strerror(error));
+		close(ov->ov_OFd);
+		return(NULL);
+	    }
 
 	    if (fstat(ov->ov_OFd, &st) < 0 || st.st_nlink == 0) {
 		hflock(ov->ov_OFd, 4, XLOCK_UN);
@@ -1036,7 +1049,17 @@ again:
 		r = -1;
 	    }
 	    if (r != 0) {
-		hflock(ov->ov_OFd, 0, XLOCK_EX);
+		if (hflock(ov->ov_OFd, 0, XLOCK_EX) < 0) {
+		    int error = errno;
+
+		    logit(LOG_ERR, "Error on overview lock for group %s: %s (%s)",
+						group, path, strerror(error));
+		    fprintf(stderr, "%s: overview lock failed: %s\n",
+						group, strerror(error));
+		    hflock(ov->ov_OFd, 4, XLOCK_UN);
+		    close(ov->ov_OFd);
+		    return(NULL);
+		}
 		/*
 		 * we have to test again after we got the lock in case
 		 * another process had a lock and adjusted the file.  Use the

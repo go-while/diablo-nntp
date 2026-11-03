@@ -673,7 +673,17 @@ WriteOverview(Connection *conn, ArtNumAss *an, const char *group, const char *xr
 	    return(1);
 	}
 
-	hflock(ov->ov_HCache->od_HFd, 0, XLOCK_EX);
+	if (hflock(ov->ov_HCache->od_HFd, 0, XLOCK_EX) < 0) {
+	    logit(LOG_ERR, "error locking overview data for %s: %s",
+		group, strerror(errno));
+	    LogCmd(conn, '-', logbuf);
+	    if (DRIncomingLogPat != NULL)
+		LogIncoming("%s - %s%s", conn->co_Auth.dr_Host, "", logbuf);
+	    MBLogPrintf(conn, &conn->co_TMBuf, "400 Error writing data\r\n");
+	    NNTerminate(conn);
+	    PutOverInfo(ov);
+	    return(1);
+	}
 	pos = lseek(ov->ov_HCache->od_HFd, 0L, 2);
 
 	errno = 0;
@@ -756,10 +766,13 @@ WriteOverview(Connection *conn, ArtNumAss *an, const char *group, const char *xr
 	     */
 	    OverArt ovart = { 0 };
 	    off_t ovpos = 0;
+	    int locked = (hflock(ov->ov_OFd, 0, XLOCK_EX) == 0);
+	    int lockerr = errno;
 
-	    hflock(ov->ov_OFd, 0, XLOCK_EX);
-
-	    (void)GetOverArt(ov, artNo, &ovpos);
+	    if (locked)
+		(void)GetOverArt(ov, artNo, &ovpos);
+	    else
+		ovpos = -1;	/* take the error path below */
 
 	    ovart.oa_ArtNo = OA_ARTNOSET(artNo);
 	    if (DOpts.ReaderXOverMode == 2)
@@ -775,15 +788,16 @@ WriteOverview(Connection *conn, ArtNumAss *an, const char *group, const char *xr
 		FilePreAllocSpace(ov->ov_OFd, ovpos, prealloc_ov,
 		    sizeof(ovart)) != 0 ||
 		OverWriteAt(ov->ov_OFd, &ovart, sizeof(ovart), ovpos) < 0) {
-		int error = errno;
+		int error = locked ? errno : lockerr;
 
 		/* The data append is not visible without a valid index entry. */
 		if (DOpts.ReaderXOverMode != 2 && ftruncate(ov->ov_HCache->od_HFd, pos) < 0)
 		    logit(LOG_ERR, "error rolling back overview data for %s: %s",
 			group, strerror(errno));
-		hflock(ov->ov_OFd, 0, XLOCK_UN);
-		logit(LOG_ERR, "error writing overview index for %s: %s",
-		    group, strerror(error));
+		if (locked)
+		    hflock(ov->ov_OFd, 0, XLOCK_UN);
+		logit(LOG_ERR, "error %s overview index for %s: %s",
+		    locked ? "writing" : "locking", group, strerror(error));
 		LogCmd(conn, '-', logbuf);
 		if (DRIncomingLogPat != NULL)
 		    LogIncoming("%s - %s%s", conn->co_Auth.dr_Host, "", logbuf);
@@ -903,7 +917,7 @@ GetOverInfo(const char *group)
 	{
 	    const char *rec;
 	    int recLen;
-	    if ((rec = KPDBReadRecord(KDBActive, group, KP_LOCK, &recLen)) == NULL) {
+	    if ((rec = KPDBReadRecord(KDBActive, group, KP_LOCK_RO, &recLen)) == NULL) {
 		FreeOverInfo(ov);
 		return(NULL);
 	    }
@@ -943,7 +957,13 @@ again:
 	     * we have to re-open it.
 	     */
 
-	    hflock(ov->ov_OFd, 4, XLOCK_SH);
+	    if (hflock(ov->ov_OFd, 4, XLOCK_SH) < 0) {
+		logit(LOG_ERR, "error locking overview index for %s: %s (%s)",
+		    group, path, strerror(errno));
+		FreeOverInfo(ov);
+		zfree(&SysMemPool, path, pathSize);
+		return(NULL);
+	    }
 
 	    if (fstat(ov->ov_OFd, &st) < 0 || st.st_nlink == 0) {
 		hflock(ov->ov_OFd, 4, XLOCK_UN);
@@ -978,7 +998,13 @@ again:
 		r = -1;
 	    }
 	    if (r != 0) {
-		hflock(ov->ov_OFd, 0, XLOCK_EX);
+		if (hflock(ov->ov_OFd, 0, XLOCK_EX) < 0) {
+		    logit(LOG_ERR, "error locking overview index for %s: %s (%s)",
+			group, path, strerror(errno));
+		    FreeOverInfo(ov);
+		    zfree(&SysMemPool, path, pathSize);
+		    return(NULL);
+		}
 		/*
 		 * we have to test again after we got the lock in case
 		 * another process had a lock and adjusted the file.  Use the
@@ -1435,7 +1461,7 @@ FindCanceledMsg(const char *group, const char *msgid, artno_t *partNo, int *pval
 	if ((ov = GetOverInfo(group)) != NULL) {
 	    hash_t hv = hhash(msgid);
 
-	    if ((rec = KPDBReadRecord(KDBActive, group, KP_LOCK, &recLen)) != NULL) {
+	    if ((rec = KPDBReadRecord(KDBActive, group, KP_LOCK_RO, &recLen)) != NULL) {
 		artno_t artBeg;
 		artno_t artEnd;
 
@@ -1480,7 +1506,11 @@ CancelOverArt(OverInfo *ov, artno_t artNo)
 	off_t ovpos = 0;
 	const OverArt *oa;
 
-	hflock(ov->ov_OFd, 0, XLOCK_EX);
+	if (hflock(ov->ov_OFd, 0, XLOCK_EX) < 0) {
+	    logit(LOG_ERR, "error locking overview index for %s: %s",
+		ov->ov_Group, strerror(errno));
+	    return(0);
+	}
 	oa = GetOverArt(ov, artNo, &ovpos);
 	if (OA_ARTNOEQ(artNo, oa->oa_ArtNo)) {
 	    OverArt copy = *oa;

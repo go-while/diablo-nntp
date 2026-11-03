@@ -135,6 +135,45 @@ KPDBFatalIO(KPDB *kpdb, const char *operation)
 }
 
 /*
+ * KPDBLockRec() - lock a record, or the append lock at offset 4, for a
+ * read-modify-write.  Without the lock a number could be handed out twice
+ * or two appends mixed, and calling the record missing would make callers
+ * create it again, so a failure is fatal like a failed write.  ENOLCK
+ * (lock table full, lockd) may pass: try a few times first.  A deadlock
+ * (EDEADLK) stays while we hold our locks: no retry.
+ */
+#define KP_LOCK_TRIES	5
+
+static void
+KPDBLockRec(KPDB *kpdb, off_t offset)
+{
+    int tries = 0;
+
+    while (hflock(kpdb->kp_Fd, offset, XLOCK_EX) < 0) {
+	if (errno != ENOLCK || ++tries >= KP_LOCK_TRIES)
+	    KPDBFatalIO(kpdb, (offset == 4) ? "append lock" : "record lock");
+	usleep(100000);
+    }
+}
+
+/*
+ * KPDBLockWarn() - a record lock taken only to read failed: the caller
+ * reads unlocked (the worst case is a torn read).  Logged the 1st, 2nd,
+ * 4th, 8th, ... time.
+ */
+static void
+KPDBLockWarn(KPDB *kpdb)
+{
+    static unsigned int fails;
+    int error = errno;
+
+    ++fails;
+    if ((fails & (fails - 1)) == 0)
+	logit(LOG_ERR, "KPDB record lock failed for %s: %s (%u times, read unlocked)",
+	    kpdb->kp_FileName, strerror(error), fails);
+}
+
+/*
  * KPDBOpen() - open a KP database.  WARNING! If you fork() after calling
  *		KPDBOpen(), you must call KPDBReOpen() to re-open the
  *		file descriptor so record-locking still works properly.
@@ -201,6 +240,7 @@ KPDB *
 KPDBReOpen(KPDB *kpdb)
 {
     int failed = 0;
+    int nosort = 0;
     int dosort = (kpdb->kp_ReSize) ? 0 : -1;
 
     /*
@@ -252,8 +292,13 @@ KPDBReOpen(KPDB *kpdb)
 	/*
 	 * locks
 	 */
-	if (kpdb->kp_Lock4 == 0)
-	    hflock(kpdb->kp_Fd, 4, XLOCK_EX);	/* open sanity/sort */
+	if (kpdb->kp_Lock4 == 0 &&
+	    hflock(kpdb->kp_Fd, 4, XLOCK_EX) < 0) {	/* open sanity/sort */
+	    /* no sort without the lock; the map can still be used */
+	    logit(LOG_ERR, "KPDB open lock failed for %s: %s",
+		kpdb->kp_FileName, strerror(errno));
+	    nosort = 1;
+	}
 
 	if (fstat(kpdb->kp_Fd, &st) == 0) {
 	    if (hflock(kpdb->kp_Fd, 0, XLOCK_EX|XLOCK_NB) < 0) {
@@ -263,7 +308,10 @@ KPDBReOpen(KPDB *kpdb)
 		    dosort = 2;		/* first locker, possible sort */
 		hflock(kpdb->kp_Fd, 0, XLOCK_UN);
 	    }
-	    hflock(kpdb->kp_Fd, 0, XLOCK_SH);	/* leave read lock */
+	    /* leave read lock: tells later openers not to sort */
+	    if (hflock(kpdb->kp_Fd, 0, XLOCK_SH) < 0)
+		logit(LOG_ERR, "KPDB read lock failed for %s: %s",
+		    kpdb->kp_FileName, strerror(errno));
 
 	    if (st.st_size == 0) {
 		const char *s = "$V" KPVERSION " 00000000 00000000 0FFFFFFF\n";
@@ -303,7 +351,7 @@ KPDBReOpen(KPDB *kpdb)
 			    dosort = 1;
 			}
 		    }
-		    if (dosort == 1)
+		    if (dosort == 1 && nosort == 0)
 			KPDBSort(kpdb);
 		    kpdb->kp_CloseMe = 0;
 		}
@@ -320,7 +368,7 @@ KPDBReOpen(KPDB *kpdb)
 void
 KPDBReSort(KPDB *kpdb)
 {
-    hflock(kpdb->kp_Fd, 4, XLOCK_EX);	/* open sanity/sort */
+    KPDBLockRec(kpdb, 4);		/* open sanity/sort */
     ++kpdb->kp_Lock4;
     KPDBLookup(kpdb, "", 0, 1);		/* force remap if size changed */
     KPDBSort(kpdb);
@@ -389,7 +437,7 @@ KPDBReadRecordAt(KPDB *kpdb, int offset, int lockMe, int *preclen)
     if (sl < sm)
 	++sl;
     if (lockMe)
-	hflock(kpdb->kp_Fd, rec - kpdb->kp_MapBase, XLOCK_EX);
+	KPDBLockRec(kpdb, rec - kpdb->kp_MapBase);
     if (preclen)
 	*preclen = sl;
     return(rec);
@@ -511,10 +559,15 @@ KPDBGetFieldDecode(const char *rec, int recLen, const char *tok, int *plen, cons
     return(ResDC);
 }
 
+/*
+ * KPDBLock() - lock a record read before, to read it whole (LIST).  A
+ * failed lock risks only a torn read: log it and go on.
+ */
 void 
 KPDBLock(KPDB *kpdb, const char *rec)
 {
-    hflock(kpdb->kp_Fd, rec - kpdb->kp_MapBase, XLOCK_EX);
+    if (hflock(kpdb->kp_Fd, rec - kpdb->kp_MapBase, XLOCK_EX) < 0)
+	KPDBLockWarn(kpdb);
 }
 
 void 
@@ -544,7 +597,7 @@ KPDBScanFirst(KPDB *kpdb, int lockMe, int *preclen)
     if (sl < sm)
 	++sl;
     if (lockMe)
-	hflock(kpdb->kp_Fd, rec - kpdb->kp_MapBase, XLOCK_EX);
+	KPDBLockRec(kpdb, rec - kpdb->kp_MapBase);
 
     *preclen = sl;
 
@@ -577,7 +630,7 @@ KPDBScanNext(KPDB *kpdb, int offset, int lockMe, int *preclen)
 	    *preclen = sl;
 	    if (rec[0] == '+') {
 		if (lockMe)
-		    hflock(kpdb->kp_Fd, rec - kpdb->kp_MapBase, XLOCK_EX);
+		    KPDBLockRec(kpdb, rec - kpdb->kp_MapBase);
 		if (rec[0] == '+') {
 		    return(rec - kpdb->kp_MapBase);
 		}
@@ -808,7 +861,7 @@ KPDBWrite(KPDB *kpdb, const char *key, const char *tok, const char *data, int lo
 	const char *failedOp = NULL;
 	int writeError = 0;
 
-	hflock(kpdb->kp_Fd, 4, XLOCK_EX);	/* append lock		*/
+	KPDBLockRec(kpdb, 4);			/* append lock		*/
 	kpdb->kp_Lock4 = 1;			/* locked thru remap	*/
 
 	/*
@@ -1128,10 +1181,16 @@ again:
 	}
     }
 
-    if (found == 0 && lockMe == KP_LOCK) {
+    if (found == 0 && (lockMe == KP_LOCK || lockMe == KP_LOCK_RO)) {
 	off_t lockoff = kpdb->kp_Cache - kpdb->kp_MapBase;
+	int locked = 1;
 
-	hflock(kpdb->kp_Fd, lockoff, XLOCK_EX);
+	if (lockMe == KP_LOCK) {
+	    KPDBLockRec(kpdb, lockoff);
+	} else if (hflock(kpdb->kp_Fd, lockoff, XLOCK_EX) < 0) {
+	    KPDBLockWarn(kpdb);
+	    locked = 0;
+	}
 
 	/*
 	 * While we waited for the lock, another process may have replaced
@@ -1145,7 +1204,8 @@ again:
 	 * and this loop does not spin.
 	 */
 	if (kpdb->kp_Cache[0] != '+') {
-	    hflock(kpdb->kp_Fd, lockoff, XLOCK_UN);
+	    if (locked)
+		hflock(kpdb->kp_Fd, lockoff, XLOCK_UN);
 	    kpdb->kp_Cache = NULL;
 	    kpdb->kp_CacheLen = 0;
 	    forceCheck = 1;

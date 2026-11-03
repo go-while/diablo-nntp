@@ -63,7 +63,24 @@ FeedStatsFindSlot(char *hostname)
 	lseek(FSSFd, 0, 0);
     }
 
-    hflock(FSSFd, 0, XLOCK_EX);
+    if (hflock(FSSFd, 0, XLOCK_EX) < 0) {
+	/*
+	 * Without the lock two processes could take the same slot: keep
+	 * the stats of this process in memory, as when the file cannot
+	 * be opened.
+	 */
+	int error = errno;
+
+	logit(LOG_ERR, "Unable to lock feeder stats file: %s (%s)",
+			PatDbExpand(DFeedStatsPat), strerror(error));
+	Stats = (FeedStats *)malloc(sizeof(FeedStats));
+	if (Stats == NULL) {
+	    logit(LOG_CRIT, "Unable to alloc memory for stats struct");
+	    exit(1);
+	}
+	bzero(Stats, sizeof(FeedStats));
+	return(Stats);
+    }
 
     /*
      * The first entry is a dummy entry
@@ -120,22 +137,37 @@ FeedStatsFindSlot(char *hostname)
 void
 LockFeedRegion(FeedStats *Stats, int locktype, int stype)
 {
+    static unsigned int fails;
     off_t base;
+    int r = 0;
 
     if (Stats->region > 0) {
 	base = (off_t)Stats->region * sizeof(FeedStats);
 	switch (stype) {
 	case FSTATS_IN:
 	case FSTATS_INDETAIL:
-	    hflock(FSSFd, base + offsetof(FeedStats, RecStats), locktype);
+	    r = hflock(FSSFd, base + offsetof(FeedStats, RecStats), locktype);
 	    break;
 	case FSTATS_OUT:
-	    hflock(FSSFd, base + offsetof(FeedStats, SentStats), locktype);
+	    r = hflock(FSSFd, base + offsetof(FeedStats, SentStats), locktype);
 	    break;
 	case FSTATS_SPOOL:
 	case FSTATS_SPOOLDETAIL:
-	    hflock(FSSFd, base + offsetof(FeedStats, SpoolStats), locktype);
+	    r = hflock(FSSFd, base + offsetof(FeedStats, SpoolStats), locktype);
 	    break;
+	}
+	/*
+	 * The lock only keeps counter updates whole.  If it fails the
+	 * caller still counts: at worst a count is lost.  Logged the 1st,
+	 * 2nd, 4th, 8th, ... time.
+	 */
+	if (r < 0 && locktype != XLOCK_UN) {
+	    int error = errno;
+
+	    ++fails;
+	    if ((fails & (fails - 1)) == 0)
+		logit(LOG_ERR, "Unable to lock feeder stats file: %s (%s, %u times)",
+			PatDbExpand(DFeedStatsPat), strerror(error), fails);
 	}
     }
 }
@@ -148,13 +180,8 @@ LockFeedRegion(FeedStats *Stats, int locktype, int stype)
 static int
 LockFeedRecord(int fd, int count, int locktype)
 {
-    struct flock fl = { 0 };
-
-    fl.l_type = (locktype == XLOCK_UN) ? F_UNLCK : F_RDLCK;
-    fl.l_whence = SEEK_SET;
-    fl.l_start = (off_t)count * sizeof(FeedStats);
-    fl.l_len = sizeof(FeedStats);
-    return(fcntl(fd, F_SETLKW, &fl));
+    return(rflock(fd, (off_t)count * sizeof(FeedStats), sizeof(FeedStats),
+			(locktype == XLOCK_UN) ? XLOCK_UN : XLOCK_SH));
 }
 
 /*
@@ -641,7 +668,17 @@ FeedStatsSnapShot(FILE *fo, char *hostname, char *ext)
     }
     while (res > 0) {
 	/* oldf is read-only: a shared lock (an exclusive one fails). */
-	LockFeedRecord(oldf, count, XLOCK_SH);
+	if (LockFeedRecord(oldf, count, XLOCK_SH) < 0) {
+	    int error = errno;
+
+	    /* no partial snapshot */
+	    fprintf(fo, "Unable to lock feeder stats file: %s (%s), no snapshot written\n",
+			PatDbExpand(DFeedStatsPat), strerror(error));
+	    close(oldf);
+	    close(newf);
+	    remove(fnameout);
+	    return;
+	}
 	res = read(oldf, &fs, sizeof(fs));
 	if (res == sizeof(fs) &&
 		(hostname == NULL || strcmp(fs.hostname, hostname) == 0)) {
