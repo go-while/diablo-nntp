@@ -1,0 +1,4 @@
+- dreaderd: when every DNS worker is busy, dreaderd keeps accepting. A new connection waits in a short queue while its expected wait is within half of `readerdnswait` (default 5 s), up to `readerdnsqueue` connections (default 256) and three quarters of the descriptor limit; otherwise it gets `400 Server too busy` at once. Before, the listener was switched off and a flood waited in the kernel backlog for tens of seconds or got TCP resets.
+- dreaderd: no request waits longer than `readerdnswait` for a DNS worker (it was a fixed 10 s); then the client gets the same 400.
+- dreaderd: AUTHINFO logins of connected clients wait ahead of new connections and have no queue limit, so a login flood no longer answers AUTHINFO PASS with 400. The old limit of `4 * readerdns + 4` queued requests is gone.
+- dreaderd: refusals are logged at most once per 10 seconds, with a count; `accept()` running out of descriptors pauses the listener for a second.
