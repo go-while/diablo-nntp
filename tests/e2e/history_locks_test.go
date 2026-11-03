@@ -1,9 +1,11 @@
 package e2e
 
 import (
+	"bytes"
 	"encoding/binary"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -407,8 +409,9 @@ func setMagic(t *testing.T, f *os.File, magic uint32) {
 
 // TestHistoryFirstOpenOfDeadHistory: a program that starts while dhisexpire
 // has the history marked dead (dhisexpire, an idle feeder or dlockhistory
-// still holding the open lock) waits for the new history by name, as a
-// reopen does, without using the CPU. A history with data and a wrong magic
+// still holding the open lock; the test also holds dhisexpire's marker lock
+// on bytes 8-11) waits for the new history by name, as a reopen does,
+// without using the CPU. A history with data and a wrong magic
 // is refused at once. The test holds the shared open lock. Fails on main
 // (dilookup exits at once on a dead history, writers wait for the lock and
 // never see the history come back) and on e3f746a (writers spin).
@@ -431,6 +434,11 @@ func TestHistoryFirstOpenOfDeadHistory(t *testing.T) {
 				setMagic(t, f, magic)
 				lk := syscall.Flock_t{Type: syscall.F_RDLCK, Start: 0, Len: 4}
 				if err := syscall.FcntlFlock(f.Fd(), syscall.F_SETLK, &lk); err != nil {
+					t.Fatal(err)
+				}
+				// the lock a running dhisexpire holds while the history is dead
+				mk := syscall.Flock_t{Type: syscall.F_WRLCK, Start: 8, Len: 4}
+				if err := syscall.FcntlFlock(f.Fd(), syscall.F_SETLK, &mk); err != nil {
 					t.Fatal(err)
 				}
 				args := map[string][]string{
@@ -475,7 +483,8 @@ func TestHistoryFirstOpenOfDeadHistory(t *testing.T) {
 }
 
 // pwriteHoldSource is an LD_PRELOAD shim: with PWHOLD=dir, the first 2-byte
-// pwrite (an exp update) creates dir/reached and waits for dir/go.
+// pwrite (an exp update) creates dir/reached and waits for dir/go, before
+// the write, or after it with PWAFTER set.
 const pwriteHoldSource = `#define _GNU_SOURCE
 #include <dlfcn.h>
 #include <fcntl.h>
@@ -508,8 +517,14 @@ pwrite64(int fd, const void *b, size_t n, off_t o)
 {
     ssize_t (*real)(int, const void *, size_t, off_t) =
 	(ssize_t (*)(int, const void *, size_t, off_t))dlsym(RTLD_NEXT, "pwrite64");
-    hold(n);
-    return real(fd, b, n, o);
+    ssize_t r;
+
+    if (getenv("PWAFTER") == NULL)
+	hold(n);
+    r = real(fd, b, n, o);
+    if (getenv("PWAFTER") != NULL)
+	hold(n);
+    return r;
 }
 #endif
 
@@ -518,43 +533,168 @@ pwrite(int fd, const void *b, size_t n, off_t o)
 {
     ssize_t (*real)(int, const void *, size_t, off_t) =
 	(ssize_t (*)(int, const void *, size_t, off_t))dlsym(RTLD_NEXT, "pwrite");
-    hold(n);
-    return real(fd, b, n, o);
+    ssize_t r;
+
+    if (getenv("PWAFTER") == NULL)
+	hold(n);
+    r = real(fd, b, n, o);
+    if (getenv("PWAFTER") != NULL)
+	hold(n);
+    return r;
 }
 `
 
 // TestHistoryUpdateDuringDhisexpire: dcancel -h is in HistoryExpire, under
-// the chain lock and before its write, when dhisexpire -a marks the history
-// dead. dhisexpire waits for the lock, but the record was copied long
-// before: the update now sees the dead magic after its write and does it
-// again in the new history. Fails on main and on e3f746a: dcancel reports
-// the cancel and the new history does not have it.
+// the chain lock, when dhisexpire -a marks the history dead. dhisexpire waits
+// for the lock, but it copied the record before: the update sees the dead
+// magic after its write and does it again in the new history.
+//
+//	expire    stopped before its write; fails on main and on e3f746a:
+//	          dcancel reports the cancel and the new history lacks it
+//	unexpire  dcancel -h -u stopped after its write; the redo must not
+//	          expire again a record that the copy has without the flag
+//	          (it did before an unexpire left live records alone)
 func TestHistoryUpdateDuringDhisexpire(t *testing.T) {
 	so := preloadShim(t, "pwhold", pwriteHoldSource)
+	for _, unexp := range []bool{false, true} {
+		name := "expire"
+		if unexp {
+			name = "unexpire"
+		}
+		t.Run(name, func(t *testing.T) {
+			s := NewSite(t, SiteOptions{})
+			ids := s.Inject(t, "e2e.test", 1)
+			hist := filepath.Join(s.Dir, "dhistory")
+			hold := t.TempDir()
+			env := []string{lockFaultEnv(so), "PWHOLD=" + hold}
+			args := []string{"-h"}
+			if unexp {
+				dcancelRun(t, s, ids[0]+"\n", "-h")
+				env = append(env, "PWAFTER=1")
+				args = []string{"-h", "-u"}
+			}
+			_, in, out, done := histCmd(t, s, env, "dcancel", args...)
+			io.WriteString(in, ids[0]+"\n")
+			in.Close()
+			waitFor(t, 30*time.Second, "dcancel in its update", func() bool {
+				return fileExists(filepath.Join(hold, "reached"))
+			})
+			xcmd, xin, xout, xdone := histCmd(t, s, nil, "dhisexpire", "-a", hist)
+			xin.Close()
+			_ = waitLockWaiter(xcmd.Process.Pid, xdone) // main does not wait
+			if err := os.WriteFile(filepath.Join(hold, "go"), nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := <-done; err != nil {
+				t.Fatalf("dcancel %v: %v\n%s", args, err, out.String())
+			}
+			if err := <-xdone; err != nil {
+				t.Fatalf("dhisexpire -a: %v\n%s", err, xout.String())
+			}
+			exp, found := histExp(t, s, hist, ids[0])
+			if !found || (exp&expfExpired != 0) == unexp {
+				t.Errorf("dcancel %v in progress during dhisexpire: found %v exp %#x in the new history\n%s",
+					args, found, exp, out.String())
+			}
+		})
+	}
+}
+
+// TestDcancelUnexpireLiveRecord: dcancel -h -u leaves a record that is not
+// expired alone. Fails on main: it expired it.
+func TestDcancelUnexpireLiveRecord(t *testing.T) {
 	s := NewSite(t, SiteOptions{})
 	ids := s.Inject(t, "e2e.test", 1)
-	hist := filepath.Join(s.Dir, "dhistory")
-	hold := t.TempDir()
-	_, in, out, done := histCmd(t, s, []string{lockFaultEnv(so), "PWHOLD=" + hold}, "dcancel", "-h")
-	io.WriteString(in, ids[0]+"\n")
-	in.Close()
-	waitFor(t, 30*time.Second, "dcancel in its update", func() bool {
-		return fileExists(filepath.Join(hold, "reached"))
-	})
+	out := dcancelRun(t, s, ids[0]+"\n", "-h", "-u")
+	if exp, _ := histExp(t, s, filepath.Join(s.Dir, "dhistory"), ids[0]); exp&expfExpired != 0 {
+		t.Errorf("dcancel -h -u expired a live record (exp %#x)\n%s", exp, out)
+	}
+}
+
+// TestHistoryDeadWithoutDhisexpire: a history left marked dead (dhisexpire
+// without -a, or one that was killed) is not replaced by anyone: with no
+// dhisexpire holding its marker lock, a first open and a reopen fail at once
+// and say what to do, instead of waiting six minutes. Fails on 111d730 (both
+// waited) and on main (the open failed without saying why, the reopen
+// retried an empty name).
+func TestHistoryDeadWithoutDhisexpire(t *testing.T) {
+	for _, mode := range []string{"open", "reopen"} {
+		t.Run(mode, func(t *testing.T) {
+			s := NewSite(t, SiteOptions{NoStart: true})
+			hist := newHistory(t, s)
+			var in io.WriteCloser
+			var out *bytes.Buffer
+			var done chan error
+			if mode == "reopen" {
+				_, in, out, done = histCmd(t, s, nil, "diload", hist)
+				io.WriteString(in, dumpLine(0x6789abc, 0xdef0123))
+				waitFor(t, 30*time.Second, "the first add", func() bool {
+					_, found := histExp(t, s, hist, "06789abc.0def0123")
+					return found
+				})
+			}
+			f, err := os.OpenFile(hist, os.O_RDWR, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			setMagic(t, f, 0xDEADF5E6)
+			f.Close()
+			if mode == "open" {
+				_, in, out, done = histCmd(t, s, nil, "dilookup", "-h", hist, "<a@e2e.test>")
+			} else {
+				io.WriteString(in, dumpLine(0x789abcd, 0xef01234))
+			}
+			in.Close()
+			select {
+			case err := <-done:
+				if err == nil || !strings.Contains(out.String(), "no dhisexpire is running") {
+					t.Errorf("%s of a history left dead: %v\n%s", mode, err, out.String())
+				}
+			case <-time.After(15 * time.Second):
+				t.Errorf("%s of a history left dead still waits after 15s\n%s", mode, out.String())
+			}
+		})
+	}
+}
+
+// TestHistoryFirstOpenDuringDhisexpire: a program that starts while a real
+// dhisexpire -a has the history marked dead (here it waits for the test,
+// which holds every chain lock) waits, then uses the new history: the
+// marker lock keeps the wait where one is due. Fails on main (no wait).
+func TestHistoryFirstOpenDuringDhisexpire(t *testing.T) {
+	s := NewSite(t, SiteOptions{NoStart: true})
+	hist := newHistory(t, s)
+	l := exec.Command(filepath.Join(s.Bin, "diload"), hist)
+	l.Dir, l.Env = s.Dir, append(os.Environ(), s.Env...)
+	l.Stdin = strings.NewReader(dumpLine(0x89abcde, 0xf012345))
+	if b, err := l.CombinedOutput(); err != nil {
+		t.Fatalf("diload: %v\n%s", err, b)
+	}
+	release := holdHistLock(t, hist, 0, 0)
+	defer release()
 	xcmd, xin, xout, xdone := histCmd(t, s, nil, "dhisexpire", "-a", hist)
 	xin.Close()
-	_ = waitLockWaiter(xcmd.Process.Pid, xdone) // main does not wait
-	if err := os.WriteFile(filepath.Join(hold, "go"), nil, 0o644); err != nil {
-		t.Fatal(err)
+	if err := waitLockWaiter(xcmd.Process.Pid, xdone); err != nil {
+		t.Fatalf("dhisexpire did not wait for the test's chain locks: %v\n%s", err, xout.String())
 	}
-	if err := <-done; err != nil {
-		t.Fatalf("dcancel -h: %v\n%s", err, out.String())
+	_, in, out, done := histCmd(t, s, nil, "dilookup", "-h", hist, "089abcde.0f012345")
+	in.Close()
+	select {
+	case err := <-done:
+		t.Fatalf("dilookup did not wait while dhisexpire ran: %v\n%s", err, out.String())
+	case <-time.After(2 * time.Second):
 	}
+	release()
 	if err := <-xdone; err != nil {
 		t.Fatalf("dhisexpire -a: %v\n%s", err, xout.String())
 	}
-	if exp, found := histExp(t, s, hist, ids[0]); !found || exp&expfExpired == 0 {
-		t.Errorf("the cancel in progress is not in the new history: found %v exp %#x\n%s", found, exp, out.String())
+	select {
+	case err := <-done:
+		if err != nil || !strings.Contains(out.String(), "ex=100") {
+			t.Errorf("dilookup after dhisexpire: %v\n%s", err, out.String())
+		}
+	case <-time.After(15 * time.Second):
+		t.Errorf("dilookup still waits 15s after dhisexpire finished\n%s", out.String())
 	}
 }
 
