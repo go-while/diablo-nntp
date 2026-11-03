@@ -544,6 +544,12 @@ Fixed: SendDns() keeps such a request in a queue in the master (at most 4 * `rea
 entries, in order) until a worker is free; a request that waits 10 s, or finds the queue full,
 gets the same 400, and a client that closes while waiting is dropped. Tests:
 `TestReaderLoginsQueueForDNSWorker`, `TestReaderDNSQueueLimit`.
+Changed by the DNS overload work: AUTHINFO logins have their own queue, served first, with no
+length limit (at most one per connection) but a descriptor cap; new connections are queued
+while their expected wait is within half of `readerdnswait` (default 5 s, the longest any
+request waits), up to `readerdnsqueue` (default 256), and otherwise get the 400 at once.
+The listener stays on while the workers are busy. Tests: `TestReaderDNSOverload*`,
+`TestReaderDNSQueueOptions`, `TestReaderDNSAuthFdLimit`.
 
 ### D-53 checkgroups creates half-formed groups
 `dreaderd/control.c:951`. A checkgroups control message that is accepted (`doit`) writes the
