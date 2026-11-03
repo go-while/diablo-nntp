@@ -3463,6 +3463,53 @@ RenameAccessCache(void)
     return(1);
 }
 
+/*
+ * The group list names of a readerdef, checked against the groupdefs once all
+ * of dreader.access is read: a groupdef may come after the readerdef using it.
+ */
+typedef struct GroupListRef {
+    char gl_Reader[DEFNAMELEN];
+    char gl_Names[3][DEFNAMELEN];	/* groups, listgroups, postgroups */
+    int gl_Line;			/* of the readerdef line */
+} GroupListRef;
+
+/*
+ * A readerdef that names a group list no groupdef defines is an error (D-164):
+ * looked up at login, the first list (usually everything) was used for it.
+ * "DEFAULT", the readerdef default, keeps falling back to the first list.
+ * Returns the number of unknown names, each logged.
+ */
+static int
+checkGroupListRefs(GroupListRef *refs, int nrefs, char **names, int nnames)
+{
+    static const char *opts[3] = { "groups", "listgroups", "postgroups" };
+    int bad = 0;
+    int i;
+    int k;
+    int j;
+
+    for (i = 0; i < nrefs; ++i) {
+	for (k = 0; k < 3; ++k) {
+	    const char *name = refs[i].gl_Names[k];
+
+	    if (strcmp(name, "DEFAULT") == 0)
+		continue;
+	    for (j = 0; j < nnames; ++j)
+		if (strcmp(name, names[j]) == 0)
+		    break;
+	    if (j < nnames)
+		continue;
+	    /* the copy groups makes of itself is reported with groups only */
+	    if (k > 0 && strcmp(name, refs[i].gl_Names[0]) == 0)
+		continue;
+	    logit(LOG_ERR, "dreader.access: readerdef %s (line %d): %s %s is not a groupdef",
+		    refs[i].gl_Reader, refs[i].gl_Line, opts[k], name);
+	    ++bad;
+	}
+    }
+    return(bad);
+}
+
 void
 InstallAccessCache(void) {
     struct stat st;
@@ -3484,6 +3531,11 @@ InstallAccessCache(void) {
     AccessDef accessdef;
     int copt = OPT_NONE;
     int parseError = 0;	/* bad file content, as opposed to a transient failure */
+    GroupListRef *glRefs = NULL;	/* the readerdefs' group list names */
+    int glRefCount = 0;
+    char **grNames = NULL;	/* the groupdef names */
+    int grNameCount = 0;
+    int rdLine = 0;		/* line of the current readerdef */
     time_t seen;
     char vsnewbuf[PATH_MAX];
     char grnewbuf[PATH_MAX];
@@ -3662,6 +3714,19 @@ InstallAccessCache(void) {
 		    break;
 		case OPT_GROUPS:
 		    fwrite(groupdef.gr_Name, strlen(groupdef.gr_Name) + 1, 1, grf);
+		    {
+			char **n = realloc(grNames, (grNameCount + 1) * sizeof(*grNames));
+
+			if (n == NULL || (n[grNameCount] = strdup(groupdef.gr_Name)) == NULL) {
+			    logit(LOG_ERR, "dreader.access: out of memory");
+			    parseError = 1;
+			    if (n != NULL)
+				grNames = n;
+			} else {
+			    grNames = n;
+			    ++grNameCount;
+			}
+		    }
 		    zfreeStr(&DnsMemPool, &groupdef.gr_Name);
 		    {
 			char buf[10];
@@ -3697,6 +3762,22 @@ InstallAccessCache(void) {
 		    if ((readerdef.rd_UseProxied || readerdef.rd_HaProxy) &&
 			readerdef.rd_NProxyFrom == 0)
 			logit(LOG_NOTICE, "readerdef %s: useproxied/haproxy without proxyfrom trusts the client address sent by any client that matches its access line", readerdef.rd_Name);
+		    {
+			GroupListRef *r = realloc(glRefs, (glRefCount + 1) * sizeof(*glRefs));
+
+			if (r == NULL) {
+			    logit(LOG_ERR, "dreader.access: out of memory");
+			    parseError = 1;
+			} else {
+			    glRefs = r;
+			    r += glRefCount++;
+			    memcpy(r->gl_Reader, readerdef.rd_Name, DEFNAMELEN);
+			    memcpy(r->gl_Names[0], readerdef.rd_Groups, DEFNAMELEN);
+			    memcpy(r->gl_Names[1], readerdef.rd_ListGroups, DEFNAMELEN);
+			    memcpy(r->gl_Names[2], readerdef.rd_PostGroups, DEFNAMELEN);
+			    r->gl_Line = rdLine;
+			}
+		    }
 		    if (strcmp(readerdef.rd_Name, "DEFAULT") == 0) {
 			long fpos;
 			fpos = ftell(rdf);
@@ -4207,12 +4288,15 @@ InstallAccessCache(void) {
 			readerdef.rd_RequireGroupCmd = 0;
 		    continue;
 		}
-#ifdef	IP_TOS
 		if (*val && strcmp(opt, "settos") == 0) {
+#ifdef	IP_TOS
 		    readerdef.rd_SetTOS = atoi(val);
+#else
+		    logit(LOG_ERR, "dreader.access: %s in line %d ignored: no IP_TOS on this system",
+				opt, linecount);
+#endif
 		    continue;
 		}
-#endif
 		if (*val && strcmp(opt, "rxbufsize") == 0) {
 		    readerdef.rd_RxBufSize = atoi(val);
 		    ValidateTcpBufferSize(&readerdef.rd_RxBufSize);
@@ -4248,8 +4332,15 @@ InstallAccessCache(void) {
 		    } else {
 			readerdef.rd_XzverLevel = atoi(val);
 		    }
+		    continue;
 		}
-		logit(LOG_ERR, "dreader.access: Invalid readerdef option : %s in line %d\n", opt, linecount);
+		/*
+		 * A misspelled option would leave the readerdef without the
+		 * setting the admin meant (D-166): refuse the file, as for a
+		 * bad number.
+		 */
+		logit(LOG_ERR, "dreader.access: Invalid readerdef option : %s in line %d; the file is not installed\n", opt, linecount);
+		parseError = 1;
 		continue;
 	}
 	/* Start of a new definition */
@@ -4277,6 +4368,7 @@ InstallAccessCache(void) {
 	}
 	if (strcmp(opt, "readerdef") == 0) {
 	    copt = OPT_READERGRP;
+	    rdLine = linecount;
 	    bzero(&readerdef, sizeof(readerdef));
 	    if (accessValue(readerdef.rd_Name, sizeof(readerdef.rd_Name), val, opt, linecount, 0) < 0)
 		parseError = 1;
@@ -4351,6 +4443,12 @@ InstallAccessCache(void) {
     fclose(auf);
     fclose(rdf);
     fclose(raf);
+    if (checkGroupListRefs(glRefs, glRefCount, grNames, grNameCount) > 0)
+	parseError = 1;
+    free(glRefs);
+    while (grNameCount > 0)
+	free(grNames[--grNameCount]);
+    free(grNames);
     if (parseError) {
 	/*
 	 * Bad content.  Keep the refused file's mtime/size/ino (set above) so
