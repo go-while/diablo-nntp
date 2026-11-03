@@ -310,6 +310,7 @@ typedef struct HistHead {
 
 #define HMAGIC		((uint32)0xA1B2C3D4)
 #define HDEADMAGIC	((uint32)0xDEADF5E6)
+#define HDEADLOCK	8	/* dhisexpire locks bytes 8-11 while it is dead */
 #define HVERSION	2
 
 /*

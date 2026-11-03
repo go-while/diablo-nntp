@@ -122,6 +122,33 @@ HistoryShareLock(int fd, const char *fileName)
     return(hflock(fd, 0, XLOCK_SH));
 }
 
+/* Does a dhisexpire hold the lock it keeps while the history is dead? */
+static int
+deadMarkerHeld(int fd)
+{
+    struct flock fl = { 0 };
+
+    fl.l_type = F_WRLCK;
+    fl.l_whence = SEEK_SET;
+    fl.l_start = HDEADLOCK;
+    fl.l_len = 4;
+    if (fcntl(fd, F_GETLK, &fl) < 0)
+	return(1);	/* cannot tell: wait as before */
+    return(fl.l_type != F_UNLCK);
+}
+
+/* Is another file at fileName now (or none)?  Then a new one came. */
+static int
+fileReplaced(int fd, const char *fileName)
+{
+    struct stat a;
+    struct stat b;
+
+    if (fstat(fd, &a) < 0 || stat(fileName, &b) < 0)
+	return(1);
+    return(a.st_dev != b.st_dev || a.st_ino != b.st_ino);
+}
+
 /* A failed lock in HistoryOpen: -2 in a reopen (it is retried), else exit. */
 static int
 openLockFailed(int fd, const char *fileName)
@@ -223,9 +250,22 @@ HistoryOpen(const char *fileName, int hflags)
 	 * Is this history an old one and we need to wait for a new one?
 	 * dhisexpire marks it dead while it copies the last records; a
 	 * first open waits for the new file by name, as a reopen does.
+	 * Without a dhisexpire at work (it holds HDEADLOCK) and with the
+	 * file still at its name, no new one is coming: fail at once.
 	 */
 	if (HHead.hmagic == HDEADMAGIC && (HFlags & HGF_FAST) == 0) {
+	    int replacing = deadMarkerHeld(fd) || fileReplaced(fd, fileName);
+
 	    close(fd);
+	    if (!replacing) {
+		logit(LOG_ERR, "%s is marked dead and no dhisexpire is running: run dhisexpire -u",
+		    fileName);
+		fprintf(stderr, "%s is marked dead and no dhisexpire is running: run dhisexpire -u\n",
+		    fileName);
+		if (DoingReOpen)
+		    return(-3);
+		exit(1);
+	    }
 	    if (DoingReOpen)
 		return(-2);
 	    logit(LOG_NOTICE, "%s is marked dead, waiting for the new history (dhisexpire -u revives it)",
@@ -544,10 +584,13 @@ static void
 reopenWait(void)
 {
     int count = 0;
+    int r;
 
     DoingReOpen = 1;
-    while (HistoryOpen(HistoryFileName, HFlags) == -2 && count++ < 360)
+    while ((r = HistoryOpen(HistoryFileName, HFlags)) == -2 && count++ < 360)
 	sleep(1);
+    if (r == -3)	/* dead and no dhisexpire: HistoryOpen said so */
+	exit(1);
     if (count++ >= 360) {
 	if (ReOpenLockError) {
 	    fprintf(stderr, "Unable to reopen history file: lock failed (%s)\n",

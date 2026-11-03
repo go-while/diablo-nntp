@@ -436,11 +436,20 @@ DoExpire(int fd, int hsize, int rsize)
 		    if (!UseNewHistory)
 			OldStaysDead = 1;
 		    DeadFd = -1;	/* the old history is replaced, or a backup */
+		    hflock(fd, HDEADLOCK, XLOCK_UN);
 		}
 		finished = 1;
 	    } else {
 		off_t seekpos = lseek(fd, 0, SEEK_CUR);
 		HistHead hh = { 0 };
+
+		/*
+		 * Held while the history is dead, until it is replaced or
+		 * alive again (also when we die): openers that find it dead
+		 * wait only while it is held.
+		 */
+		if (hflock(fd, HDEADLOCK, XLOCK_EX|XLOCK_NB) < 0)
+		    Fail(NewFileName, "Unable to lock the history dead marker");
 		if (lseek(fd, 0, SEEK_SET) == -1)
 		    Fail(FileName, "Unable to seek to pos 0 in history");
 		if (read(fd, &hh, sizeof(hh)) == -1)
