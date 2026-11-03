@@ -148,12 +148,22 @@
 #endif  /* __bsdi__ */
 
 /********************************************************
- * 			NETBSD				*
+ * 			NETBSD, OPENBSD			*
  ********************************************************
  *
- * NetBSD 3.0 replaced statfs() with the POSIX statvfs().
+ * The same switches as FreeBSD where both have the feature.  USE_POLL
+ * matters for dnewslink: its connect/read timeouts and its SIGTERM
+ * handling are in the poll() path only.  NetBSD 3.0 replaced statfs()
+ * with the POSIX statvfs().
  */
 
+#if defined(__NetBSD__) || defined(__OpenBSD__)
+#define USE_SYSV_DIR		1	/* dirent.h			 */
+#define USE_ANON_MMAP		1	/* use anonymous mmap for alloc  */
+#define HAS_USLEEP		1	/* < 1 second sleeps		 */
+#define HAS_SA_LEN		1
+#define USE_POLL		1	/* poll() syscall		 */
+#endif
 #ifdef __NetBSD__
 #define USE_SUN_STATVFS		1
 #endif
