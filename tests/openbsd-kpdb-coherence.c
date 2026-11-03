@@ -35,8 +35,9 @@ main(int argc, char **argv)
     check(db != NULL, "open");
     check(KPDBWrite(db, "same", "v", "old", 0) == 0, "initial same");
     check(KPDBWrite(db, "deleted", "v", "yes", 0) == 0, "initial deleted");
-    check(value_is(db, "same", "old"), "initial lookup");
     check(value_is(db, "deleted", "yes"), "initial deleted lookup");
+    /* Leave this exact record cached across the child's in-place update. */
+    check(value_is(db, "same", "old"), "initial lookup");
     child = fork();
     check(child >= 0, "fork");
     if (child == 0) {
