@@ -65,3 +65,50 @@ func TestFeederChildSighupAfterQuit(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 }
+
+// TestFeederMasterSigtermEndsSessions: SIGTERM to the master ends an open feed session and the
+// master exits, as after "dicmd exit". Before, the master's handler set Exiting before it
+// checked it, so it never sent SIGHUP to its children and waited for the session to end on
+// its own: a long-lived incoming feed kept the old master running.
+func TestFeederMasterSigtermEndsSessions(t *testing.T) {
+	s := NewSite(t, SiteOptions{})
+	p := s.Peer(t)
+	defer p.Close()
+	expect(t, p, 203, "MODE STREAM")
+
+	if err := syscall.Kill(s.Proc.Pid(), syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-s.Proc.Done():
+	case <-time.After(10 * time.Second):
+		t.Fatalf("diablo still running 10s after SIGTERM with a feed session open")
+	}
+}
+
+// TestFeederPidFileOfNewerMaster: a master that exits removes diablo.pid only while it still
+// names that master. Before, an old master that exited after a new one had started removed
+// the new master's pid file.
+func TestFeederPidFileOfNewerMaster(t *testing.T) {
+	s := NewSite(t, SiteOptions{})
+	pidFile := filepath.Join(s.Dir, "log", "diablo.pid")
+	b, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatalf("no diablo.pid after start: %v", err)
+	}
+	if got := strings.TrimSpace(string(b)); got != strconv.Itoa(s.Proc.Pid()) {
+		t.Fatalf("diablo.pid %q, want %d", got, s.Proc.Pid())
+	}
+	const newer = "999999\n" // as written by a master started after this one
+	s.WriteFile(t, "log/diablo.pid", newer)
+
+	s.Dicmd(t, "exit")
+	select {
+	case <-s.Proc.Done():
+	case <-time.After(10 * time.Second):
+		t.Fatalf("diablo still running 10s after dicmd exit")
+	}
+	if b, err := os.ReadFile(pidFile); err != nil || string(b) != newer {
+		t.Errorf("diablo.pid after the old master exited: %q, %v; want %q", b, err, newer)
+	}
+}

@@ -1,0 +1,2 @@
+- diablo: SIGTERM (or SIGINT/SIGHUP) to the master now sends SIGHUP to its children, as `dicmd exit` does; before, the handler set `Exiting` before checking it, so an open feed session kept the master running until the peer disconnected.
+- diablo: on exit the master removes `diablo.pid` only if the file still holds its own pid, so a late-exiting old master no longer removes the pid file of a master started after it.
