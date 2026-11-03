@@ -310,6 +310,7 @@ typedef struct HistHead {
 
 #define HMAGIC		((uint32)0xA1B2C3D4)
 #define HDEADMAGIC	((uint32)0xDEADF5E6)
+#define HDEADLOCK	8	/* dhisexpire locks bytes 8-11 while it is dead */
 #define HVERSION	2
 
 /*
@@ -544,7 +545,7 @@ typedef struct ArtTypeList {
 
 #define HGF_FAST	0x01
 #define HGF_NOSEARCH	0x02
-#define HGF_MLOCK	0x03
+#define HGF_MLOCK	0x10
 #define HGF_READONLY	0x04
 #define HGF_EXCHECK	0x08
 

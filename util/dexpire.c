@@ -355,6 +355,11 @@ CleanAllSpools(void)
 	    exit(1);
 	}
 	HistoryEnd = sb.st_size;
+	if (HistoryShareLock(HistoryFd, HistoryFile) < 0) {
+	    fprintf(stderr, "Unable to lock history(%s): %s\n",
+						HistoryFile, strerror(errno));
+	    exit(1);
+	}
     }
 
     /*
@@ -1003,6 +1008,43 @@ findSize(char *pathname, char *dirname)
     return(size);
 }
 
+/*
+ * Set or clear the expired flag of the record at pos from the flags on
+ * disk now, under its hash chain lock as lib/history.c updates records.
+ * h is the copy read before the spool scan.
+ */
+static int
+setExpired(const HistHead *hh, off_t pos, const History *h, int expired)
+{
+    off_t chainlock = hh->headSize + (off_t)((h->hv.h1 ^ h->hv.h2) &
+	(hh->hashSize - 1)) * sizeof(HistIndex);
+    History cur;
+    ssize_t n;
+    int error = 0;
+
+    if (hflock(HistoryFd, chainlock, XLOCK_EX) < 0)
+	return(-1);
+    n = pread(HistoryFd, &cur, sizeof(cur), pos);
+    /* a record moved since the spool scan (dcancel -s) is left alone */
+    if (n == sizeof(cur) && cur.hv.h1 == h->hv.h1 && cur.hv.h2 == h->hv.h2 &&
+	cur.iter == h->iter && cur.boffset == h->boffset) {
+	if (expired)
+	    cur.exp |= EXPF_EXPIRED;
+	else
+	    cur.exp &= ~EXPF_EXPIRED;
+	n = pwrite(HistoryFd, &cur.exp, sizeof(cur.exp),
+	    pos + offsetof(History, exp));
+	if (n != sizeof(cur.exp))
+	    error = (n < 0) ? errno : EIO;
+    } else if (n != sizeof(cur)) {
+	error = (n < 0) ? errno : EIO;
+    }
+    if (hflock(HistoryFd, chainlock, XLOCK_UN) < 0 && error == 0)
+	error = errno;
+    errno = error;
+    return(error ? -1 : 0);
+}
+
 int
 updateHistory(void)
 {
@@ -1114,6 +1156,11 @@ updateHistory(void)
 	    );
 	    exit(1);
 	}
+	if (hh.hashSize == 0 || (hh.hashSize & (hh.hashSize - 1)) != 0) {
+	    fprintf(stderr, "corrupted history file: hash size %u\n",
+		(unsigned)hh.hashSize);
+	    exit(1);
+	}
 
 	lseek(HistoryFd, hh.headSize + sizeof(HistIndex) * hh.hashSize, 0);
 
@@ -1128,7 +1175,6 @@ updateHistory(void)
 	npos = lseek(HistoryFd, 0L, 1);
 	while ((n = read(HistoryFd, hist, sizeof(hist))) > 0) {
 	    int i;
-	    int changed = 0;
 
 	    bpos = npos;
 	    npos += n;
@@ -1212,18 +1258,8 @@ updateHistory(void)
 			);
 		    }
 		    if (UnexpireOpt || HistoryUpdateOpt != 2) {
-			changed = 1;
-			if (UnexpireOpt)
-			    h->exp &= ~EXPF_EXPIRED;
-			else
-			    h->exp |= EXPF_EXPIRED;
-			lseek(
-			    HistoryFd,
-			    bpos + sizeof(History) * i + offsetof(History, exp),
-			    0
-			);
-			if (!NotForReal &&
-			    WriteAll(HistoryFd, &h->exp, sizeof(h->exp)) < 0)
+			if (!NotForReal && setExpired(&hh,
+			    bpos + sizeof(History) * i, h, !UnexpireOpt) < 0)
 			    fprintf(stderr, "history write failed: %s\n",
 							strerror(errno));
 
@@ -1233,8 +1269,6 @@ updateHistory(void)
 		    ++countExp;
 		}
 	    }
-	    if (changed)
-		lseek(HistoryFd, npos, 0);
 	}
     }
 

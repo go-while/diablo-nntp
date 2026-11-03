@@ -32,12 +32,13 @@
 
 Prototype int HistoryOpen(const char *fileName, int fastMode);
 Prototype int HistoryClose(void);
+Prototype int HistoryShareLock(int fd, const char *fileName);
 Prototype int HistoryLookup(const char *msgid, History *h);
 Prototype int HistoryLookupByHash(hash_t hv, History *h);
 Prototype HistIndex HistoryPosLookupByHash(hash_t hv, History *h);
 Prototype int HistoryAdd(const char *msgid, History *h);
 Prototype int HistoryStore(History *h);
-Prototype void HistoryStoreExp(History *h, HistIndex index);
+Prototype int HistoryStoreExp(History *h, HistIndex index);
 Prototype int HistoryExpire(const char *msgid, History *h, int unexp);
 Prototype void PrintHistory(History *h);
 
@@ -61,6 +62,7 @@ int		HBlkGood;
 char		HistoryFileName[PATH_MAX];
 int		DoingReOpen = 0;
 static int	ReOpenLockError = 0;	/* errno of a failed lock in a reopen */
+static void	reopenWait(void);
 
 /*
  * Write an entire buffer at a fixed offset.  A successful short write is
@@ -104,13 +106,82 @@ HistoryFatalIO(const char *operation)
     exit(1);
 }
 
+/*
+ * Take the shared lock on bytes 0-3 that every history opener holds
+ * while it has the file open, waiting for a fast-mode writer to finish.
+ */
+int
+HistoryShareLock(int fd, const char *fileName)
+{
+    if (hflock(fd, 0, XLOCK_SH|XLOCK_NB) == 0)
+	return(0);
+    if (errno != EAGAIN && errno != EACCES)
+	return(-1);
+    logit(LOG_NOTICE, "%s is in use by a fast-mode writer, waiting", fileName);
+    fprintf(stderr, "%s is in use by a fast-mode writer, waiting\n", fileName);
+    return(hflock(fd, 0, XLOCK_SH));
+}
+
+/* Does a dhisexpire hold the lock it keeps while the history is dead? */
+static int
+deadMarkerHeld(int fd)
+{
+    struct flock fl = { 0 };
+
+    fl.l_type = F_WRLCK;
+    fl.l_whence = SEEK_SET;
+    fl.l_start = HDEADLOCK;
+    fl.l_len = 4;
+    if (fcntl(fd, F_GETLK, &fl) < 0)
+	return(1);	/* cannot tell: wait as before */
+    return(fl.l_type != F_UNLCK);
+}
+
+/* Is the history open as fd still marked dead? */
+static int
+stillDead(int fd)
+{
+    uint32 magic;
+
+    return(pread(fd, &magic, sizeof(magic), 0) != sizeof(magic) ||
+	magic == HDEADMAGIC);
+}
+
+/* Is another file at fileName now (or none)?  Then a new one came. */
+static int
+fileReplaced(int fd, const char *fileName)
+{
+    struct stat a;
+    struct stat b;
+
+    if (fstat(fd, &a) < 0 || stat(fileName, &b) < 0)
+	return(1);
+    return(a.st_dev != b.st_dev || a.st_ino != b.st_ino);
+}
+
+/* A failed lock in HistoryOpen: -2 in a reopen (it is retried), else exit. */
+static int
+openLockFailed(int fd, const char *fileName)
+{
+    int error = errno;
+
+    close(fd);
+    if (DoingReOpen) {
+	ReOpenLockError = error;
+	return(-2);
+    }
+    logit(LOG_ERR, "lock %s failed (%s)", fileName, strerror(error));
+    fprintf(stderr, "lock %s failed (%s)\n", fileName, strerror(error));
+    exit(1);
+}
+
 int
 HistoryOpen(const char *fileName, int hflags)
 {
     int fd;
     struct stat st;
     int openflags;
-    int fastLocked = 0;
+    int openLock = 0;	/* our lock on bytes 0-3: XLOCK_SH or XLOCK_EX */
 
     ReOpenLockError = 0;
 
@@ -158,6 +229,24 @@ HistoryOpen(const char *fileName, int hflags)
     }
 
     /*
+     * Every opener holds a lock on bytes 0-3 while it has the history
+     * open: fast mode an exclusive one (it caches the hash table, so it
+     * needs the file to itself), the others a shared one.
+     */
+    if ((HFlags & (HGF_FAST|HGF_READONLY)) == HGF_FAST) {
+	if (hflock(fd, 0, XLOCK_EX|XLOCK_NB) < 0) {
+	    if (errno != EAGAIN && errno != EACCES)
+		return(openLockFailed(fd, fileName));
+	    logit(LOG_ERR, "%s is in use by another process: fast mode needs it to itself",
+		fileName);
+	    fprintf(stderr, "%s is in use by another process: fast mode needs it to itself\n",
+		fileName);
+	    exit(1);
+	}
+	openLock = XLOCK_EX;
+    }
+
+    /*
      * initial history file creation, if necessary
      */
 
@@ -169,29 +258,83 @@ HistoryOpen(const char *fileName, int hflags)
     ) {
 	/*
 	 * Is this history an old one and we need to wait for a new one?
+	 * dhisexpire marks it dead while it copies the last records; a
+	 * first open waits for the new file by name, as a reopen does.
+	 * Without a dhisexpire at work (it holds HDEADLOCK) and with the
+	 * file still at its name, no new one is coming: fail at once.
 	 */
-	if (DoingReOpen && HHead.hmagic == HDEADMAGIC) {
+	if (HHead.hmagic == HDEADMAGIC && (HFlags & HGF_FAST) == 0) {
+	    int replacing = deadMarkerHeld(fd) || fileReplaced(fd, fileName);
+
+	    /*
+	     * dhisexpire drops the marker only after the history is valid
+	     * again (a failure) or another file is at the name, but it can
+	     * be between those steps: look once more before giving up.
+	     */
+	    if (!replacing) {
+		if (stillDead(fd))
+		    usleep(100000);
+		replacing = !stillDead(fd) || deadMarkerHeld(fd) ||
+		    fileReplaced(fd, fileName);
+	    }
 	    close(fd);
-	    return(-2);
+	    if (!replacing) {
+		logit(LOG_ERR, "%s is marked dead and no dhisexpire is running: run dhisexpire -u",
+		    fileName);
+		fprintf(stderr, "%s is marked dead and no dhisexpire is running: run dhisexpire -u\n",
+		    fileName);
+		if (DoingReOpen)
+		    return(-3);
+		exit(1);
+	    }
+	    if (DoingReOpen)
+		return(-2);
+	    logit(LOG_NOTICE, "%s is marked dead, waiting for the new history (dhisexpire -u revives it)",
+		fileName);
+	    fprintf(stderr, "%s is marked dead, waiting for the new history (dhisexpire -u revives it)\n",
+		fileName);
+	    reopenWait();
+	    return(0);
 	}
 
 	/*
 	 * lock after finding the history file to be invalid and recheck.
 	 * A read-only descriptor can only take a shared lock (an exclusive
 	 * one fails at once with EBADF); it still waits for a creator.
+	 * So does a writer that cannot get the exclusive lock at once: the
+	 * creator keeps a shared lock while it has the file open, and an
+	 * exclusive wait would last until it closes.
 	 */
 
-	if (hflock(fd, 0, (HFlags & HGF_READONLY) ? XLOCK_SH : XLOCK_EX) < 0) {
-	    int error = errno;
+	while (openLock == 0) {
+	    HistHead hh;
 
-	    close(fd);
-	    if (DoingReOpen) {
-		ReOpenLockError = error;
-		return(-2);
+	    if ((HFlags & HGF_READONLY) == 0 &&
+		hflock(fd, 0, XLOCK_EX|XLOCK_NB) == 0) {
+		openLock = XLOCK_EX;
+		break;
 	    }
-	    logit(LOG_ERR, "lock %s failed (%s)", fileName, strerror(error));
-	    fprintf(stderr, "lock %s failed (%s)\n", fileName, strerror(error));
-	    exit(1);
+	    if ((HFlags & HGF_READONLY) == 0 &&
+		errno != EAGAIN && errno != EACCES)
+		return(openLockFailed(fd, fileName));
+	    if (hflock(fd, 0, XLOCK_SH) < 0)
+		return(openLockFailed(fd, fileName));
+	    /*
+	     * No creator is at work while we hold the shared lock: a file
+	     * with data but no valid magic is not going to change (it fails
+	     * below), and only an empty one is worth another try.
+	     */
+	    if ((HFlags & HGF_READONLY) ||
+		(pread(fd, &hh, sizeof(hh), 0) == sizeof(hh) &&
+		hh.hmagic == HMAGIC) ||
+		fstat(fd, &st) < 0 || st.st_size > 0) {
+		openLock = XLOCK_SH;
+		break;
+	    }
+	    /* still not created: try for the creation lock again */
+	    if (hflock(fd, 0, XLOCK_UN) < 0)
+		return(openLockFailed(fd, fileName));
+	    usleep(10000);
 	}
 
 	fstat(fd, &st);
@@ -214,6 +357,8 @@ HistoryOpen(const char *fileName, int hflags)
 
 	    if (st.st_size) {
 		logit(LOG_ERR, "Incompatible history file version or corrupted history file\n");
+		fprintf(stderr, "%s: incompatible history file version or corrupted history file\n",
+		    fileName);
 		exit(1);
 	    }
 
@@ -284,14 +429,21 @@ HistoryOpen(const char *fileName, int hflags)
 	}
 
 	/*
-	 * Fast mode wants this lock for the whole run: keep it.  Released
-	 * and taken again, a reader waiting for the creation could get in
-	 * between and the fast-mode lock below would fail.
+	 * Fast mode keeps its exclusive lock for the whole run; other
+	 * openers turn the creation lock into their shared one, so that
+	 * no fast-mode writer gets in between.
 	 */
-	if ((HFlags & (HGF_FAST|HGF_READONLY)) == HGF_FAST)
-	    fastLocked = 1;
-	else
-	    hflock(fd, 0, XLOCK_UN);
+	if ((HFlags & HGF_FAST) == 0 && openLock == XLOCK_EX) {
+	    if (hflock(fd, 0, XLOCK_SH) < 0)
+		return(openLockFailed(fd, fileName));
+	    openLock = XLOCK_SH;
+	}
+    }
+
+    if (openLock == 0) {
+	if (HistoryShareLock(fd, fileName) < 0)
+	    return(openLockFailed(fd, fileName));
+	openLock = XLOCK_SH;
     }
 
     if (HHead.version < 1) {
@@ -344,7 +496,7 @@ HistoryOpen(const char *fileName, int hflags)
     HMask = HSize - 1;
 
     /*
-     * In FAST mode we leave the history file locked in order to
+     * In FAST mode we hold the history file locked (above) in order to
      * cache the hash table array at the beginning, which in turn
      * allows us to essentially append new entries to the end of
      * the file without having to seek back and forth updating
@@ -354,15 +506,8 @@ HistoryOpen(const char *fileName, int hflags)
      * portion of the history file.
      */
 
-    if (HFlags & HGF_FAST) {
-	if (HFlags & HGF_READONLY) {
-	    fprintf(stderr, "Ignoring fast mode for readonly history open\n");
-	} else if (!fastLocked && hflock(fd, 0, XLOCK_EX|XLOCK_NB) == -1) {
-	    fprintf(stderr, "Unable to lock history file in fast mode (%s)\n",
-							strerror(errno));
-	    exit(1);
-	}
-    }
+    if ((HFlags & (HGF_FAST|HGF_READONLY)) == (HGF_FAST|HGF_READONLY))
+	fprintf(stderr, "Ignoring fast mode for readonly history open\n");
 
     if (HFlags & HGF_FAST) {
 	HAry = calloc(HSize, sizeof(HistIndex));
@@ -409,8 +554,10 @@ HistoryClose(void)
 
     if (HFd >= 0 && !(HFlags & HGF_READONLY)) {
 	if (HFlags & HGF_FAST) {
+	    /* synced too: the file is often renamed into place next */
 	    if (HistoryWriteAt(HFd, HAry,
-		(size_t)HSize * sizeof(HistIndex), HHead.headSize) < 0) {
+		(size_t)HSize * sizeof(HistIndex), HHead.headSize) < 0 ||
+		fsync(HFd) < 0) {
 		logit(LOG_ERR, "dhistory fast-mode index write failed: %s",
 		    strerror(errno));
 		r = RCTRYAGAIN;
@@ -439,8 +586,7 @@ HistoryClose(void)
 	    HHeadMap = NULL;
 	}
 	if (HFd >= 0) {
-	    if (HFlags & HGF_FAST)
-		hflock(HFd, 0, XLOCK_UN);
+	    hflock(HFd, 0, XLOCK_UN);
 	    close(HFd);
 	}
 	HFd = -1;
@@ -451,12 +597,23 @@ HistoryClose(void)
 void
 historyReOpen(void)
 {
-    int count = 0;
-
     DoingReOpen = 1;
     HistoryClose();
-    while (HistoryOpen(HistoryFileName, HFlags) == -2 && count++ < 360)
+    reopenWait();
+}
+
+/* Open HistoryFileName again, waiting up to 6 minutes for a new file. */
+static void
+reopenWait(void)
+{
+    int count = 0;
+    int r;
+
+    DoingReOpen = 1;
+    while ((r = HistoryOpen(HistoryFileName, HFlags)) == -2 && count++ < 360)
 	sleep(1);
+    if (r == -3)	/* dead and no dhisexpire: HistoryOpen said so */
+	exit(1);
     if (count++ >= 360) {
 	if (ReOpenLockError) {
 	    fprintf(stderr, "Unable to reopen history file: lock failed (%s)\n",
@@ -644,6 +801,75 @@ HistoryPosLookupByHash(hash_t hv, History *h)
     return(-1);
 }
 
+#define HIST_LOCK_TRIES	5	/* tries for a chain lock that fails with ENOLCK */
+
+/*
+ * After an update under the chain lock: was the history marked dead in
+ * the meantime?  dhisexpire copied the record long before, so the update
+ * must be done again in the new history.  Fast mode has its own file.
+ */
+static int
+updateLost(void)
+{
+    return((HFlags & HGF_FAST) == 0 && HHeadMap->hmagic != HMAGIC);
+}
+
+/* File offset of the record at index. */
+static off_t
+recordOffset(HistIndex index)
+{
+    if (HHead.version > 1)
+	return((off_t)HEntryOff + (off_t)index * sizeof(History));
+    return((off_t)index);
+}
+
+static void
+unlockChain(off_t chainlock)
+{
+    if (chainlock > 0 && hflock(HFd, chainlock, XLOCK_UN) < 0)
+	HistoryFatalIO("hash chain unlock");
+}
+
+/*
+ * Lock the hash chain of hv for an add or a record update.  Returns the
+ * lock offset, 0 in fast mode (no lock, it has the file to itself), or
+ * -1.  dhisexpire marks the history dead and then waits for every chain
+ * lock before it copies the last records: a history found dead under the
+ * lock is reopened, so no write goes to the old file after that copy.
+ */
+static off_t
+lockChain(hash_t hv)
+{
+    int tries = 0;
+
+    for (;;) {
+	off_t chainlock;
+
+	if (HHeadMap->hmagic != HMAGIC)
+	    historyReOpen();
+	if (HFlags & HGF_FAST)
+	    return(0);
+	chainlock = HHead.headSize +
+	    (off_t)((hv.h1 ^ hv.h2) & HMask) * sizeof(HistIndex);
+	while (hflock(HFd, chainlock, XLOCK_EX) < 0) {
+	    int error = errno;
+
+	    /* ENOLCK can pass (as in KPDBLockRec); other errors do not */
+	    if (error == ENOLCK && ++tries < HIST_LOCK_TRIES) {
+		usleep(100000);
+		continue;
+	    }
+	    logit(LOG_ERR, "Unable to lock dhistory chain: %s",
+		strerror(error));
+	    errno = error;
+	    return(-1);
+	}
+	if (HHeadMap->hmagic == HMAGIC)
+	    return(chainlock);
+	unlockChain(chainlock);
+    }
+}
+
 /*
  * This is a new and simplifed HistoryAdd that locks an append lock
  * (pos 4) and just appends the single history record and unlocks.
@@ -660,9 +886,6 @@ HistoryAdd(const char *msgid, History *h)
     off_t chainlock;
     int r = RCOK;
 
-    if (HHeadMap->hmagic != HMAGIC)
-	historyReOpen();
-
     /*
      * This should not happen, but if it does, log it and pretend we did it
      */
@@ -675,15 +898,10 @@ HistoryAdd(const char *msgid, History *h)
      *
      */
 
+    if ((chainlock = lockChain(h->hv)) < 0)
+	return(RCTRYAGAIN);
     hi = (h->hv.h1 ^ h->hv.h2) & HMask;
     pindex = HHead.headSize + hi * sizeof(HistIndex);
-    chainlock = (off_t)pindex;
-
-    if ((HFlags & HGF_FAST) == 0 &&
-        hflock(HFd, chainlock, XLOCK_EX) < 0) {
-	logit(LOG_ERR, "Unable to lock dhistory chain: %s", strerror(errno));
-	return(RCTRYAGAIN);
-    }
 
     /*
      * make sure message-id is not already in hash table
@@ -784,69 +1002,117 @@ HistoryAdd(const char *msgid, History *h)
 	}
     }
 
-    if ((HFlags & HGF_FAST) == 0 &&
-        hflock(HFd, chainlock, XLOCK_UN) < 0)
-	HistoryFatalIO("hash chain unlock");
+    unlockChain(chainlock);
 
     return(r);
 }
 
+/*
+ * Replace the record of h->hv with *h, under its chain lock.  The link
+ * and an expired flag on disk are kept: *h can be an old copy, read
+ * before the history was replaced or the record was expired.  Returns
+ * 1 when stored, 0 when not found, -1 when the lock failed (errno).
+ */
 int
 HistoryStore(History *h)
 {
     HistIndex index;
     History th;
-    off_t offset;
+    off_t chainlock;
+    int lost;
 
-    index = HistoryPosLookupByHash(h->hv, &th);
-    if (index == (HistIndex)-1)
-	return(0);
-    if (HHead.version > 1)
-	offset = (off_t)HEntryOff + (off_t)index * sizeof(History);
-    else
-	offset = index;
-    if (HistoryWriteAt(HFd, h, sizeof(*h), offset) < 0)
-	HistoryFatalIO("record update");
-    return(1);
+    do {
+	if ((chainlock = lockChain(h->hv)) < 0)
+	    return(-1);
+	index = HistoryPosLookupByHash(h->hv, &th);
+	if (index != (HistIndex)-1) {
+	    History nh = *h;
+
+	    nh.next = th.next;
+	    if (H_EXPIRED(th.exp))
+		nh.exp |= EXPF_EXPIRED;
+	    if (HistoryWriteAt(HFd, &nh, sizeof(nh), recordOffset(index)) < 0)
+		HistoryFatalIO("record update");
+	}
+	lost = updateLost();
+	unlockChain(chainlock);
+    } while (lost);
+    return(index != (HistIndex)-1);
 }
 
-void
-HistoryStoreExp(History *h, HistIndex index)
+/* Write exp into the record at index; the caller holds its chain lock. */
+static void
+storeExp(uint16 exp, HistIndex index)
 {
-    off_t offset;
-
-    if (HHead.version > 1)
-	offset = (off_t)HEntryOff + (off_t)index * sizeof(History) +
-	    offsetof(History, exp);
-    else
-	offset = (off_t)index + offsetof(History, exp);
-    if (HistoryWriteAt(HFd, &h->exp, sizeof(h->exp), offset) < 0)
+    if (HistoryWriteAt(HFd, &exp, sizeof(exp),
+	recordOffset(index) + offsetof(History, exp)) < 0)
 	HistoryFatalIO("expiration update");
 }
 
 /*
- * Cancel/expire article in history
+ * Store h->exp in the record at index (from a lookup of h->hv), under
+ * its chain lock.  When that record is no longer h->hv (the history was
+ * replaced since), it is looked up again.  Returns 1 when stored, 0
+ * when not found, -1 when the lock failed (errno).
+ */
+int
+HistoryStoreExp(History *h, HistIndex index)
+{
+    History th;
+    off_t chainlock;
+    int lost;
+
+    do {
+	if ((chainlock = lockChain(h->hv)) < 0)
+	    return(-1);
+	if (pread(HFd, &th, sizeof(th), recordOffset(index)) != sizeof(th) ||
+	    th.hv.h1 != h->hv.h1 || th.hv.h2 != h->hv.h2)
+	    index = HistoryPosLookupByHash(h->hv, &th);
+	if (index != (HistIndex)-1)
+	    storeExp(h->exp, index);
+	lost = updateLost();
+	unlockChain(chainlock);
+    } while (lost);
+    return(index != (HistIndex)-1);
+}
+
+/*
+ * Cancel/expire article in history.  The lookup and the update are
+ * done under the chain lock.  Returns 1 when found, 0 when not, 2 when
+ * it was found but dhisexpire replaced the history meanwhile and the
+ * new one has no such entry, -1 when the lock failed (errno).
  */
 int
 HistoryExpire(const char *msgid, History *h, int unexp)
 {
     HistIndex index;
     hash_t hv;
+    off_t chainlock;
+    int lost;
+    int found = 0;
 
     if (msgid == NULL)
 	hv = h->hv;
     else
 	hv = hhash(msgid);
-    index = HistoryPosLookupByHash(hv, h);
+    do {
+	if ((chainlock = lockChain(hv)) < 0)
+	    return(-1);
+	index = HistoryPosLookupByHash(hv, h);
+	if (index != (HistIndex)-1) {
+	    found = 1;
+	    if (unexp && H_EXPIRED(h->exp)) {
+		h->exp &= ~EXPF_EXPIRED;
+		storeExp(h->exp, index);
+	    } else if (!unexp && !H_EXPIRED(h->exp)) {
+		h->exp |= EXPF_EXPIRED;
+		storeExp(h->exp, index);
+	    }
+	}
+	lost = updateLost();
+	unlockChain(chainlock);
+    } while (lost);
     if (index == (HistIndex)-1)
-	return(0);
-    if (unexp && H_EXPIRED(h->exp)) {
-	h->exp &= ~EXPF_EXPIRED;
-	HistoryStoreExp(h, index);
-    } else if (!H_EXPIRED(h->exp)) {
-	h->exp |= EXPF_EXPIRED;
-	HistoryStoreExp(h, index);
-    }
+	return(found ? 2 : 0);
     return(1);
 }
-
