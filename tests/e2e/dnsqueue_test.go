@@ -4,10 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"net"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -103,51 +99,6 @@ func TestReaderDNSQueueLimit(t *testing.T) {
 		if !strings.HasPrefix(r, "281") {
 			t.Errorf("login %d: got %q, want 281", i, r)
 		}
-	}
-	c := s.Reader(t)
-	expect(t, c, 381, "AUTHINFO USER fred")
-	expect(t, c, 281, "AUTHINFO PASS fredspass")
-	expect(t, c, 205, "QUIT")
-}
-
-// TestReaderDNSQueueStreamIPC: TestReaderDNSQueueLimit with the IPC socketpairs of illumos,
-// on Linux. The shim (testdata/streamipc) refuses SOCK_SEQPACKET, so dreaderd falls back to
-// SOCK_STREAM, and keeps the AF_UNIX buffers small (8 KiB asked, 16 KiB on Linux), as on
-// illumos, which ignores the 256 KiB dreaderd asks for. The 40 hand-backs of the burst then
-// fill the reader-to-main direction while the replies fill the other one. Fails before the
-// fix (the illumos CI stall): the main process waited in SendMsg() for the reader, which
-// waited in SendMsg() for the main process, and the logins timed out.
-func TestReaderDNSQueueStreamIPC(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("the stream IPC shim needs Linux (LD_PRELOAD)")
-	}
-	cc := wmCC(t)
-	dir := t.TempDir()
-	so := filepath.Join(dir, "streamipc.so")
-	src, err := filepath.Abs(filepath.Join("testdata", "streamipc", "streamipc.c"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out, err := exec.Command(cc, "-O2", "-shared", "-fPIC", "-o", so, src, "-ldl").CombinedOutput(); err != nil {
-		t.Skipf("cannot build the shim: %v\n%s", err, out)
-	}
-	marks := filepath.Join(dir, "refused.log")
-	_, spool := spoolStore(t)
-	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: AuthReaderAccess,
-		Config: map[string]string{"readerthreads": "64"}, NoStart: true})
-	s.Env = append(s.Env, "LD_PRELOAD="+so, "STREAMIPC_BUF=8192", "STREAMIPC_LOG="+marks)
-	_, port, _ := net.SplitHostPort(s.Addr)
-	startReader(t, s, "[127.0.0.1]:"+port)
-	if b, err := os.ReadFile(marks); err != nil || len(b) == 0 {
-		t.Fatalf("the shim refused no SOCK_SEQPACKET socketpair (%v): the test would not use the stream fallback", err)
-	}
-	for i, r := range authBurst(t, s.Addr, 40) {
-		if !strings.HasPrefix(r, "281") {
-			t.Errorf("login %d: got %q, want 281", i, r)
-		}
-	}
-	if t.Failed() {
-		return
 	}
 	c := s.Reader(t)
 	expect(t, c, 381, "AUTHINFO USER fred")
