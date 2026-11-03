@@ -121,6 +121,33 @@ out:
         ExpireSnapshotFailed = 1;
     return(result);
 }
+
+static int
+LockAndRefreshOverview(int fd, OverArt *snapshot, size_t len, off_t offset)
+{
+    if (hflock(fd, 0, XLOCK_EX) < 0) {
+        fprintf(stderr, "overview refresh lock failed: %s\n", strerror(errno));
+        ExpireSnapshotFailed = 1;
+        return(-1);
+    }
+    if (xreadat(fd, snapshot, len, offset) < 0) {
+        fprintf(stderr, "overview expiration refresh failed: %s\n", strerror(errno));
+        ExpireSnapshotFailed = 1;
+        if (hflock(fd, 0, XLOCK_UN) < 0)
+            fprintf(stderr, "overview refresh unlock failed: %s\n", strerror(errno));
+        return(-1);
+    }
+    return(0);
+}
+
+static void
+UnlockOverview(int fd)
+{
+    if (hflock(fd, 0, XLOCK_UN) < 0) {
+        fprintf(stderr, "overview refresh unlock failed: %s\n", strerror(errno));
+        ExpireSnapshotFailed = 1;
+    }
+}
 #endif
 
 #define GZ_MAGIC0       0x1F
@@ -1468,9 +1495,8 @@ ExpireByDays(Group *group, int fd, OverHead *oh, int expireSecs)
 	 * Update active file begin sequence number
 	 */
 #ifdef __OpenBSD__
-	if (xreadat(fd, (void *)oaBase, n * sizeof(OverArt), oh->oh_HeadSize) < 0) {
-	    fprintf(stderr, "overview expiration refresh failed: %s\n", strerror(errno));
-	    ExpireSnapshotFailed = 1;
+	if (LockAndRefreshOverview(fd, (OverArt *)oaBase,
+	    n * sizeof(OverArt), oh->oh_HeadSize) < 0) {
 	    xunmap((void *)oaBase, n * sizeof(OverArt));
 	    return;
 	}
@@ -1497,6 +1523,9 @@ ExpireByDays(Group *group, int fd, OverHead *oh, int expireSecs)
 	    }
 	    ++jumped;
 	}
+#ifdef __OpenBSD__
+	UnlockOverview(fd);
+#endif
 	if (jumped)
 	    group->gr_State |= GRF_EDITEDBEG | GRF_MODIFIED;
     }
@@ -1606,9 +1635,8 @@ ExpireBySpool(Group *group, int fd, OverHead *oh)
 	 * Update history file begin sequence number
 	 */
 #ifdef __OpenBSD__
-	if (xreadat(fd, (void *)oaBase, n * sizeof(OverArt), oh->oh_HeadSize) < 0) {
-	    fprintf(stderr, "overview expiration refresh failed: %s\n", strerror(errno));
-	    ExpireSnapshotFailed = 1;
+	if (LockAndRefreshOverview(fd, (OverArt *)oaBase,
+	    n * sizeof(OverArt), oh->oh_HeadSize) < 0) {
 	    xunmap((void *)oaBase, n * sizeof(OverArt));
 	    return;
 	}
@@ -1635,6 +1663,9 @@ ExpireBySpool(Group *group, int fd, OverHead *oh)
 	    }
 	    ++jumped;
 	}
+#ifdef __OpenBSD__
+	UnlockOverview(fd);
+#endif
 	if (jumped)
 	    group->gr_State |= GRF_EDITEDBEG | GRF_MODIFIED;
     }
@@ -1744,9 +1775,8 @@ ExpireFromFile(Group *group, int fd, OverHead *oh, int expireSecs)
 	 * Update history file begin sequence number
 	 */
 #ifdef __OpenBSD__
-	if (xreadat(fd, (void *)oaBase, n * sizeof(OverArt), oh->oh_HeadSize) < 0) {
-	    fprintf(stderr, "overview expiration refresh failed: %s\n", strerror(errno));
-	    ExpireSnapshotFailed = 1;
+	if (LockAndRefreshOverview(fd, (OverArt *)oaBase,
+	    n * sizeof(OverArt), oh->oh_HeadSize) < 0) {
 	    xunmap((void *)oaBase, n * sizeof(OverArt));
 	    return;
 	}
@@ -1773,6 +1803,9 @@ ExpireFromFile(Group *group, int fd, OverHead *oh, int expireSecs)
 	    }
 	    ++jumped;
 	}
+#ifdef __OpenBSD__
+	UnlockOverview(fd);
+#endif
 	if (jumped)
 	    group->gr_State |= GRF_EDITEDBEG | GRF_MODIFIED;
     }
