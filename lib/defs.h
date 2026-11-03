@@ -114,10 +114,21 @@ typedef struct direct den_t;
 #include	<md5.h>
 #endif
 #ifdef	NETREMOTE_ENABLED
-#if __FreeBSD_version > 470100
-#include        <openssl/des.h>
-#else
+#if defined(__FreeBSD_version) && __FreeBSD_version <= 470100
 #include	<des.h>
+#else
+/* NetRemote needs the DES calls OpenSSL 3 marks deprecated */
+#define OPENSSL_SUPPRESS_DEPRECATED
+#include	<openssl/opensslv.h>
+#include	<openssl/des.h>
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+/* OpenSSL 1.1 dropped the old des_ names */
+#define des_cblock		DES_cblock
+#define des_key_schedule	DES_key_schedule
+#define des_string_to_key(s, k)	DES_string_to_key((s), (k))
+#define des_set_key(k, s)	DES_set_key((k), &(s))
+#define des_ecb_encrypt(i, o, s, e) DES_ecb_encrypt((i), (o), &(s), (e))
+#endif
 #endif
 #endif
 #if defined(RADIUS_ENABLED) && !defined(RADIUS_RADCLI)
@@ -259,6 +270,7 @@ struct DiabloOpts {
     int SpoolPreloadArt;
     int FeederMaxHeaderSize;
     int ReaderIdentTimeout;
+    int ReaderAuthTimeout;	/* readerauthtimeout: seconds per auth backend, 0 = none */
     char *SpamFilterOpt;
     char *FeederPathHost;
     char *FeederXRefHost;
