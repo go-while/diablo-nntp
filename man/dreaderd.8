@@ -258,7 +258,8 @@ seconds (default 5, 1 to 300).
 .B readerdnsqueue 0
 queues no new connection.  dreaderd keeps accepting while the DNS
 processes are busy, so a login flood gets quick 400 replies instead of
-waiting in the kernel's listen backlog (SOMAXCONN); past 200 refusals
+waiting in the kernel's listen backlog, which dreaderd asks to be as
+large as the kernel allows (net.core.somaxconn on Linux); past 200 refusals
 in 100 ms the listener pauses for the rest of those 100 ms.  AUTHINFO logins of connected clients wait in their own
 queue, ahead of the new connections.  There is at most one per
 connection, so it has no length limit, but it is queued only up to 32
@@ -273,6 +274,11 @@ specify the number of reader processes, default is 10.  The value
 .B auto
 starts one per CPU that dreaderd may use (on Linux the affinity mask
 and a cgroup v2 CPU quota count), at most 64, and logs the number.
+On illumos and Solaris it is the CPUs online (in a zone with its own
+pool, the pool's CPUs), lowered to the processor set dreaderd is bound
+to (psrset, poolbind) and to the zone's CPU cap (zone.cpu-cap, in
+percent of one CPU, rounded up: a cap of 800 gives 8); dreaderd logs
+the three.
 Reader processes are CPU-bound, so more than the CPU count adds
 nothing.  Each reader
 process can handle several connections in parallel but opens a
