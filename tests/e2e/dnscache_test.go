@@ -4,8 +4,10 @@ package e2e
 // and the AUTHINFO re-send that carries the connect-time lookup result.
 //
 // The tests preload testdata/dnsshim/dnsshim.c into dreaderd. It fakes the reverse and
-// forward lookups of 127.a.b.c (h-a-b-c.bench.test; no name for 127.9.x.x) and ::1
-// (v6-1.bench.test), and logs every faked lookup, so a test can count them per address.
+// forward lookups of 127.a.b.c (h-a-b-c.bench.test) and ::1 (v6-1.bench.test), and logs
+// every faked lookup, so a test can count them per address. Special nets: 127.9 no name,
+// 127.8 reverse timeout, 127.5 reverse timeout once, 127.7 forward mismatch, 127.6 forward
+// timeout (see the shim).
 
 import (
 	"net"
@@ -80,13 +82,16 @@ func startDNSCacheReader(t *testing.T, sh *dnsShim, access string, conf map[stri
 // ip plus forward lookups of its name).
 func (sh *dnsShim) lookups(ip string) int {
 	b, _ := os.ReadFile(sh.log)
-	name := "v6-1.bench.test"
+	tail := "v6-1.bench.test"
 	if f := strings.Split(ip, "."); len(f) == 4 {
-		name = "h-" + f[1] + "-" + f[2] + "-" + f[3] + ".bench.test"
+		tail = "-" + f[1] + "-" + f[2] + "-" + f[3] + ".bench.test" // h-, x- or t- names
 	}
 	n := 0
 	for _, l := range strings.Split(string(b), "\n") {
-		if l == "rev "+ip || l == "fwd "+name {
+		if l == "rev "+ip {
+			n++
+		} else if fwd, ok := strings.CutPrefix(l, "fwd "); ok &&
+			(fwd == tail || len(fwd) == len(tail)+1 && strings.HasSuffix(fwd, tail)) {
 			n++
 		}
 	}
@@ -191,7 +196,7 @@ access *.bench.test userfred
 func TestReaderDNSCacheTTL(t *testing.T) {
 	sh := buildDNSShim(t)
 	s := startDNSCacheReader(t, sh, dnsCacheAccess, map[string]string{
-		"readerdnscachettl": "8", "readerdnscachenegttl": "2"}, "")
+		"readerdnscachettl": "10", "readerdnscachenegttl": "3"}, "")
 	const pos, neg, refused = "127.1.0.4", "127.9.1.1", "127.9.2.1"
 	start := time.Now()
 	wantLogin(t, s, sh, pos, 200, 2, "name, first login")
@@ -201,11 +206,11 @@ func TestReaderDNSCacheTTL(t *testing.T) {
 	wantLogin(t, s, sh, neg, 201, 0, "no name, cached (address rule)")
 	wantLogin(t, s, sh, refused, 502, 0, "no name, no address rule, cached")
 
-	time.Sleep(time.Until(start.Add(3200 * time.Millisecond)))
+	time.Sleep(time.Until(start.Add(4500 * time.Millisecond)))
 	wantLogin(t, s, sh, neg, 201, 1, "no name after the negative TTL")
 	wantLogin(t, s, sh, pos, 200, 0, "name within the positive TTL")
 
-	time.Sleep(time.Until(start.Add(9500 * time.Millisecond)))
+	time.Sleep(time.Until(start.Add(12 * time.Second)))
 	wantLogin(t, s, sh, pos, 200, 2, "name after the positive TTL")
 }
 
@@ -315,4 +320,111 @@ access h-1-0-8.bench.test viaproxy
 	if code != 200 {
 		t.Errorf("proxied as 127.1.0.9 (h-1-0-9, rule rp): reply %d %q, want 200", code, line)
 	}
+}
+
+// authAccess: names under bench.test read and post after AUTHINFO; 127.5.0.0/16 reads only,
+// also after AUTHINFO.
+const dnsAuthAccess = `vserverdef DEFAULT
+    hostname ` + PathHost + `
+end
+authdef fred
+    user fred
+    pass fredspass
+end
+readerdef userfred
+    read yes
+    post yes
+    auth fred
+end
+readerdef ipauth
+    read yes
+    auth fred
+end
+readerdef ro
+    read yes
+end
+access 127.0.0.1 ro
+access 127.5.0.0/16 ipauth
+access *.bench.test userfred
+`
+
+// TestReaderDNSAuthinfoAfterTempFail: when the connect-time reverse lookup failed
+// temporarily, AUTHINFO looks up again (as on main) and gets the name-based rule, instead of
+// reusing the failure for the rest of the connection. Failed before the fix: POST got 440
+// (the address rule) with 1 lookup.
+func TestReaderDNSAuthinfoAfterTempFail(t *testing.T) {
+	sh := buildDNSShim(t)
+	s := startDNSCacheReader(t, sh, dnsAuthAccess, nil, "")
+	ip := "127.5.1.1" // the first reverse lookup times out
+	c := s.dialFrom(t, ip)
+	if !strings.HasPrefix(c.Greeting, "201") {
+		t.Errorf("greeting %q, want 201 (address rule, no name yet)", c.Greeting)
+	}
+	expect(t, c, 381, "AUTHINFO USER fred")
+	expect(t, c, 281, "AUTHINFO PASS fredspass")
+	code, line := c.Cmd("POST")
+	if code == 340 {
+		send(t, c, ".\r\n")
+		c.ReadStatus()
+	}
+	c.TryCmd("QUIT")
+	c.Close()
+	if code != 340 {
+		t.Errorf("POST after AUTHINFO: %q, want 340 (name rule after a new lookup)", line)
+	}
+	if n := sh.lookups(ip); n != 3 {
+		t.Errorf("%d lookups, want 3 (failed reverse at connect; reverse and forward at AUTHINFO)", n)
+	}
+}
+
+// TestReaderDNSCacheTempFailNotCached: a reverse or forward lookup that failed temporarily
+// is not cached; a forward mismatch is cached (negative TTL) and gives the same decision.
+func TestReaderDNSCacheTempFailNotCached(t *testing.T) {
+	sh := buildDNSShim(t)
+	access := dnsCacheAccess + "access 127.7.2.0/24 ro\n"
+	s := startDNSCacheReader(t, sh, access, nil, "")
+	for _, tc := range []struct {
+		ip, what           string
+		code, first, again int
+	}{
+		{"127.8.1.1", "reverse timeout", 502, 1, 1},
+		{"127.6.1.1", "forward timeout", 502, 2, 2},
+		{"127.7.1.1", "forward mismatch, name rule", 502, 2, 0},
+		{"127.7.2.1", "forward mismatch, address rule", 201, 2, 0},
+	} {
+		wantLogin(t, s, sh, tc.ip, tc.code, tc.first, tc.what+", first login")
+		wantLogin(t, s, sh, tc.ip, tc.code, tc.again, tc.what+", second login")
+	}
+}
+
+// TestReaderDNSCacheTTLLowered: an entry is checked against the current TTL, so a TTL
+// lowered with drcmd config applies to entries stored before. Failed before: the entry kept
+// its old expiry (0 lookups).
+func TestReaderDNSCacheTTLLowered(t *testing.T) {
+	sh := buildDNSShim(t)
+	s := startDNSCacheReader(t, sh, dnsCacheAccess, nil, "")
+	ip := "127.1.4.4"
+	wantLogin(t, s, sh, ip, 200, 2, "first login (ttl 300)")
+	wantLogin(t, s, sh, ip, 200, 0, "second login (ttl 300)")
+	if out := s.Run(t, "drcmd", "config", "readerdnscachettl", "1"); !strings.Contains(out, "Set") {
+		t.Fatalf("drcmd config readerdnscachettl 1: %q", out)
+	}
+	time.Sleep(2500 * time.Millisecond)
+	wantLogin(t, s, sh, ip, 200, 2, "after lowering the TTL to 1 s")
+}
+
+// TestReaderDNSCacheFlush: "drcmd dnscache flush" empties the cache; other words do not.
+func TestReaderDNSCacheFlush(t *testing.T) {
+	sh := buildDNSShim(t)
+	s := startDNSCacheReader(t, sh, dnsCacheAccess, nil, "")
+	ip := "127.1.4.5"
+	wantLogin(t, s, sh, ip, 200, 2, "first login")
+	s.Run(t, "drcmd", "dnscache", "flushfoo")
+	wantLogin(t, s, sh, ip, 200, 0, "after 'dnscache flushfoo'")
+	s.Run(t, "drcmd", "dnscache", "flush")
+	if n := dnsCacheStat(t, s, "size"); n != 0 {
+		t.Errorf("after a flush the table is freed: size=%d, want 0", n)
+	}
+	wantLogin(t, s, sh, ip, 200, 2, "after 'dnscache flush'")
+	wantLogin(t, s, sh, ip, 200, 0, "cached again")
 }

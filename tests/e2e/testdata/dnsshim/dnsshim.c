@@ -8,6 +8,12 @@
  *     getnameinfo(NI_NAMEREQD) -> "h-a-b-c.bench.test"
  *     getaddrinfo("h-a-b-c.bench.test") -> 127.a.b.c
  *   127.9.b.c: getnameinfo fails with EAI_NONAME (no PTR record)
+ *   127.8.b.c: getnameinfo fails with EAI_AGAIN (resolver timeout)
+ *   127.5.b.c: getnameinfo fails with EAI_AGAIN once per address, then works
+ *   127.7.b.c: name "x-7-b-c.bench.test", whose forward lookup gives
+ *              127.66.66.66 (forward mismatch)
+ *   127.6.b.c: name "t-6-b-c.bench.test", whose forward lookup fails with
+ *              EAI_AGAIN
  *   ::1: getnameinfo -> "v6-1.bench.test", getaddrinfo("v6-1.bench.test") -> ::1
  * Everything else goes to libc.
  *
@@ -61,9 +67,28 @@ int getnameinfo(const struct sockaddr *sa, socklen_t salen, char *host, socklen_
                 snprintf(ip, sizeof(ip), "127.%u.%u.%u", (a >> 16) & 255, (a >> 8) & 255, a & 255);
                 count("rev", ip);
                 slow();
-                if (((a >> 16) & 255) == 9)
+                unsigned net = (a >> 16) & 255;
+                char pfx = 'h';
+                if (net == 9)
                     return EAI_NONAME;
-                snprintf(host, hostlen, "h-%u-%u-%u.bench.test", (a >> 16) & 255, (a >> 8) & 255, a & 255);
+                if (net == 8)
+                    return EAI_AGAIN;
+                if (net == 5) {
+                    /* the first lookup of each address fails: a marker file remembers it */
+                    const char *p = getenv("DSHIM_COUNT");
+                    char m[600];
+                    int fd;
+                    snprintf(m, sizeof(m), "%s.once-%s", p ? p : "/tmp/dnsshim", ip);
+                    if ((fd = open(m, O_WRONLY | O_CREAT | O_EXCL, 0644)) >= 0) {
+                        close(fd);
+                        return EAI_AGAIN;
+                    }
+                }
+                if (net == 7)
+                    pfx = 'x';
+                if (net == 6)
+                    pfx = 't';
+                snprintf(host, hostlen, "%c-%u-%u-%u.bench.test", pfx, net, (a >> 8) & 255, a & 255);
                 return 0;
             }
         } else if (sa->sa_family == AF_INET6 &&
@@ -97,11 +122,19 @@ int getaddrinfo(const char *node, const char *service, const struct addrinfo *hi
         *res = &p->ai;
         return 0;
     }
-    if (node && sscanf(node, "h-%u-%u-%u.%63s", &a, &b, &c, tail) == 4 && strcmp(tail, "bench.test") == 0) {
+    char pfx;
+    if (node && sscanf(node, "%c-%u-%u-%u.%63s", &pfx, &a, &b, &c, tail) == 5 &&
+        (pfx == 'h' || pfx == 'x' || pfx == 't') && strcmp(tail, "bench.test") == 0) {
         /* glibc freeaddrinfo frees the ai block: keep the sockaddr inside it */
         struct { struct addrinfo ai; struct sockaddr_in sin; } *p = calloc(1, sizeof(*p));
         count("fwd", node);
         slow();
+        if (pfx == 't') {
+            free(p);
+            return EAI_AGAIN;
+        }
+        if (pfx == 'x')
+            a = b = c = 66;
         if (!p) return EAI_MEMORY;
         p->sin.sin_family = AF_INET;
         p->sin.sin_addr.s_addr = htonl((127u << 24) | (a << 16) | (b << 8) | c);
