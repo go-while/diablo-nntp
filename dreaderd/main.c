@@ -33,6 +33,7 @@
 #endif
 
 #include "defs.h"
+#include <sys/resource.h>
 
 #ifdef __linux__
 #include <sched.h>
@@ -124,11 +125,13 @@ int NumActive;			/* active connections	*/
 static int DnsSockType = SOCK_STREAM;
 
 /*
- * Requests (new connections, AUTHINFO logins) that found every DNS worker
- * busy wait here, in order, until one is free.  Bounded and timed so a
- * flood cannot grow it or hold clients for long.
+ * Requests that found every DNS worker busy wait here, in order, until one
+ * is free.  AUTHINFO logins of greeted clients have their own queue, served
+ * first.  New connections (and a proxied client's first lookup) are queued
+ * only while the expected wait is within half of readerdnswait, up to
+ * readerdnsqueue of them and below a fd cap; otherwise they get 400 at
+ * once.  Nothing waits longer than readerdnswait.
  */
-#define DNSQ_WAIT	10		/* seconds a request may wait	*/
 typedef struct DnsQ {
     struct DnsQ *dq_Next;
     int dq_Fd;
@@ -139,11 +142,33 @@ typedef struct DnsQ {
 #endif
     int dq_HasRes;
     DnsRes dq_Res;
-    time_t dq_When;
+    double dq_When;		/* MonoMs() when queued */
+    int dq_Known;		/* lookup result known: no lookups */
 } DnsQ;
-DnsQ *DnsQHead;
-DnsQ **DnsQTail = &DnsQHead;
-int DnsQLen;
+typedef struct DnsQList {
+    DnsQ *ql_Head;
+    DnsQ **ql_Tail;
+    int ql_Len;
+    int ql_Known;		/* entries with dq_Known */
+} DnsQList;
+static DnsQList DnsQAuth = { NULL, &DnsQAuth.ql_Head, 0, 0 };
+static DnsQList DnsQNew = { NULL, &DnsQNew.ql_Head, 0, 0 };
+static int DnsQFdCap;		/* queue new connections only below this fd */
+static int DnsQAuthFdCap;	/* queue AUTHINFO logins only below this fd */
+static double ListenPauseUntil;	/* MonoMs(): listeners off until then */
+#define DQR_FULL	1	/* readerdnsqueue reached		*/
+#define DQR_WAIT	2	/* estimated wait too long		*/
+#define DQR_FDS		3	/* no descriptor headroom		*/
+#define DQR_NOWORKER	4	/* no DNS worker			*/
+#define DQR_EXPIRED	5	/* waited readerdnswait			*/
+#define DQR_MAXFDS	6	/* accepted fd beyond MAXFDS		*/
+#define DQR_ACCEPT	7	/* accept() out of descriptors/memory	*/
+#define DQR_NOFD	8	/* hand-back arrived without its fd	*/
+#define DQR_INFLIGHT	9	/* fd pass to a reader: ETOOMANYREFS	*/
+#define DQR_N		10	/* reasons are 1..9; 0 = admitted */
+static double MonoMs(void);
+static void DnsRefuseLog(int r);
+static void DnsQInitLimits(void);
 
 double TotalClientGroups = 0.0;
 double TotalClientArticles = 0.0;
@@ -632,7 +657,7 @@ main(int ac, char **av)
 		exit(1);
 	    }
 #endif
-	    listen(lfd, 256);
+	    listen(lfd, SOMAXCONN);
 	    if (bl->bl_Host != NULL && strchr(bl->bl_Host, ':') != NULL)
 		syslog(LOG_INFO, "Listening on [%s]:%s",
 					bl->bl_Host ? bl->bl_Host : "ALL",
@@ -665,7 +690,7 @@ main(int ac, char **av)
 							RxBufSize, passedfd);
 	        }
 
-	    listen(passedfd, 256);
+	    listen(passedfd, SOMAXCONN);
 	    AddThread("acceptor", passedfd, -1, THREAD_LISTEN, -1, 0);
     }
 
@@ -820,6 +845,7 @@ main(int ac, char **av)
     closelog();
     OpenLog("dreaderd", (DebugOpt ? LOG_PERROR : 0) | LOG_NDELAY | LOG_PID);
     SysLogDesc = "dreaderd";
+    DnsQInitLimits();
 
     /*
      * Save PID
@@ -1075,7 +1101,17 @@ main(int ac, char **av)
 	    if (Exiting)
 		NextTimeout(&tv, 50);
 	    else
-		NextTimeout(&tv, DnsQHead ? 1000 : 10 * 1000);
+	    {
+		int ms = (DnsQAuth.ql_Head || DnsQNew.ql_Head) ? 250 : 10 * 1000;
+
+		if (ListenPauseUntil > 0) {
+		    double left = ListenPauseUntil - MonoMs();
+
+		    if (left < ms)
+			ms = (left < 1) ? 1 : (int)left + 1;
+		}
+		NextTimeout(&tv, ms);
+	    }
 
 	    stprintf("Connect=%d Failed=%d Dns=%d/%d Act=%d/%d", 
 		ConnectCount, FailCount,
@@ -1142,7 +1178,10 @@ main(int ac, char **av)
 					bzero(&rsin, sizeof(rsin));
 					memcpy(&rsin, &dres.dr_Addr, sizeof(rsin));
 #endif
-					if (dres.dr_ResultFlags == DR_REQUIRE_DNS) {
+					if (recv_fd < 0) {
+					    /* the descriptor was lost (limit); still account */
+					    DnsRefuseLog(DQR_NOFD);
+					} else if (dres.dr_ResultFlags == DR_REQUIRE_DNS) {
 					    SendDns(recv_fd, &rsin, &dres);
 					} else {
 #ifdef	NETREMOTE_ENABLED
@@ -1185,11 +1224,14 @@ main(int ac, char **av)
 	DnsQueueRun();
 
 	/*
-	 * Disable listen socket if we have too many connections pending or
-	 * we are full up, enable listen socket otherwise.  NOTE: NumPending
+	 * Disable listen socket if we are full up or out of descriptors,
+	 * enable listen socket otherwise.  Busy DNS workers do not turn it
+	 * off: SendDns() queues or refuses the connection.  NOTE: NumPending
 	 * is included in the NumActive number.
 	 */
-	if (NumPending < NumDnsForks && 
+	if (ListenPauseUntil > 0 && MonoMs() >= ListenPauseUntil)
+	    ListenPauseUntil = 0;
+	if (ListenPauseUntil == 0 &&
 	    NumActive < NumReaderForks * DOpts.ReaderThreads
 	) {
 	    if (ListenersEnabled == 0) {
@@ -1302,6 +1344,14 @@ DoListen(ForkDesc *desc, time_t t)
 	bzero(&rsin, sizeof(rsin));
 	fd = accept(desc->d_Fd, (struct sockaddr *)&rsin, &rslen);
 
+	if (fd < 0 && (errno == EMFILE || errno == ENFILE ||
+			errno == ENOBUFS || errno == ENOMEM)) {
+	    /* the client stays in the backlog; retry in a second */
+	    DnsRefuseLog(DQR_ACCEPT);
+	    ListenPauseUntil = MonoMs() + 1000;
+	    return;
+	}
+
 	if (PausedCount) {
 	    snprintf(errbuf, sizeof(errbuf), "400 %s: Server is temporarily unavailable, please try later%s%s\r\n",
 					DOpts.ReaderHostName,
@@ -1316,7 +1366,7 @@ DoListen(ForkDesc *desc, time_t t)
 	}
 
 	if (fd >= MAXFDS) {
-	    logit(LOG_CRIT, "fd beyond MAXFDS: %d, closing", fd);
+	    DnsRefuseLog(DQR_MAXFDS);
 	    snprintf(errbuf, sizeof(errbuf), "400 %s: Too many open descriptors, please try later%s%s\r\n",
 					DOpts.ReaderHostName,
 					(DOpts.NewsAdmin != NULL) ? " - " : "",
@@ -1678,6 +1728,9 @@ TrySendDns(int fd, struct sockaddr_in *rsin, DnsRes *dres)
 	 * request in the pipe, so retire the worker instead of feeding it
 	 * the next request at a wrong offset.
 	 */
+	best->d_SendMs = MonoMs();
+	best->d_SendKnown = (dres != NULL && dres->dr_ResultFlags == DR_SESSEXIT_RPT) ||
+			    (dreq.dr_Lookup & DL_MASK) != DL_NONE;
 	if (WriteAll(best->d_Fd, &dreq, sizeof(dreq)) < 0) {
 	    int err = errno;
 
@@ -1699,8 +1752,312 @@ TrySendDns(int fd, struct sockaddr_in *rsin, DnsRes *dres)
 }
 
 /*
+ * Refusals are logged per reason, at most once per 10 seconds each, with
+ * the count of the ones not logged; DnsRefuseFlush() logs what is left.
+ */
+
+static struct {
+    time_t last;
+    int skipped;
+} DnsRefuseLogs[DQR_N];
+
+static void
+DnsRefuseText(int r, char *buf, size_t len)
+{
+    switch (r) {
+    case DQR_FULL:
+	snprintf(buf, len, "Unable to find spare DNS thread, queue full - rejecting connection");
+	break;
+    case DQR_WAIT:
+	snprintf(buf, len, "Unable to find spare DNS thread, estimated wait over %d seconds - rejecting connection",
+	    DOpts.ReaderDnsWait);
+	break;
+    case DQR_FDS:
+	snprintf(buf, len, "Unable to find spare DNS thread, no descriptors left to queue - rejecting connection");
+	break;
+    case DQR_NOWORKER:
+	snprintf(buf, len, "No DNS thread running - rejecting connection");
+	break;
+    case DQR_EXPIRED:
+	snprintf(buf, len, "Unable to find spare DNS thread in %d seconds - rejecting connection",
+	    DOpts.ReaderDnsWait);
+	break;
+    case DQR_MAXFDS:
+	snprintf(buf, len, "fd beyond MAXFDS (%d), closing", MAXFDS);
+	break;
+    case DQR_ACCEPT:
+	snprintf(buf, len, "accept: out of descriptors or memory - listener paused");
+	break;
+    case DQR_INFLIGHT:
+	snprintf(buf, len, "connect: too many descriptors in flight to the readers - rejecting connection");
+	break;
+    default:
+	snprintf(buf, len, "reader handed back a connection without its descriptor (descriptor limit?)");
+	break;
+    }
+}
+
+static void
+DnsRefuseLog(int r)
+{
+    char buf[256];
+    time_t now = time(NULL);
+
+    if (DnsRefuseLogs[r].last != 0 && now - DnsRefuseLogs[r].last < 10) {
+	++DnsRefuseLogs[r].skipped;
+	return;
+    }
+    DnsRefuseText(r, buf, sizeof(buf));
+    if (DnsRefuseLogs[r].skipped)
+	logit(LOG_CRIT, "%s (%d more since the last message)", buf,
+	    DnsRefuseLogs[r].skipped);
+    else
+	logit(LOG_CRIT, "%s", buf);
+    DnsRefuseLogs[r].last = now;
+    DnsRefuseLogs[r].skipped = 0;
+}
+
+static void
+DnsRefuseFlush(void)
+{
+    char buf[256];
+    time_t now = time(NULL);
+    int r;
+
+    for (r = 1; r < DQR_N; ++r) {
+	if (DnsRefuseLogs[r].skipped == 0 || now - DnsRefuseLogs[r].last < 10)
+	    continue;
+	DnsRefuseText(r, buf, sizeof(buf));
+	logit(LOG_CRIT, "%s (%d more since the last message)", buf,
+	    DnsRefuseLogs[r].skipped);
+	DnsRefuseLogs[r].last = now;
+	DnsRefuseLogs[r].skipped = 0;
+    }
+}
+
+/*
+ * Milliseconds on a clock that does not jump with the time of day.
+ */
+static double
+MonoMs(void)
+{
+#ifdef CLOCK_MONOTONIC
+    struct timespec ts;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) == 0)
+	return(ts.tv_sec * 1000.0 + ts.tv_nsec / 1000000.0);
+#endif
+    return(time(NULL) * 1000.0);
+}
+
+/*
+ * Descriptor limits, at startup: raise the soft RLIMIT_NOFILE up to the
+ * hard limit, but not past FD_SETSIZE (the readers select() on their
+ * clients).  The limit used is the smaller of MAXFDS and RLIMIT_NOFILE.
+ * New connections are queued only below three quarters of it; AUTHINFO
+ * logins up to 32 below it (never less than new connections), so that a
+ * descriptor a reader hands back can still be received.
+ */
+static void
+DnsQInitLimits(void)
+{
+    struct rlimit rl;
+    rlim_t lim = MAXFDS;
+
+    if (getrlimit(RLIMIT_NOFILE, &rl) == 0) {
+	if (rl.rlim_cur != RLIM_INFINITY && rl.rlim_cur < (rlim_t)FD_SETSIZE &&
+		(rl.rlim_max == RLIM_INFINITY || rl.rlim_cur < rl.rlim_max)) {
+	    rlim_t old = rl.rlim_cur;
+
+	    rl.rlim_cur = (rl.rlim_max == RLIM_INFINITY ||
+			    rl.rlim_max > (rlim_t)FD_SETSIZE) ?
+			    (rlim_t)FD_SETSIZE : rl.rlim_max;
+	    if (setrlimit(RLIMIT_NOFILE, &rl) == 0)
+		logit(LOG_NOTICE, "raised the descriptor limit from %lu to %lu",
+		    (unsigned long)old, (unsigned long)rl.rlim_cur);
+	    else
+		rl.rlim_cur = old;
+	}
+	if (rl.rlim_cur != RLIM_INFINITY && rl.rlim_cur < lim)
+	    lim = rl.rlim_cur;
+    }
+    DnsQFdCap = (int)(lim * 3 / 4);
+    DnsQAuthFdCap = (int)lim - 32;
+    if (DnsQAuthFdCap < DnsQFdCap)
+	DnsQAuthFdCap = DnsQFdCap;
+}
+
+/*
+ * Worker time of requests that need lookups and of requests that do not
+ * (a DNS cache hit, AUTHINFO with its connection's result): the larger of
+ * a moving average and the median of the last three samples, so a step
+ * up shows after two samples while a single slow one does not.  The
+ * estimate never goes below DNSQ_FLOOR_LOOKUP / DNSQ_FLOOR_KNOWN ms, so a
+ * burst right after startup or after only cache hits is not taken whole.
+ */
+#define DNSQ_FLOOR_LOOKUP	50.0
+#define DNSQ_FLOOR_KNOWN	5.0
+
+typedef struct DnsTime {
+    double dt_Avg;
+    double dt_Last[3];
+    int dt_N;
+} DnsTime;
+
+static DnsTime DnsTimeLookup;
+static DnsTime DnsTimeKnown;
+static int DnsEstChanged;	/* a new sample: recheck the queue */
+
+static void
+DnsSample(int known, double ms)
+{
+    DnsTime *dt = known ? &DnsTimeKnown : &DnsTimeLookup;
+
+    if (ms < 0)
+	ms = 0;
+    dt->dt_Avg = (dt->dt_N == 0) ? ms : dt->dt_Avg + (ms - dt->dt_Avg) / 8;
+    dt->dt_Last[dt->dt_N % 3] = ms;
+    ++dt->dt_N;
+    if (dt->dt_N >= 1000000)
+	dt->dt_N = 3 + dt->dt_N % 3;	/* keep the slot order */
+    DnsEstChanged = 1;
+}
+
+static double
+DnsTimeEst(const DnsTime *dt, double floor)
+{
+    const double *l = dt->dt_Last;
+    double m = dt->dt_Avg;
+    double med;
+
+    if (dt->dt_N >= 3) {
+	med = (l[0] > l[1]) ?
+	    ((l[1] > l[2]) ? l[1] : (l[0] > l[2]) ? l[2] : l[0]) :
+	    ((l[0] > l[2]) ? l[0] : (l[1] > l[2]) ? l[2] : l[1]);
+    } else {
+	med = (dt->dt_N == 2 && l[1] > l[0]) ? l[1] : l[0];
+    }
+    if (med > m)
+	m = med;
+    return((m > floor) ? m : floor);
+}
+
+/*
+ * The youngest request a worker is busy with: when even that one is older
+ * than the average, the workers have slowed down and the average lags.
+ */
+static double DnsYoungest;	/* send time in ms, 0 = none busy */
+
+static void
+DnsYoungestScan(ForkDesc *desc)
+{
+    if (desc->d_Count > 0 && !desc->d_Dead && desc->d_SendMs > DnsYoungest)
+	DnsYoungest = desc->d_SendMs;
+}
+
+static void
+DnsReqMs(double now, double *lookup, double *known)
+{
+    *lookup = DnsTimeEst(&DnsTimeLookup, DNSQ_FLOOR_LOOKUP);
+    *known = DnsTimeEst(&DnsTimeKnown, DNSQ_FLOOR_KNOWN);
+    DnsYoungest = 0;
+    ScanThreads(THREAD_DNS, DnsYoungestScan);
+    if (DnsYoungest > 0 && now - DnsYoungest > *lookup)
+	*lookup = now - DnsYoungest;
+}
+
+/* worker time of the requests in a queue */
+static double
+DnsQWork(const DnsQList *ql, double lookup, double known)
+{
+    return(ql->ql_Known * known + (ql->ql_Len - ql->ql_Known) * lookup);
+}
+
+/*
+ * May a new connection (or the first lookup of a proxied client) wait
+ * for a worker?  Not when the queue is at readerdnsqueue, its descriptor
+ * is above the cap, or the expected wait is beyond half of readerdnswait:
+ * the work queued ahead of it and its own over the workers, or the age of
+ * the oldest one waiting.  Returns 0 or the DQR_ reason.
+ */
+static int
+DnsQAdmit(int fd, int known)
+{
+    double now = MonoMs();
+    double lookup;
+    double kms;
+    double est;
+
+    if (NumDnsForks <= 0)
+	return(DQR_NOWORKER);
+    if (fd >= DnsQFdCap)
+	return(DQR_FDS);
+    if (DnsQNew.ql_Len >= DOpts.ReaderDnsQueue)
+	return(DQR_FULL);
+    DnsReqMs(now, &lookup, &kms);
+    est = (DnsQWork(&DnsQAuth, lookup, kms) + DnsQWork(&DnsQNew, lookup, kms) +
+	    (known ? kms : lookup)) / NumDnsForks;
+    if (DnsQNew.ql_Head != NULL && now - DnsQNew.ql_Head->dq_When > est)
+	est = now - DnsQNew.ql_Head->dq_When;
+    /* half the limit: the estimate lags when the workers slow down */
+    if (est > DOpts.ReaderDnsWait * 500.0)
+	return(DQR_WAIT);
+    return(0);
+}
+
+#ifdef INET6
+static int
+DnsQAdd(DnsQList *ql, int fd, struct sockaddr_storage *rsin, DnsRes *dres, int known)
+#else
+static int
+DnsQAdd(DnsQList *ql, int fd, struct sockaddr_in *rsin, DnsRes *dres, int known)
+#endif
+{
+    DnsQ *dq;
+
+    if ((dq = malloc(sizeof(*dq))) == NULL)
+	return(0);
+    dq->dq_Next = NULL;
+    dq->dq_Fd = fd;
+    bcopy(rsin, &dq->dq_RSin, sizeof(dq->dq_RSin));
+    dq->dq_HasRes = (dres != NULL);
+    if (dres != NULL)
+	dq->dq_Res = *dres;
+    dq->dq_When = MonoMs();
+    dq->dq_Known = known;
+    *ql->ql_Tail = dq;
+    ql->ql_Tail = &dq->dq_Next;
+    ++ql->ql_Len;
+    ql->ql_Known += known;
+    return(1);
+}
+
+/*
+ * Refusals of new connections per 100 ms: past DNSQ_REFUSE_BUDGET the
+ * listener pauses until the tick ends, so a reconnect storm costs little
+ * CPU and its clients wait at most 100 ms in the backlog for their 400.
+ */
+#define DNSQ_REFUSE_BUDGET	200
+static void
+DnsRefuseNew(int fd, int r)
+{
+    static double tick;
+    static int count;
+    double now = MonoMs();
+
+    DnsRefuseLog(r);
+    DnsTooBusy(fd);
+    if (now - tick >= 100) {
+	tick = now;
+	count = 0;
+    }
+    if (++count >= DNSQ_REFUSE_BUDGET && ListenPauseUntil < tick + 100)
+	ListenPauseUntil = tick + 100;
+}
+
+/*
  * Send a new connection or an AUTHINFO login to a DNS worker; when all are
- * busy, queue it (D-51).
+ * busy, queue it (D-51) or refuse it.
  */
 #ifdef INET6
 void
@@ -1710,20 +2067,21 @@ void
 SendDns(int fd, struct sockaddr_in *rsin, DnsRes *dres)
 #endif
 {
-    DnsQ *dq;
+    int known;
+    int r;
 
     ++ConnectCount;
+
+    if (DnsQFdCap == 0)
+	DnsQInitLimits();
 
     /*
      * Session-exit accounting is never queued (see below), so it doesn't wait
      * behind the queue either.
      */
-    if ((DnsQHead == NULL ||
-	    (dres != NULL && dres->dr_ResultFlags == DR_SESSEXIT_RPT)) &&
-	    TrySendDns(fd, rsin, dres))
-	return;
-
     if (dres != NULL && dres->dr_ResultFlags == DR_SESSEXIT_RPT) {
+	if (TrySendDns(fd, rsin, dres))
+	    return;
 	/*
 	 * Only the end-of-session accounting of a finished session: the
 	 * client already got its 205.  Never write to it; the caller
@@ -1735,64 +2093,149 @@ SendDns(int fd, struct sockaddr_in *rsin, DnsRes *dres)
 	return;
     }
 
-    if (DnsQLen >= 4 * DOpts.ReaderDns + 4 ||
-	(dq = malloc(sizeof(*dq))) == NULL) {
-	logit(LOG_CRIT, "Unable to find spare DNS thread, queue full - rejecting connection");
-	DnsTooBusy(fd);
+    /*
+     * An AUTHINFO login of a greeted client waits only behind other
+     * AUTHINFO logins, never behind new connections.  There is at most
+     * one per connection, so the queue needs no length limit, only
+     * descriptor headroom.
+     */
+    if (dres != NULL && dres->dr_AuthUser[0] &&
+	    !((dres->dr_Flags & DF_ISPROXIED) &&
+	      (dres->dr_Lookup & DL_MASK) == DL_NONE)) {
+	if (DnsQAuth.ql_Head == NULL && TrySendDns(fd, rsin, dres))
+	    return;
+	if (fd >= DnsQAuthFdCap) {
+	    DnsRefuseLog(DQR_FDS);
+	    DnsTooBusy(fd);
+	} else if (!DnsQAdd(&DnsQAuth, fd, rsin, dres, 1)) {
+	    DnsRefuseLog(DQR_FULL);
+	    DnsTooBusy(fd);
+	}
 	return;
     }
-    dq->dq_Next = NULL;
-    dq->dq_Fd = fd;
-    bcopy(rsin, &dq->dq_RSin, sizeof(dq->dq_RSin));
-    dq->dq_HasRes = (dres != NULL);
+
+    /*
+     * A new connection, or the first lookup of a proxied client's real
+     * address (PROXY or "proxied", no AUTHINFO yet): admission and the
+     * new-connection queue.
+     */
+    if (DnsQAuth.ql_Head == NULL && DnsQNew.ql_Head == NULL &&
+	    TrySendDns(fd, rsin, dres))
+	return;
     if (dres != NULL)
-	dq->dq_Res = *dres;
-    dq->dq_When = time(NULL);
-    *DnsQTail = dq;
-    DnsQTail = &dq->dq_Next;
-    ++DnsQLen;
+	known = (dres->dr_Lookup & DL_MASK) != DL_NONE &&
+		(dres->dr_Lookup & DL_TEMP) == 0;
+    else
+	known = DnsCacheHas((struct sockaddr *)rsin);
+    if ((r = DnsQAdmit(fd, known)) != 0)
+	DnsRefuseNew(fd, r);
+    else if (!DnsQAdd(&DnsQNew, fd, rsin, dres, known))
+	DnsRefuseNew(fd, DQR_FULL);
 }
 
 /*
  * Called every pass of the main loop: drop queued clients that went away or
- * waited too long, and hand the oldest ones to free workers.
+ * waited too long, refuse the ones that can no longer make it in time, and
+ * hand the oldest ones to free workers, AUTHINFO logins first.
  */
 static void
-DnsQRemove(DnsQ **pdq)
+DnsQRemove(DnsQList *ql, DnsQ **pdq)
 {
     DnsQ *dq = *pdq;
 
     if ((*pdq = dq->dq_Next) == NULL)
-	DnsQTail = pdq;
-    --DnsQLen;
+	ql->ql_Tail = pdq;
+    --ql->ql_Len;
+    ql->ql_Known -= dq->dq_Known;
     free(dq);
+}
+
+static void
+DnsQExpire(DnsQList *ql, double now)
+{
+    DnsQ *dq;
+
+    while ((dq = ql->ql_Head) != NULL &&
+	    (Exiting || now - dq->dq_When >= DOpts.ReaderDnsWait * 1000.0)) {
+	DnsRefuseLog(DQR_EXPIRED);
+	DnsTooBusy(dq->dq_Fd);
+	DnsQRemove(ql, &ql->ql_Head);
+    }
+}
+
+/*
+ * After a new worker time sample: a queued new connection that would get
+ * its worker only after readerdnswait gets its 400 now.
+ */
+static void
+DnsQTrim(double now)
+{
+    double lookup;
+    double kms;
+    double work;
+    DnsQ **pdq;
+    DnsQ *dq;
+
+    if (NumDnsForks <= 0)
+	return;
+    DnsReqMs(now, &lookup, &kms);
+    work = DnsQWork(&DnsQAuth, lookup, kms);
+    for (pdq = &DnsQNew.ql_Head; (dq = *pdq) != NULL; ) {
+	double ms = dq->dq_Known ? kms : lookup;
+
+	if (now - dq->dq_When + (work + ms) / NumDnsForks >
+		DOpts.ReaderDnsWait * 1000.0) {
+	    DnsRefuseLog(DQR_WAIT);
+	    DnsTooBusy(dq->dq_Fd);
+	    DnsQRemove(&DnsQNew, pdq);
+	} else {
+	    work += ms;
+	    pdq = &dq->dq_Next;
+	}
+    }
+}
+
+/*
+ * Hand queued requests to free workers.  Returns 0 when a worker ran out.
+ */
+static int
+DnsQDispatch(DnsQList *ql)
+{
+    DnsQ *dq;
+
+    while ((dq = ql->ql_Head) != NULL) {
+	char c;
+
+	if (recv(dq->dq_Fd, &c, 1, MSG_PEEK | MSG_DONTWAIT) == 0) {
+	    /* the client closed while waiting */
+	    close(dq->dq_Fd);
+	    DnsQRemove(ql, &ql->ql_Head);
+	} else if (TrySendDns(dq->dq_Fd, (void *)&dq->dq_RSin,
+				dq->dq_HasRes ? &dq->dq_Res : NULL)) {
+	    DnsQRemove(ql, &ql->ql_Head);
+	} else {
+	    return(0);		/* no free worker; keep the order */
+	}
+    }
+    return(1);
 }
 
 void
 DnsQueueRun(void)
 {
-    DnsQ **pdq = &DnsQHead;
-    time_t now = time(NULL);
+    double now;
 
-    while (*pdq != NULL) {
-	DnsQ *dq = *pdq;
-	char c;
-
-	if (Exiting || now - dq->dq_When >= DNSQ_WAIT) {
-	    logit(LOG_CRIT, "Unable to find spare DNS thread in %d seconds - rejecting connection", DNSQ_WAIT);
-	    DnsTooBusy(dq->dq_Fd);
-	    DnsQRemove(pdq);
-	} else if (recv(dq->dq_Fd, &c, 1, MSG_PEEK | MSG_DONTWAIT) == 0) {
-	    /* the client closed while waiting */
-	    close(dq->dq_Fd);
-	    DnsQRemove(pdq);
-	} else if (TrySendDns(dq->dq_Fd, (void *)&dq->dq_RSin,
-				dq->dq_HasRes ? &dq->dq_Res : NULL)) {
-	    DnsQRemove(pdq);
-	} else {
-	    break;			/* no free worker; keep the order */
-	}
-    }
+    DnsRefuseFlush();
+    if (DnsQAuth.ql_Head == NULL && DnsQNew.ql_Head == NULL)
+	return;
+    now = MonoMs();
+    DnsQExpire(&DnsQAuth, now);
+    DnsQExpire(&DnsQNew, now);
+    if (DnsQDispatch(&DnsQAuth))
+	DnsQDispatch(&DnsQNew);
+    if (DnsEstChanged && DnsQNew.ql_Head != NULL)
+	DnsQTrim(now);
+    DnsEstChanged = 0;
 }
 
 pid_t
@@ -1977,6 +2420,9 @@ HandleDnsThread(ForkDesc *desc)
     }
     --desc->d_Count;
     --NumPending;
+
+    /* worker time, for DnsQAdmit() */
+    DnsSample(desc->d_SendKnown, MonoMs() - desc->d_SendMs);
 
     if (dres.dr_ResultFlags & DR_SESSEXIT_RPT) {
 	/* we don't need the rest of this */
@@ -2348,6 +2794,17 @@ HandleDnsThread(ForkDesc *desc)
 
     if (SendMsg(reader->d_Fd, desc->d_FdPend, &dres) < 0) {
 	char errbuf[1024];
+#ifdef ETOOMANYREFS
+	if (errno == ETOOMANYREFS) {
+	    /* too many descriptors in flight: nothing was sent, the reader is fine */
+	    DnsRefuseLog(DQR_INFLIGHT);
+	    DnsTooBusy(desc->d_FdPend);
+	    desc->d_FdPend = -1;
+	    --NumActive;
+	    deleteDnsResHash(&dres, reader);	/* stored under the reader */
+	    return;
+	}
+#endif
 	logit(LOG_ERR, 
 	    "connect: error passing file descriptor: %s, killing reader pid %d", 
 	    strerror(errno),
@@ -2364,7 +2821,7 @@ HandleDnsThread(ForkDesc *desc)
 	desc->d_FdPend = -1;
 	++FailCount;
 	--NumActive;
-	deleteDnsResHash(&dres, desc);
+	deleteDnsResHash(&dres, reader);
 
 	if (reader->d_Pid > 0)
 	    kill(reader->d_Pid, SIGQUIT);

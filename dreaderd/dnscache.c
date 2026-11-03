@@ -18,6 +18,7 @@
 #include "defs.h"
 
 Prototype int DnsCacheGet(const struct sockaddr *sa, int *lookup, char *host, size_t hostlen);
+Prototype int DnsCacheHas(const struct sockaddr *sa);
 Prototype void DnsCacheStore(const struct sockaddr *sa, int lookup, const char *host, unsigned int gen);
 Prototype unsigned int DnsCacheGen(void);
 Prototype int DnsCacheSameAddr(const struct sockaddr *a, const struct sockaddr *b);
@@ -165,30 +166,53 @@ dcAlloc(void)
  * A hit fills *lookup and host and returns 1.  Otherwise returns 0 and the
  * worker does the lookups.
  */
-int
-DnsCacheGet(const struct sockaddr *sa, int *lookup, char *host, size_t hostlen)
+/* the live entry for an address, or NULL */
+static DcEnt *
+dcFind(const struct sockaddr *sa)
 {
     DcKey k;
     DcEnt *e;
     time_t now;
     int i;
 
-    if (DcTab == NULL || !dcKey(sa, &k))
-	return(0);
+    if (!dcKey(sa, &k))
+	return(NULL);
     now = dcNow();
     e = &DcTab[(size_t)(dcHash(&k) % (unsigned int)DcSets) * DC_WAYS];
     for (i = 0; i < DC_WAYS; ++i, ++e) {
 	if (e->dc_Lookup == DL_NONE || !dcKeyEq(&e->dc_Key, &k))
 	    continue;
-	if (dcLeft(e, now) <= 0 || strlen(e->dc_Host) >= hostlen)
-	    break;
-	*lookup = e->dc_Lookup;
-	memcpy(host, e->dc_Host, strlen(e->dc_Host) + 1);
-	++DcHits;
-	return(1);
+	return((dcLeft(e, now) > 0) ? e : NULL);
     }
-    ++DcMisses;
-    return(0);
+    return(NULL);
+}
+
+int
+DnsCacheGet(const struct sockaddr *sa, int *lookup, char *host, size_t hostlen)
+{
+    DcEnt *e;
+
+    DcKey k;
+
+    if (DcTab == NULL || !dcKey(sa, &k))
+	return(0);
+    if ((e = dcFind(sa)) == NULL || strlen(e->dc_Host) >= hostlen) {
+	++DcMisses;
+	return(0);
+    }
+    *lookup = e->dc_Lookup;
+    memcpy(host, e->dc_Host, strlen(e->dc_Host) + 1);
+    ++DcHits;
+    return(1);
+}
+
+/*
+ * Is a live entry kept for the address?  Not counted as a hit or miss.
+ */
+int
+DnsCacheHas(const struct sockaddr *sa)
+{
+    return(DcTab != NULL && dcFind(sa) != NULL);
 }
 
 /* the flush generation; a result looked up before a flush is not stored */

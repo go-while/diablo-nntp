@@ -459,6 +459,14 @@ HandleReaderMsg(ForkDesc *desc)
 	    fcntl(TFd, F_SETFL, 0);
 	    SendMsg(TFd, recv_fd, &dres);
 	    fcntl(TFd, F_SETFL, O_NONBLOCK);
+	} else if (recv_fd == RECV_FD_LOST) {
+	    /*
+	     * The connection's descriptor was dropped on the way: hand the
+	     * message back so the main server releases the connection.
+	     */
+	    fcntl(TFd, F_SETFL, 0);
+	    SendMsg(TFd, -1, &dres);
+	    fcntl(TFd, F_SETFL, O_NONBLOCK);
 	} else if (recv_fd >= 0) {
 	    ForkDesc *ndesc;
 	    Connection *conn;
@@ -587,6 +595,20 @@ InitConnection(ForkDesc *desc, DnsRes *dres)
     return(conn);
 }
 
+/*
+ * Did the last SendMsg() fail only because the descriptor could not be
+ * passed (too many in flight)?  Then nothing was sent.
+ */
+static int
+SendMsgFdRefused(void)
+{
+#ifdef ETOOMANYREFS
+    return(errno == ETOOMANYREFS);
+#else
+    return(0);
+#endif
+}
+
 void
 DeleteConnection(Connection *conn)
 {
@@ -629,7 +651,25 @@ DeleteConnection(Connection *conn)
 	 * connection terminates.
 	 */
 	conn->co_Auth.dr_ByteCount = conn->co_TMBuf.mh_TotalBytes;
-	SendMsg(TFd, conn->co_Desc->d_Fd, &conn->co_Auth);
+	if (SendMsg(TFd, conn->co_Desc->d_Fd, &conn->co_Auth) < 0 &&
+	    SendMsgFdRefused()) {
+	    /*
+	     * The descriptor cannot go along (ETOOMANYREFS, too many in
+	     * flight; nothing was sent): answer an AUTHINFO login here and
+	     * still tell the main server that the connection is gone.
+	     */
+	    if (conn->co_Auth.dr_ResultFlags & DR_REQUIRE_DNS) {
+		char errbuf[512];
+
+		snprintf(errbuf, sizeof(errbuf),
+		    "400 %s: Server too busy - please try later%s%s\r\n",
+		    DOpts.ReaderHostName,
+		    (DOpts.NewsAdmin != NULL) ? " - " : "",
+		    safestr(DOpts.NewsAdmin, ""));
+		WriteBestEffort(conn->co_Desc->d_Fd, errbuf, strlen(errbuf));
+	    }
+	    SendMsg(TFd, -1, &conn->co_Auth);
+	}
     }
 
     FreeControl(conn);

@@ -145,9 +145,8 @@ func runConformance(tb testing.TB, o conformance.Options) map[string]conformance
 // (482), GROUP before login (480), AUTHINFO after login (502) and AUTHINFO gone from
 // CAPABILITIES after login. Every check must pass, and the six AUTHINFO checks must not be
 // skipped. Before #67 (D-46), the wrong-password, PASS-before-USER and second-login checks
-// failed. The checks run one at a time: each AUTHINFO PASS goes through dreaderd's DNS/auth
-// worker, the test reader has one (readerdns 1), and a login while it is busy gets "400
-// Server too busy" instead of waiting.
+// failed. The checks run one at a time; each AUTHINFO PASS goes through dreaderd's DNS/auth
+// worker, and the test reader has one (readerdns 1).
 func TestReaderConformanceAuthinfo(t *testing.T) {
 	st, spool := spoolStore(t)
 	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: AuthReaderAccess})

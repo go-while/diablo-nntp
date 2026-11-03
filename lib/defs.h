@@ -234,6 +234,8 @@ struct DiabloOpts {
     int ReaderDnsCacheTTL;	/* readerdnscachettl: seconds, 0 = off */
     int ReaderDnsCacheNegTTL;	/* readerdnscachenegttl: seconds, 0 = off */
     int ReaderDnsCacheSize;	/* readerdnscachesize: entries */
+    int ReaderDnsQueue;		/* readerdnsqueue: new connections waiting */
+    int ReaderDnsWait;		/* readerdnswait: seconds a request may wait */
     int ReaderCacheMode;
     int ReaderCacheHashSize;
     int ReaderXOverMode;

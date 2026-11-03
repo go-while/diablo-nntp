@@ -79,6 +79,8 @@ typedef struct ForkDesc {
     struct DnsRes *d_DnsRes;	/* partial DNS reply (THREAD_DNS only) */
     size_t	d_DnsRead;	/* number of reply bytes accumulated */
     int		d_Dead;		/* worker failed; never pick it, wait3() reaps */
+    double	d_SendMs;	/* when the last DNS request went out (ms) */
+    int		d_SendKnown;	/* ... and needed no lookups */
     struct sockaddr_storage d_SaveRSin;
     char	*d_LocalSpool;	/* direct spool access	*/
     int		d_Cache;	/* is spooler to be locally cached */
@@ -310,6 +312,7 @@ typedef struct DnsReq {
 /*
  * Define some values used in dr_ResultFlags
  */
+#define	RECV_FD_LOST	(-2)		/* RecvMsg: message whole, fd dropped */
 #define	DR_REQUIRE_DNS	0x0001		/* authinfo check required	*/
 #define	DR_SERVER_STATS	0x0002		/* struct has info server stats	*/
 #define	DR_SESSEXIT_RPT	0x0004		/* reporting session term stats	*/

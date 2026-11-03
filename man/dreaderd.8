@@ -235,6 +235,37 @@ up to
 seconds old.  An AUTHINFO login reuses the result of its own connection,
 whatever the TTLs and also after a flush, so it does no further lookups;
 only a lookup that failed temporarily is done again.
+.PP
+When every DNS process is busy, a new connection (or the first lookup
+of a client behind a PROXY or useproxied proxy) waits in a queue.  It
+is queued only while its expected wait (the worker time of the requests
+ahead of it and its own, over the number of DNS processes) is within
+half of
+.BR readerdnswait ,
+and only up to
+.B readerdnsqueue
+connections (default 256) and three quarters of the descriptor limit
+dreaderd uses (the smaller of MAXFDS and RLIMIT_NOFILE).
+Worker times are kept apart for requests with and without lookups, as
+the larger of a moving average and the median of the last three; a
+request with lookups counts at least 50 ms.  A queued connection that a
+new worker time shows can no longer be served within
+.B readerdnswait
+is refused at once.  Otherwise the client gets "400 Server too busy" at
+once and is disconnected, and so does a request still waiting after
+.B readerdnswait
+seconds (default 5, 1 to 300).
+.B readerdnsqueue 0
+queues no new connection.  dreaderd keeps accepting while the DNS
+processes are busy, so a login flood gets quick 400 replies instead of
+waiting in the kernel's listen backlog (SOMAXCONN); past 200 refusals
+in 100 ms the listener pauses for the rest of those 100 ms.  AUTHINFO logins of connected clients wait in their own
+queue, ahead of the new connections.  There is at most one per
+connection, so it has no length limit, but it is queued only up to 32
+descriptors below the descriptor limit dreaderd uses (and never below
+the new-connection cap).  At startup dreaderd raises its
+soft descriptor limit to the hard limit, at most FD_SETSIZE.  Both
+options can be changed at run time with drcmd config.
 
 .PP
 .B \-M numreaderprocs
