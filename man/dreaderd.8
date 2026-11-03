@@ -209,6 +209,25 @@ Typically you want one dns thread for every 90 or so users with a
 minimum of four.  So, for example, if you configure dreaderd to
 handle up to 750 users, you would want 8 or 9 DNS forks.  This
 option will override its diablo.config counterpart.
+A login occupies one DNS process for a reverse and a forward lookup,
+so logins per second are at most numdnsprocs / (2 x lookup time).
+.PP
+The main process caches the lookup results per client address, so a
+client that reconnects within the TTL costs no lookup.  The diablo.config
+options
+.B readerdnscachettl
+(seconds a forward-confirmed name is kept, default 300),
+.B readerdnscachenegttl
+(seconds an address without a name, or with an unconfirmed name, is kept,
+default 60) and
+.B readerdnscachesize
+(most entries, default 16384) control it; a TTL of 0 turns that kind of
+entry off.  Temporary lookup failures are not cached.  Access rules, auth
+and accounting still run on every login, but a name-based dreader.access
+line can see a name up to
+.B readerdnscachettl
+seconds old.  An AUTHINFO login reuses the result of its connection, so
+it does no further lookups.
 
 .PP
 .B \-M numreaderprocs

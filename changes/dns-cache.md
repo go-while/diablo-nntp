@@ -1,0 +1,4 @@
+- dreaderd: the main process caches the reverse and forward lookup results per client address (`readerdnscachettl` 300 s, `readerdnscachenegttl` 60 s, `readerdnscachesize` 16384; a TTL of 0 turns it off). A client that reconnects within the TTL costs no lookup; access rules, auth and accounting still run on every login.
+- dreaderd: AUTHINFO reuses the lookup result of its connection, so an authenticated login does 2 lookups instead of 4, with or without the cache.
+- dreaderd: without netremote, a session end no longer sends an accounting request through a DNS worker.
+- drcmd: `dnscache` prints the cache counters, `dnscache flush` empties it.
