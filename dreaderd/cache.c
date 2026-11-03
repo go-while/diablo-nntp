@@ -546,13 +546,15 @@ struct CacheHitEntry*
 FindCacheHitEntry(struct CacheHash_t *ch) {
     uint32 *i=NULL;
     uint32 off;
-    uint32 max=CacheHitsEnd-sizeof(struct CacheHitEntry);
+    /* the last entry may end exactly at the end of the mapping */
+    uint32 max=(CacheHitsEnd >= sizeof(struct CacheHitEntry)) ?
+	CacheHitsEnd-sizeof(struct CacheHitEntry) : 0;
     struct CacheHitEntry *che=NULL;
     struct CacheHitHead *chh=(struct CacheHitHead *)CacheHits;
 
     i = (uint32*) (CacheHits+sizeof(struct CacheHitHead)+((ch->h1^ch->h2)%chh->chh_hashSize)*sizeof(uint32));
 
-    while ((off = CH_LOAD_ACQ(i)) != 0 && off < max) {
+    while ((off = CH_LOAD_ACQ(i)) != 0 && off <= max) {
 	che = (struct CacheHitEntry*) (CacheHits + off);
 	if (CacheHashEqual(ch, CHE_HASH(che))) {
 	    return che;

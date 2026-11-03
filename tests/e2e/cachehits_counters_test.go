@@ -311,3 +311,83 @@ func TestReaderCacheHitsConcurrent(t *testing.T) {
 			hits, readArt, want, int64(want)-int64(hits))
 	}
 }
+
+// TestDexpirescoringLastEntry: dexpirescoring skipped an entry that ends exactly at
+// the end of the scoreboard (its walk stopped at offsets >= end - entry size).  The
+// test takes the key dreaderd wrote for e2e.test and rebuilds cache.hits with that
+// entry last: with the default 4096 buckets, 291 other entries put it at 32712 and
+// the end at 32768.  dexpirescoring must find it and decay its counters.
+func TestDexpirescoringLastEntry(t *testing.T) {
+	s, feed := scoringReaderSite(t, nil)
+	path := filepath.Join(s.Dir, "cache.hits")
+	feed("e2e.test", newArticle(msgID(t), "e2e.test", "last entry", "body"))
+	if ok, d := readArticleOnce(t, s, "e2e.test", 1); !ok {
+		t.Fatalf("first read: %s", d)
+	}
+	var es []cacheHitsEntry
+	waitFor(t, 10*time.Second, "a scoreboard entry", func() bool {
+		es = cacheHitsEntries(t, path)
+		return len(es) > 0
+	})
+	key := es[0]
+	hashSize := readCacheHitsHead(t, path).hashSize
+	if hashSize == 0 {
+		t.Fatal("cache.hits: hash size 0")
+	}
+
+	const n = 292
+	start := 32 + int64(hashSize)*4
+	end := start + n*cheSize
+	b := make([]byte, end)
+	le := binary.LittleEndian
+	le.PutUint32(b[0:], 0xD1C2B3A4)
+	le.PutUint32(b[4:], 1)
+	le.PutUint32(b[8:], hashSize)
+	le.PutUint32(b[12:], uint32(end))
+	le.PutUint32(b[16:], uint32(end))
+	le.PutUint64(b[24:], uint64(time.Now().Unix()-36000))
+	// add appends an entry to its bucket's chain, as CreateCacheHitEntry does.
+	add := func(off int64, h1, h2 uint64, iter int32) {
+		e := b[off:]
+		le.PutUint64(e[0:], h1)
+		le.PutUint64(e[8:], h2)
+		le.PutUint32(e[16:], uint32(iter))
+		link := 32 + int64((h1^h2)%uint64(hashSize))*4
+		for le.Uint32(b[link:]) != 0 {
+			link = int64(le.Uint32(b[link:])) + 32 // che_Next
+		}
+		le.PutUint32(b[link:], uint32(off))
+	}
+	for i := int64(0); i < n-1; i++ {
+		h1, h2 := uint64(0xE2E0000000000000)|uint64(i), uint64(i)
+		if h1 == key.h1 && h2 == key.h2 {
+			h1++
+		}
+		add(start+i*cheSize, h1, h2, 0)
+	}
+	last := end - cheSize
+	add(last, key.h1, key.h2, key.iter)
+	le.PutUint32(b[last+cheReadArt:], 400)
+	le.PutUint32(b[last+cheHits:], 800)
+	le.PutUint32(b[last+44:], key.lastHi)
+	// A new file: the reader keeps its mapping of the old one.
+	if err := os.WriteFile(path+".new", b, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(path+".new", path); err != nil {
+		t.Fatal(err)
+	}
+
+	out := s.Run(t, "dexpirescoring", "-v", "-H", "36000")
+	if !strings.Contains(out, "e2e.test") {
+		t.Errorf("dexpirescoring -v did not find the entry at %d (end %d):\n%s", last, end, out)
+	}
+	es = cacheHitsEntries(t, path)
+	if len(es) != n || es[n-1].off != last {
+		t.Fatalf("scoreboard after dexpirescoring: %d entries, want %d", len(es), n)
+	}
+	// Halved (a second more of delay rounds down by one).
+	if e := es[n-1]; e.readArt < 195 || e.readArt > 200 || e.hits < 395 || e.hits > 400 {
+		t.Errorf("last entry ReadArt=%d Hits=%d, want about 200 and 400 (not decayed)", e.readArt, e.hits)
+	}
+}

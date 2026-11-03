@@ -45,12 +45,14 @@ allocTmpCopy(const char *buf, int bufLen)
 struct CacheHitEntry*
 FindCacheHitEntry(struct CacheHash_t *ch) {
     uint32 *i=NULL;
+    /* main() checked that the end leaves room for one entry */
     uint32 max=CacheHitsEnd-sizeof(struct CacheHitEntry);
     struct CacheHitEntry *che=NULL;
     struct CacheHitHead *chh=(struct CacheHitHead *)CacheHits;
     i = (uint32*) (CacheHits+sizeof(struct CacheHitHead)+((ch->h1^ch->h2)%chh->chh_hashSize)*sizeof(uint32));
 
-    while ((*i != 0) && (*i < max)) {
+    /* the last entry may end exactly at CacheHitsEnd */
+    while ((*i != 0) && (*i <= max)) {
 	che = (struct CacheHitEntry*) (CacheHits + (*i));
 	if (CacheHashEqual(ch, CHE_HASH(che))) {
 	    return che;
