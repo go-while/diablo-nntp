@@ -456,17 +456,13 @@ HandleReaderMsg(ForkDesc *desc)
 	    /*
 	     * Tell the main server that we are done with the connection
 	     */
-	    fcntl(TFd, F_SETFL, 0);
 	    SendMsg(TFd, recv_fd, &dres);
-	    fcntl(TFd, F_SETFL, O_NONBLOCK);
 	} else if (recv_fd == RECV_FD_LOST) {
 	    /*
 	     * The connection's descriptor was dropped on the way: hand the
 	     * message back so the main server releases the connection.
 	     */
-	    fcntl(TFd, F_SETFL, 0);
 	    SendMsg(TFd, -1, &dres);
-	    fcntl(TFd, F_SETFL, O_NONBLOCK);
 	} else if (recv_fd >= 0) {
 	    ForkDesc *ndesc;
 	    Connection *conn;

@@ -3530,7 +3530,8 @@ InstallAccessCache(void) {
 			parseError = 1;
 		    continue;
 		}
-		logit(LOG_ERR, "dreader.access: Invalid vserverdef option : %s in line %d\n", opt, linecount);
+		logit(LOG_ERR, "dreader.access: Invalid vserverdef option : %s in line %d; the file is not installed\n", opt, linecount);
+		parseError = 1;	/* as for a readerdef (D-166) */
 		continue;
 	    case OPT_GROUPS:
 		if (*val && strcmp(opt, "group") == 0) {
@@ -3549,7 +3550,8 @@ InstallAccessCache(void) {
 		    }
 		    continue;
 		}
-		logit(LOG_ERR, "dreader.access: Invalid groupdef option : %s in line %d\n", opt, linecount);
+		logit(LOG_ERR, "dreader.access: Invalid groupdef option : %s in line %d; the file is not installed\n", opt, linecount);
+		parseError = 1;	/* as for a readerdef (D-166) */
 		continue;
 	    case OPT_AUTH:
 		if (*val && strcmp(opt, "file") == 0) {
@@ -3626,7 +3628,8 @@ InstallAccessCache(void) {
 			authdef.au_Ident = 0;
 		    continue;
 		}
-		logit(LOG_ERR, "dreader.access: Invalid authdef option : %s in line %d\n", opt, linecount);
+		logit(LOG_ERR, "dreader.access: Invalid authdef option : %s in line %d; the file is not installed\n", opt, linecount);
+		parseError = 1;	/* as for a readerdef (D-166) */
 		continue;
 	    case OPT_READERGRP:
 		if (*val && strcmp(opt, "auth") == 0) {
