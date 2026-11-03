@@ -135,6 +135,8 @@ initDOpts(void)
     DOpts.ReaderDnsCacheTTL = 300;
     DOpts.ReaderDnsCacheNegTTL = 60;
     DOpts.ReaderDnsCacheSize = 16384;
+    DOpts.ReaderDnsQueue = 256;
+    DOpts.ReaderDnsWait = 5;
     DOpts.ReaderCacheMode = 1;
     DOpts.ReaderCacheHashSize = 4096;
     DOpts.ReaderXOverMode = 1;
@@ -681,6 +683,12 @@ SetCommand(FILE *fo, char *cmd, char *opt, int *cmdErr)
 	} else if (strcasecmp(cmd, "readerdnscachenegttl") == 0) {
 	    if (opt && confRange(opt, 0, 86400, &DOpts.ReaderDnsCacheNegTTL))
 		optErr = 0;
+	} else if (strcasecmp(cmd, "readerdnsqueue") == 0) {
+	    if (opt && confRange(opt, 0, 65536, &DOpts.ReaderDnsQueue))
+		optErr = 0;
+	} else if (strcasecmp(cmd, "readerdnswait") == 0) {
+	    if (opt && confRange(opt, 1, 300, &DOpts.ReaderDnsWait))
+		optErr = 0;
 	} else if (strcasecmp(cmd, "readercache") == 0) {
 	    if (opt) {
 		DOpts.ReaderCacheMode = enabled(opt);
@@ -1011,6 +1019,10 @@ dumpConfigReader(FILE *fo, char *cmd)
 	fprintf(fo, "readerdnscachenegttl: %d\n", DOpts.ReaderDnsCacheNegTTL);
     if (cmd == NULL || strcasecmp(cmd, "readerdnscachesize") == 0)
 	fprintf(fo, "*readerdnscachesize: %d\n", DOpts.ReaderDnsCacheSize);
+    if (cmd == NULL || strcasecmp(cmd, "readerdnsqueue") == 0)
+	fprintf(fo, "readerdnsqueue: %d\n", DOpts.ReaderDnsQueue);
+    if (cmd == NULL || strcasecmp(cmd, "readerdnswait") == 0)
+	fprintf(fo, "readerdnswait: %d\n", DOpts.ReaderDnsWait);
     if (cmd == NULL || strcasecmp(cmd, "readerbindhost") == 0)
 	fprintf(fo, "*readerbindhost: %s\n",
 					safestr(DOpts.ReaderBindHost, "ANY"));
