@@ -74,10 +74,11 @@ func TestReaderHandbackFdLostReleased(t *testing.T) {
 			c.Close()
 			act0("after the descriptor was lost")
 			if tc.mode == "emfile" {
-				// illumos syslog has no LOG_PERROR: the line is in the log file there
+				// illumos syslog has no LOG_PERROR: the line is in the log file there.
+				// The EMFILE text differs by libc (musl: "No file descriptors available").
 				logged, _ := os.ReadFile(filepath.Join(s.Dir, "log", "general.log"))
-				if !strings.Contains(string(logged)+s.Proc.Stderr(), "recvmsg error (Too many open files)") {
-					t.Errorf("no \"recvmsg error (Too many open files)\" in log/general.log or stderr:\n%s", logged)
+				if !strings.Contains(string(logged)+s.Proc.Stderr(), "recvmsg error (") {
+					t.Errorf("no \"recvmsg error\" in log/general.log or stderr:\n%s", logged)
 				}
 			}
 
