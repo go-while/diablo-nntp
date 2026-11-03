@@ -176,30 +176,40 @@ static double ListenPauseUntil;	/* MonoMs(): listeners off until then */
 #define DQR_ACCEPT	7	/* accept() out of descriptors/memory	*/
 #define DQR_NOFD	8	/* hand-back arrived without its fd	*/
 #define DQR_INFLIGHT	9	/* fd pass to a reader: ETOOMANYREFS	*/
-#define DQR_N		10	/* reasons are 1..9; 0 = admitted */
+#define DQR_READER	10	/* waited readerdnswait for its reader	*/
+#define DQR_N		11	/* reasons are 1..10; 0 = admitted */
 static double MonoMs(void);
 static void DnsRefuseLog(int r);
 static void DnsQInitLimits(void);
 
 /*
  * Clients on their way to a reader whose socketpair is full.  The main
- * process never waits for a reader to make room: a reader may itself be
- * waiting in SendMsg() for the main process to read its hand-backs, and
+ * process never waits for room in a reader's socket: a reader may itself
+ * be waiting in SendMsg() for the main process to read its hand-backs, and
  * with both directions full neither would read again.  On the SOCK_STREAM
  * fallback (illumos, about 16 KiB per direction) a burst of AUTHINFO logins
  * fills both.  A queued client keeps its descriptor open in the main
- * process until its whole message is sent; ro_Off is how far it got.
+ * process until its whole message is sent; ro_Off is how far it got.  A
+ * client nothing of which has gone yet waits at most readerdnswait.
  */
 typedef struct ReaderOut {
     struct ReaderOut *ro_Next;
     int ro_Fd;
     size_t ro_Off;
+    double ro_When;		/* MonoMs() when queued */
     DnsRes ro_Res;
 } ReaderOut;
 static fd_set ReaderOutFds;	/* readers with a queue: select for write */
+static int ReaderOutLen;	/* queued clients, all readers */
+static int ReaderOutBackoff;	/* readers waiting out an ENOBUFS */
+#define READEROUT_BACKOFF_MS	50
 static int ReaderOutSend(ForkDesc *reader, int fd, DnsRes *dres);
 static void ReaderOutFlush(ForkDesc *reader);
 static void ReaderOutDrop(ForkDesc *reader);
+static void ReaderOutTick(ForkDesc *reader);
+static void ReaderBroken(ForkDesc *reader);
+static ForkDesc *PickReader(int type);
+static void CloseQueuedFds(void);
 
 double TotalClientGroups = 0.0;
 double TotalClientArticles = 0.0;
@@ -1136,7 +1146,11 @@ main(int ac, char **av)
 		NextTimeout(&tv, 50);
 	    else
 	    {
-		int ms = (DnsQAuth.ql_Head || DnsQNew.ql_Head) ? 250 : 10 * 1000;
+		int ms = (DnsQAuth.ql_Head || DnsQNew.ql_Head || ReaderOutLen) ?
+			250 : 10 * 1000;
+
+		if (ReaderOutBackoff && ms > READEROUT_BACKOFF_MS)
+		    ms = READEROUT_BACKOFF_MS;
 
 		if (ListenPauseUntil > 0) {
 		    double left = ListenPauseUntil - MonoMs();
@@ -1264,6 +1278,10 @@ main(int ac, char **av)
 	    (void)ScanTimers(1, 0);
 	}
 	DnsQueueRun();
+	if (ReaderOutLen || ReaderOutBackoff) {
+	    ScanThreads(THREAD_READER, ReaderOutTick);
+	    ScanThreads(THREAD_FEEDER, ReaderOutTick);
+	}
 
 	/*
 	 * Disable listen socket if we are full up or out of descriptors,
@@ -1833,6 +1851,10 @@ DnsRefuseText(int r, char *buf, size_t len)
     case DQR_INFLIGHT:
 	snprintf(buf, len, "connect: too many descriptors in flight to the readers - rejecting connection");
 	break;
+    case DQR_READER:
+	snprintf(buf, len, "connect: reader did not take the connection in %d seconds - rejecting connection",
+	    DOpts.ReaderDnsWait);
+	break;
     default:
 	snprintf(buf, len, "reader handed back a connection without its descriptor (descriptor limit?)");
 	break;
@@ -2369,6 +2391,7 @@ ForkPipe(int *pfd, void (*task)(int fd, const char *id), const char *description
 	stprintf("%s startup", description);
 	/* note: DnsResHash not longer valid in children */
 	/* note: fds[1] is a normal descriptor, not a non-blocking desc */
+	CloseQueuedFds();
 	ResetThreads();
 	close(*pfd);
 	task(fds[1], description);
@@ -2421,43 +2444,116 @@ ReadDnsResponse(ForkDesc *desc, DnsRes *dres)
 }
 
 /*
- * Pass a client to a reader without waiting.  Returns 1 when it went at
- * once (the caller closes fd), 0 when it is queued (fd is the queue's now),
- * or -1 when nothing was sent (errno set, the caller keeps fd).
+ * A reader whose stream may hold part of a message, or that cannot be
+ * written to: never pick it again (the next message would start in the
+ * middle of the last one), hand its queued clients a 400 and kill it.
+ * The wait3() handler does the rest.
+ */
+static void
+ReaderBroken(ForkDesc *reader)
+{
+    ReaderOutDrop(reader);
+    reader->d_Dead = 1;
+    if (reader->d_Pid > 0)
+	kill(reader->d_Pid, SIGQUIT);
+}
+
+/*
+ * The picked reader has a queue (its socket is full): prefer the least
+ * used reader without one, else keep to the least used of all.
+ */
+static ForkDesc *
+PickReader(int type)
+{
+    ForkDesc *best = NULL;
+    ForkDesc *any = NULL;
+    int i;
+
+    for (i = 0; i < MaxFds; ++i) {
+	ForkDesc *d = FindThread(i, -1);
+
+	if (d == NULL || d->d_Type != type || d->d_Dead ||
+		d->d_Count >= DOpts.ReaderThreads)
+	    continue;
+	if (any == NULL || d->d_Count < any->d_Count)
+	    any = d;
+	if (d->d_OutQ == NULL && (best == NULL || d->d_Count < best->d_Count))
+	    best = d;
+    }
+    return((best != NULL) ? best : any);
+}
+
+/*
+ * The reader's socket gave ENOBUFS: that is not "full", select() may well
+ * say it is writable, so retry from the main loop's tick after a pause.
+ */
+static void
+ReaderOutPause(ForkDesc *reader)
+{
+    if (reader->d_OutRetryMs == 0)
+	++ReaderOutBackoff;
+    reader->d_OutRetryMs = MonoMs() + READEROUT_BACKOFF_MS;
+    FD_CLR(reader->d_Fd, &ReaderOutFds);
+}
+
+/*
+ * Pass a client to a reader without waiting for room.  Returns 1 when it
+ * went at once (the caller closes fd), 0 when it is queued (fd is the
+ * queue's now), or -1 when it could not be passed (errno set, the caller
+ * keeps fd; ENOMEM and ETOOMANYREFS: nothing was sent).
  */
 static int
 ReaderOutSend(ForkDesc *reader, int fd, DnsRes *dres)
 {
     ReaderOut *ro;
     size_t off = 0;
+    int nobufs = 0;
 
     if (reader->d_OutQ == NULL) {
 	int r = SendMsgPart(reader->d_Fd, fd, dres, &off);
 
 	if (r != 0)
 	    return(r);
+	nobufs = (errno == ENOBUFS);
     }
     if ((ro = malloc(sizeof(*ro))) == NULL) {
 	if (off != 0) {
-	    /* the reader has half a message: it cannot be used any more */
+	    /* the reader has part of a message: it cannot be used any more */
 	    logit(LOG_CRIT, "out of memory queueing for reader pid %d, killing it",
 		(int)reader->d_Pid);
-	    if (reader->d_Pid > 0)
-		kill(reader->d_Pid, SIGQUIT);
+	    ReaderBroken(reader);
+	    errno = EIO;
+	} else {
+	    errno = ENOMEM;
 	}
-	errno = ENOMEM;
 	return(-1);
     }
     ro->ro_Next = NULL;
     ro->ro_Fd = fd;
     ro->ro_Off = off;
+    ro->ro_When = MonoMs();
     ro->ro_Res = *dres;
     if (reader->d_OutQ == NULL)
 	reader->d_OutTail = &reader->d_OutQ;
     *reader->d_OutTail = ro;
     reader->d_OutTail = &ro->ro_Next;
-    FD_SET(reader->d_Fd, &ReaderOutFds);
+    ++ReaderOutLen;
+    if (nobufs)
+	ReaderOutPause(reader);
+    else if (reader->d_OutRetryMs == 0)
+	FD_SET(reader->d_Fd, &ReaderOutFds);
     return(0);
+}
+
+static void
+ReaderOutPop(ForkDesc *reader, ReaderOut **pro)
+{
+    ReaderOut *ro = *pro;
+
+    if ((*pro = ro->ro_Next) == NULL)
+	reader->d_OutTail = pro;
+    --ReaderOutLen;
+    free(ro);
 }
 
 /*
@@ -2471,8 +2567,11 @@ ReaderOutFlush(ForkDesc *reader)
     while ((ro = reader->d_OutQ) != NULL) {
 	int r = SendMsgPart(reader->d_Fd, ro->ro_Fd, &ro->ro_Res, &ro->ro_Off);
 
-	if (r == 0)
+	if (r == 0) {
+	    if (errno == ENOBUFS)
+		ReaderOutPause(reader);
 	    return;
+	}
 	if (r < 0) {
 #ifdef ETOOMANYREFS
 	    if (errno == ETOOMANYREFS && ro->ro_Off == 0) {
@@ -2482,24 +2581,58 @@ ReaderOutFlush(ForkDesc *reader)
 		--NumActive;
 		--reader->d_Count;
 		deleteDnsResHash(&ro->ro_Res, reader);
-		reader->d_OutQ = ro->ro_Next;
-		free(ro);
+		ReaderOutPop(reader, &reader->d_OutQ);
 		continue;
 	    }
 #endif
 	    logit(LOG_ERR,
 		"connect: error passing file descriptor: %s, killing reader pid %d",
 		strerror(errno), (int)reader->d_Pid);
-	    ReaderOutDrop(reader);
-	    if (reader->d_Pid > 0)
-		kill(reader->d_Pid, SIGQUIT);
+	    ReaderBroken(reader);
 	    return;
 	}
 	close(ro->ro_Fd);
-	reader->d_OutQ = ro->ro_Next;
-	free(ro);
+	ReaderOutPop(reader, &reader->d_OutQ);
     }
     FD_CLR(reader->d_Fd, &ReaderOutFds);
+}
+
+/*
+ * Every pass of the main loop while clients are queued: end an ENOBUFS
+ * pause, and refuse the clients that waited readerdnswait for a reader
+ * that does not read.  The head may be sent in part; it stays.
+ */
+static void
+ReaderOutTick(ForkDesc *reader)
+{
+    double now;
+    ReaderOut **pro;
+    ReaderOut *ro;
+
+    if (reader->d_OutQ == NULL && reader->d_OutRetryMs == 0)
+	return;
+    now = MonoMs();
+    if (reader->d_OutRetryMs != 0 && now >= reader->d_OutRetryMs) {
+	reader->d_OutRetryMs = 0;
+	--ReaderOutBackoff;
+	if (reader->d_OutQ != NULL && reader->d_Fd >= 0)
+	    FD_SET(reader->d_Fd, &ReaderOutFds);
+    }
+    for (pro = &reader->d_OutQ; (ro = *pro) != NULL; ) {
+	if (ro->ro_Off == 0 &&
+		now - ro->ro_When >= DOpts.ReaderDnsWait * 1000.0) {
+	    DnsRefuseLog(DQR_READER);
+	    DnsTooBusy(ro->ro_Fd);
+	    --NumActive;
+	    --reader->d_Count;
+	    deleteDnsResHash(&ro->ro_Res, reader);
+	    ReaderOutPop(reader, pro);
+	} else {
+	    pro = &ro->ro_Next;
+	}
+    }
+    if (reader->d_OutQ == NULL && reader->d_Fd >= 0)
+	FD_CLR(reader->d_Fd, &ReaderOutFds);
 }
 
 /*
@@ -2509,23 +2642,54 @@ ReaderOutFlush(ForkDesc *reader)
 static void
 ReaderOutDrop(ForkDesc *reader)
 {
-    ReaderOut *ro;
-
-    while ((ro = reader->d_OutQ) != NULL) {
+    while (reader->d_OutQ != NULL) {
 	char errbuf[1024];
 
-	reader->d_OutQ = ro->ro_Next;
 	snprintf(errbuf, sizeof(errbuf), "400 %s: Server error, fd pass failed%s%s\r\n",
 	    DOpts.ReaderHostName,
 	    (DOpts.NewsAdmin != NULL) ? " - " : "",
 	    safestr(DOpts.NewsAdmin, ""));
-	WriteBestEffort(ro->ro_Fd, errbuf, strlen(errbuf));
-	close(ro->ro_Fd);
+	WriteBestEffort(reader->d_OutQ->ro_Fd, errbuf, strlen(errbuf));
+	close(reader->d_OutQ->ro_Fd);
 	++FailCount;
-	free(ro);
+	ReaderOutPop(reader, &reader->d_OutQ);
+    }
+    if (reader->d_OutRetryMs != 0) {
+	reader->d_OutRetryMs = 0;
+	--ReaderOutBackoff;
     }
     if (reader->d_Fd >= 0)
 	FD_CLR(reader->d_Fd, &ReaderOutFds);
+}
+
+/*
+ * In a new child of the main process: close the client descriptors the
+ * main process holds for later (queued for a reader or a DNS worker, or
+ * waiting for a delayed close).  A copy left open in the child would keep
+ * the connection open after the reader and the main process closed theirs.
+ */
+static void
+CloseQueuedFds(void)
+{
+    PendingClose *pc;
+    DnsQ *dq;
+    int i;
+
+    for (i = 0; i < MaxFds; ++i) {
+	ForkDesc *d = FindThread(i, -1);
+	ReaderOut *ro;
+
+	if (d != NULL)
+	    for (ro = d->d_OutQ; ro != NULL; ro = ro->ro_Next)
+		close(ro->ro_Fd);
+    }
+    for (dq = DnsQAuth.ql_Head; dq != NULL; dq = dq->dq_Next)
+	close(dq->dq_Fd);
+    for (dq = DnsQNew.ql_Head; dq != NULL; dq = dq->dq_Next)
+	close(dq->dq_Fd);
+    for (pc = NeedClosing; pc != NULL; pc = pc->next)
+	if (pc->fd >= 0)
+	    close(pc->fd);
 }
 
 void
@@ -2672,9 +2836,13 @@ HandleDnsThread(ForkDesc *desc)
     if (error1 == NULL) {
 	if ((dres.dr_Flags & (DF_FEED|DF_READ|DF_POST)) == DF_FEED) {
 	    reader = FindLeastUsedThread(THREAD_FEEDER, DOpts.ReaderThreads, 0, &RandCounter, -1, NULL, NULL);
+	    if (reader != NULL && reader->d_OutQ != NULL)
+		reader = PickReader(THREAD_FEEDER);
 	    dres.dr_Flags |= DF_FEEDONLY;
 	} else {
 	    reader = FindLeastUsedThread(THREAD_READER, DOpts.ReaderThreads, 0, &RandCounter, -1, NULL, NULL);
+	    if (reader != NULL && reader->d_OutQ != NULL)
+		reader = PickReader(THREAD_READER);
 	}
 	if (reader == NULL) {
 	    snprintf(errbuf, sizeof(errbuf), "400 %s: Global connection limit reached, please try later%s%s\r\n",
@@ -2944,6 +3112,17 @@ HandleDnsThread(ForkDesc *desc)
 
     if ((r = ReaderOutSend(reader, desc->d_FdPend, &dres)) < 0) {
 	char errbuf[1024];
+
+	if (errno == ENOMEM) {
+	    /* nothing was sent and nothing queued: the reader is fine */
+	    logit(LOG_ERR, "connect: out of memory queueing a client for reader pid %d",
+		(int)reader->d_Pid);
+	    DnsTooBusy(desc->d_FdPend);
+	    desc->d_FdPend = -1;
+	    --NumActive;
+	    deleteDnsResHash(&dres, reader);	/* stored under the reader */
+	    return;
+	}
 #ifdef ETOOMANYREFS
 	if (errno == ETOOMANYREFS) {
 	    /* too many descriptors in flight: nothing was sent, the reader is fine */
@@ -2972,9 +3151,7 @@ HandleDnsThread(ForkDesc *desc)
 	++FailCount;
 	--NumActive;
 	deleteDnsResHash(&dres, reader);
-
-	if (reader->d_Pid > 0)
-	    kill(reader->d_Pid, SIGQUIT);
+	ReaderBroken(reader);
 	return;
     }
     if (r > 0)

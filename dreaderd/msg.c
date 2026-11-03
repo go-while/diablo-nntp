@@ -1,5 +1,3 @@
-#define FDPASS_DAMN_CMSG_MACROS        1
-
 #include "defs.h"
 #include <poll.h>	/* lib/defs.h includes it only when USE_POLL is set */
 
@@ -7,26 +5,21 @@ Prototype int SendMsg(int to_fd, int send_fd, DnsRes *dres);
 Prototype int SendMsgPart(int to_fd, int send_fd, DnsRes *dres, size_t *off);
 Prototype int RecvMsg(int from_fd, int *recv_fd, DnsRes *dres);
 
-#if FDPASS_DAMN_CMSG_MACROS
-
 /*
- * I generally don't like #ifdef defining entire functions, but
- * this was getting too damn messy.  Linux apparently wants you
- * to use some nifty new cmsg macros to assemble this sort of
- * message, and it wasn't too compatible with what used to live
- * here.  I've broken the SendMsg into two functions for now
- * so it is easier to see what is going on.  JG20050830
+ * Descriptor passing with the CMSG macros (SCM_RIGHTS).  JG20050830 split
+ * SendMsg into two versions; the one for systems without them (msg_accrights)
+ * was never compiled any more and is gone.
  */
 
 /*
- * Send what is left of a fixed-size message without waiting: from *off on,
- * with the descriptor only while nothing has gone yet (off 0).  On the
- * SOCK_STREAM fallback a short write sends the first part, with the
+ * Send what is left of a fixed-size message without waiting for room:
+ * from *off on, with the descriptor only while nothing has gone yet (off 0).
+ * On the SOCK_STREAM fallback a short write sends the first part, with the
  * descriptor, and the rest needs later calls without control data.
  *
- * Returns 1 when the whole message is sent, 0 when the socket is full
- * (*off tells how far it got), -1 on an error (errno set; with *off still 0
- * nothing was sent).
+ * Returns 1 when the whole message is sent, 0 when the socket is full or
+ * gave ENOBUFS (errno tells which; *off tells how far it got), or -1 on an
+ * error (errno set; with *off still 0 nothing was sent).
  */
 int
 SendMsgPart(int to_fd, int send_fd, DnsRes *dres, size_t *off)
@@ -71,7 +64,22 @@ SendMsgPart(int to_fd, int send_fd, DnsRes *dres, size_t *off)
 	    msg.msg_controllen = cmsg->cmsg_len;
 	}
 	errno = 0;
+#ifdef MSG_DONTWAIT
 	res = sendmsg(to_fd, &msg, MSG_DONTWAIT);
+#else
+	{
+	    int fl = fcntl(to_fd, F_GETFL, 0);
+	    int err;
+
+	    if (fl >= 0 && (fl & O_NONBLOCK) == 0)
+		(void)fcntl(to_fd, F_SETFL, fl | O_NONBLOCK);
+	    res = sendmsg(to_fd, &msg, 0);
+	    err = errno;
+	    if (fl >= 0 && (fl & O_NONBLOCK) == 0)
+		(void)fcntl(to_fd, F_SETFL, fl);
+	    errno = err;
+	}
+#endif
 	if (res > 0) {
 	    *off += (size_t)res;
 	    continue;
@@ -116,7 +124,8 @@ SendMsg(int to_fd, int send_fd, DnsRes *dres)
 	pfd.fd = to_fd;
 	pfd.events = POLLOUT;
 	pfd.revents = 0;
-	(void)poll(&pfd, 1, 50);
+	/* ENOBUFS: the socket may well poll writable; just pause */
+	(void)poll(&pfd, (errno == ENOBUFS) ? 0 : 1, 50);
     }
     if (r < 0)
 	return(-1);
@@ -237,146 +246,3 @@ RecvMsg(int from_fd, int *recv_fd, DnsRes *dres)
 				(int)getpid(), *recv_fd, result);
     return(result);
 }
-
-
-
-#else /*FDPASS_DAMN_CMSG_MACROS*/
-
-
-
-
-int
-SendMsg(int to_fd, int send_fd, DnsRes *dres)
-{
-    struct msghdr msg;
-    struct iovec iov;
-    struct {
-#if FDPASS_USES_CMSG
-	struct cmsghdr cmsg;
-#endif
-	int fd;
-    } cmsg;
-    int res = 0;
-    int cmsgsize;
-    int sent = 0;
-         
-    bzero(&msg, sizeof(msg));
-    bzero(&cmsg, sizeof(cmsg));
-
-    iov.iov_base = (void *)dres;
-    iov.iov_len = sizeof(DnsRes);
-                
-    msg.msg_iov = &iov;
-    msg.msg_iovlen = 1;
-    if (send_fd >= 0) {
-	cmsgsize = sizeof(cmsg);
-    } else {
-#if FDPASS_USES_CMSG
-	cmsgsize = sizeof(struct cmsghdr);
-#else
-	cmsgsize = 0;
-#endif
-    }
-#if FDPASS_USES_ACC
-    msg.msg_accrights = (caddr_t)&cmsg;
-    msg.msg_accrightslen = cmsgsize;
-#else
-    msg.msg_control = (caddr_t)&cmsg;
-    msg.msg_controllen = cmsgsize;
-#endif
-#if FDPASS_USES_CMSG
-    msg.msg_flags = 0;
-    cmsg.cmsg.cmsg_len = cmsgsize;
-    cmsg.cmsg.cmsg_level = SOL_SOCKET;
-    cmsg.cmsg.cmsg_type = SCM_RIGHTS;
-#endif 
-    cmsg.fd = send_fd;
-
-    errno = 0;
-        
-    /*
-     * If we do not turn off nagle, lots of little 'group' transactions
-     * can result in major delays even if nagle only kicks in on a few
-     * of them.
-     */
-        
-#ifdef TCP_NODELAY
-    /*
-     * Turn on TCP_NODELAY
-     */
-    if (send_fd >= 0) {
-	int one = 1;
-	setsockopt(send_fd, IPPROTO_TCP, TCP_NODELAY, (void *)&one, sizeof(one));
-    }
-#endif
-     
-    /*
-     * Send the message.  This should never fail.  If it does, try to core
-     * the reader subprocess.  Certainly kill it.
-     */
-        
-    if (DebugOpt)
-	printf("SendMsg() pid= %d fd=%d size=%d\n", (int)getpid(), cmsg.fd, (int)sizeof(DnsRes));
-    while (!sent) {
-	res = sendmsg(to_fd, &msg, 0);
-	sent = 1;
-	if (res < 0) {
-	    if (errno == EAGAIN)
-		sent = 0;
-	    else
-		logit(LOG_ERR, "sendmsg error (%s)", strerror(errno));
-	}
-    }
-    return(res);
-}
-
-int
-RecvMsg(int from_fd, int *recv_fd, DnsRes *dres)
-{
-    int result = 0;
-    struct msghdr msg;
-    struct iovec  iov;
-    struct {
-#if FDPASS_USES_CMSG
-	struct cmsghdr cmsg;
-#endif
-	int fd;
-    } cmsg;
-  
-    bzero(&msg, sizeof(msg));
-  
-    iov.iov_base = (void *)dres;
-    iov.iov_len = sizeof(DnsRes);
- 
-    msg.msg_iov = &iov;
-    msg.msg_iovlen = 1;
-#if FDPASS_USES_ACC
-    msg.msg_accrights = (caddr_t)&cmsg;
-    msg.msg_accrightslen = sizeof(cmsg);
-#else
-    msg.msg_control = (caddr_t)&cmsg;
-    msg.msg_controllen = sizeof(cmsg);
-#endif
-#if FDPASS_USES_CMSG
-    msg.msg_flags = 0;
-    cmsg.cmsg.cmsg_len = sizeof(cmsg);
-#endif
-    cmsg.fd = -1;
-    errno = 0;
-
-    /*
-     * receive message w/ file descriptor   
-     */
-
-    result = recvmsg(from_fd, &msg, MSG_EOR|MSG_WAITALL);
-    if (result >= 0 || errno == EAGAIN) {
-	*recv_fd = cmsg.fd;
-	if (DebugOpt && errno != EAGAIN)
-	    printf("RecvMsg() pid=%d fd=%d size=%d\n",
-					(int)getpid(), cmsg.fd, result);
-    } else {
-	logit(LOG_ERR, "recvmsg error (%s)", strerror(errno));
-    }
-    return(result);
-}
-#endif /*FDPASS_DAMN_CMSG_MACROS*/
