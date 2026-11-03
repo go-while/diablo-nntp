@@ -259,6 +259,12 @@ func TestReaderDNSCacheIPv6(t *testing.T) {
 	} else {
 		l.Close()
 	}
+	// dreaderd resolves its -P address with AI_ADDRCONFIG, which refuses ::1 ("Address
+	// family for hostname not supported") unless a non-loopback interface has an IPv6
+	// address, as in containers without IPv6.
+	if !hasNonLoopbackIPv6() {
+		t.Skip("no IPv6 address outside loopback (getaddrinfo AI_ADDRCONFIG refuses ::1)")
+	}
 	sh := buildDNSShim(t)
 	access := strings.Replace(dnsCacheAccess, "access 127.0.0.1 ro\n", "", 1)
 	s := startDNSCacheReader(t, sh, access, nil, "::1")
@@ -433,4 +439,24 @@ func TestReaderDNSCacheFlush(t *testing.T) {
 	}
 	wantLogin(t, s, sh, ip, 200, 2, "after 'dnscache flush'")
 	wantLogin(t, s, sh, ip, 200, 0, "cached again")
+}
+
+// hasNonLoopbackIPv6 reports whether an interface other than loopback has an IPv6 address.
+func hasNonLoopbackIPv6() bool {
+	ifs, err := net.Interfaces()
+	if err != nil {
+		return false
+	}
+	for _, ifc := range ifs {
+		if ifc.Flags&net.FlagLoopback != 0 || ifc.Flags&net.FlagUp == 0 {
+			continue
+		}
+		addrs, _ := ifc.Addrs()
+		for _, a := range addrs {
+			if n, ok := a.(*net.IPNet); ok && n.IP.To4() == nil && !n.IP.IsLoopback() {
+				return true
+			}
+		}
+	}
+	return false
 }
