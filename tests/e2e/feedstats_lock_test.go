@@ -117,10 +117,10 @@ func TestFeedStatsHostLock(t *testing.T) {
 			}
 		}
 		nc.Write([]byte("QUIT\r\n"))
-		waitFor(t, 10*time.Second, "con=2", func() bool { return feedStatsCon(t, s, "-i", "peer") == 2 })
-		if n := feedStatsCon(t, s, "-s", "peer"); n != 2 {
-			t.Errorf("SpoolStats.ConnectCnt %d, want 2", n)
-		}
+		// The in and spool counts are separate updates: wait for both.
+		waitFor(t, 10*time.Second, "in and spool con=2", func() bool {
+			return feedStatsCon(t, s, "-i", "peer") == 2 && feedStatsCon(t, s, "-s", "peer") == 2
+		})
 	})
 
 	t.Run("per host", func(t *testing.T) {
