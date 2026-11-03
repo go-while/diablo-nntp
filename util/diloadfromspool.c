@@ -50,6 +50,7 @@ uint32 GmtEnd = 0;
 static int SpoolFragmentBase;
 static int SpoolFragmentActive;
 static int SpoolFragmentCount;
+static int SpoolReadError;
 static void ScanSpoolFileRead(int fd, int bytes, int gmt, int iter,
     char *path, uint16 spoolobj);
 #endif
@@ -313,12 +314,20 @@ main(int ac, char **av)
     {
 	int r = HistoryClose();
 
-	if (r == RCOK)
+	if (r == RCOK
+#ifdef __OpenBSD__
+	    && !SpoolReadError
+#endif
+	)
 	    return(0);
 	else
 	    return(1);
     }
+#ifdef __OpenBSD__
+    return(SpoolReadError ? 1 : 0);
+#else
     return(0);
+#endif
     /* not reached */
 }
 
@@ -461,6 +470,7 @@ ScanSpoolFileRead(int fd, int bytes, int gmt, int iter, char *path, uint16 spool
         if (bytes - pos < (int)sizeof(ah) ||
             xreadat(fd, &ah, sizeof(ah), pos) < 0) {
             printf("\tIncomplete spool header at %d\n", pos);
+            SpoolReadError = 1;
             break;
         }
         if ((uint8)ah.Magic1 != STORE_MAGIC1 || (uint8)ah.Magic2 != STORE_MAGIC2) {
@@ -474,6 +484,7 @@ ScanSpoolFileRead(int fd, int bytes, int gmt, int iter, char *path, uint16 spool
             ah.StoreLen > (uint32)(bytes - pos) ||
             ((ah.StoreType & STORETYPE_GZIP) && ah.StoreLen == (uint32)(bytes - pos))) {
             printf("\tInvalid spool article at offset %d\n", pos);
+            SpoolReadError = 1;
             break;
         }
         disklen = (size_t)ah.StoreLen + ((ah.StoreType & STORETYPE_GZIP) ? 1 : 0);
@@ -481,11 +492,13 @@ ScanSpoolFileRead(int fd, int bytes, int gmt, int iter, char *path, uint16 spool
             (size_t)ah.HeadLen + ah.ArtHdrLen;
         if (need > ah.StoreLen || need < sizeof(ah)) {
             printf("\tInvalid spool header length at offset %d\n", pos);
+            SpoolReadError = 1;
             break;
         }
         fragment = calloc(1, need + 16);
         if (fragment == NULL || xreadat(fd, fragment, need, pos) < 0) {
             printf("\tUnable to read spool article at %d: %s\n", pos, strerror(errno));
+            SpoolReadError = 1;
             free(fragment);
             break;
         }
@@ -510,6 +523,7 @@ ScanSpoolFileRead(int fd, int bytes, int gmt, int iter, char *path, uint16 spool
                     n = sizeof(block);
                 if (xreadat(fd, block, n, end) < 0) {
                     printf("\tUnable to read spool at %d: %s\n", end, strerror(errno));
+                    SpoolReadError = 1;
                     goto done;
                 }
                 zero = memchr(block, 0, n);
@@ -525,11 +539,13 @@ ScanSpoolFileRead(int fd, int bytes, int gmt, int iter, char *path, uint16 spool
             len = (size_t)(end - pos);
             if (!terminated || len > SPOOL_MAX_FILE_SIZE) {
                 printf("\tIncomplete or oversized old spool article at %d\n", pos);
+                SpoolReadError = 1;
                 break;
             }
             fragment = calloc(1, len + 16);
             if (fragment == NULL || xreadat(fd, fragment, len, pos) < 0) {
                 printf("\tUnable to read old spool article at %d: %s\n", pos, strerror(errno));
+                SpoolReadError = 1;
                 free(fragment);
                 break;
             }
@@ -561,10 +577,16 @@ ScanSpoolFile(char *fpath, int gmt, int iter, uint16 spoolobj)
     errno = 0;
     if ((fd = open(fpath, O_RDONLY)) < 0) {
 	printf("    %s\t%s\n", fpath, strerror(errno));
+#ifdef __OpenBSD__
+	SpoolReadError = 1;
+#endif
 	return;
     }
     if (fstat(fd, &st) < 0) {
 	printf("    %s\t%s\n", fpath, strerror(errno));
+#ifdef __OpenBSD__
+	SpoolReadError = 1;
+#endif
 	close(fd);
 	return;
     }
@@ -573,6 +595,7 @@ ScanSpoolFile(char *fpath, int gmt, int iter, uint16 spoolobj)
 #ifdef __OpenBSD__
     if (st.st_size <= 0 || st.st_size > INT_MAX) {
         printf("    %s\tinvalid or oversized spool file\n", fpath);
+        SpoolReadError = 1;
         close(fd);
         return;
     }
@@ -639,6 +662,7 @@ ScanSpoolFileMap(const char *base, int bytes, int gmt, int iter, char *dpath, ui
 	    if (artbase == NULL) {
 		printf("\tUnable to allocate compressed article at %d: %s\n",
 		    SpoolFragmentBase + b, strerror(errno));
+		SpoolReadError = 1;
 		return;
 	    }
 #endif
@@ -649,15 +673,25 @@ ScanSpoolFileMap(const char *base, int bytes, int gmt, int iter, char *dpath, ui
 #endif
                 , 0);
 	    if ((gzf = gzdopen(dup(fd), "r")) != NULL) {
-		if (gzread(gzf, artbase, len) != len)
+		if (gzread(gzf, artbase, len) != len) {
 		    arthdrlen = 0;
+#ifdef __OpenBSD__
+		    SpoolReadError = 1;
+#endif
+		}
 		gzclose(gzf);
 	    } else {
 		arthdrlen = 0;
+#ifdef __OpenBSD__
+		SpoolReadError = 1;
+#endif
 	    }
 #else
 	    printf("\tCompressed file detected and compression support not enabled\n");
 	    arthdrlen = 0;
+#ifdef __OpenBSD__
+	    SpoolReadError = 1;
+#endif
 #endif
 	} else {
 	    artbase = (char *)base + b + ah.HeadLen;

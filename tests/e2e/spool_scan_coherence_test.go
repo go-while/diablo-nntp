@@ -35,7 +35,7 @@ func checkSpoolOffsets(t *testing.T, out string, ids []string) {
 	}
 }
 
-func scanSpoolForTest(t *testing.T, s *Site, file string) string {
+func runSpoolScan(t *testing.T, s *Site, file string) (string, error) {
 	t.Helper()
 	dir := filepath.Dir(filepath.Dir(file))
 	rel := filepath.Join(filepath.Base(filepath.Dir(file)), filepath.Base(file))
@@ -43,10 +43,16 @@ func scanSpoolForTest(t *testing.T, s *Site, file string) string {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), s.Env...)
 	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+func scanSpoolForTest(t *testing.T, s *Site, file string) string {
+	t.Helper()
+	out, err := runSpoolScan(t, s, file)
 	if err != nil {
 		t.Fatalf("diloadfromspool: %v\n%s", err, out)
 	}
-	return string(out)
+	return out
 }
 
 func TestSpoolScanMultipleArticles(t *testing.T) {
@@ -122,7 +128,10 @@ func TestSpoolScanTruncatedHeader(t *testing.T) {
 	if err := os.WriteFile(file, []byte{0xff, 0x99}, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	out := scanSpoolForTest(t, s, file)
+	out, err := runSpoolScan(t, s, file)
+	if err == nil {
+		t.Error("truncated spool scan unexpectedly succeeded")
+	}
 	if !strings.Contains(out, "Incomplete spool header") {
 		t.Errorf("truncated header not reported: %q", out)
 	}
