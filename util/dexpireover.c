@@ -1899,7 +1899,7 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
 					close(tmpfd);
 				    } else {
 					// handle gzip headers
-hl = gzHeaderLen(zmap, st.st_size);
+					hl = gzHeaderLen(zmap, st.st_size);
 					bzero(&z, sizeof(z));
 					if (hl == 0) {
 					    z.msg = "bad gzip header";

@@ -1657,7 +1657,7 @@ MakeOverHFile(OverInfo *ov, artno_t artNo, int create)
 				tmpfd = -1;
 		            } else {
 				// handle gzip headers
-hl = gzHeaderLen(zmap, st.st_size);
+				hl = gzHeaderLen(zmap, st.st_size);
 				bzero(&z, sizeof(z));
 				if (hl == 0) {
 				    z.msg = "bad gzip header";
