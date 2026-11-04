@@ -1149,6 +1149,8 @@ all 4775 records, 1843 of them still on the spool), so entries whose file is gon
 skipped, and `file=` is an absolute path, so the spool directory has to be stripped to get the
 `D.xxxxxxxx/B.xxxx` form. Raised by the maintainer.
 
+**Status: in progress** (maintainer, 2026-11-04: "Take F-03"): a new tool, `dspoolrefeed`, writes the queue files the recipe above builds by hand. It walks the history, reads each Message-ID from the article on the spool (compressed spool objects too) and checks it against the history hash, and leaves out expired, header-only and vanished entries. `-a days` and `-g groups` select; `-n` splits the output for parallel dnewslinks. The man page dspoolrefeed(8) covers the receiving side.
+
 ### F-04 NoCeM notices
 INN can act on NoCeM notices (signed notices from third parties that list the Message-IDs of
 spam and other unwanted articles to hide), and such notices are still issued today. Diablo has

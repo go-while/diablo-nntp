@@ -1,0 +1,157 @@
+.TH DSPOOLREFEED 8
+.SH NAME
+dspoolrefeed \- write dnewslink queue files for every article on the spool
+.SH SYNOPSIS
+.B dspoolrefeed
+[
+.B \-C
+.I diablo.config
+]
+[
+.B \-a
+.I days
+]
+[
+.B \-g
+.I groups
+]
+[
+.B \-n
+.I lines
+]
+[
+.B \-o
+.I prefix
+]
+[
+.B \-q
+]
+[
+.B \-V
+]
+[
+.I historyfile
+]
+.SH DESCRIPTION
+.B dspoolrefeed
+reads the history file
+(default: the
+.B path_history
+of
+.BR diablo.config )
+and writes one queue line for each article that is still on the spool,
+in the form that
+.BR diablo (8)
+writes to its queue files:
+.PP
+.RS
+D.xxxxxxxx/B.xxxx <message-id> offset,size
+.RE
+.PP
+with
+.B C\fIsize\fR
+at the end for an article on a compressed spool object.
+.BR dnewslink (8)
+then offers the articles to another server
+(\fBCHECK\fR/\fBTAKETHIS\fR, or \fBIHAVE\fR),
+for example to fill a new server, or one that lost its spool.
+.PP
+The history keeps only a hash of each Message-ID, so
+.B dspoolrefeed
+reads the Message-ID from the article's header on the spool, and checks
+that it hashes to the history entry; an entry whose offset no longer holds
+that article is left out.
+Expired entries, header-only entries, and entries whose file or article is
+gone are left out too.
+At the end, the counts of written and left-out entries go to standard
+error.
+.SH OPTIONS
+.TP
+.B \-a \fIdays\fR
+Only articles received in the last
+.I days
+days.
+.TP
+.B \-g \fIgroups\fR
+Only articles posted to a matching newsgroup.
+.I groups
+is a comma-separated list of wildmats; a pattern with a leading
+.B !
+excludes, and for each newsgroup the last matching pattern decides
+(for example
+.BR comp.*,!comp.binaries.* ).
+An article is written when one of its newsgroups is selected.
+.TP
+.B \-n \fIlines\fR
+With
+.BR \-o ,
+start a new file every
+.I lines
+entries, so several
+.B dnewslink
+processes can send the parts in parallel.
+.TP
+.B \-o \fIprefix\fR
+Write the queue to the file
+.I prefix
+(with
+.BR \-n :
+\fIprefix\fR.0000, \fIprefix\fR.0001, ...)
+instead of standard output.
+An existing file is not overwritten.
+.TP
+.B \-q
+Do not print the counts.
+.TP
+.B \-C \fIdiablo.config\fR
+Use this configuration file.
+.SH EXAMPLES
+Refeed the last 30 days, in parts of 100000 articles, as the news user
+from the queue directory:
+.PP
+.RS
+.nf
+cd /news/dqueue
+dspoolrefeed -a 30 -n 100000 -o refeed
+for f in refeed.????; do
+    dnewslink -h newpeer.example.com -b $f -D &
+done
+.fi
+.RE
+.PP
+.B dnewslink
+takes the
+.B \-b
+file name relative to the queue directory
+.RB ( path_dqueue ),
+so write the files there.
+It rewrites each file with the entries the peer deferred, so running the
+same command again retries them; articles the peer already has are
+refused, and nothing is sent twice.
+.SH NOTES
+The receiving server must accept the old articles: with INN, raise
+.B artcutoff
+(default 10 days) for the time of the refeed, and give the sending host a
+peer entry
+.RB ( incoming.conf ).
+Diablo checks the article age with
+.B feedermaxacceptage
+on the receiving side.
+.PP
+The history is read in its own order, not by time.
+Sorting a queue file
+.RB ( "sort -o refeed.0000 refeed.0000" )
+groups the lines by spool directory, which sends the articles roughly in
+the order they arrived and reads each spool file in one pass.
+.PP
+On a large spool every article's header is read once; run it at a quiet
+time, or limit it with
+.B \-a
+or
+.BR \-g .
+.SH "SEE ALSO"
+.BR diablo (8),
+.BR dnewslink (8),
+.BR didump (8),
+.BR dreadart (8),
+.BR dspoolout (8)
