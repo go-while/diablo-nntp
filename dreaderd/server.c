@@ -23,6 +23,13 @@ Prototype int	NReadServAct;
 Prototype int	NWriteServers;
 Prototype int	NWriteServAct;
 
+/*
+ * Longest line taken from a spool server (newline included).  A longer
+ * one makes MBReadLine() report EOF and the connection is dropped, so a
+ * broken or hostile server cannot make us buffer without end.
+ */
+#define SERVER_MAXLINE	(1024 * 1024)
+
 void NNServerStart(Connection *conn);
 void QueueServerRequests(void);
 int queueServerRequest(ServReq *sreq, int type, int maxq);
@@ -99,6 +106,44 @@ setServerClosedRemovals(ForkDesc *desc)
     }
 }
 
+/*
+ * Read the next line of dserver.hosts that fits in buf.  A line that does
+ * not is logged and skipped whole: its tail would be read as a line of
+ * its own.  Returns 0 at EOF.
+ */
+static int
+ReadHostsLine(FILE *fi, char *buf, int size, int *linecount)
+{
+    int skiptail = 0;
+
+    while (fgets(buf, size, fi) != NULL) {
+	int partial = 0;
+	size_t blen = strlen(buf);
+
+	if (blen > 0 && buf[blen - 1] != '\n') {
+	    int ch = getc(fi);
+
+	    if (ch != EOF) {
+		ungetc(ch, fi);
+		partial = 1;
+	    }
+	}
+	if (skiptail) {
+	    skiptail = partial;
+	    continue;
+	}
+	skiptail = partial;
+	(*linecount)++;
+	if (partial) {
+	    logit(LOG_ERR, "dserver.hosts: line %d is longer than %d bytes",
+		*linecount, size - 2);
+	    continue;
+	}
+	return(1);
+    }
+    return(0);
+}
+
 void 
 CheckServerConfig(time_t t, int force)
 {
@@ -129,13 +174,14 @@ CheckServerConfig(time_t t, int force)
 
 	if ((fi = fopen(path, "r")) != NULL) {
 	    char buf[PATH_MAX];
+	    int linecount = 0;
 
 	    ServersTerminated = 0;
 
 	    ScanThreads(THREAD_SPOOL, setServerMaybeCloseFlag);
 	    ScanThreads(THREAD_POST, setServerMaybeCloseFlag);
 
-	    while (fgets(buf, sizeof(buf), fi) != NULL) {
+	    while (ReadHostsLine(fi, buf, sizeof(buf), &linecount)) {
 		char *host = strtok(buf, " \t\n");
 		char *flags = "";
 		char c;
@@ -493,6 +539,7 @@ AddServer(char *bindinfo, int txbufsize, int rxbufsize, const char *host, int ty
     desc = AddThread(host, fd, -1, type, -1, pri);
     FD_SET(desc->d_Fd, &RFds);
     conn = InitConnection(desc, NULL);
+    conn->co_RMBuf.mh_MaxLine = SERVER_MAXLINE;
     if (flags & COF_LOGIN) {
 	if (password) {
 	    snprintf(conn->co_Auth.dr_AuthUser, sizeof(conn->co_Auth.dr_AuthUser), "%s", login);

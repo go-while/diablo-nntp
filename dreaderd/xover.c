@@ -23,6 +23,9 @@ Prototype int OutputOverview(Connection *conn, const char *res, int resLen, int 
 
 void NNListNewNews(Connection *conn);
 void NNStartListOverview(Connection *conn, const char *hdr, const char *ran, const char *pat, int mode);
+/* most overview records looked at in one pass before other work gets a turn */
+#define OVERVIEW_PASS_RECORDS	10000
+
 void NNStartListOverviewRange(Connection *conn);
 void NNStartListOverviewMsgId(Connection *conn, const char *msgid);
 void NNListOverviewRange(Connection *conn);
@@ -438,6 +441,7 @@ NNListOverviewRange(Connection *conn)
 {
     OverInfo *ov;
     int xpat_count = 0;
+    int nrec = 0;
 
     conn->co_Func = NNListOverviewRange;
     conn->co_State = "listover";
@@ -468,6 +472,15 @@ NNListOverviewRange(Connection *conn)
 	TimeRestrict *tr = NULL;
 #endif
 
+	/*
+	 * Bound the work done in one pass.  A range of missing articles
+	 * produces no output, so the buffer test above never stops it and
+	 * a very wide range (xref-slave mode) would hold the process.
+	 */
+	if (++nrec > OVERVIEW_PASS_RECORDS) {
+	    FD_SET(conn->co_Desc->d_Fd, &WFds);
+	    break;
+	}
 	if (conn->co_ArtMode == COM_XPAT && ++xpat_count > 50) {
 	    FD_SET(conn->co_Desc->d_Fd, &WFds);
 	    break;
