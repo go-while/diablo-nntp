@@ -1219,8 +1219,33 @@ missing, a client Message-ID kept unchanged (without `POST_FORCEMSGID`), Approve
 the readerdef's permission, the moderator forwarding, group status `n`/`x` refusals, Cancel-Lock
 (RFC 8315, F-01).
 
+Maintainer decisions (2026-11-04):
+- **Lines: no longer generated and not deleted** (RFC 5536 3.3.1 "SHOULD NOT generate"; RFC 5537
+  3.5 step 6). A poster's own Lines header is kept as it is. Before the change, check that
+  dreaderd's overview (OVER/XOVER "Lines" column) does not depend on the header;
+  `samples/dnewsfeeds` says genlines "is not necessary for dreaderd", but that is not traced in
+  the code yet. If it does depend on it, the overview counts the lines itself.
+- **posttrailer: removed** (RFC 5537 3.5 step 6, MUST NOT alter the body). Since #283 an unknown
+  vserverdef option makes dreader.access invalid, so the keyword stays known: it is logged once
+  as no longer supported and ignored, and an old dreader.access still loads.
+- **X-Trace: dropped; its information moves into Injection-Info** (RFC 5536 3.2.8), with the
+  same encryption that `cryptpw` gives X-Trace today (AES, `C=`, with the optional key
+  generation `G=`). Mapping:
+  - `<path-identity>`: the vserverdef's path identity (as used for Path).
+  - `posting-host`: the client's host or address. With `cryptpw`, the same mangled form as
+    today's NNTP-Posting-Host, or left out. The readerdef's NNTP-Posting-Host switch
+    (`rd_TurnOffNNPH`) turns it off.
+  - `posting-account`: the authenticated user (and ident user). With `cryptpw`, encrypted.
+  - `logging-data`: what X-Trace carried (time, server, process, user, address). With
+    `cryptpw`, encrypted as `G=...,C=...` as in X-Trace today.
+  - `mail-complaints-to`: the vserverdef's abuse address, replacing X-Complaints-To.
+  - NNTP-Posting-Date gives way to Injection-Date.
+  NNTP-Posting-Host and X-Complaints-To are not generated any more either, since Injection-Info
+  carries them. A poster's own X-Trace, NNTP-Posting-Host or X-Complaints-To is still refused
+  (RFC 5537 3.5 step 2 allows refusing trace fields of an earlier injection).
+
 Suggested order, one PR each: (1) Injection-Date and the step-2 refusals (Injection-Info, Xref,
-`.POSTED`); (2) Path `.POSTED` and Injection-Info; (3) the Date format and window; (4) syntax
+`.POSTED`); (2) Path `.POSTED` and Injection-Info in place of X-Trace, NNTP-Posting-Host and
+X-Complaints-To (with `cryptpw`); (3) the Date format and window; (4) syntax
 checks (Message-ID, Date, line length); (5) reserved group names; (6) the header-preservation
-items, which change long-standing behavior and need options. Lines and the trailer are the
-maintainer's call, since sites rely on them.
+items, Lines among them; (7) removing posttrailer.
