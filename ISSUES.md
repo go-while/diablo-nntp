@@ -12,7 +12,7 @@ re-checked yet.
 Status values: **open**, **PR** (fix waiting for review, with its number), **fixed** (with
 the PR that fixed it), **decision** (needs the maintainer to decide), **won't fix**.
 
-Last updated 2026-11-03: D-172 (retained control connections inherited) and D-173 (NETREMOTE accounting destination) added from go-while's review; D-164 to D-166 marked fixed (#280: readerdef typos, access cache reload); D-167 marked fixed (#169: one Perl interpreter per script); D-134 marked fixed (#257: dkp -t); D-168 and D-169 marked fixed (#185); D-170 added (illumos loses a hand-back at the descriptor limit); D-171 added (OpenBSD shared maps, won't fix). Before that, 2026-10-30: D-167 to D-169 added (Perl authentication, the file and cdb deny lists); F-06 (Perl authentication) added; F-02 noted in progress (#167). Before that, 2026-10-29: D-16 marked fixed (#127). D-135 to D-146 and D-156, D-157 marked fixed (#145, #151 to #154); D-158 won't fix; D-150 to D-155 marked fixed (#158); D-147 to D-149 marked fixed (#159); D-159 to D-162 marked fixed (#160); D-164 to D-166 added from go-while's review of #160. Before that, 2026-10-28: D-91, D-96, D-98 and D-131 to D-133 marked fixed (#146 to #149). F-01 marked done, F-04 (NoCeM) and F-05 (init scripts, done) added, D-163 (file modes, fixed in #139) added; D-135 to D-162 added from go-while's batch of `main` at `0401451`, and a note on D-94. Before that, D-110 to D-134 added from go-while's third review pass of `main` at `6a4b97d`. Before that, 2026-10-27: D-66 to D-109 added from the second review pass and the reviews of the fixes
+Last updated 2026-11-04: F-07 added (dreaderd POST against RFC 5536/5537). Before that, 2026-11-03: D-172 (retained control connections inherited) and D-173 (NETREMOTE accounting destination) added from go-while's review; D-164 to D-166 marked fixed (#280: readerdef typos, access cache reload); D-167 marked fixed (#169: one Perl interpreter per script); D-134 marked fixed (#257: dkp -t); D-168 and D-169 marked fixed (#185); D-170 added (illumos loses a hand-back at the descriptor limit); D-171 added (OpenBSD shared maps, won't fix). Before that, 2026-10-30: D-167 to D-169 added (Perl authentication, the file and cdb deny lists); F-06 (Perl authentication) added; F-02 noted in progress (#167). Before that, 2026-10-29: D-16 marked fixed (#127). D-135 to D-146 and D-156, D-157 marked fixed (#145, #151 to #154); D-158 won't fix; D-150 to D-155 marked fixed (#158); D-147 to D-149 marked fixed (#159); D-159 to D-162 marked fixed (#160); D-164 to D-166 added from go-while's review of #160. Before that, 2026-10-28: D-91, D-96, D-98 and D-131 to D-133 marked fixed (#146 to #149). F-01 marked done, F-04 (NoCeM) and F-05 (init scripts, done) added, D-163 (file modes, fixed in #139) added; D-135 to D-162 added from go-while's batch of `main` at `0401451`, and a note on D-94. Before that, D-110 to D-134 added from go-while's third review pass of `main` at `6a4b97d`. Before that, 2026-10-27: D-66 to D-109 added from the second review pass and the reviews of the fixes
 (D-77 is documented behaviour and only needs a note); the fixed ones are marked with their PR. Before that, D-53 to D-65 added from the review of `main` at `ca648d4`. Before that, 2026-10-26, after batch 1 (#30, #31, #37 to #44, #47 to #49) and the first part
 of batch 2 (#46, #50, #52, #62) were merged. Open: #35 (GnuPG pgpverify, held for a private
 advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
@@ -1163,3 +1163,64 @@ review findings are fixed — notably the htpasswd no-cache DoS and the `call_ch
 (patch sent), the configure missing-`config.mk` hard error, and the radcli Filter-Id fail-open — and
 (2) a second deep code review of the fixed auth path (`dreaderd/dns.c` `PerlAuthenticate`/`perlWords`,
 `contrib/htpasswd-auth.pl`, the radcli adapter). Agreed with the maintainer on 2026-10-30.
+
+### F-07 dreaderd POST as an RFC 5536/5537 injecting agent
+The maintainer's gold standard for Netnews behavior is the USEFOR index
+(https://www.eyrie.org/~eagle/usefor/): RFC 5536 (article format, on RFC 5322) and RFC 5537
+(architecture; section 3.5 lists the duties of an injecting agent, which dreaderd's POST is).
+Review of `dreaderd/post.c` (`NNPostBuffer()`) at main e92a51f, from reading, not run. Each
+item gives the requirement and what dreaderd does today.
+
+MUST, not met:
+- **Injection-Date** (RFC 5536 3.2.7, RFC 5537 3.5 step 11): it must be added at injection
+  unless the proto-article has both Message-ID and Date, and an existing one must never be
+  changed. dreaderd never adds it, and passes a client's own through unchecked.
+- **Reject proto-articles with Injection-Info or Xref** (RFC 5537 3.5 step 2). dreaderd keeps
+  a client's Injection-Info and silently deletes Xref.
+- **Reject a Path containing the "POSTED" diag-keyword** (RFC 5537 3.5 step 2). dreaderd deletes
+  the client's Path without looking for `.POSTED`; it only counts `!` elements (`pathcomponents`)
+  and, with `POST_CKPATHLOOP`, a fixed string.
+- **Do not alter the body** (RFC 5537 3.5 step 6). The vserverdef `posttrailer` option appends
+  lines to the body.
+- **Do not generate obs-zone dates** (RFC 5322 3.3, restated in RFC 5536 3.1.1): the generated
+  `Date:` is `%d %b %Y %H:%M:%S GMT`; it should be `+0000` (an optional day name is fine). The
+  same applies to `NNTP-Posting-Date` with `POST_NNTP_POSTING_DATE_GMT`.
+- **Syntactically valid as defined by RFC 5536** (RFC 5537 3.5 step 2). dreaderd checks
+  little syntax: Message-ID only through `MsgId()` and an `@`; Date not at all; header lines
+  over 998 octets (RFC 5322 2.1.1) are not refused; the From check (`ckaddress()`) is
+  compile-time only (`POST_CKADDRESS`).
+
+SHOULD, not met:
+- **Injection-Info** (RFC 5536 3.2.8, RFC 5537 3.5 step 10) instead of the older trace fields:
+  dreaderd adds `NNTP-Posting-Host`, `X-Trace`, `X-Complaints-To` and (optionally)
+  `NNTP-Posting-Date`. These could move into Injection-Info (`posting-host`, `logging-data`,
+  `mail-complaints-to`), as INN does, keeping the old fields behind an option during a
+  transition.
+- **`.POSTED` in Path** (RFC 5537 3.2.1 step 2): the injecting agent should prepend
+  `!.POSTED[.<host>]`. dreaderd writes `Path: <postpath>!not-for-mail`.
+- **Date window** (RFC 5537 3.5 step 3): refuse a Date (or Injection-Date) more than 24 hours
+  in the future, or older than the relaying cutoff (at least 72 hours). Not checked.
+- **Reserved newsgroup names** (RFC 5536 3.1.4, RFC 5537 3.5 step 4): `example.*`, `poster`,
+  `to.*`, `control.*`, `junk`, `all` should be refused unless a specific purpose applies.
+  `checkpostgroups` only refuses groups that do not exist.
+- **Lines** (RFC 5536 3.3.1): obsolescent; agents should not generate it. dreaderd deletes the
+  client's and adds its own.
+- **Do not alter, delete or reorder existing header fields except Path** (RFC 5537 3.5 step 6):
+  dreaderd puts Path first, deletes Lines and an empty Distribution, can rewrite Newsgroups
+  (`POST_CLEANUPNEWSGROUPSLINE`), and with `POST_BOFHCLEANUP` refuses To and Cc, which are
+  valid RFC 5322 fields in news.
+- **Moderated groups** (RFC 5537 3.5 step 7, 3.5.1): forwarding must happen after Message-ID and
+  Date are added and before the injection fields; dreaderd builds its trace fields before
+  `MailIfModerated()`, so they go to the moderator too. To be checked when Injection-Info is
+  added.
+
+Met, for reference: the required From, Newsgroups and Subject, Message-ID and Date added when
+missing, a client Message-ID kept unchanged (without `POST_FORCEMSGID`), Approved only with
+the readerdef's permission, the moderator forwarding, group status `n`/`x` refusals, Cancel-Lock
+(RFC 8315, F-01).
+
+Suggested order, one PR each: (1) Injection-Date and the step-2 refusals (Injection-Info, Xref,
+`.POSTED`); (2) Path `.POSTED` and Injection-Info; (3) the Date format and window; (4) syntax
+checks (Message-ID, Date, line length); (5) reserved group names; (6) the header-preservation
+items, which change long-standing behavior and need options. Lines and the trailer are the
+maintainer's call, since sites rely on them.
