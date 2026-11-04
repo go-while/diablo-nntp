@@ -900,6 +900,33 @@ loadSpoolCtl(FILE *fi)
  *
  * NOTE: exit program if any errors
  */
+/*
+ * spoolCtlValid() - parse fi in a child process first: loadSpoolCtl() and
+ *		     what it calls stop the program with exit(1) on any error,
+ *		     which would end a running diablo on a reload.  Returns 1
+ *		     when the child got through the whole file (or no child
+ *		     could be made: then the reload goes on as before), else 0.
+ *		     fi is back at its start.
+ */
+static int
+spoolCtlValid(FILE *fi)
+{
+    pid_t pid;
+    int status = 0;
+
+    fflush(NULL);
+    if ((pid = fork()) == 0) {
+	loadSpoolCtl(fi);
+	_exit(0);
+    }
+    if (pid < 0)
+	return(1);
+    while (waitpid(pid, &status, 0) < 0 && errno == EINTR)
+	;
+    fseek(fi, 0L, SEEK_SET);
+    return(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+}
+
 void
 LoadSpoolCtl(time_t gmt, int force)
 {
@@ -922,6 +949,12 @@ LoadSpoolCtl(time_t gmt, int force)
 
 	    fi = fopen(PatLibExpand(DSpoolCtlPat), "r");
 
+	    if (fi == NULL && !force && SpoolObjects != NULL) {
+		/* a reload: keep running with what we have (D-175) */
+		logit(LOG_ERR, "%s: cannot open (%s), keeping the old spool configuration",
+					PatLibExpand(DSpoolCtlPat), strerror(errno));
+		return;
+	    }
 	    if (fi == NULL) {
 		logit(LOG_EMERG, "%s file not found",
 					PatLibExpand(DSpoolCtlPat));
@@ -934,7 +967,17 @@ LoadSpoolCtl(time_t gmt, int force)
 		if (force)
 		    fstat(fileno(fi), &st);
 		SpoolMTime = st.st_mtime; /* may be 0 if file failed to open */
-		loadSpoolCtl(fi);
+		/*
+		 * A reload of a running program (diablo checks every
+		 * minute) must not stop it on a mistake in the new file:
+		 * keep the old configuration until the file is fixed
+		 * (D-175).  At start an error still stops the program.
+		 */
+		if (!force && SpoolObjects != NULL && !spoolCtlValid(fi))
+		    logit(LOG_ERR, "%s: not reloaded because of the error above, keeping the old spool configuration",
+				PatLibExpand(DSpoolCtlPat));
+		else
+		    loadSpoolCtl(fi);
 	    }
 	    if (fi)
 		fclose(fi);
