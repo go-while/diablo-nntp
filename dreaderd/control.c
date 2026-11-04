@@ -440,6 +440,8 @@ ParseControl(Connection *conn, const char *cmd, const char *from, const char *ne
 {
     FILE *fi;
     char buf[256];
+    int tooLong;
+    int lineNo = 0;
     Control *ctl = NULL;
 
     if (DebugOpt) {
@@ -464,7 +466,14 @@ ParseControl(Connection *conn, const char *cmd, const char *from, const char *ne
     if ((fi = fopen(PatLibExpand(DControlCtlPat), "r")) == NULL)
 	return(NULL);
 
-    while (fgets(buf, sizeof(buf), fi) != NULL) {
+    while (ConfigGets(buf, sizeof(buf), fi, &tooLong) != NULL) {
+	++lineNo;
+	if (tooLong) {
+	    /* its tail must not be read as a line of its own (D-94) */
+	    logit(LOG_ERR, "%s: line %d too long (at most %d characters), ignored",
+		PatLibExpand(DControlCtlPat), lineNo, (int)sizeof(buf) - 2);
+	    continue;
+	}
 	char *smsg;
 	char *sfrom;
 	char *sgroups;

@@ -58,3 +58,28 @@ func boolInt(b bool) int {
 	}
 	return 0
 }
+
+// TestReaderListLongFileLines (D-94): LIST MODERATORS and LIST DISTRIBUTIONS send a line of the
+// local file that is longer than the 256-byte read buffer as one line. Before, each 255-byte
+// piece went out as a line of its own, and the tail of the long line looked like an entry.
+func TestReaderListLongFileLines(t *testing.T) {
+	long := "e2e.long." + strings.Repeat("x", 400) + ":long@moderators.example.invalid"
+	m := newModerationReader(t, ModOptions{Moderators: "# a comment\n" + long + "\ne2e.mod:a@moderators.example.invalid\n"})
+	c := m.Reader(t)
+	expect(t, c, 215, "LIST MODERATORS")
+	lines := c.ReadDotLines()
+	if len(lines) != 2 || lines[0] != long {
+		t.Errorf("LIST MODERATORS: %d lines %.80q..., want the long line whole and one more", len(lines), lines)
+	}
+
+	dist := "local." + strings.Repeat("y", 300) + "\tA local distribution"
+	if err := os.WriteFile(filepath.Join(m.Dir, "distributions"), []byte(dist+"\nworld\tEverywhere\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	expect(t, c, 215, "LIST DISTRIBUTIONS")
+	lines = c.ReadDotLines()
+	if len(lines) != 2 || lines[0] != dist {
+		t.Errorf("LIST DISTRIBUTIONS: %d lines, want the long line whole and one more", len(lines))
+	}
+	expect(t, c, 205, "QUIT")
+}

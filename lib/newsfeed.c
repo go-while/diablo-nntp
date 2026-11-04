@@ -1301,6 +1301,11 @@ LoadNewsFeed(time_t t, int force, const char *hlabel)
 
 		    ++lineNo;
 
+		    if (IgetsTooLong) {	/* skipped whole (D-94) */
+			logit(LOG_ERR, "Newsfeed config line %d too long (at most %d characters), ignored",
+			    lineNo, (int)sizeof(buf) - 2);
+			continue;
+		    }
 		    if (s1 == NULL || *s1 == '#')
 			continue;
 
@@ -2098,10 +2103,19 @@ AltFeed(NewsFeed *nf, FILE *fi)
     while (*psNode)
 	psNode = &(*psNode)->no_Next;
 
-    while (fgets(buf, sizeof(buf), fi) != NULL) {
-	char *s1 = strtok(buf, " \t\n");
-	char *s2 = strtok(NULL, " \t\n");
+    int tooLong;
 
+    while (ConfigGets(buf, sizeof(buf), fi, &tooLong) != NULL) {
+	char *s1;
+	char *s2;
+
+	if (tooLong) {	/* skipped whole (D-94) */
+	    logit(LOG_ERR, "%s: a line is too long (at most %d characters), ignored",
+		nf->nf_Label, (int)sizeof(buf) - 2);
+	    continue;
+	}
+	s1 = strtok(buf, " \t\n");
+	s2 = strtok(NULL, " \t\n");
 	if (s1 == NULL)
 	    continue;
 	if (s2 == NULL)
