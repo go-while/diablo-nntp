@@ -272,7 +272,7 @@ NetBSD)
             pkg_add "$p" >/dev/null 2>&1 || echo "build-on-host: package $p not installed"
         fi
     done
-    [ -e /opt/local ] || ln -s /usr/pkg /opt/local
+    [ -e /opt/local ] || { mkdir -p /opt && ln -s /usr/pkg /opt/local; } || echo "build-on-host: could not link /opt/local"
     ls /usr/pkg/bin/gpgv* /usr/pkg/bin/perl /usr/pkg/include/libcanlock-3/canlock.h /usr/pkg/include/cdb.h 2>&1 | sed 's/^/build-on-host: /'
     fake_sendmail_bsd
     groupadd news 2>/dev/null || true
