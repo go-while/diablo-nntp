@@ -7,6 +7,7 @@ package e2e
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -295,6 +296,13 @@ func TestReaderForkKeepsNoQueuedClients(t *testing.T) {
 		r := cs[i].line(10 * time.Second)
 		cs[i].c.SetReadDeadline(time.Now().Add(3 * time.Second))
 		if _, err := io.ReadAll(cs[i].rd); err != nil {
+			// A client of the reader that was killed is already closed when it sends QUIT
+			// (its QUIT got EOF); the QUIT then draws a reset on FreeBSD. That is a closed
+			// socket, not one that something else keeps open.
+			if errors.Is(err, syscall.ECONNRESET) && strings.HasPrefix(r, "error:") {
+				cs[i].c.Close()
+				continue
+			}
 			noEOF++
 			if noEOF <= 3 {
 				t.Errorf("client %d: QUIT got %q, then no EOF within 3 s (%v)", i, r, err)
