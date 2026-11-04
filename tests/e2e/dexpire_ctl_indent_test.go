@@ -18,11 +18,11 @@ func overviewSize(t *testing.T, ctl string) int64 {
 	s := NewReaderSite(t, ReaderOptions{Spool: spool, Files: map[string]string{"dexpire.ctl": ctl}})
 	feedReader(t, s, st, "e2e.test", newArticle(msgID(t), "e2e.test", "overview size", "body"))
 	c := s.Reader(t)
-	waitFor(t, testkit.Deadline(), "the article in GROUP e2e.test", func() bool {
+	testkit.WaitFor(t, testkit.Deadline(), "the article in GROUP e2e.test", func() bool {
 		_, line := c.Cmd("GROUP e2e.test")
 		return strings.HasPrefix(line, "211 1")
 	})
-	expect(t, c, 205, "QUIT")
+	c.ExpectCmd(205, "QUIT")
 	var size int64 = -1
 	filepath.WalkDir(filepath.Join(s.Dir, "spool", "group"), func(p string, d os.DirEntry, err error) error {
 		if err == nil && !d.IsDir() && strings.HasPrefix(d.Name(), "over.") {

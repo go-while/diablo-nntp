@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"github.com/go-while/nntp-testkit/client"
 	"strings"
 	"testing"
 )
@@ -20,8 +21,8 @@ func TestFeederMaxHeaderSize(t *testing.T) {
 	art := append(append([]string{}, big[:6]...), pad...)
 	art = append(art, big[6:]...)
 	id := headerValue(art, "Message-ID")
-	expect(t, p, 335, "IHAVE %s", id)
-	send(t, p, wire(art))
+	p.ExpectCmd(335, "IHAVE %s", id)
+	p.MustSend(client.Stuff(art))
 	code, line, err := p.ReadStatus()
 	if err != nil {
 		t.Fatal(err)
@@ -32,8 +33,8 @@ func TestFeederMaxHeaderSize(t *testing.T) {
 
 	ok := newArticle(msgID(t), "e2e.test", "small headers", "body")
 	okID := headerValue(ok, "Message-ID")
-	expect(t, p, 335, "IHAVE %s", okID)
-	send(t, p, wire(ok))
-	status(t, p, 235, "IHAVE small article")
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(335, "IHAVE %s", okID)
+	p.MustSend(client.Stuff(ok))
+	p.ExpectStatus(235, "IHAVE small article")
+	p.ExpectCmd(205, "QUIT")
 }

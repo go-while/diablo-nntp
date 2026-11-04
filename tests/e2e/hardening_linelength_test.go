@@ -41,7 +41,7 @@ func TestReaderLongLineClosed(t *testing.T) {
 	}
 	// the reader still serves others
 	c2 := s.Reader(t)
-	expect(t, c2, 205, "QUIT")
+	c2.ExpectCmd(205, "QUIT")
 }
 
 // TestReaderLongLineAtLimit checks the edge: a command line of exactly the limit
@@ -52,16 +52,16 @@ func TestReaderLongLineAtLimit(t *testing.T) {
 	s := NewReaderSite(t, ReaderOptions{Spool: spool})
 
 	c := s.Reader(t)
-	send(t, c, "X"+strings.Repeat("a", clientMaxLine-3)+"\r\n")
+	c.MustSend("X" + strings.Repeat("a", clientMaxLine-3) + "\r\n")
 	code, line, err := c.ReadStatus()
 	if err != nil || code/100 != 5 {
 		t.Fatalf("line of exactly %d bytes: %d %q err=%v, want a 5xx reply", clientMaxLine, code, line, err)
 	}
-	expect(t, c, 111, "DATE")
-	expect(t, c, 205, "QUIT")
+	c.ExpectCmd(111, "DATE")
+	c.ExpectCmd(205, "QUIT")
 
 	c = s.Reader(t)
-	send(t, c, "X"+strings.Repeat("a", clientMaxLine-2)+"\r\n")
+	c.MustSend("X" + strings.Repeat("a", clientMaxLine-2) + "\r\n")
 	code, line, err = c.ReadStatus()
 	if err == nil && code == 500 {
 		// "500 Line too long", then the close

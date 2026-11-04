@@ -12,7 +12,7 @@ import (
 // listActiveGroups sends LIST ACTIVE with pattern and returns the group names listed.
 func listActiveGroups(t *testing.T, c *client.Conn, pattern string) []string {
 	t.Helper()
-	expect(t, c, 215, "LIST ACTIVE %s", pattern)
+	c.ExpectCmd(215, "LIST ACTIVE %s", pattern)
 	var groups []string
 	for _, l := range c.ReadDotLines() {
 		if f := strings.Fields(l); len(f) > 0 {
@@ -54,7 +54,7 @@ func TestReaderListWildcardTime(t *testing.T) {
 	// every way to place the pairs in the 56 characters (several seconds or more).
 	pattern := strings.Repeat("*?", 8) + "X"
 	start := time.Now()
-	send(t, c, "LIST ACTIVE "+pattern+"\r\n")
+	c.MustSend("LIST ACTIVE " + pattern + "\r\n")
 
 	const limit = 5 * time.Second
 	c2, err := client.TryDial(s.Addr, limit)
@@ -63,13 +63,13 @@ func TestReaderListWildcardTime(t *testing.T) {
 	}
 	c2 = c2.WithTB(t)
 	c.Deadline = limit
-	status(t, c, 215, "LIST ACTIVE "+pattern)
+	c.ExpectStatus(215, "LIST ACTIVE "+pattern)
 	if got := c.ReadDotLines(); len(got) != 0 {
 		t.Errorf("LIST ACTIVE %s: %q, want no groups", pattern, got)
 	}
 	if d := time.Since(start); d > limit {
 		t.Errorf("LIST ACTIVE %s took %v", pattern, d)
 	}
-	expect(t, c2, 205, "QUIT")
-	expect(t, c, 205, "QUIT")
+	c2.ExpectCmd(205, "QUIT")
+	c.ExpectCmd(205, "QUIT")
 }

@@ -34,7 +34,7 @@ func TestFeederChildSighupAfterQuit(t *testing.T) {
 	}
 	for range rounds {
 		p := s.Peer(t)
-		expect(t, p, 205, "QUIT")
+		p.ExpectCmd(205, "QUIT")
 		for _, pid := range children() {
 			_ = syscall.Kill(pid, syscall.SIGHUP)
 		}
@@ -74,7 +74,7 @@ func TestFeederMasterSigtermEndsSessions(t *testing.T) {
 	s := NewSite(t, SiteOptions{})
 	p := s.Peer(t)
 	defer p.Close()
-	expect(t, p, 203, "MODE STREAM")
+	p.ExpectCmd(203, "MODE STREAM")
 
 	if err := syscall.Kill(s.Proc.Pid(), syscall.SIGTERM); err != nil {
 		t.Fatal(err)

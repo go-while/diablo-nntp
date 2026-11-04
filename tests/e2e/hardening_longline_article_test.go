@@ -5,6 +5,7 @@ package e2e
 // closes the connection, after a 500.
 
 import (
+	"github.com/go-while/nntp-testkit/client"
 	"net"
 	"strings"
 	"testing"
@@ -23,19 +24,19 @@ func TestReaderIHaveLongLine(t *testing.T) {
 	p := s.dialFrom(t, PeerIP)
 
 	id := msgID(t)
-	expect(t, p, 335, "IHAVE %s", id)
+	p.ExpectCmd(335, "IHAVE %s", id)
 	// text around the long line is read normally, as is the rest after its end
-	send(t, p, wire(newArticle(id, "e2e.test", "long line", "before", longLine, "after")))
-	status(t, p, 437, "IHAVE article with a long line")
+	p.MustSend(client.Stuff(newArticle(id, "e2e.test", "long line", "before", longLine, "after")))
+	p.ExpectStatus(437, "IHAVE article with a long line")
 
 	id2 := msgID(t)
 	art := newArticle(id2, "e2e.test", "normal", "hello")
 	head, body := splitArticle(art)
 	st.AddArticle("e2e.test", fakeserver.Article{MessageID: id2, Headers: head, Body: body})
-	expect(t, p, 335, "IHAVE %s", id2)
-	send(t, p, wire(art))
-	status(t, p, 235, "IHAVE normal article")
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(335, "IHAVE %s", id2)
+	p.MustSend(client.Stuff(art))
+	p.ExpectStatus(235, "IHAVE normal article")
+	p.ExpectCmd(205, "QUIT")
 }
 
 // TestReaderTakeThisLongLine: the same with TAKETHIS, answered 439.
@@ -45,9 +46,9 @@ func TestReaderTakeThisLongLine(t *testing.T) {
 	p := s.dialFrom(t, PeerIP)
 
 	id := msgID(t)
-	send(t, p, "TAKETHIS "+id+"\r\n"+wire(newArticle(id, "e2e.test", "long line", longLine)))
-	status(t, p, 439, "TAKETHIS article with a long line")
-	expect(t, p, 205, "QUIT")
+	p.MustSend("TAKETHIS " + id + "\r\n" + client.Stuff(newArticle(id, "e2e.test", "long line", longLine)))
+	p.ExpectStatus(439, "TAKETHIS article with a long line")
+	p.ExpectCmd(205, "QUIT")
 }
 
 // TestReaderPostLongLine: POST of an article with a 2 MiB body line gets 441 and the
@@ -57,8 +58,8 @@ func TestReaderPostLongLine(t *testing.T) {
 	s := NewReaderSite(t, ReaderOptions{Spool: spool})
 	c := s.Reader(t)
 
-	expect(t, c, 340, "POST")
-	send(t, c, wire([]string{
+	c.ExpectCmd(340, "POST")
+	c.MustSend(client.Stuff([]string{
 		"From: E2E Poster <poster@example.invalid>",
 		"Newsgroups: e2e.test",
 		"Subject: long line",
@@ -68,9 +69,9 @@ func TestReaderPostLongLine(t *testing.T) {
 		longLine,
 		"after",
 	}))
-	status(t, c, 441, "POST article with a long line")
-	expect(t, c, 211, "GROUP e2e.test")
-	expect(t, c, 205, "QUIT")
+	c.ExpectStatus(441, "POST article with a long line")
+	c.ExpectCmd(211, "GROUP e2e.test")
+	c.ExpectCmd(205, "QUIT")
 }
 
 // TestReaderCommandLongLine: a command line of 2 MiB gets 500 and the connection is closed.

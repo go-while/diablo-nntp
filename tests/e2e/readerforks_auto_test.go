@@ -7,6 +7,7 @@ package e2e
 
 import (
 	"context"
+	testkit "github.com/go-while/nntp-testkit"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,7 +39,7 @@ func readerForkPids(s *Site) map[string]bool {
 // expectReaderForks waits for want reader forks and checks that no more follow.
 func expectReaderForks(t *testing.T, s *Site, want int) {
 	t.Helper()
-	waitFor(t, 20*time.Second, strconv.Itoa(want)+" reader forks", func() bool {
+	testkit.WaitFor(t, 20*time.Second, strconv.Itoa(want)+" reader forks", func() bool {
 		return len(readerForkPids(s)) >= want
 	})
 	time.Sleep(time.Second)
@@ -424,7 +425,7 @@ func TestReaderForksInvalid(t *testing.T) {
 			s.WriteFile(t, "diablo.config",
 				strings.Replace(conf, "readerforks\t1\n", "readerforks\t"+c.conf+"\n", 1))
 			args := []string{"-d", "-p", PathHost, "-h", PathHost,
-				"-P", "[127.0.0.1]:" + strconv.Itoa(freePort(t))}
+				"-P", "[127.0.0.1]:" + strconv.Itoa(testkit.FreePort(t))}
 			if c.flag != "" {
 				args = append(args, "-M", c.flag)
 			}

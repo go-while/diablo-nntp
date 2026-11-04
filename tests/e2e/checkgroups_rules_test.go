@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	testkit "github.com/go-while/nntp-testkit"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,7 +23,7 @@ const cgLogLine = "all:*:*:log=cg.log\n"
 func cgDone(t *testing.T, s *Site) string {
 	t.Helper()
 	var log []byte
-	waitFor(t, 30*time.Second, "the checkgroups in the control log", func() bool {
+	testkit.WaitFor(t, 30*time.Second, "the checkgroups in the control log", func() bool {
 		log, _ = os.ReadFile(filepath.Join(s.Dir, "log", "cg.log"))
 		return strings.Contains(string(log), ">> processing completed ok") || strings.Contains(string(log), ">> processing failed")
 	})

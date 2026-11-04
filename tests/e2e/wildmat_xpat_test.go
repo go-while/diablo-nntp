@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	testkit "github.com/go-while/nntp-testkit"
 	"strings"
 	"testing"
 	"time"
@@ -31,7 +32,7 @@ func TestReaderXPatUnterminatedClass(t *testing.T) {
 	feedReader(t, s, st, "e2e.test", newArticle(id, "e2e.test", "a", "wildmat xpat body"))
 
 	r := s.Reader(t)
-	waitFor(t, 10*time.Second, "the article in GROUP e2e.test", func() bool {
+	testkit.WaitFor(t, 10*time.Second, "the article in GROUP e2e.test", func() bool {
 		_, line := r.Cmd("GROUP e2e.test")
 		f := strings.Fields(line)
 		return len(f) > 1 && f[0] == "211" && f[1] != "0"
@@ -53,5 +54,5 @@ func TestReaderXPatUnterminatedClass(t *testing.T) {
 	if code, line := r.Cmd("GROUP e2e.test"); code != 211 {
 		t.Errorf("GROUP after XPAT: got %d %q, want 211", code, line)
 	}
-	expect(t, r, 205, "QUIT")
+	r.ExpectCmd(205, "QUIT")
 }

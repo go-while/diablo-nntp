@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"github.com/go-while/nntp-testkit/client"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,9 +22,9 @@ func TestSpoolDirRemovedWhileWriting(t *testing.T) {
 	})
 	p := s.Peer(t)
 	first := msgID(t)
-	expect(t, p, 335, "IHAVE %s", first)
-	send(t, p, wire(newArticle(first, "e2e.test", "first", "body")))
-	status(t, p, 235, "IHAVE first")
+	p.ExpectCmd(335, "IHAVE %s", first)
+	p.MustSend(client.Stuff(newArticle(first, "e2e.test", "first", "body")))
+	p.ExpectStatus(235, "IHAVE first")
 
 	dirs, _ := filepath.Glob(filepath.Join(s.Dir, "spool", "news", "D.*"))
 	if len(dirs) == 0 {
@@ -36,11 +37,11 @@ func TestSpoolDirRemovedWhileWriting(t *testing.T) {
 	}
 
 	second := msgID(t)
-	expect(t, p, 335, "IHAVE %s", second)
-	send(t, p, wire(newArticle(second, "e2e.test", "second", "body")))
-	status(t, p, 235, "IHAVE after the spool directory was removed")
-	expect(t, p, 223, "STAT %s", second)
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(335, "IHAVE %s", second)
+	p.MustSend(client.Stuff(newArticle(second, "e2e.test", "second", "body")))
+	p.ExpectStatus(235, "IHAVE after the spool directory was removed")
+	p.ExpectCmd(223, "STAT %s", second)
+	p.ExpectCmd(205, "QUIT")
 
 	if again, _ := filepath.Glob(filepath.Join(s.Dir, "spool", "news", "D.*")); len(again) == 0 {
 		t.Errorf("spool directory not recreated")

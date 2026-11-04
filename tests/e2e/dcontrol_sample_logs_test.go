@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	testkit "github.com/go-while/nntp-testkit"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,7 +41,7 @@ func TestDcontrolSampleCheckgroupsLog(t *testing.T) {
 
 			want := filepath.Join(s.Dir, "log", "checkgroups.other")
 			other := filepath.Join(s.Dir, "log", "control.log")
-			waitFor(t, 10*time.Second, "control message to be logged", func() bool {
+			testkit.WaitFor(t, 10*time.Second, "control message to be logged", func() bool {
 				correct, _ := os.ReadFile(want)
 				fallback, _ := os.ReadFile(other)
 				for _, id := range ids {

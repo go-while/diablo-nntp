@@ -260,6 +260,15 @@ main(int ac, char **av)
 	    fprintf(stderr, "WARNING! Version mismatch file V%d, expecting V%d\n", hh.version, HVERSION);
 	    fprintf(stderr, "dump may be invalid\n");
 	}
+	/*
+	 * A damaged header must not make the record size 0 (division by
+	 * zero below) or smaller than a record (reads past each one).
+	 */
+	if (hh.henSize < sizeof(History) || hh.henSize > 4096) {
+	    fprintf(stderr, "Corrupted history file - record size %d (expected %d)\n",
+		(int)hh.henSize, (int)sizeof(History));
+	    exit(1);
+	}
 	rsize = hh.henSize;
 	hsize = hh.hashSize;
 	HistoryVersion = hh.version;

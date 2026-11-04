@@ -6,6 +6,7 @@ package e2e
 
 import (
 	"bytes"
+	testkit "github.com/go-while/nntp-testkit"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -166,7 +167,7 @@ end
 	})
 	accepted := func(id string) {
 		t.Helper()
-		waitFor(t, 15*time.Second, "the peer to accept "+id, func() bool { return slices.Contains(got.list(), id) })
+		testkit.WaitFor(t, 15*time.Second, "the peer to accept "+id, func() bool { return slices.Contains(got.list(), id) })
 	}
 
 	// The first article creates dqueue/fake; dspoolout rotates it (a batch worker sends it)
@@ -177,7 +178,7 @@ end
 	accepted(a[0])
 	var w1 int
 	var sock1 []string
-	waitFor(t, 10*time.Second, "the realtime worker connected", func() bool {
+	testkit.WaitFor(t, 10*time.Second, "the realtime worker connected", func() bool {
 		w1 = realtimeWorker(s)
 		if w1 > 0 {
 			sock1 = sockets(w1)
@@ -214,7 +215,7 @@ end
 		id := s.Inject(t, "e2e.test", 1)[0]
 		accepted(id)
 		var w int
-		waitFor(t, 10*time.Second, "realtime worker "+strconv.Itoa(n)+" after connlife, a rotation and an article", func() bool {
+		testkit.WaitFor(t, 10*time.Second, "realtime worker "+strconv.Itoa(n)+" after connlife, a rotation and an article", func() bool {
 			w = realtimeWorker(s)
 			return w > 0 && w != prev
 		})

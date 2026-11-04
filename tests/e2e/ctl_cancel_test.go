@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"github.com/go-while/nntp-testkit/client"
 	"testing"
 )
 
@@ -42,8 +43,8 @@ func TestReaderControlCancelNoNewsgroups(t *testing.T) {
 		"body",
 	}
 	p := s.dialFrom(t, PeerIP)
-	expect(t, p, 335, "IHAVE %s", mid)
-	send(t, p, wire(art))
+	p.ExpectCmd(335, "IHAVE %s", mid)
+	p.MustSend(client.Stuff(art))
 	code, line, err := p.ReadStatus()
 	if err != nil {
 		t.Fatalf("control article without Newsgroups: no reply (process died?): %v", err)

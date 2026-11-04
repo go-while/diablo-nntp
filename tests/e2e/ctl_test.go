@@ -166,7 +166,7 @@ func TestDiabloCtlFeeder(t *testing.T) {
 
 	out, code = ctl(t, s, ctlp, conf, "start")
 	wantCtl(t, out, code, 0, "start")
-	waitFor(t, testkit.Deadline(), "dhosts.cache", func() bool {
+	testkit.WaitFor(t, testkit.Deadline(), "dhosts.cache", func() bool {
 		_, err := os.Stat(filepath.Join(s.Dir, "dhosts.cache"))
 		return err == nil
 	})
@@ -175,7 +175,7 @@ func TestDiabloCtlFeeder(t *testing.T) {
 		t.Fatalf("peer greeting after diablo-ctl start: %q", p.Greeting)
 	}
 	checkPsPad(t, s, "diablo", "server")
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(205, "QUIT")
 
 	out, code = ctl(t, s, ctlp, filepath.Base(conf), "start") // -f without a slash (cwd is s.Dir)
 	wantCtl(t, out, code, 0, "start while running, -f without a slash")
@@ -220,7 +220,7 @@ func TestDiabloCtlReader(t *testing.T) {
 	out, code = ctl(t, s, ctlp, conf, "start")
 	wantCtl(t, out, code, 0, "start")
 	c := s.Reader(t)
-	expect(t, c, 205, "QUIT")
+	c.ExpectCmd(205, "QUIT")
 	checkPsPad(t, s, "dreaderd", "[127.0.0.1]:"+port)
 	if runtime.GOOS == "linux" {
 		if pids := sitePids(s, "dreaderd"); len(pids) > 0 {
@@ -296,7 +296,7 @@ func TestDiabloCtlOnlyItsOwnSite(t *testing.T) {
 	if !strings.HasPrefix(p.Greeting, "200 ") {
 		t.Fatalf("other site's greeting after diablo-ctl stop: %q", p.Greeting)
 	}
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(205, "QUIT")
 	select {
 	case <-other.Proc.Done():
 		t.Errorf("other site's diablo is gone after diablo-ctl stop\n%s", out)

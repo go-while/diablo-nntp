@@ -37,16 +37,16 @@ access ` + PeerIP + ` open
 	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: access})
 
 	c := s.Reader(t)
-	expect(t, c, 381, "AUTHINFO USER bob")
-	expect(t, c, 281, "AUTHINFO PASS secret")
-	expect(t, c, 502, "AUTHINFO USER mallory")
-	expect(t, c, 502, "AUTHINFO PASS other")
-	expect(t, c, 205, "QUIT")
+	c.ExpectCmd(381, "AUTHINFO USER bob")
+	c.ExpectCmd(281, "AUTHINFO PASS secret")
+	c.ExpectCmd(502, "AUTHINFO USER mallory")
+	c.ExpectCmd(502, "AUTHINFO PASS other")
+	c.ExpectCmd(205, "QUIT")
 
 	// allowed by address: AUTHINFO is still open to it
 	o := s.dialFrom(t, PeerIP)
-	expect(t, o, 381, "AUTHINFO USER bob")
-	expect(t, o, 205, "QUIT")
+	o.ExpectCmd(381, "AUTHINFO USER bob")
+	o.ExpectCmd(205, "QUIT")
 }
 
 // TestReaderCapabilitiesArgument (D-124, RFC 3977 section 5.2.2): CAPABILITIES with a keyword
@@ -73,7 +73,7 @@ func TestReaderCapabilitiesArgument(t *testing.T) {
 			}
 		}
 	}
-	expect(t, c, 205, "QUIT")
+	c.ExpectCmd(205, "QUIT")
 }
 
 // TestReaderUnavailableCommand502 (D-125, RFC 3977 section 3.2.1): a command dreaderd has but
@@ -85,14 +85,14 @@ func TestReaderUnavailableCommand502(t *testing.T) {
 	_, spool := spoolStore(t)
 	s := NewReaderSite(t, ReaderOptions{Spool: spool})
 	r := s.Reader(t)
-	expect(t, r, 502, "TAKETHIS <d125@e2e.test>")
-	expect(t, r, 500, "FROBNICATE")
-	expect(t, r, 205, "QUIT")
+	r.ExpectCmd(502, "TAKETHIS <d125@e2e.test>")
+	r.ExpectCmd(500, "FROBNICATE")
+	r.ExpectCmd(205, "QUIT")
 
 	f := s.dialFrom(t, PeerIP) // DefaultReaderAccess: feed yes only
-	expect(t, f, 502, "GROUP e2e.test")
-	expect(t, f, 500, "FROBNICATE")
-	expect(t, f, 205, "QUIT")
+	f.ExpectCmd(502, "GROUP e2e.test")
+	f.ExpectCmd(500, "FROBNICATE")
+	f.ExpectCmd(205, "QUIT")
 
 	access := `vserverdef DEFAULT
     hostname ` + PathHost + `
@@ -110,6 +110,6 @@ access ` + PeerIP + ` feedread
 	_, spool2 := spoolStore(t)
 	s2 := NewReaderSite(t, ReaderOptions{Spool: spool2, Access: access})
 	m := s2.dialFrom(t, PeerIP)
-	expect(t, m, 500, "GROUP e2e.test")
-	expect(t, m, 205, "QUIT")
+	m.ExpectCmd(500, "GROUP e2e.test")
+	m.ExpectCmd(205, "QUIT")
 }

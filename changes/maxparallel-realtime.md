@@ -1,0 +1,1 @@
+- `dspoolout`: a realtime label's realtime dnewslink now counts toward `maxparallel`, which `samples/dnewsfeeds` describes as the number of connections to the host. Before, it came on top: four hashfeed labels to one peer with `maxparallel 2` each opened up to 12 connections. At least one batch dnewslink is kept for the backlog, so `maxparallel 1` with realtime still allows two.

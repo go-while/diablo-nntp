@@ -37,8 +37,8 @@ func TestSpoolLongXrefPath(t *testing.T) {
 	feedReader(t, s, st, "e2e.test", newArticle(id, "e2e.test", "long headers", "body"))
 
 	c := s.Reader(t)
-	defer expect(t, c, 205, "QUIT")
-	expect(t, c, 211, "GROUP e2e.test")
+	defer c.ExpectCmd(205, "QUIT")
+	c.ExpectCmd(211, "GROUP e2e.test")
 	for _, cmd := range []string{"HEAD " + id, "ARTICLE " + id} {
 		code, line := c.Cmd("%s", cmd)
 		if code != 221 && code != 220 {
@@ -61,5 +61,5 @@ func TestSpoolLongXrefPath(t *testing.T) {
 			t.Errorf("%s: Xref header of %d bytes, want one of at most 8192", cmd, len(xref))
 		}
 	}
-	expect(t, c, 223, "STAT 1") // the reader is still there
+	c.ExpectCmd(223, "STAT 1") // the reader is still there
 }
