@@ -1,0 +1,7 @@
+- `dreaderd`, `dsyncgroups`: a numeric listen, connect or bind address (for example `::1`) works on a host without a global IPv6 address; `AI_ADDRCONFIG` is used only for host names and the wildcard (D-89).
+- `diablo`: an article without `Bytes:` on a header-only feed is counted and logged as `HdrOnlyNoBytes`, not `UnknownReject` (D-92).
+- `dreaderd`: a reload of the access cache frees the whole old group list, not only its first node (D-103).
+- `dreaderd`: with two matching `dcontrol.ctl` lines that both verify, the first verifier is freed (D-110).
+- `dnewslink`: a write that times out is reported as failed, so the article is not counted as sent (D-116).
+- `dspool.ctl`: an unknown option inside a spool or metaspool block stops the program, as an unknown definition already does; a typo no longer leaves the default in place (D-120).
+- `dicmd`: a command line longer than 255 bytes is sent whole before the reply is read, and a long reply line is not mistaken for the end of the reply (D-127).

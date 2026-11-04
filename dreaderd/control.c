@@ -510,6 +510,8 @@ ParseControl(Connection *conn, const char *cmd, const char *from, const char *ne
 	    zfreeStr(&conn->co_MemPool, &ctl->ct_From);
 	    zfreeStr(&conn->co_MemPool, &ctl->ct_Groups);
 	    ctl->ct_Flags &= ~(CTF_EXECUTE|CTF_MAIL|CTF_DGPVERIFY|CTF_PGPVERIFY|CTF_DROP); /* XXX */
+	    /* the later line decides the verifier too (D-110) */
+	    zfreeStr(&conn->co_MemPool, &ctl->ct_Verify);
 	} else {
 	    ctl = zalloc(&conn->co_MemPool, sizeof(Control));
 	}
@@ -541,6 +543,7 @@ ParseControl(Connection *conn, const char *cmd, const char *from, const char *ne
 		ctl->ct_Flags |= CTF_PGPVERIFY;
 		if ((ctl->ct_Flags & CTF_DROP) == 0)
 		    ctl->ct_Flags |= CTF_EXECUTE;
+		zfreeStr(&conn->co_MemPool, &ctl->ct_Verify);
 		ctl->ct_Verify = zallocStr(&conn->co_MemPool, saction + 7);
 	    } else if (strcmp(saction, "dgpverify") == 0) {
 		/*

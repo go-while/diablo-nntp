@@ -618,7 +618,7 @@ main(int ac, char **av)
 	     * Open a wildcard listening socket
 	     */
 	    bzero(&hints, sizeof(hints));
-	    hints.ai_flags = AI_PASSIVE | AI_ADDRCONFIG;
+	    hints.ai_flags = AI_PASSIVE | AddrConfigFlag(bl->bl_Host);
 	    hints.ai_family = PF_UNSPEC;
 	    hints.ai_socktype = SOCK_STREAM;
 	    error = getaddrinfo(bl->bl_Host, bl->bl_Port, &hints, &res);

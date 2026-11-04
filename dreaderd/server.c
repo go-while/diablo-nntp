@@ -424,7 +424,7 @@ AddServer(char *bindinfo, int txbufsize, int rxbufsize, const char *host, int ty
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = AI_ADDRCONFIG;
+    hints.ai_flags = AddrConfigFlag(host);
     snprintf(portbuf, sizeof(portbuf), "%d", port);
 
     if (getaddrinfo(host, portbuf, &hints, &dst) != 0) {
@@ -439,6 +439,7 @@ AddServer(char *bindinfo, int txbufsize, int rxbufsize, const char *host, int ty
     }
 
     if (bindinfo != NULL) {
+	hints.ai_flags = AddrConfigFlag(bindinfo);
         if (getaddrinfo(bindinfo, NULL, &hints, &src) != 0) {
 	    freeaddrinfo(dst);
 	    logit(LOG_ERR, "Unknown host for bindhost option: %s\n",
