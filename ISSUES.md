@@ -185,8 +185,11 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-169](#d-169-the-cdb--deny-list-does-not-work-and-rejects-every-user) | Low | The `cdb !` deny list does not work and rejects every user | fixed (#185) |
 | [D-170](#d-170-on-illumos-a-hand-back-lost-at-the-descriptor-limit-stays-counted) | Low | On illumos a hand-back lost at the descriptor limit stays counted (Act) | open |
 | [D-171](#d-171-on-openbsd-readers-do-not-see-writes-through-their-shared-maps) | Medium (OpenBSD only) | On OpenBSD readers do not see writes through their shared maps | won't fix (design) |
-| [D-172](#d-172-feed-children-and-programs-diablo-runs-inherit-retained-control-connections) | Low | Feed children and programs diablo runs inherit retained control connections | PR (#294) |
+| [D-172](#d-172-feed-children-and-programs-diablo-runs-inherit-retained-control-connections) | Low | Feed children and programs diablo runs inherit retained control connections | fixed (#294) |
 | [D-173](#d-173-netremote-session-accounting-goes-to-a-placeholder-host) | Low | NETREMOTE session accounting goes to a placeholder host | open |
+| [D-176](#d-176-gz-header-parse-of-an-overview-data-file-is-not-bounded-by-the-file-size) | Low | .gz header parse of an overview data file is not bounded by the file size | PR (#?) |
+| [D-177](#d-177-dreaderaccess-line-longer-than-the-read-buffer-is-parsed-in-pieces) | Low | dreader.access line longer than the read buffer is parsed in pieces | PR (#?) |
+| [D-178](#d-178-dsyncgroups-cuts-a-long-authinfo-user-name-or-password) | Low | dsyncgroups cuts a long AUTHINFO user name or password | PR (#?) |
 
 Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315), [F-02 configure script](#f-02-configure-script-for-the-build-options), [F-03 refeed a whole spool](#f-03-refeed-a-whole-spool-to-another-server), [F-04 NoCeM notices](#f-04-nocem-notices), [F-05 init scripts](#f-05-init-scripts-and-adm-script-replacements), [F-06 Perl authentication](#f-06-perl-authentication-for-dreaderd).
 
@@ -1068,6 +1071,15 @@ History, the KPDB files (`dactive.kp`) and overview are read through `MAP_SHARED
 
 ### D-173 NETREMOTE session accounting goes to a placeholder host
 `dreaderd/dns.c`, `netRemoteAccounting()` (only with `NETREMOTE_ENABLED`, off in `lib/vendor.h`): at every session end of a user who logged in with a password, the DNS worker sends the session's accounting to the hard-coded `Password@accounting.server:8998`, not to the `netremote` server of the authdef the user logged in through. Found by go-while from reading. Before #292 NETREMOTE did not compile with OpenSSL 1.1 or later (the old `des_*` names), and the lookup, connect and read had no timeouts; #292 maps the names to the `DES_` calls and bounds the exchange with `readerauthtimeout`. The maintainer keeps NETREMOTE now that it builds (2026-11-03). Left: the accounting destination (use the authdef's `netremote` setting, or send nothing without one).
+
+### D-176 .gz header parse of an overview data file is not bounded by the file size
+`dreaderd/group.c` (`MakeOverHFile()`) and `util/dexpireover.c` (`RewriteData()`): the gzip header of a `.gz` data file was walked with no check against the file size (extra field length, file name and comment strings, header CRC), so a damaged or hostile `.gz` made `inflate` read past the mapping. A wrong magic was logged and parsed anyway, and the extra-field length skipped two bytes too few. The files are written by `dexpireover -z`; needs a damaged file. Found in our own audit. Fixed by one bounded header length function in both files; a bad header is reported as an inflate error.
+
+### D-177 dreader.access line longer than the read buffer is parsed in pieces
+`dreaderd/dns.c`, `InstallAccessCache()` read `dreader.access` with `fgets(buf[1024])`; the tail of a longer line was parsed as a line of its own (the same class as D-82 and D-94). A line that does not fit is now refused with its line number and the file is not installed (as for other errors); a long comment line is skipped whole. Our own audit.
+
+### D-178 dsyncgroups cuts a long AUTHINFO user name or password
+`util/dsyncgroups.c`: `authinfo user` / `authinfo pass` were built with `snprintf()` in a 4096-byte buffer and sent cut. A cut password is another password. Now dsyncgroups says the name or password is too long and exits 1 before sending it. Our own audit.
 
 ## Feature requests
 
