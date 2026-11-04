@@ -1244,6 +1244,12 @@ Maintainer decisions (2026-11-04):
   carries them. A poster's own X-Trace, NNTP-Posting-Host or X-Complaints-To is still refused
   (RFC 5537 3.5 step 2 allows refusing trace fields of an earlier injection).
 
+Compatibility (maintainer, 2026-11-04): the default follows the standards; where the code
+allows it cheaply, an opt-in option keeps today's behavior for sites that depend on it, for
+example generating Lines, or also writing the old X-Trace, NNTP-Posting-Host and X-Complaints-To
+fields next to Injection-Info. Each PR says whether it has such an option and why or why not.
+posttrailer stays removed unless keeping it opt-in turns out trivial; that is decided in its PR.
+
 Suggested order, one PR each: (1) Injection-Date and the step-2 refusals (Injection-Info, Xref,
 `.POSTED`); (2) Path `.POSTED` and Injection-Info in place of X-Trace, NNTP-Posting-Host and
 X-Complaints-To (with `cryptpw`); (3) the Date format and window; (4) syntax
