@@ -285,7 +285,7 @@ func TestDexpireoverLockTimeoutKept(t *testing.T) {
 	}
 }
 
-// lockFaultShim builds an LD_PRELOAD library (Linux, illumos) for fcntl locks; lockFaultEnv
+// lockFaultShim builds an LD_PRELOAD library (Linux, illumos, FreeBSD, NetBSD) for fcntl locks; lockFaultEnv
 // gives the variable that loads it.
 //
 //	LOCKFAULT=eintr        fail the first blocking lock (F_SETLKW) with EINTR
@@ -303,13 +303,85 @@ func lockFaultShim(t *testing.T) string {
 	return preloadShim(t, "lockfault", lockFaultSource)
 }
 
-// preloadShim builds the C source src into an LD_PRELOAD library (Linux, illumos) named
-// <name>.so; lockFaultEnv gives the variable that loads it.
+// preloadHost reports whether LD_PRELOAD shims run on this system: Linux, FreeBSD and NetBSD,
+// and illumos when withIllumos (the shims that were never ported there stay off).
+func preloadHost(withIllumos bool) bool {
+	switch runtime.GOOS {
+	case "linux", "freebsd", "netbsd":
+		return true
+	case "illumos":
+		return withIllumos
+	}
+	return false
+}
+
+// shimLibs is what a shim links with: dlsym() is in libc on the BSDs, which need no libdl.
+func shimLibs() []string {
+	if runtime.GOOS == "freebsd" || runtime.GOOS == "netbsd" {
+		return nil
+	}
+	return []string{"-ldl"}
+}
+
+// fdPathC is the C function fdpath(fd, buf, len) for the shims that need the file name of a
+// descriptor (the text /*FDPATH*/ in their source, after the includes). It leaves "" when the
+// system does not tell. Linux and illumos read /proc; FreeBSD asks fcntl(F_KINFO), NetBSD
+// fcntl(F_GETPATH).
+const fdPathC = `
+#if defined(__FreeBSD__)
+#include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/socket.h>
+#include <sys/user.h>
+#endif
+#if defined(__NetBSD__)
+#include <sys/param.h>
+#endif
+static void
+fdpath(int fd, char *path, size_t len)
+{
+#if defined(__FreeBSD__)
+    struct kinfo_file kf;
+
+    memset(&kf, 0, sizeof(kf));
+    kf.kf_structsize = sizeof(kf);
+    path[0] = 0;
+    if (fcntl(fd, F_KINFO, &kf) == 0)
+	snprintf(path, len, "%s", kf.kf_path);
+#elif defined(__NetBSD__)
+    char buf[MAXPATHLEN + 1];
+
+    path[0] = 0;
+    if (fcntl(fd, F_GETPATH, buf) == 0)
+	snprintf(path, len, "%s", buf);
+#else
+    char link[64];
+    ssize_t n;
+
+#ifdef __sun
+    snprintf(link, sizeof(link), "/proc/self/path/%d", fd);
+#else
+    snprintf(link, sizeof(link), "/proc/self/fd/%d", fd);
+#endif
+    n = readlink(link, path, len - 1);
+    path[n > 0 ? n : 0] = 0;
+#endif
+}
+`
+
+// withFdPath puts fdPathC into a shim source at its /*FDPATH*/ mark.
+func withFdPath(src string) string {
+	return strings.Replace(src, "/*FDPATH*/", fdPathC, 1)
+}
+
+// preloadShim builds the C source src into an LD_PRELOAD library (Linux, illumos, FreeBSD,
+// NetBSD) named <name>.so; lockFaultEnv gives the variable that loads it.
 func preloadShim(t *testing.T, name, src string) string {
 	t.Helper()
-	if runtime.GOOS != "linux" && runtime.GOOS != "illumos" {
-		t.Skip("the fault injector uses LD_PRELOAD on Linux and illumos")
+	if !preloadHost(true) {
+		t.Skip("the fault injector uses LD_PRELOAD on Linux, illumos, FreeBSD and NetBSD")
 	}
+	src = withFdPath(src)
 	cc := wmCC(t)
 	dir := t.TempDir()
 	c := filepath.Join(dir, name+".c")
@@ -317,7 +389,7 @@ func preloadShim(t *testing.T, name, src string) string {
 	if err := os.WriteFile(c, []byte(src), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	args := []string{"-shared", "-fPIC", "-o", so, c, "-ldl"}
+	args := append([]string{"-shared", "-fPIC", "-o", so, c}, shimLibs()...)
 	if runtime.GOOS == "illumos" {
 		args = append([]string{"-m64"}, args...) // the Diablo programs are 64-bit
 	}
@@ -349,7 +421,7 @@ const lockFaultSource = `#define _GNU_SOURCE
 #include <unistd.h>
 
 typedef int (*fcntl_fn)(int, int, ...);
-
+/*FDPATH*/
 static void
 logline(const char *env, const char *line)
 {
@@ -370,18 +442,11 @@ fault(int fd, int cmd, struct flock *fl)
     const char *only = getenv("LOCKFAULT_FILE");
     const char *on = getenv("LOCKFAULT_ON");
     const char *skip = getenv("LOCKFAULT_SKIP");
-    char link[64], path[4096], line[4200];
-    ssize_t n;
+    char path[4096], line[4200];
 
     if (cmd != F_SETLK && cmd != F_SETLKW)
 	return 0;
-#ifdef __sun
-    snprintf(link, sizeof(link), "/proc/self/path/%d", fd);
-#else
-    snprintf(link, sizeof(link), "/proc/self/fd/%d", fd);
-#endif
-    n = readlink(link, path, sizeof(path) - 1);
-    path[n > 0 ? n : 0] = 0;
+    fdpath(fd, path, sizeof(path));
     snprintf(line, sizeof(line), "%s %c %lld %lld %s\n",
 	cmd == F_SETLKW ? "SETLKW" : "SETLK",
 	fl->l_type == F_WRLCK ? 'W' : fl->l_type == F_RDLCK ? 'R' : 'U',

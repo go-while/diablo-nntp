@@ -13,7 +13,8 @@
 ##  The binaries end up in dbin/.  The news user and group are created when
 ##  missing (diablo switches to them at startup).  With E2E_FAKE_SENDMAIL=1
 ##  the moderation tests' fake sendmail is installed as /usr/sbin/sendmail
-##  where no sendmail exists (Linux only; see ci/fake-sendmail).  With
+##  where no sendmail exists (on FreeBSD and NetBSD in place of the base one, which
+##  is kept as sendmail.real; throw-away VMs only; see ci/fake-sendmail).  With
 ##  E2E_NO_CANLOCK=1 Cancel-Lock (CANLOCK_ENABLED) is built out even if
 ##  libcanlock is installed, to test the build without it.
 
@@ -194,6 +195,21 @@ else  # FreeBSD / illumos (OmniOS) / OpenBSD / NetBSD: gmake
 # The GNU Makefile needs gmake here (base `make` is BSD make on FreeBSD).
 MAKE=gmake; MAKEARGS=
 
+# E2E_FAKE_SENDMAIL=1 on FreeBSD and NetBSD: their base has a sendmail (or a postfix
+# front end) at /usr/sbin/sendmail, which the Linux rule above would leave alone, so the
+# moderation tests would not check the mail.  A throw-away test VM gets the fake in its place;
+# the original is kept as sendmail.real.
+fake_sendmail_bsd() {
+    [ "${E2E_FAKE_SENDMAIL:-}" = 1 ] || return 0
+    sm=/usr/sbin/sendmail
+    if [ -e "$sm" ] && ! grep -q diablo-e2e-fake-sendmail "$sm" 2>/dev/null; then
+        mv "$sm" "$sm.real" || { echo "build-on-host: could not move $sm away" >&2; return 0; }
+    fi
+    install -m 755 "$(dirname "$0")/fake-sendmail" "$sm" &&
+        echo "fake sendmail: installed as $sm" ||
+        echo "build-on-host: could not install fake sendmail at $sm" >&2
+}
+
 case "$os" in
 FreeBSD)
     echo "== FreeBSD $(freebsd-version 2>/dev/null || uname -r)"
@@ -201,12 +217,16 @@ FreeBSD)
     export ASSUME_ALWAYS_YES=yes
     # gmake is what the build needs beyond the base compiler, OpenSSL and zlib.
     pkg install -y gmake >/dev/null 2>&1 || pkg install -y gmake
-    # Cancel-Lock is left off here to match the known-good gmake-only baseline and
-    # keep this change focused. libcanlock from pkg does work on FreeBSD (installing
-    # it builds dreaderd with Cancel-Lock and its tests pass), so it can be enabled
-    # later; not installing it leaves the check below to build the feature out (the
-    # base ships no libcanlock header). TestReaderDNSQueueLimit is timing-flaky on
-    # the FreeBSD CI VM regardless of Cancel-Lock -- a separate item.
+    # Optional features, best effort (a package that is missing only leaves its
+    # feature, and the tests of it, out): libcanlock (Cancel-Lock, dcanlock), perl5
+    # (Perl authentication), gnupg (gpgv, for pgpverify) and tinycdb (CDB
+    # authentication). ./configure finds them under /usr/local.
+    pk="perl5 gnupg tinycdb"
+    [ "${E2E_NO_CANLOCK:-}" = 1 ] || pk="libcanlock $pk"
+    for p in $pk; do
+        pkg install -y "$p" >/dev/null 2>&1 || echo "build-on-host: package $p not installed"
+    done
+    fake_sendmail_bsd
     pw groupadd news 2>/dev/null || true
     pw useradd news -g news -d /var/tmp -s /bin/sh 2>/dev/null || true
     ;;
@@ -239,6 +259,19 @@ NetBSD)
     else
         pkg_add gmake >/dev/null 2>&1 || pkg_add gmake
     fi
+    # Optional features, best effort (see FreeBSD): libcanlock, perl, gnupg2 (gpgv)
+    # and tinycdb from pkgsrc. ./configure looks in /usr/local, /opt/local and
+    # /opt/ooce but not in pkgsrc's /usr/pkg, so a throw-away test VM gets /usr/local
+    # as a link to /usr/pkg.
+    if command -v pkgin >/dev/null 2>&1; then
+        pk="perl gnupg2 tinycdb"
+        [ "${E2E_NO_CANLOCK:-}" = 1 ] || pk="libcanlock $pk"
+        for p in $pk; do
+            pkgin -y install "$p" >/dev/null 2>&1 || echo "build-on-host: package $p not installed"
+        done
+        [ -e /usr/local ] || ln -s /usr/pkg /usr/local
+    fi
+    fake_sendmail_bsd
     groupadd news 2>/dev/null || true
     useradd -g news -d /var/tmp -s /bin/sh news 2>/dev/null || true
     ;;

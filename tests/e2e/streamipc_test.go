@@ -27,8 +27,8 @@ import (
 // with the stream IPC shim, and checks that the shim did refuse SOCK_SEQPACKET.
 func startStreamIPCReader(t *testing.T, conf map[string]string) *Site {
 	t.Helper()
-	if runtime.GOOS != "linux" {
-		t.Skip("the stream IPC shim needs Linux (LD_PRELOAD, /proc)")
+	if !preloadHost(false) {
+		t.Skip("the stream IPC shim needs LD_PRELOAD (Linux, FreeBSD, NetBSD)")
 	}
 	cc := wmCC(t)
 	dir := t.TempDir()
@@ -37,7 +37,7 @@ func startStreamIPCReader(t *testing.T, conf map[string]string) *Site {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command(cc, "-O2", "-shared", "-fPIC", "-o", so, src, "-ldl").CombinedOutput(); err != nil {
+	if out, err := exec.Command(cc, append([]string{"-O2", "-shared", "-fPIC", "-o", so, src}, shimLibs()...)...).CombinedOutput(); err != nil {
 		t.Skipf("cannot build the shim: %v\n%s", err, out)
 	}
 	marks := filepath.Join(dir, "refused.log")
@@ -61,11 +61,27 @@ func startStreamIPCReader(t *testing.T, conf map[string]string) *Site {
 // readers first, then the feed fork and the DNS workers).
 func procChildren(t *testing.T, pid int) []int {
 	t.Helper()
+	var kids []int
+	if runtime.GOOS != "linux" {
+		// no /proc here: ask ps (pid and parent pid of every process)
+		out, err := exec.Command("ps", "-ax", "-o", "pid=", "-o", "ppid=").Output()
+		if err != nil {
+			t.Fatalf("ps: %v", err)
+		}
+		for _, l := range strings.Split(string(out), "\n") {
+			if f := strings.Fields(l); len(f) == 2 && f[1] == strconv.Itoa(pid) {
+				if p, err := strconv.Atoi(f[0]); err == nil {
+					kids = append(kids, p)
+				}
+			}
+		}
+		sort.Ints(kids)
+		return kids
+	}
 	ents, err := os.ReadDir("/proc")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var kids []int
 	for _, e := range ents {
 		p, err := strconv.Atoi(e.Name())
 		if err != nil {

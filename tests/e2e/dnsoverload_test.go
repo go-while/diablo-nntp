@@ -555,8 +555,8 @@ func TestReaderListenBacklog(t *testing.T) {
 // for under the DNS worker instead of the reader and stayed, so every later client got "Too
 // many connections from your host".
 func TestReaderTooManyRefsHostLimit(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("the ETOOMANYREFS shim needs Linux (LD_PRELOAD)")
+	if !preloadHost(false) {
+		t.Skip("the ETOOMANYREFS shim needs LD_PRELOAD (Linux, FreeBSD, NetBSD)")
 	}
 	cc := wmCC(t)
 	so := filepath.Join(t.TempDir(), "tmrshim.so")
@@ -564,7 +564,7 @@ func TestReaderTooManyRefsHostLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command(cc, "-O2", "-shared", "-fPIC", "-o", so, src, "-ldl").CombinedOutput(); err != nil {
+	if out, err := exec.Command(cc, append([]string{"-O2", "-shared", "-fPIC", "-o", so, src}, shimLibs()...)...).CombinedOutput(); err != nil {
 		t.Skipf("cannot build the shim: %v\n%s", err, out)
 	}
 	_, spool := spoolStore(t)

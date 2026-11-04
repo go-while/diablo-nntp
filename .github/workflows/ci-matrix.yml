@@ -190,9 +190,10 @@ jobs:
 
   # FreeBSD: build + e2e suite on a vmactions VM. build-on-host owns the FreeBSD
   # path (pkg install gmake, create the news user, build with gmake and clang
-  # from base), so this job calls it like the Linux jobs. RADIUS/libcanlock/
-  # BerkeleyDB stay off (no library is wired up here / the base ships no
-  # db_185.h), keeping the dependency to gmake. This proves the FreeBSD build,
+  # from base), so this job calls it like the Linux jobs. It also installs, best
+  # effort, libcanlock, perl5, gnupg (gpgv) and tinycdb, and the fake sendmail, so
+  # the tests of those run. RADIUS/BerkeleyDB stay off (no library is wired up
+  # here / the base ships no db_185.h). This proves the FreeBSD build,
   # the e2e suite, and TestInitRcdFreeBSD (the rc.d script, which runs only where
   # /etc/rc.subr exists). The prepare step only sets up loopback aliases and the
   # peer host names; the build itself goes through the shared build-on-host.
@@ -233,7 +234,7 @@ jobs:
             chmod 755 tests/e2e/e2e.test
             # build-on-host installs gmake, creates the news user, builds the
             # optional features out (no library wired up here) and builds dbin.
-            tests/e2e/ci/build-on-host
+            E2E_FAKE_SENDMAIL=1 tests/e2e/ci/build-on-host
             echo "=== build.log (last 20 lines) ==="; tail -20 build.log
             ls dbin
             chmod -R a+rX .
@@ -315,7 +316,8 @@ jobs:
             ls dbin
 
   # NetBSD: best effort, same shape as FreeBSD via build-on-host (pkgin install
-  # gmake, create the news user, build with gmake and gcc from base). The
+  # gmake, create the news user, build with gmake and gcc from base; libcanlock,
+  # perl, gnupg2 and tinycdb from pkgsrc where available). The
   # release is pinned so an action update cannot change the OS under test.
   # Does not fail the workflow until it is green; reported either way.
   netbsd:
@@ -353,7 +355,7 @@ jobs:
             chmod 755 tests/e2e/e2e.test
             # build-on-host installs gmake, creates the news user, builds the
             # optional features out and builds dbin with gmake and gcc.
-            tests/e2e/ci/build-on-host
+            E2E_FAKE_SENDMAIL=1 tests/e2e/ci/build-on-host
             echo "=== build.log (last 20 lines) ==="; tail -20 build.log
             ls dbin
             chmod -R a+rX .
