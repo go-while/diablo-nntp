@@ -261,15 +261,19 @@ NetBSD)
     fi
     # Optional features, best effort (see FreeBSD): libcanlock, perl, gnupg2 (gpgv)
     # and tinycdb from pkgsrc. ./configure looks in /usr/local, /opt/local and
-    # /opt/ooce but not in pkgsrc's /usr/pkg, so a throw-away test VM gets /usr/local
-    # as a link to /usr/pkg.
+    # /opt/ooce but not in pkgsrc's /usr/pkg (and NetBSD has an /usr/local of its
+    # own), so a throw-away test VM gets /opt/local as a link to /usr/pkg.
     if command -v pkgin >/dev/null 2>&1; then
         pk="perl gnupg2 tinycdb"
         [ "${E2E_NO_CANLOCK:-}" = 1 ] || pk="libcanlock $pk"
         for p in $pk; do
             pkgin -y install "$p" >/dev/null 2>&1 || echo "build-on-host: package $p not installed"
         done
-        [ -e /usr/local ] || ln -s /usr/pkg /usr/local
+        [ -e /opt/local ] || ln -s /usr/pkg /opt/local
+        for p in perl gpgv libcanlock tinycdb; do
+            pkg_info -e "$p" >/dev/null 2>&1 && echo "build-on-host: $p installed" || echo "build-on-host: $p missing"
+        done
+        ls /usr/pkg/bin/gpgv* /usr/pkg/bin/perl /usr/pkg/include/libcanlock-3/canlock.h /usr/pkg/include/cdb.h 2>&1 | sed 's/^/build-on-host: /'
     fi
     fake_sendmail_bsd
     groupadd news 2>/dev/null || true

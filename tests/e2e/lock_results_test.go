@@ -325,9 +325,14 @@ func shimLibs() []string {
 
 // fdPathC is the C function fdpath(fd, buf, len) for the shims that need the file name of a
 // descriptor (the text /*FDPATH*/ in their source, after the includes). It leaves "" when the
-// system does not tell. Linux and illumos read /proc; FreeBSD asks fcntl(F_KINFO), NetBSD
-// fcntl(F_GETPATH).
+// system does not tell. Linux and illumos read /proc. FreeBSD and NetBSD have no /proc: the
+// kernel can name a file (fcntl F_KINFO, F_GETPATH) only while the name is in its name cache,
+// which it often is not for a file created a moment ago, so the shim also remembers the path
+// of every open() and fopen() (and forgets it at close()) and uses that when the kernel does
+// not know. FDPATH_TRACK makes it do that on any system.
 const fdPathC = `
+#include <stdarg.h>
+#include <stdlib.h>
 #if defined(__FreeBSD__)
 #include <sys/param.h>
 #include <sys/queue.h>
@@ -337,34 +342,141 @@ const fdPathC = `
 #if defined(__NetBSD__)
 #include <sys/param.h>
 #endif
+#if defined(__FreeBSD__) || defined(__NetBSD__) || defined(FDPATH_TRACK)
+#define FDPATH_TRACKED 1
+#define TRACKMAX 4096
+static char tracked[TRACKMAX][512];
+
+static void
+track(int fd, const char *path)
+{
+    char cwd[400];
+
+    if (fd < 0 || fd >= TRACKMAX || path == NULL)
+	return;
+    tracked[fd][0] = 0;
+    if (path[0] == '/')
+	snprintf(tracked[fd], sizeof(tracked[fd]), "%s", path);
+    else if (getcwd(cwd, sizeof(cwd)) != NULL)
+	snprintf(tracked[fd], sizeof(tracked[fd]), "%s/%s", cwd, path);
+}
+
+static int
+open_tracked(const char *name, const char *path, int flags, mode_t mode)
+{
+    int (*real)(const char *, int, ...) = (int (*)(const char *, int, ...))dlsym(RTLD_NEXT, name);
+    int fd = real(path, flags, mode);
+
+    if (fd >= 0)
+	track(fd, path);
+    return fd;
+}
+
+int
+open(const char *path, int flags, ...)
+{
+    mode_t mode = 0;
+
+    if (flags & O_CREAT) {
+	va_list ap;
+
+	va_start(ap, flags);
+	mode = (mode_t)va_arg(ap, int);
+	va_end(ap);
+    }
+    return open_tracked("open", path, flags, mode);
+}
+
+static FILE *
+fopen_tracked(const char *name, const char *path, const char *mode)
+{
+    FILE *(*real)(const char *, const char *) = (FILE *(*)(const char *, const char *))dlsym(RTLD_NEXT, name);
+    FILE *f = real(path, mode);
+
+    if (f != NULL)
+	track(fileno(f), path);
+    return f;
+}
+
+FILE *
+fopen(const char *path, const char *mode)
+{
+    return fopen_tracked("fopen", path, mode);
+}
+
+#ifdef __linux__	/* glibc with _FILE_OFFSET_BITS=64 */
+int
+open64(const char *path, int flags, ...)
+{
+    mode_t mode = 0;
+
+    if (flags & O_CREAT) {
+	va_list ap;
+
+	va_start(ap, flags);
+	mode = (mode_t)va_arg(ap, int);
+	va_end(ap);
+    }
+    return open_tracked("open64", path, flags, mode);
+}
+
+FILE *
+fopen64(const char *path, const char *mode)
+{
+    return fopen_tracked("fopen64", path, mode);
+}
+#endif
+
+int
+close(int fd)
+{
+    static int (*real)(int);
+
+    if (real == NULL)
+	real = (int (*)(int))dlsym(RTLD_NEXT, "close");
+    if (fd >= 0 && fd < TRACKMAX)
+	tracked[fd][0] = 0;
+    return real(fd);
+}
+#endif
+
 static void
 fdpath(int fd, char *path, size_t len)
 {
+    path[0] = 0;
 #if defined(__FreeBSD__)
-    struct kinfo_file kf;
+    {
+	struct kinfo_file kf;
 
-    memset(&kf, 0, sizeof(kf));
-    kf.kf_structsize = sizeof(kf);
-    path[0] = 0;
-    if (fcntl(fd, F_KINFO, &kf) == 0)
-	snprintf(path, len, "%s", kf.kf_path);
+	memset(&kf, 0, sizeof(kf));
+	kf.kf_structsize = sizeof(kf);
+	if (fcntl(fd, F_KINFO, &kf) == 0)
+	    snprintf(path, len, "%s", kf.kf_path);
+    }
 #elif defined(__NetBSD__)
-    char buf[MAXPATHLEN + 1];
+    {
+	char buf[MAXPATHLEN + 1];
 
-    path[0] = 0;
-    if (fcntl(fd, F_GETPATH, buf) == 0)
-	snprintf(path, len, "%s", buf);
-#else
-    char link[64];
-    ssize_t n;
+	if (fcntl(fd, F_GETPATH, buf) == 0)
+	    snprintf(path, len, "%s", buf);
+    }
+#elif !defined(FDPATH_TRACK)
+    {
+	char link[64];
+	ssize_t n;
 
 #ifdef __sun
-    snprintf(link, sizeof(link), "/proc/self/path/%d", fd);
+	snprintf(link, sizeof(link), "/proc/self/path/%d", fd);
 #else
-    snprintf(link, sizeof(link), "/proc/self/fd/%d", fd);
+	snprintf(link, sizeof(link), "/proc/self/fd/%d", fd);
 #endif
-    n = readlink(link, path, len - 1);
-    path[n > 0 ? n : 0] = 0;
+	n = readlink(link, path, len - 1);
+	path[n > 0 ? n : 0] = 0;
+    }
+#endif
+#ifdef FDPATH_TRACKED
+    if (path[0] == 0 && fd >= 0 && fd < TRACKMAX)
+	snprintf(path, len, "%s", tracked[fd]);
 #endif
 }
 `
