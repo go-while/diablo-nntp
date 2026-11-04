@@ -1048,7 +1048,14 @@ History, the KPDB files (`dactive.kp`) and overview are read through `MAP_SHARED
 `dreaderd/dns.c`, `netRemoteAccounting()` (only with `NETREMOTE_ENABLED`, off in `lib/vendor.h`): at every session end of a user who logged in with a password, the DNS worker sends the session's accounting to the hard-coded `Password@accounting.server:8998`, not to the `netremote` server of the authdef the user logged in through. Found by go-while from reading. Before #292 NETREMOTE did not compile with OpenSSL 1.1 or later (the old `des_*` names), and the lookup, connect and read had no timeouts; #292 maps the names to the `DES_` calls and bounds the exchange with `readerauthtimeout`. The maintainer keeps NETREMOTE now that it builds (2026-11-03). Left: the accounting destination (use the authdef's `netremote` setting, or send nothing without one).
 
 ### D-174 The reader overview Lines column is empty for articles without a Lines header
-`dreaderd/xover.c` builds each OVER/XOVER line from the stored header block: a missing `Bytes:` is computed, a missing `Lines:` gives an empty column. dreaderd gets headers only (header feed), so it cannot count the lines; `dnewslink -L` (label option `genlines`) adds a `Lines:` header to the header feed when the article has none, but it is off by default and `samples/dnewsfeeds` says it "is not necessary for dreaderd". Verified on the SmartOS test reader (2026-11-04): 97 of 353 XOVER lines of alt.test have an empty Lines column (articles without a Lines header, for example from a remailer); in a sample of overview data files 160 of 7510 stored headers had none. Readers show 0 or nothing as the size. Fix: `genlines` on by default for header feeds (the feed to dreaderd is internal, so the added header is not an article change under RFC 5537), and correct the sample text. Needed before F-07 stops generating Lines in POST.
+`dreaderd/xover.c` builds each OVER/XOVER line from the stored header block: the `:bytes` field comes from the overview record (`oa_ArtSize`, filled from the `Bytes:` line the header feed adds), but the `:lines` field is the stored `Lines:` header and stays empty without one. RFC 3977 8.4.2 says the 8th field MUST be the `:lines` metadata, which 8.1.2 defines as the number of lines in the body, whatever the headers say. Verified on the SmartOS test reader (2026-11-04): 97 of 353 XOVER lines of alt.test have an empty Lines column (articles without a Lines header, for example from a remailer); in a sample of overview data files 160 of 7510 stored headers had none. Readers then show no size for those articles. dreaderd gets headers only, so it cannot count the lines itself.
+
+Plan (maintainer, 2026-11-04: "dreaderd gets :lines from the feeder"):
+- dnewslink in header-only mode (`-H`) counts the body lines of every article, as it already does for `-L`, and passes the count to dreaderd with the size it already sends, as feed-only data, not as an article header. It must be backward compatible with an older dreaderd, for example `Bytes: <size> <lines>`, which today's `strtol()` reads as the size alone. The `-HB` case, where the poster's own Bytes header is kept, needs a look in the PR.
+- dreaderd takes the count out as it does `Bytes:` today, and stores it in the overview record. `OverArt` has an unused field (`oa_UnusedX`), so the files keep their format.
+- OVER/XOVER/XZVER and HDR `:lines` use the stored count. Records written before the change (count 0, or the field never set) fall back to the `Lines:` header. LIST OVERVIEW.FMT may then say `:lines` (RFC 3977 8.4.3 prefers it to `Lines:`).
+- No `Lines:` header is added to any article (RFC 5536 3.3.1, F-07). `genlines` (`-L`) stays for feeds to other servers that want it, with the sample text corrected: it is not what dreaderd needs.
+- Needed before F-07 stops generating Lines in POST, so local posts keep a correct Lines column.
 
 ## Feature requests
 
@@ -1227,9 +1234,9 @@ Maintainer decisions (2026-11-04):
 - **Lines: no longer generated and not deleted** (RFC 5536 3.3.1 "SHOULD NOT generate"; RFC 5537
   3.5 step 6). A poster's own Lines header is kept as it is. Checked: dreaderd's overview "Lines"
   column is the stored `Lines:` header and stays empty without one (D-174), and dreaderd gets only
-  headers, so it cannot count lines itself. The count therefore has to come with the header feed
-  (dnewslink `-L`, label option `genlines`); with that on by default for header feeds (D-174),
-  local posts keep their Lines column after this change.
+  headers, so it cannot count lines itself. The count comes from the feeder with the header feed
+  as overview data (`:lines`, D-174), not as an article header, so local posts keep their Lines
+  column after this change.
 - **posttrailer: removed** (RFC 5537 3.5 step 6, MUST NOT alter the body). Since #283 an unknown
   vserverdef option makes dreader.access invalid, so the keyword stays known: it is logged once
   as no longer supported and ignored, and an old dreader.access still loads.
