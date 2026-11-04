@@ -1,6 +1,6 @@
 /*
  * streamipc.c - LD_PRELOAD shim for TestReaderDNSQueueStreamIPC
- * (dnsqueue_test.go).  Linux.
+ * (dnsqueue_test.go).  Linux, FreeBSD, NetBSD.
  *
  * Makes dreaderd's IPC socketpairs look like illumos ones: socketpair()
  * of AF_UNIX SOCK_SEQPACKET fails (illumos does not implement it), so

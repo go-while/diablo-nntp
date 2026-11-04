@@ -769,23 +769,17 @@ const lseekFailSource = `#define _GNU_SOURCE
 #include <string.h>
 #include <unistd.h>
 #include <sys/types.h>
-
+#include <fcntl.h>
+/*FDPATH*/
 static int
 fail(int fd, off_t off, int whence)
 {
     const char *want = getenv("LSEEKFAIL");
-    char link[64], path[4096];
-    ssize_t n;
+    char path[4096];
 
     if (want == NULL || off != 0 || whence != SEEK_SET)
 	return 0;
-#ifdef __sun
-    snprintf(link, sizeof(link), "/proc/self/path/%d", fd);
-#else
-    snprintf(link, sizeof(link), "/proc/self/fd/%d", fd);
-#endif
-    n = readlink(link, path, sizeof(path) - 1);
-    path[n > 0 ? n : 0] = 0;
+    fdpath(fd, path, sizeof(path));
     return strcmp(path, want) == 0;
 }
 

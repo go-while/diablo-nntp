@@ -14,7 +14,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -45,8 +44,8 @@ type dnsShim struct {
 // buildDNSShim compiles the resolver shim, or skips (it needs glibc's LD_PRELOAD).
 func buildDNSShim(t *testing.T) *dnsShim {
 	t.Helper()
-	if runtime.GOOS != "linux" {
-		t.Skip("the resolver shim needs Linux (LD_PRELOAD of getnameinfo/getaddrinfo)")
+	if !preloadHost(false) {
+		t.Skip("the resolver shim needs LD_PRELOAD of getnameinfo/getaddrinfo (Linux, FreeBSD, NetBSD)")
 	}
 	cc := wmCC(t)
 	dir := t.TempDir()
@@ -55,7 +54,7 @@ func buildDNSShim(t *testing.T) *dnsShim {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command(cc, "-O2", "-shared", "-fPIC", "-o", so, src, "-ldl").CombinedOutput(); err != nil {
+	if out, err := exec.Command(cc, append([]string{"-O2", "-shared", "-fPIC", "-o", so, src}, shimLibs()...)...).CombinedOutput(); err != nil {
 		t.Skipf("cannot build the resolver shim: %v\n%s", err, out)
 	}
 	return &dnsShim{so: so, log: filepath.Join(dir, "lookups.log")}
