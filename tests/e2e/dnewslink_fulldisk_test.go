@@ -44,6 +44,7 @@ func TestDnewslinkFullDiskKeepsQueue(t *testing.T) {
 	t.Cleanup(func() { exec.Command("umount", mnt).Run() })
 
 	s := NewSite(t, SiteOptions{NoStart: true})
+	dnlSpool(t, s)
 	qdir := filepath.Join(mnt, "dqueue")
 	if err := os.MkdirAll(qdir, 0o755); err != nil {
 		t.Fatal(err)

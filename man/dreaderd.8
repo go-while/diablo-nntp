@@ -271,7 +271,24 @@ descriptors below the descriptor limit dreaderd uses (and never below
 the new-connection cap).  At startup dreaderd raises its
 soft descriptor limit to the hard limit, at most FD_SETSIZE.  Both
 options can be changed at run time with drcmd config.
-
+.PP
+A DNS process also runs the auth backends, one login at a time, so a
+backend that does not answer holds it.
+.B readerauthtimeout
+in diablo.config (default 10 seconds, 0 to 300, 0 for no limit) bounds
+each backend call.  LDAP and NetRemote share it out over the steps of
+their exchange (connect, bind, search; connect, read, write) as their
+own timeouts, and the DNS process goes on.  PAM and Perl, and LDAP or
+NetRemote still running 2 seconds past the limit (for example in a name
+lookup), are cut off by the process's alarm: it sends the refusal and
+exits, and dreaderd starts a new DNS process (a Perl script is then
+loaded again on its next use).  A login that runs out of time is refused
+like a wrong password, and dreaderd logs it.  No further dreader.access
+lines are tried for it, even a later one that needs no backend: a
+timeout always refuses.  RADIUS keeps its own timeout and tries per
+server, which readerauthtimeout does not cut: keep them within what a
+login may wait.  Ident lookups (only in builds without INET6) and the
+NetRemote accounting at session exit stop at the limit too.
 .PP
 .B \-M numreaderprocs
 specify the number of reader processes, default is 10.  The value

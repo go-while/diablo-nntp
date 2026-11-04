@@ -12,7 +12,7 @@ re-checked yet.
 Status values: **open**, **PR** (fix waiting for review, with its number), **fixed** (with
 the PR that fixed it), **decision** (needs the maintainer to decide), **won't fix**.
 
-Last updated 2026-11-03: audit of the open items against main: D-70, D-77, D-88, D-102, D-106, D-108, D-109, D-113 and D-114 marked fixed (their PRs had not updated this file), D-100 marked fixed (#230), D-55 and D-101 noted as partly fixed, six index links and the F-02/F-06 status corrected; D-164 to D-166 marked fixed (#280: readerdef typos, access cache reload); D-167 marked fixed (#169: one Perl interpreter per script); D-134 marked fixed (#257: dkp -t); D-168 and D-169 marked fixed (#185); D-170 added (illumos loses a hand-back at the descriptor limit). Before that, 2026-10-30: D-167 to D-169 added (Perl authentication, the file and cdb deny lists); F-06 (Perl authentication) added; F-02 noted in progress (#167). Before that, 2026-10-29: D-16 marked fixed (#127). D-135 to D-146 and D-156, D-157 marked fixed (#145, #151 to #154); D-158 won't fix; D-150 to D-155 marked fixed (#158); D-147 to D-149 marked fixed (#159); D-159 to D-162 marked fixed (#160); D-164 to D-166 added from go-while's review of #160. Before that, 2026-10-28: D-91, D-96, D-98 and D-131 to D-133 marked fixed (#146 to #149). F-01 marked done, F-04 (NoCeM) and F-05 (init scripts, done) added, D-163 (file modes, fixed in #139) added; D-135 to D-162 added from go-while's batch of `main` at `0401451`, and a note on D-94. Before that, D-110 to D-134 added from go-while's third review pass of `main` at `6a4b97d`. Before that, 2026-10-27: D-66 to D-109 added from the second review pass and the reviews of the fixes
+Last updated 2026-11-04: D-97, D-104, D-105, D-111, D-112, D-115 and D-121 marked fixed (#291); audit of the open items against main: D-70, D-77, D-88, D-102, D-106, D-108, D-109, D-113 and D-114 marked fixed (their PRs had not updated this file), D-100 marked fixed (#230), D-55 and D-101 noted as partly fixed, six index links and the F-02/F-06 status corrected; D-172 (retained control connections inherited) and D-173 (NETREMOTE accounting destination) added from go-while's review; D-164 to D-166 marked fixed (#280: readerdef typos, access cache reload); D-167 marked fixed (#169: one Perl interpreter per script); D-134 marked fixed (#257: dkp -t); D-168 and D-169 marked fixed (#185); D-170 added (illumos loses a hand-back at the descriptor limit); D-171 added (OpenBSD shared maps, won't fix). Before that, 2026-10-30: D-167 to D-169 added (Perl authentication, the file and cdb deny lists); F-06 (Perl authentication) added; F-02 noted in progress (#167). Before that, 2026-10-29: D-16 marked fixed (#127). D-135 to D-146 and D-156, D-157 marked fixed (#145, #151 to #154); D-158 won't fix; D-150 to D-155 marked fixed (#158); D-147 to D-149 marked fixed (#159); D-159 to D-162 marked fixed (#160); D-164 to D-166 added from go-while's review of #160. Before that, 2026-10-28: D-91, D-96, D-98 and D-131 to D-133 marked fixed (#146 to #149). F-01 marked done, F-04 (NoCeM) and F-05 (init scripts, done) added, D-163 (file modes, fixed in #139) added; D-135 to D-162 added from go-while's batch of `main` at `0401451`, and a note on D-94. Before that, D-110 to D-134 added from go-while's third review pass of `main` at `6a4b97d`. Before that, 2026-10-27: D-66 to D-109 added from the second review pass and the reviews of the fixes
 (D-77 is documented behaviour and only needs a note); the fixed ones are marked with their PR. Before that, D-53 to D-65 added from the review of `main` at `ca648d4`. Before that, 2026-10-26, after batch 1 (#30, #31, #37 to #44, #47 to #49) and the first part
 of batch 2 (#46, #50, #52, #62) were merged. Open: #35 (GnuPG pgpverify, held for a private
 advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
@@ -111,37 +111,37 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-94](#d-94-dcontrolctl-dnewsfeeds-and-dserverhosts-split-long-lines) | Low | dcontrol.ctl, dnewsfeeds and dserver.hosts split long lines | open |
 | [D-95](#d-95-maxinboundrate-value-is-read-past-its-end) | Low | MaxInboundRate value ending in ';' or in an hour number is read past its end | open |
 | [D-96](#d-96-spamfilter-s0-turns-the-filter-off-and-use_spam_rw_map-0-does-not-compile) | Low | spamfilter: s0 turns the filter off, and USE_SPAM_RW_MAP 0 does not compile | fixed (#147) |
-| [D-97](#d-97-diab-filter-writes-one-byte-past-its-reply-buffer-writeall-loops-on-a-zero-write) | Low | diab-filter writes one byte past its reply buffer; writeAll loops on a zero write | open |
+| [D-97](#d-97-diab-filter-writes-one-byte-past-its-reply-buffer-writeall-loops-on-a-zero-write) | Low | diab-filter writes one byte past its reply buffer; writeAll loops on a zero write | fixed (#291) |
 | [D-98](#d-98-ctype-calls-on-plain-char) | Low | ctype calls on plain char | fixed (#148) |
 | [D-100](#d-100-cachefile-builds-the-path-without-bounds) | Low | cacheFile builds the path without bounds | fixed (#230) |
 | [D-101](#d-101-spool-server-replies-have-no-line-cap-other-small-items-in-dreaderdserverc) | Low | Spool server replies have no line cap; other small items in dreaderd/server.c | open |
 | [D-102](#d-102-readaccesscache-leaks-descriptors-when-a-cache-open-fails) | Low | ReadAccessCache leaks descriptors when a cache open fails | fixed (#160) |
 | [D-103](#d-103-access-cache-reload-leaks-the-old-groupdef-and-grouplist-nodes) | Low | Access cache reload leaks the old GroupDef and GroupList nodes | open |
-| [D-104](#d-104-dhisexpire-uses-the-history-record-size-without-a-check) | Low | dhisexpire uses the history record size without a check | open |
-| [D-105](#d-105-dexpire--o-uses-a-null-file-after-a-failed-fopen) | Low | dexpire -o uses a NULL FILE after a failed fopen | open |
+| [D-104](#d-104-dhisexpire-uses-the-history-record-size-without-a-check) | Low | dhisexpire uses the history record size without a check | fixed (#291) |
+| [D-105](#d-105-dexpire--o-uses-a-null-file-after-a-failed-fopen) | Low | dexpire -o uses a NULL FILE after a failed fopen | fixed (#291) |
 | [D-106](#d-106-dexpireover-getfirstartage-trusts-the-over-file-header) | Low | dexpireover getFirstArtAge trusts the over file header | fixed (#162) |
 | [D-107](#d-107-metaspool-with-more-than-100-spool-lines-or-dontstore-with-no-spools) | Low | metaspool with more than 100 spool lines, or dontstore with no spools | open |
 | [D-108](#d-108-dcancel-stores-the-history-offsets-before-the-rewritten-spool-file-is-in-place) | Medium | dcancel stores the history offsets before the rewritten spool file is in place | fixed (#170) |
 | [D-109](#d-109-dsyncgroups-use-after-free-of-the-address-lists-unchecked-strtok-results) | Medium | dsyncgroups: use after free of the address lists, unchecked strtok results | fixed (#171) |
 | [D-110](#d-110-dcontrolctl-ct_verify-leaks-or-keeps-a-stale-value-when-two-rules-match) | Low | dcontrol.ctl: ct_Verify leaks or keeps a stale value when two rules match | open |
-| [D-111](#d-111-pgpverify-does-not-check-fdopen-and-realloc-results) | Low | pgpverify does not check fdopen() and realloc() results | open |
-| [D-112](#d-112-strcpy-into-sun_path-in-the-filter-socket-code) | Low | strcpy() into sun_path in the filter socket code | open |
+| [D-111](#d-111-pgpverify-does-not-check-fdopen-and-realloc-results) | Low | pgpverify does not check fdopen() and realloc() results | fixed (#291) |
+| [D-112](#d-112-strcpy-into-sun_path-in-the-filter-socket-code) | Low | strcpy() into sun_path in the filter socket code | fixed (#291) |
 | [D-113](#d-113-cached-head-and-body-of-an-article-with-an-lf-only-headerbody-separator) | Medium | Cached HEAD and BODY of an article with an LF-only header/body separator | fixed (#173) |
 | [D-114](#d-114-egets-loses-the-prefix-of-an-overlong-line) | Medium | egets() loses the prefix of an overlong line | fixed (#166) |
-| [D-115](#d-115-dnewslink-flushcommandbuffer-can-spin-on-a-zero-write) | Low | dnewslink flushCommandBuffer() can spin on a zero write | open |
+| [D-115](#d-115-dnewslink-flushcommandbuffer-can-spin-on-a-zero-write) | Low | dnewslink flushCommandBuffer() can spin on a zero write | fixed (#291) |
 | [D-116](#d-116-dnewslink-writelarge-reports-a-write-timeout-as-success) | Low | dnewslink writeLarge() reports a write timeout as success | open |
 | [D-117](#d-117-kpdbsort-is-not-synchronized-with-readers) | Medium | KPDBSort() is not synchronized with readers | open |
 | [D-118](#d-118-kpdbwrite-with-a-null-token-the-documented-behaviour-does-not-exist) | Low | KPDBWrite() with a NULL token: the documented behaviour does not exist | open |
 | [D-119](#d-119-articlefilename-builds-a-relative-path-for-an-unconfigured-spool) | Low | ArticleFileName builds a relative path for an unconfigured spool | open |
 | [D-120](#d-120-unknown-options-inside-spool-and-metaspool-blocks-are-only-logged) | Low | Unknown options inside spool and metaspool blocks are only logged | open |
-| [D-121](#d-121-getspoolfrompath-is-dead-code-with-a-stray-printf-and-a-prefix-match) | Low | GetSpoolFromPath is dead code with a stray printf and a prefix match | open |
+| [D-121](#d-121-getspoolfrompath-is-dead-code-with-a-stray-printf-and-a-prefix-match) | Low | GetSpoolFromPath is dead code with a stray printf and a prefix match | fixed (#291) |
 | [D-122](#d-122-kp-files-above-2-gb-wrap-the-int-offsets) | Low | KP files above 2 GB wrap the int offsets | open |
 | [D-123](#d-123-authinfo-user-accepted-again-after-a-passwordless-authentication) | Low | AUTHINFO USER accepted again after a passwordless authentication | open |
 | [D-124](#d-124-capabilities-with-an-argument-answers-101) | Low | CAPABILITIES with an argument answers 101 | open |
 | [D-125](#d-125-reader-only-command-on-a-transit-connection-answers-500-not-502) | Low | Reader-only command on a transit connection answers 500, not 502 | open |
 | [D-126](#d-126-strtoll-overflow-into-artno_input) | Low | strtoll() overflow into artno_input() | open |
 | [D-127](#d-127-dicmd-splits-lines-longer-than-255-bytes) | Low | dicmd splits lines longer than 255 bytes | open |
-| [D-128](#d-128-dkp-parses-the-second-piece-of-a-long-input-line-as-a-new-record) | Low | dkp parses the second piece of a long input line as a new record | open |
+| [D-128](#d-128-dkp-parses-the-second-piece-of-a-long-input-line-as-a-new-record) | Low | dkp parses the second piece of a long input line as a new record | fixed (#288) |
 | [D-129](#d-129-dclient-is-ipv4-only-gethostbyname) | Low | dclient is IPv4-only (gethostbyname) | open |
 | [D-130](#d-130-newnews-and-newgroups-ignore-the-distributions-argument) | Low | NEWNEWS and NEWGROUPS ignore the distributions argument | open |
 | [D-131](#d-131-dclient-does-not-know-the-202-reply-of-list-extensions) | Low | dclient does not know the 202 reply of LIST EXTENSIONS | fixed (#149) |
@@ -184,6 +184,9 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-168](#d-168-a-file--deny-list-leaks-a-file-handle-for-every-listed-user-that-logs-in) | Low | A `file !` deny list leaks a file handle for every listed user that logs in | fixed (#185) |
 | [D-169](#d-169-the-cdb--deny-list-does-not-work-and-rejects-every-user) | Low | The `cdb !` deny list does not work and rejects every user | fixed (#185) |
 | [D-170](#d-170-on-illumos-a-hand-back-lost-at-the-descriptor-limit-stays-counted) | Low | On illumos a hand-back lost at the descriptor limit stays counted (Act) | open |
+| [D-171](#d-171-on-openbsd-readers-do-not-see-writes-through-their-shared-maps) | Medium (OpenBSD only) | On OpenBSD readers do not see writes through their shared maps | won't fix (design) |
+| [D-172](#d-172-feed-children-and-programs-diablo-runs-inherit-retained-control-connections) | Low | Feed children and programs diablo runs inherit retained control connections | PR (#294) |
+| [D-173](#d-173-netremote-session-accounting-goes-to-a-placeholder-host) | Low | NETREMOTE session accounting goes to a placeholder host | open |
 
 Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315), [F-02 configure script](#f-02-configure-script-for-the-build-options), [F-03 refeed a whole spool](#f-03-refeed-a-whole-spool-to-another-server), [F-04 NoCeM notices](#f-04-nocem-notices), [F-05 init scripts](#f-05-init-scripts-and-adm-script-replacements), [F-06 Perl authentication](#f-06-perl-authentication-for-dreaderd).
 
@@ -920,6 +923,8 @@ Fixed in #166: egets() keeps the prefix of an overlong line. Test: tests/e2e/sou
 ### D-128 dkp parses the second piece of a long input line as a new record
 `util/dkp.c:148-149`: `fgets` into a 1023-byte buffer and `strtok` on it. A longer line is split and the second piece is parsed as a new record, so a long key or value is written as truncated records. Data-quality issue for admin input. The trim mode has a related problem, see D-134. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
 
+Fixed in #288: `dkp` reads a stdin line of any length as one record (a growing buffer instead of `fgets()` into 1024 bytes). Test: `TestDKPStdinLongLine`.
+
 ### D-129 dclient is IPv4-only (gethostbyname)
 `util/dclient.c:61-73`: `connectnews()` uses `gethostbyname()` and a `struct sockaddr_in`, so it cannot reach an IPv6-only host. The `memcpy` of `h_length` bytes into the 4-byte `sin_addr` is safe for AF_INET results. Modernization: `getaddrinfo()`. Limitation of a test client. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
 
@@ -1054,6 +1059,15 @@ Fixed in #169: each distinct `perl <script> [arguments]` line has its own interp
 - illumos (SmartOS): -1/EMFILE, and the whole message, data and descriptor, is gone for all three socket types. The main process never learns which connection ended, so `NumActive` and the reader's `d_Count` (and the per-host and per-user entries) stay counted until a restart.
 
 Low: since #266 the main process keeps headroom below its limit (queued connections to 3/4 of it, AUTHINFO to the limit minus 32), so this needs the descriptor table to be full anyway. A full fix would be a reconciliation: on EMFILE the main process asks each reader for its live connections and resets its counts. Do it if `Act` drift shows on an illumos server.
+
+### D-171 On OpenBSD readers do not see writes through their shared maps
+History, the KPDB files (`dactive.kp`) and overview are read through `MAP_SHARED` mappings and written with `write()`/`pwrite()`. OpenBSD has no unified buffer cache, so another process's map does not see those writes. In CI on OpenBSD 7.9 (from #268 on): an article just accepted is not found (`TestDexpire`, STAT 430); a second IHAVE of a stored article gets 335 instead of 435 (`TestPeerIHAVE`); a KPDB update leaves two live records for one key (`TestKPDBConcurrentUpdate`); and most reader tests time out waiting for a group or an article. That is 70 tests at #272 (96a15fb). The KPDB, precommit and spam-cache map switches (`USE_KP_RW_MAP` and the others, on since #272) do not change that. A fix would have writers update through the shared map or readers use `pread()`, a design change the maintainer decided against (2026-11-03). Won't fix: OpenBSD builds but is not supported. CI only builds it (the `openbsd` job in `ci-matrix.yml`, no e2e run), so a build break still shows.
+
+### D-172 Feed children and programs diablo runs inherit retained control connections
+`util/diablo.c`, `DoCommand()`: for `pause`, `readonly` and `exit` the master keeps the `dicmd` connection (the `Retain` list) and answers it when the operation is done. The connection had no close-on-exec, so `path_shutdown_cleanup` (run with `system()` while an `exit` waits) and any program it leaves running kept a copy; a client that reads to the end of the connection, not only to the "." line, waited for that program. A feed child forked while a `readonly` waits closes only the descriptors below `MaxFds`, which need not include the retained ones. Found by go-while from reading. Fix: close-on-exec on both descriptors of a control connection, and the feed child closes its copies of the retained ones. Test: `TestControlConnectionNotInherited`.
+
+### D-173 NETREMOTE session accounting goes to a placeholder host
+`dreaderd/dns.c`, `netRemoteAccounting()` (only with `NETREMOTE_ENABLED`, off in `lib/vendor.h`): at every session end of a user who logged in with a password, the DNS worker sends the session's accounting to the hard-coded `Password@accounting.server:8998`, not to the `netremote` server of the authdef the user logged in through. Found by go-while from reading. Before #292 NETREMOTE did not compile with OpenSSL 1.1 or later (the old `des_*` names), and the lookup, connect and read had no timeouts; #292 maps the names to the `DES_` calls and bounds the exchange with `readerauthtimeout`. The maintainer keeps NETREMOTE now that it builds (2026-11-03). Left: the accounting destination (use the authdef's `netremote` setting, or send nothing without one).
 
 ## Feature requests
 

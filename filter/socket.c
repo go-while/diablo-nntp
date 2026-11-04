@@ -59,46 +59,6 @@ strdup(char *x)
 
 #endif
 
-#if 0
-
-int create_named_socket(pathname, opt)
-char *pathname;
-int opt;
-{
-	int s, i, j;
-	struct sockaddr_un sun;
-
-	if ((s = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
-		DIE("create_named_socket: socket");
-	}
-
-	sun.sun_family = AF_UNIX;
-	strcpy(sun.sun_path, pathname);
-
-	i = 1;
-	j = sizeof(i);
-	if (opt & OPT_REUSEADDR && setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (char *)&i, j) < 0) {
-		close(s);
-		DIE("create_named_socket: setsockopt");
-	}
-	if (bind(s, (struct sockaddr *)&sun, sizeof(sun)) < 0) {
-		close(s);
-		DIE("create_named_socket: bind");
-	}
-	if (listen(s, BACKLOG) < 0) {
-		close(s);
-		DIE("create_named_socket: listen");
-	}
-	if (opt & OPT_NONBLOCK && fcntl(s, F_SETFL, O_NDELAY) < 0) {
-		close(s);
-		DIE("create_named_socket: fcntl ndelay");
-	}
-	if (opt & OPT_VERBOSE) {
-		printf("accepting connections on named socket %s\n", pathname);
-	}
-	return(s);
-}
-#endif
 
 int
 create_tcp_listen_socket(int port, int opt, char *bindaddr)

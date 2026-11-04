@@ -1,0 +1,1 @@
+- `dkp -w`, `dkp -r` and `dkp -x -w` read a stdin line of any length as one record. Before, a line longer than 1023 bytes was cut: the value was stored truncated and the rest of the line was read as another record (D-128).

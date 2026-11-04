@@ -9,6 +9,7 @@
  */
 
 #include "defs.h"
+#include <setjmp.h>
 
 #ifdef LDAP_ENABLED
 #define LDAP_COMPARE
@@ -30,11 +31,13 @@
 #  endif
 #endif
 #ifdef PERL_ENABLED
+#undef HAS_USLEEP	/* perl's config.h has its own */
 #include <EXTERN.h>
 #include <perl.h>
 #endif
 
 Prototype void DnsTask(int fd, const char *id);
+Prototype const char *AuthTimeoutName(int how);
 Prototype void InstallAccessCache(void);
 Prototype int ReadAccessCache(void);
 Prototype int ProxyFromOk(const ReaderDef *rd, const struct sockaddr_storage *peer);
@@ -47,9 +50,10 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
 void getAuthUser(const struct sockaddr *lsin, const struct sockaddr *rsin, char *ubuf, int ulen, int timeout);
 int readExactly(int fd, void *buf, int bytes);
 void sigSegVDNS(int sigNo);
-int readtoeof(int fd, void *buf, int bytes, int secs);
+#ifndef INET6
+int readtoeof(int fd, void *buf, int bytes, double deadline);
+#endif
 int readAccessLine(FILE *af, char *fname, AccessDef *adef);
-int xread(int fd, char *buf, int siz);
 void getRateLimitCmds(char *opt, ReaderDef *rd);
 void sigHupDns(int SigNo);
 
@@ -233,6 +237,210 @@ WriteDnsResponse(int fd, const DnsRes *dres)
     }
     return(0);
 }
+
+#if defined(NETREMOTE_ENABLED) || defined(LDAP_ENABLED) || \
+    defined(PERL_ENABLED) || defined(PAM_ENABLED)
+#define AUTH_CALLS	/* backends that AuthCall() bounds */
+#endif
+
+#define AC_NETREMOTE	1
+#define AC_LDAP		2
+#define AC_PERL		3
+#define AC_PAM		4
+
+/*
+ * AuthTimeoutName() - the backend of dr_AuthTimeout, for main's log line.
+ */
+const char *
+AuthTimeoutName(int how)
+{
+    static const char *names[] = { "", "NetRemote", "LDAP", "Perl", "PAM" };
+
+    how &= ~DR_AUTHTO_EXIT;
+    if (how < 0 || how >= (int)(sizeof(names) / sizeof(names[0])))
+	return("auth");
+    return(names[how]);
+}
+
+#if defined(AUTH_CALLS) || !defined(INET6)
+static int AuthTimedOut = 0;		/* set by a backend's own timeout */
+
+/* milliseconds, for the deadlines */
+static double
+AuthNow(void)
+{
+    struct timeval tv;
+
+    gettimeofday(&tv, NULL);
+    return(tv.tv_sec * 1000.0 + tv.tv_usec / 1000.0);
+}
+#endif
+
+#ifdef AUTH_CALLS
+/*
+ * Auth time limit (readerauthtimeout).  A DNS worker serves one request
+ * at a time, so a backend that hangs holds the worker.
+ *
+ * LDAP and NetRemote share one deadline (AuthEnd) for the whole exchange,
+ * and each step gets the time left as its own timeout.  When that runs
+ * out, the login is refused and the worker goes on.
+ *
+ * AuthCall() also arms alarm(): at the limit for Perl and PAM, AUTH_GRACE
+ * later for LDAP and NetRemote.  A call still running then may hold a libc
+ * lock (syslog, the resolver) or be inside malloc, so the worker must not
+ * go on.  The handler sends the refusal with write() and ends the worker
+ * with _exit(); main logs the timeout and starts a new worker.
+ */
+#define AUTH_GRACE	2
+
+static double AuthEnd = 0;		/* deadline (ms), 0 = none */
+static DnsRes * volatile AuthRes = NULL;	/* the reply DnsTest() builds */
+static volatile sig_atomic_t AuthHow = 0;
+
+static void
+sigAlrmAuth(int sig)
+{
+    if (AuthHow == 0 || AuthRes == NULL)
+	return;
+    /* async-signal-safe only from here: write() and _exit() */
+    AuthRes->dr_Code = 0;
+    AuthRes->dr_AuthTimeout = AuthHow | DR_AUTHTO_EXIT;
+    (void)WriteDnsResponse(DFd, AuthRes);
+    _exit(DNS_EXIT_AUTHTIMEOUT);
+}
+
+typedef struct AuthArgs {
+    char	*user;
+    char	*pass;
+    char	*conf;
+    char	*realm;
+    char	*localip;
+    const char	*ipname;
+} AuthArgs;
+
+static char *
+AuthBackend(int how, AuthArgs *a)
+{
+    switch (how) {
+#ifdef NETREMOTE_ENABLED
+    case AC_NETREMOTE:
+	return(netRemoteAuthenticate(a->user, a->pass, a->conf, a->localip,
+					(char *)a->ipname));
+#endif
+#ifdef LDAP_ENABLED
+    case AC_LDAP:
+#ifdef NEW_LDAP
+	return(LDAPAuthenticate(a->user, a->pass, a->realm, a->conf));
+#else
+	return(LDAPAuthenticate(a->user, a->pass, a->conf));
+#endif
+#endif
+#ifdef PERL_ENABLED
+    case AC_PERL:
+	return(PerlAuthenticate(a->user, a->pass, a->conf));
+#endif
+#ifdef PAM_ENABLED
+    case AC_PAM:
+	return(PamAuthenticate(a->user, a->pass, a->conf));
+#endif
+    default:
+	break;
+    }
+    return(NULL);
+}
+
+/*
+ * AuthCall() - one backend call within readerauthtimeout.  When the
+ * backend's own timeout ran out, the result is NULL (refused) and
+ * dres->dr_AuthTimeout is set.
+ */
+static char *
+AuthCall(int how, AuthArgs *a, DnsRes *dres)
+{
+    struct sigaction sa;
+    struct sigaction osa;
+    int secs = DOpts.ReaderAuthTimeout;
+    char *r;
+
+    AuthTimedOut = 0;
+    if (secs <= 0) {
+	AuthEnd = 0;
+	return(AuthBackend(how, a));
+    }
+    AuthEnd = AuthNow() + secs * 1000.0;
+
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = sigAlrmAuth;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGALRM, &sa, &osa);
+    AuthRes = dres;
+    AuthHow = how;
+    alarm((how == AC_LDAP || how == AC_NETREMOTE) ? secs + AUTH_GRACE : secs);
+    r = AuthBackend(how, a);
+    alarm(0);
+    AuthHow = 0;
+    AuthRes = NULL;
+    sigaction(SIGALRM, &osa, NULL);
+    AuthEnd = 0;
+
+    if (AuthTimedOut) {
+	r = NULL;
+	dres->dr_AuthTimeout = how;
+    }
+    return(r);
+}
+
+#ifdef LDAP_ENABLED
+/* milliseconds left until AuthEnd; -1 without a limit, 0 when it passed */
+static double
+AuthLeft(void)
+{
+    double left;
+
+    if (AuthEnd <= 0)
+	return(-1);
+    if ((left = AuthEnd - AuthNow()) <= 0) {
+	AuthTimedOut = 1;
+	return(0);
+    }
+    return(left);
+}
+#endif
+#endif	/* AUTH_CALLS */
+
+#if defined(NETREMOTE_ENABLED) || !defined(INET6)
+/*
+ * Wait for events on fd until deadline (ms, 0 = none); 0 when it passed
+ * (AuthTimedOut).  For the backends that wait on a socket themselves.
+ */
+static int
+AuthWait(int fd, int events, double deadline)
+{
+    for (;;) {
+	struct pollfd pfd;
+	int ms = -1;
+	int r;
+
+	if (deadline > 0) {
+	    double left = deadline - AuthNow();
+
+	    if (left <= 0) {
+		AuthTimedOut = 1;
+		return(0);
+	    }
+	    ms = (int)left + 1;
+	}
+	pfd.fd = fd;
+	pfd.events = events;
+	pfd.revents = 0;
+	r = poll(&pfd, 1, ms);
+	if (r > 0)
+	    return(1);
+	if (r < 0 && errno != EINTR)
+	    return(-1);
+    }
+}
+#endif
 
 /*
  * This is the process that loops handling DNS and authentication requests
@@ -866,23 +1074,103 @@ dbAuthenticate(char *user, char *pass, char *conf)
 /* really needs to be a multiple of 8 for DES encrypt */
 #define NETREMOTE_DATASIZE	1432
 
-int xread(fd, buf, siz)
-int fd;
-char *buf;
-int siz;
+/* read exactly siz bytes; less on EOF, an error or the deadline */
+static int
+nrRead(int fd, char *buf, int siz, double deadline)
 {
-    int rval;
     int chrs = 0;
 
-    while (siz) {
-        if ((rval = read(fd, buf, siz)) <= 0) {
-            return(rval);
-        }
-        chrs += rval;
-        siz -= rval;
-        buf += rval;
+    while (siz > 0) {
+	int n;
+
+	if (AuthWait(fd, POLLIN, deadline) <= 0)
+	    break;
+	n = read(fd, buf, siz);
+	if (n < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK))
+	    continue;
+	if (n <= 0)
+	    break;
+	chrs += n;
+	siz -= n;
+	buf += n;
     }
     return(chrs);
+}
+
+static int
+nrWrite(int fd, const char *buf, int siz, double deadline)
+{
+    while (siz > 0) {
+	int n;
+
+	if (AuthWait(fd, POLLOUT, deadline) <= 0)
+	    return(-1);
+	n = write(fd, buf, siz);
+	if (n < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK))
+	    continue;
+	if (n <= 0)
+	    return(-1);
+	siz -= n;
+	buf += n;
+    }
+    return(0);
+}
+
+/*
+ * netRemoteConnect() - a non-blocking connect to confhn (an IPv4 address
+ * or a name; each of its IPv4 addresses is tried) within the deadline.
+ * The name lookup has no timeout of its own; for a login AuthCall()'s
+ * alarm bounds it.
+ */
+static int
+netRemoteConnect(const char *confhn, int port, double deadline)
+{
+    struct addrinfo hints;
+    struct addrinfo *res = NULL;
+    struct addrinfo *ai;
+    int fd = -1;
+    int e;
+
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    if ((e = getaddrinfo(confhn, NULL, &hints, &res)) != 0) {
+	logit(LOG_ERR, "NetRemote lookup: %s: %s", confhn, gai_strerror(e));
+	return(-1);
+    }
+    for (ai = res; ai != NULL; ai = ai->ai_next) {
+	struct sockaddr_in sin;
+	int err;
+
+	memcpy(&sin, ai->ai_addr, sizeof(sin));
+	sin.sin_port = htons(port);
+	if ((fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+	    logit(LOG_ERR, "NetRemote socket create: %m");
+	    break;
+	}
+	fcntl(fd, F_SETFL, O_NONBLOCK);
+	if (connect(fd, (struct sockaddr *)&sin, sizeof(sin)) == 0)
+	    break;
+	err = errno;
+	if (err == EINPROGRESS) {
+	    socklen_t len = sizeof(err);
+	    int w = AuthWait(fd, POLLOUT, deadline);
+
+	    if (w > 0 && getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len) == 0 &&
+			err == 0)
+		break;
+	    if (w == 0)
+		err = ETIMEDOUT;
+	}
+	close(fd);
+	fd = -1;
+	logit(LOG_ERR, "NetRemote socket connect: %s(%s:%d): %s", confhn,
+		inet_ntoa(sin.sin_addr), port, strerror(err));
+	if (AuthTimedOut)
+	    break;
+    }
+    freeaddrinfo(res);
+    return(fd);
 }
 
 /*
@@ -905,8 +1193,7 @@ netRemoteAccounting(DnsReq *dreq)
     long theirtime;
     des_cblock key;
     des_key_schedule sched;
-    struct sockaddr_in sin;
-    struct hostent *hptr;
+    double deadline;
 
     snprintf(confpw, sizeof(confpw), "%s", conf);
     if ((ptr = strchr(confpw, '@'))) {
@@ -937,83 +1224,14 @@ netRemoteAccounting(DnsReq *dreq)
 	}
     }
 
-    /* attach to remote server(s) */
-    if (isdigit((unsigned char)*confhn)) {
-        if ((fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-            logit(LOG_ERR, "NetRemote socket create: %m");
-	    return;
-        }
-        bzero((void *)&sin, sizeof(&sin));
-        sin.sin_family = AF_INET;
-        sin.sin_addr.s_addr = INADDR_ANY;
-        sin.sin_port = htons(0);
-
-        if (bind(fd, (struct sockaddr *)&sin, sizeof(sin)) < 0) {
-	    close(fd);
-            logit(LOG_ERR, "NetRemote socket bind: %m");
-	    return;
-        }
-
-        bzero((void *)&sin, sizeof(&sin));
-        sin.sin_family = AF_INET;
-        sin.sin_port = htons(port);
-	sin.sin_addr.s_addr = inet_addr(confhn);
-
-	if (connect(fd, (struct sockaddr *)&sin, sizeof(sin)) < 0) {
-	    close(fd);
-	    logit(LOG_ERR, "NetRemote socket connect: %s(%s:%d): %m", confhn, inet_ntoa(sin.sin_addr), ntohs(sin.sin_port));
-	    return;
-	}
-    } else {
-	int i = 0, connected = 0;
-
-	if (! (hptr = gethostbyname(confhn))) {
-	    close(fd);
-            logit(LOG_ERR, "NetRemote gethostbyname: %s: %m", confhn);
-	    return;
-	}
-	while (! connected) {
-	    if (! hptr->h_addr_list[i]) {
-		return;
-	    }
-
-            if ((fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-                logit(LOG_ERR, "NetRemote socket create: %m");
-	        return;
-            }
-            bzero((void *)&sin, sizeof(&sin));
-            sin.sin_family = AF_INET;
-            sin.sin_addr.s_addr = INADDR_ANY;
-            sin.sin_port = htons(0);
-
-            if (bind(fd, (struct sockaddr *)&sin, sizeof(sin)) < 0) {
-	        close(fd);
-                logit(LOG_ERR, "NetRemote socket bind: %m");
-	        return;
-            }
-
-            bzero((void *)&sin, sizeof(&sin));
-            sin.sin_family = AF_INET;
-            sin.sin_port = htons(port);
-	    bcopy(hptr->h_addr_list[i], (char *)&sin.sin_addr.s_addr, sizeof(sin.sin_addr.s_addr));
-
-	    if (connect(fd, (struct sockaddr *)&sin, sizeof(sin)) < 0) {
-		if (errno != ETIMEDOUT && errno != ECONNREFUSED && errno != ENETUNREACH) {
-		    close(fd);
-		    logit(LOG_ERR, "NetRemote fatal socket connect: %s: %m", confhn);
-		    return;
-		}
-		close(fd);
-	        logit(LOG_ERR, "NetRemote socket connect: %s(%s:%d): %m", confhn, inet_ntoa(sin.sin_addr), ntohs(sin.sin_port));
-	        i++;
-	    } else {
-		connected++;
-	    }
-	}
-    }
+    /* attach to remote server(s), within readerauthtimeout too */
+    deadline = (DOpts.ReaderAuthTimeout > 0) ?
+		AuthNow() + DOpts.ReaderAuthTimeout * 1000.0 : 0;
+    if ((fd = netRemoteConnect(confhn, port, deadline)) < 0)
+	return;
 
     /* Read the server's idea of time.  12 byte int plus \n */
-    if (xread(fd, buffer, 13) != 13) {
+    if (nrRead(fd, buffer, 13, deadline) != 13) {
         close(fd);
 	return;
     }
@@ -1052,9 +1270,9 @@ netRemoteAccounting(DnsReq *dreq)
     }
 
     /* Send the encrypted request, prefixed by size of packet */
-    snprintf(buffer, sizeof(buffer), "%012d\n", sizeof(output));
-    write(fd, buffer, strlen(buffer));
-    write(fd, output, sizeof(output));
+    snprintf(buffer, sizeof(buffer), "%012d\n", (int)sizeof(output));
+    if (nrWrite(fd, buffer, strlen(buffer), deadline) == 0)
+	nrWrite(fd, output, sizeof(output), deadline);
 
     /* No response to read */
     close(fd);
@@ -1068,13 +1286,13 @@ netRemoteAuthenticate(char *user, char *pass, char *conf, char *localip, char *r
     static char result[DEFNAMELEN + 16];
     char *r = NULL;
     int fd = -1, port = 8998;
+    int n;
     char buffer[NETREMOTE_DATASIZE], output[NETREMOTE_DATASIZE], *ptr, *optr;
     char confpw[1024], confhn[1024], *colon;
     long theirtime;
     des_cblock key;
     des_key_schedule sched;
-    struct sockaddr_in sin;
-    struct hostent *hptr;
+    double deadline;
 
     snprintf(confpw, sizeof(confpw), "%s", conf);
     if ((ptr = strchr(confpw, '@'))) {
@@ -1105,83 +1323,13 @@ netRemoteAuthenticate(char *user, char *pass, char *conf, char *localip, char *r
 	}
     }
 
-    /* attach to remote server(s) */
-    if (isdigit((unsigned char)*confhn)) {
-        if ((fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-            logit(LOG_ERR, "NetRemote socket create: %m");
-	    return(NULL);
-        }
-        bzero((void *)&sin, sizeof(&sin));
-        sin.sin_family = AF_INET;
-        sin.sin_addr.s_addr = INADDR_ANY;
-        sin.sin_port = htons(0);
-
-        if (bind(fd, (struct sockaddr *)&sin, sizeof(sin)) < 0) {
-	    close(fd);
-            logit(LOG_ERR, "NetRemote socket bind: %m");
-	    return(NULL);
-        }
-
-        bzero((void *)&sin, sizeof(&sin));
-        sin.sin_family = AF_INET;
-        sin.sin_port = htons(port);
-	sin.sin_addr.s_addr = inet_addr(confhn);
-
-	if (connect(fd, (struct sockaddr *)&sin, sizeof(sin)) < 0) {
-	    close(fd);
-	    logit(LOG_ERR, "NetRemote socket connect: %s(%s:%d): %m", confhn, inet_ntoa(sin.sin_addr), ntohs(sin.sin_port));
-	    return(NULL);
-	}
-    } else {
-	int i = 0, connected = 0;
-
-	if (! (hptr = gethostbyname(confhn))) {
-	    close(fd);
-            logit(LOG_ERR, "NetRemote gethostbyname: %s: %m", confhn);
-	    return(NULL);
-	}
-	while (! connected) {
-	    if (! hptr->h_addr_list[i]) {
-		return(NULL);
-	    }
-
-            if ((fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-                logit(LOG_ERR, "NetRemote socket create: %m");
-	        return(NULL);
-            }
-            bzero((void *)&sin, sizeof(&sin));
-            sin.sin_family = AF_INET;
-            sin.sin_addr.s_addr = INADDR_ANY;
-            sin.sin_port = htons(0);
-
-            if (bind(fd, (struct sockaddr *)&sin, sizeof(sin)) < 0) {
-	        close(fd);
-                logit(LOG_ERR, "NetRemote socket bind: %m");
-	        return(NULL);
-            }
-
-            bzero((void *)&sin, sizeof(&sin));
-            sin.sin_family = AF_INET;
-            sin.sin_port = htons(port);
-	    bcopy(hptr->h_addr_list[i], (char *)&sin.sin_addr.s_addr, sizeof(sin.sin_addr.s_addr));
-
-	    if (connect(fd, (struct sockaddr *)&sin, sizeof(sin)) < 0) {
-		if (errno != ETIMEDOUT && errno != ECONNREFUSED && errno != ENETUNREACH) {
-		    close(fd);
-		    logit(LOG_ERR, "NetRemote fatal socket connect: %s: %m", confhn);
-		    return(NULL);
-		}
-		close(fd);
-	        logit(LOG_ERR, "NetRemote socket connect: %s(%s:%d): %m", confhn, inet_ntoa(sin.sin_addr), ntohs(sin.sin_port));
-	        i++;
-	    } else {
-		connected++;
-	    }
-	}
-    }
+    /* attach to remote server(s), within AuthCall()'s deadline */
+    deadline = AuthEnd;
+    if ((fd = netRemoteConnect(confhn, port, deadline)) < 0)
+	return(NULL);
 
     /* Read the server's idea of time.  12 byte int plus \n */
-    if (xread(fd, buffer, 13) != 13) {
+    if (nrRead(fd, buffer, 13, deadline) != 13) {
         close(fd);
 	return(NULL);
     }
@@ -1203,16 +1351,24 @@ netRemoteAuthenticate(char *user, char *pass, char *conf, char *localip, char *r
     }
 
     /* Send the encrypted request, prefixed by size of packet */
-    snprintf(buffer, sizeof(buffer), "%012d\n", sizeof(output));
-    write(fd, buffer, strlen(buffer));
-    write(fd, output, sizeof(output));
-
-    /* Read the server's response.  1 byte int plus \n */
-    if (read(fd, buffer, sizeof(buffer)) < 2) {
-        close(fd);
+    snprintf(buffer, sizeof(buffer), "%012d\n", (int)sizeof(output));
+    if (nrWrite(fd, buffer, strlen(buffer), deadline) < 0 ||
+		nrWrite(fd, output, sizeof(output), deadline) < 0) {
+	close(fd);
 	return(NULL);
     }
+
+    /* Read the server's response.  1 byte int plus \n */
+    n = -1;
+    while (n < 0 && AuthWait(fd, POLLIN, deadline) > 0) {
+	n = read(fd, buffer, sizeof(buffer) - 1);
+	if (n < 0 && errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK)
+	    break;
+    }
     close(fd);
+    if (n < 2)
+	return(NULL);
+    buffer[n] = 0;
 
     if (*buffer == '1') {
 	snprintf(result, sizeof(result), "%s", buffer);
@@ -1227,6 +1383,108 @@ netRemoteAuthenticate(char *user, char *pass, char *conf, char *localip, char *r
 #endif
 
 #ifdef		LDAP_ENABLED
+
+static LDAP *LdapLd = NULL;	/* the connection, kept between logins */
+
+/*
+ * The time left of AuthCall()'s deadline as a timeval: -1 without a limit,
+ * 0 when it has passed (AuthTimedOut), else 1.  Each step of the exchange
+ * (connect, bind, search, compare) gets only what is left, so the
+ * library's timeouts come before AuthCall()'s alarm.
+ */
+static int
+LDAPLeft(struct timeval *tv)
+{
+    double left = AuthLeft();
+
+    if (left < 0)
+	return(-1);
+    if (left == 0)
+	return(0);
+    tv->tv_sec = (long)(left / 1000);
+    tv->tv_usec = (long)((left - tv->tv_sec * 1000.0) * 1000);
+    if (tv->tv_sec == 0 && tv->tv_usec == 0)
+	tv->tv_usec = 1;
+    return(1);
+}
+
+/* the time left as the library's connect and operation timeouts */
+static void
+LDAPTimeouts(LDAP *ld)
+{
+    struct timeval tv;
+
+    if (LDAPLeft(&tv) <= 0)
+	return;
+#ifdef LDAP_OPT_NETWORK_TIMEOUT
+    ldap_set_option(ld, LDAP_OPT_NETWORK_TIMEOUT, &tv);
+#endif
+#ifdef LDAP_OPT_TIMEOUT
+    ldap_set_option(ld, LDAP_OPT_TIMEOUT, &tv);
+#endif
+}
+
+/* a simple bind (and the connect) within the time left */
+static int
+LDAPBind(LDAP *ld, char *who, char *pw)
+{
+    struct timeval tv;
+    LDAPMessage *res = NULL;
+    int msgid;
+    int rc;
+
+    switch (LDAPLeft(&tv)) {
+    case -1:
+	return(ldap_simple_bind_s(ld, who, pw));
+    case 0:
+	return(LDAP_TIMEOUT);
+    }
+    LDAPTimeouts(ld);
+    rc = LDAP_OTHER;
+    if ((msgid = ldap_simple_bind(ld, who, pw)) < 0) {
+	ldap_get_option(ld, LDAP_OPT_ERROR_NUMBER, &rc);
+    } else if (LDAPLeft(&tv) == 0) {
+	rc = LDAP_TIMEOUT;
+    } else {
+	switch (ldap_result(ld, msgid, LDAP_MSG_ALL, &tv, &res)) {
+	case 0:
+	    rc = LDAP_TIMEOUT;
+	    break;
+	case -1:
+	    ldap_get_option(ld, LDAP_OPT_ERROR_NUMBER, &rc);
+	    break;
+	default:
+	    rc = ldap_result2error(ld, res, 1);
+	    break;
+	}
+    }
+    if (rc == LDAP_TIMEOUT)
+	AuthTimedOut = 1;
+    return(rc);
+}
+
+/* ldap_search_s() within the time left */
+static int
+LDAPSearch(LDAP *ld, char *base, int scope, char *filter, char **attrs,
+		LDAPMessage **res)
+{
+    struct timeval tv;
+    int rc;
+
+    *res = NULL;
+    switch (LDAPLeft(&tv)) {
+    case -1:
+	return(ldap_search_s(ld, base, scope, filter, attrs, 0, res));
+    case 0:
+	return(LDAP_TIMEOUT);
+    }
+    LDAPTimeouts(ld);
+    rc = ldap_search_ext_s(ld, base, scope, filter, attrs, 0, NULL, NULL,
+				&tv, LDAP_NO_LIMIT, res);
+    if (rc == LDAP_TIMEOUT)
+	AuthTimedOut = 1;
+    return(rc);
+}
 
 #ifdef NEW_LDAP
 /*
@@ -1266,7 +1524,6 @@ netRemoteAuthenticate(char *user, char *pass, char *conf, char *localip, char *r
 char *
 LDAPAuthenticate(char *user, char *pass, char *realm, char *conf)
 {
-    static LDAP *ld = NULL;
     char *result = NULL;
     char url[1024];
     LDAPURLDesc *ludp;
@@ -1299,15 +1556,15 @@ LDAPAuthenticate(char *user, char *pass, char *realm, char *conf)
     } else {
 	confst = r;
     }
-    if (ld != NULL && (confst == NULL || strcmp(confst, conf) != 0)) {
-	ldap_unbind_s(ld);
-	ld = NULL;
+    if (LdapLd != NULL && (confst == NULL || strcmp(confst, conf) != 0)) {
+	ldap_unbind_s(LdapLd);
+	LdapLd = NULL;
     }
 
     /*
      * Make a new connection to the LDAP server if one isn't already there
      */
-    if (ld == NULL) {
+    if (LdapLd == NULL) {
 	if (ldap_is_ldap_url(confst) == 0) {
 	    logit(LOG_ERR, "Not an LDAP URL: %s\n", conf);
 	    free(confst);
@@ -1321,7 +1578,7 @@ LDAPAuthenticate(char *user, char *pass, char *realm, char *conf)
 	}
 
 	/* Open LDAP connection */
-	if ((ld = ldap_init(ludp->lud_host, ludp->lud_port)) == NULL) {
+	if ((LdapLd = ldap_init(ludp->lud_host, ludp->lud_port)) == NULL) {
 	    /* Couldn't contact server - fail authentication attempt */
 	    logit(LOG_ERR,"Unable to connect to LDAP server: %s\n", confst);
 	    free(confst);
@@ -1331,13 +1588,13 @@ LDAPAuthenticate(char *user, char *pass, char *realm, char *conf)
 
         ldap_free_urldesc(ludp);
 
-	if ((msgid = ldap_bind_s(ld, ldapuser, ldappass, LDAP_AUTH_SIMPLE)) !=
+	if ((msgid = LDAPBind(LdapLd, ldapuser, ldappass)) !=
 								LDAP_SUCCESS) {
 	    /* Bind failed - fail auth attempt */
 	    logit(LOG_ERR,"LDAP bind failed: %s\n", confst);
 	    free(confst);
-	    ldap_unbind_s(ld);
-	    ld = NULL;
+	    ldap_unbind_s(LdapLd);
+	    LdapLd = NULL;
 	    return(NULL);
 	}
 	if (DebugOpt)
@@ -1404,12 +1661,12 @@ LDAPAuthenticate(char *user, char *pass, char *realm, char *conf)
     /*
      * Perform the search
      */
-    if ((rcode = ldap_search_s(ld, ludp->lud_dn, ludp->lud_scope, ludp->lud_filter, ludp->lud_attrs, 0, &res)) != LDAP_SUCCESS) {
+    if ((rcode = LDAPSearch(LdapLd, ludp->lud_dn, ludp->lud_scope, ludp->lud_filter, ludp->lud_attrs, &res)) != LDAP_SUCCESS) {
 	logit(LOG_ERR,"LDAP search for %s failed: %s\n", url, ldap_err2string(rcode));
 	free(confst);
-	ldap_unbind_s(ld);
+	ldap_unbind_s(LdapLd);
 	ldap_free_urldesc(ludp);
-	ld = NULL;
+	LdapLd = NULL;
 	return(NULL);
     }
 
@@ -1420,19 +1677,19 @@ LDAPAuthenticate(char *user, char *pass, char *realm, char *conf)
      */
     if (DebugOpt)
 	printf("Results:\n");
-    for (m = ldap_first_entry(ld, res); m != NULL;
-					m = ldap_next_entry(ld, m)) {
+    for (m = ldap_first_entry(LdapLd, res); m != NULL;
+					m = ldap_next_entry(LdapLd, m)) {
 	BerElement *ber;
 	char *attr;
 	int i;
 	
-	for (attr = ldap_first_attribute(ld, m, &ber); attr != NULL;
-				attr = ldap_next_attribute(ld, m, ber)) {
+	for (attr = ldap_first_attribute(LdapLd, m, &ber); attr != NULL;
+				attr = ldap_next_attribute(LdapLd, m, ber)) {
 	    char **vals;
 
 	    if (DebugOpt)
 		printf("attr: %s\n", attr);
-	    if ((vals = ldap_get_values(ld, m, attr)) != NULL) {
+	    if ((vals = ldap_get_values(LdapLd, m, attr)) != NULL) {
 		for (i = 0; vals[i] != NULL; ++i) {
 		    if (strcmp(pass,vals[i])==0) result="100 Success";
 		    if (DebugOpt)
@@ -1444,8 +1701,8 @@ LDAPAuthenticate(char *user, char *pass, char *realm, char *conf)
     }
     ldap_msgfree(res);
 #ifdef LDAP_DO_UNBIND
-    ldap_unbind_s(ld);
-    ld = NULL;
+    ldap_unbind_s(LdapLd);
+    LdapLd = NULL;
 #endif
     free(confst);
     return(result);
@@ -1462,7 +1719,6 @@ LDAPAuthenticate(char *user, char *pass, char *conf)
 {
     static char result[DEFNAMELEN + 16];
     char *r;
-    static LDAP *ld = NULL;
     static LDAPURLDesc *ludp;
     LDAPMessage *res;
     LDAPMessage *mptr;
@@ -1476,35 +1732,36 @@ LDAPAuthenticate(char *user, char *pass, char *conf)
     char *dn;
 #endif
 
-    if (ld == NULL) {
+    if (LdapLd == NULL) {
 	if (ldap_is_ldap_url(conf) == 0) {
 	    logit(LOG_ERR, "No LDAP URL: %s\n", conf);
-	    ld = NULL;
+	    LdapLd = NULL;
 	    return(NULL);
 	}
 
 	if (ldap_url_parse(conf, &ludp) != 0) {
 	    logit(LOG_ERR, "Unable to parse LDAP URL: %s\n", conf);
 	    ldap_free_urldesc(ludp);
-	    ld = NULL;
+	    LdapLd = NULL;
 	    return(NULL);
 	}
 
 	/* Open LDAP connection */
-	if ((ld = ldap_init(ludp->lud_host, ludp->lud_port)) == NULL) {
+	if ((LdapLd = ldap_init(ludp->lud_host, ludp->lud_port)) == NULL) {
 	    /* Couldn't contact server - fail authentication attempt */
 	    logit(LOG_ERR, "Unable to connect to LDAP server: %s\n", conf);
 	    ldap_free_urldesc(ludp);
-	    ld = NULL;
+	    LdapLd = NULL;
 	    return(NULL);
 	}
 
-	if ((msgid = ldap_bind_s(ld, NULL, NULL, LDAP_AUTH_SIMPLE)) !=
+	if ((msgid = LDAPBind(LdapLd, NULL, NULL)) !=
 								LDAP_SUCCESS) {
 	    /* Bind failed - fail auth attempt */
 	    logit(LOG_ERR, "LDAP bind failed: %s\n", conf);
+	    ldap_unbind_s(LdapLd);	/* its socket, every failed login */
 	    ldap_free_urldesc(ludp);
-	    ld = NULL;
+	    LdapLd = NULL;
 	    return(NULL);
 	}
 	if (DebugOpt)
@@ -1515,9 +1772,9 @@ LDAPAuthenticate(char *user, char *pass, char *conf)
     if ((filter = (char *)malloc(strlen(ludp->lud_filter) + strlen(user) + 1)) == NULL) {
 	/* Malloc failed - fail auth attempt */
 	logit(LOG_ERR, "LDAP malloc failed: %s\n", conf);
-	ldap_unbind_s(ld);
+	ldap_unbind_s(LdapLd);
 	ldap_free_urldesc(ludp);
-	ld = NULL;
+	LdapLd = NULL;
 	return(NULL);
     }
     /*
@@ -1545,9 +1802,9 @@ LDAPAuthenticate(char *user, char *pass, char *conf)
 	    } else {
 		logit(LOG_ERR, "LDAP filter may hold one %%s and no other %% conversion: %s\n", conf);
 		free(filter);
-		ldap_unbind_s(ld);
+		ldap_unbind_s(LdapLd);
 		ldap_free_urldesc(ludp);
-		ld = NULL;
+		LdapLd = NULL;
 		return(NULL);
 	    }
 	}
@@ -1555,37 +1812,58 @@ LDAPAuthenticate(char *user, char *pass, char *conf)
     }
 
     /* Perform the search */
-    if ((rcode = ldap_search_s(ld, ludp->lud_dn, ludp->lud_scope, filter, ludp->lud_attrs, 0, &res)) != LDAP_SUCCESS) {
+    if ((rcode = LDAPSearch(LdapLd, ludp->lud_dn, ludp->lud_scope, filter, ludp->lud_attrs, &res)) != LDAP_SUCCESS) {
 	/* Search failed - fail auth attempt */
 	logit(LOG_INFO, "LDAP search failed (%s): %s\n",
 						user, ldap_err2string(rcode));
 	free(filter);
-	ldap_unbind_s(ld);
+	ldap_unbind_s(LdapLd);
 	ldap_free_urldesc(ludp);
-	ld = NULL;
+	LdapLd = NULL;
 	return(NULL);
     }
 
     /* See what we got back - we only care about the first response */
-    if ((mptr = ldap_first_entry(ld, res)) == NULL) {
+    if ((mptr = ldap_first_entry(LdapLd, res)) == NULL) {
 	/* Error - fail auth attempt */
 	logit(LOG_INFO, "LDAP auth failed: %s\n", user);
 	free(filter);
 	ldap_msgfree(res);
-	ldap_unbind_s(ld);
+	ldap_unbind_s(LdapLd);
 	ldap_free_urldesc(ludp);
 	/* the statics must not keep the freed handle and URL: the next login would use them */
-	ld = NULL;
+	LdapLd = NULL;
 	ludp = NULL;
 	return(NULL);
     }
 
     r = NULL;
 #ifdef LDAP_COMPARE
-    dn = ldap_get_dn(ld, mptr);
-    if (ldap_compare_s(ld, dn, ldappassattr, pass) == LDAP_COMPARE_TRUE) {
+    dn = ldap_get_dn(LdapLd, mptr);
+    {
+	struct timeval tv;
+
+	if (LDAPLeft(&tv) == 0) {
+	    rcode = LDAP_TIMEOUT;
+	} else {
+	    LDAPTimeouts(LdapLd);
+	    rcode = ldap_compare_s(LdapLd, dn, ldappassattr, pass);
+	}
+    }
+    if (rcode == LDAP_COMPARE_TRUE) {
 	strcpy(result, "100 Success");
 	r = result;
+    } else if (rcode == LDAP_TIMEOUT) {
+	/* out of time: a late answer must not meet the next login */
+	AuthTimedOut = 1;
+	free(dn);
+	free(filter);
+	ldap_msgfree(res);
+	ldap_unbind_s(LdapLd);
+	ldap_free_urldesc(ludp);
+	LdapLd = NULL;
+	ludp = NULL;
+	return(NULL);
     } else {
 	logit(LOG_INFO, "LDAP auth failed: %s\n", user);
 	r = NULL;
@@ -1593,7 +1871,7 @@ LDAPAuthenticate(char *user, char *pass, char *conf)
     free(dn);
 #else
     /* Read the password and compare it */
-    bv_val = ldap_get_values(ld, mptr, ldappassattr);
+    bv_val = ldap_get_values(LdapLd, mptr, ldappassattr);
     if (bv_val == NULL || ldap_count_values(bv_val) == 0) {
 	/* No password value returned - fail auth attempt */
 	logit(LOG_INFO, "LDAP auth failed: %s\n", user);
@@ -1790,6 +2068,7 @@ char *PerlAuthenticate(char *user, char *pass, char *conf)
     logit(LOG_INFO, "PERL auth request for %s: %s\n", user, reslog);
     return result;
 }
+
 #endif	/* PERL_ENABLED */
 
 #ifdef PAM_ENABLED
@@ -2176,6 +2455,9 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
 
 	    char user[128];
 	    int authok;
+#ifdef AUTH_CALLS
+	    AuthArgs aa;
+#endif
 
 	    /*
 	     * Add a default realm, if one not already specified
@@ -2251,6 +2533,13 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
 		}
 	    }
 #endif	/* REJECT_DB */
+
+#ifdef AUTH_CALLS
+	    memset(&aa, 0, sizeof(aa));
+	    aa.user = user;
+	    aa.pass = dreq->dr_AuthPass;
+	    aa.ipname = ipname;
+#endif
 
 	    /*
 	     * Check for the user+pass in a file
@@ -2399,10 +2688,11 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
 	    if (authok && *dres->dr_AuthDef->au_NetRemote && *user &&
 				*dreq->dr_AuthPass) {
 		stprintf("dns auth netremote %s@%s", user, ipname);
-		AuthReader = netRemoteAuthenticate(user, dreq->dr_AuthPass,
-				dres->dr_AuthDef->au_NetRemote,
-				NetAddrToSt(0, (struct sockaddr *)&dreq->dr_LSin, 1, 0, 1),
-				ipname);
+		aa.conf = dres->dr_AuthDef->au_NetRemote;
+		aa.localip = NetAddrToSt(0, (struct sockaddr *)&dreq->dr_LSin, 1, 0, 1);
+		AuthReader = AuthCall(AC_NETREMOTE, &aa, dres);
+		if (dres->dr_AuthTimeout)
+		    goto authtimeout;
 		stprintf("dns auth search %s", ipname);
 		if (AuthReader != NULL && *AuthReader == '1') {
 		    Authenticated = 1;
@@ -2433,13 +2723,11 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
 	    if (authok && *dres->dr_AuthDef->au_LDAP && *user &&
 				*dreq->dr_AuthPass) {
 		stprintf("dns auth ldap %s@%s", user, ipname);
-#ifdef NEW_LDAP
-		AuthReader = LDAPAuthenticate(user, dreq->dr_AuthPass, realm,
-						dres->dr_AuthDef->au_LDAP);
-#else
-		AuthReader = LDAPAuthenticate(user, dreq->dr_AuthPass,
-						dres->dr_AuthDef->au_LDAP);
-#endif
+		aa.conf = dres->dr_AuthDef->au_LDAP;
+		aa.realm = realm;
+		AuthReader = AuthCall(AC_LDAP, &aa, dres);
+		if (dres->dr_AuthTimeout)
+		    goto authtimeout;
 		stprintf("dns auth search %s", ipname);
 		if (AuthReader != NULL && *AuthReader == '1') {
 		    Authenticated = 1;
@@ -2465,8 +2753,10 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
 	    if (authok && *dres->dr_AuthDef->au_Perl && *user &&
 				*dreq->dr_AuthPass) {
 		stprintf("dns auth perl %s@%s", user, ipname);
-		AuthReader = PerlAuthenticate(user, dreq->dr_AuthPass,
-						dres->dr_AuthDef->au_Perl);
+		aa.conf = dres->dr_AuthDef->au_Perl;
+		AuthReader = AuthCall(AC_PERL, &aa, dres);
+		if (dres->dr_AuthTimeout)
+		    goto authtimeout;
 		stprintf("dns auth search %s", ipname);
 		if (AuthReader != NULL && *AuthReader == '1') {
 		    Authenticated = 1;
@@ -2497,8 +2787,10 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
 	    if (authok && *dres->dr_AuthDef->au_PAM && *user &&
 						*dreq->dr_AuthPass) {
 		stprintf("dns auth PAM %s@%s", user, ipname);
-		AuthReader = PamAuthenticate(user, dreq->dr_AuthPass,
-						dres->dr_AuthDef->au_PAM);
+		aa.conf = dres->dr_AuthDef->au_PAM;
+		AuthReader = AuthCall(AC_PAM, &aa, dres);
+		if (dres->dr_AuthTimeout)
+		    goto authtimeout;
 		stprintf("dns auth search %s", ipname);
 		if (AuthReader != NULL && *AuthReader == '1') {
 		    Authenticated = 1;
@@ -2559,6 +2851,16 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
 	}
 	if (matchedalp && matchedalp->ad_MatchExit)
 	    break;
+#ifdef AUTH_CALLS
+	continue;
+
+authtimeout:
+	/* a backend ran out of time: refuse, try no more lines */
+	if (accessfile == 1)
+	    fclose(af);
+	dres->dr_Code = 0;
+	return;
+#endif
     }
     if (accessfile == 1)
 	fclose(af);
@@ -2650,6 +2952,7 @@ getAuthUser(const struct sockaddr *plsin, const struct sockaddr *prsin, char *ub
     char buf[256];
     struct sockaddr_in lsin;
     struct sockaddr_in rsin;
+    double deadline;
 
     memcpy(&lsin, plsin, sizeof(lsin));
     memcpy(&rsin, prsin, sizeof(rsin));
@@ -2676,19 +2979,22 @@ getAuthUser(const struct sockaddr *plsin, const struct sockaddr *prsin, char *ub
      * necessary to deal with broken clients or firewalls.
      */
 
+    /*
+     * One deadline for the whole exchange, at most readerauthtimeout too.
+     * A timeout of 0 waits for nothing, as the select() with 0 did.
+     */
+    if (DOpts.ReaderAuthTimeout > 0 && timeout > DOpts.ReaderAuthTimeout)
+	timeout = DOpts.ReaderAuthTimeout;
+    deadline = AuthNow() + (timeout > 0 ? timeout : 0) * 1000.0;
+
     fcntl(cfd, F_SETFL, O_NONBLOCK);
     errno = 0;
     if (connect(cfd, (struct sockaddr *)&rsin, sizeof(rsin)) < 0) {
-	fd_set wfds;
-	struct timeval tv = { timeout, 0 };
-
 	if (errno != EINPROGRESS) {
 	    close(cfd);
 	    return;
 	}
-	FD_ZERO(&wfds);
-	FD_SET(cfd, &wfds);
-	if (select(cfd + 1, NULL, &wfds, NULL, &tv) == 0) {
+	if (AuthWait(cfd, POLLOUT, deadline) <= 0) {
 	    close(cfd);
 	    cfd = -1;
 	}
@@ -2709,7 +3015,7 @@ getAuthUser(const struct sockaddr *plsin, const struct sockaddr *prsin, char *ub
 	    n = -1;
 	} else {
 	    fcntl(cfd, F_SETFL, O_NONBLOCK);
-	    n = readtoeof(cfd, buf, sizeof(buf) - 1, 10);
+	    n = readtoeof(cfd, buf, sizeof(buf) - 1, deadline);
 	}
     } else {
 	n = -1;
@@ -2762,23 +3068,16 @@ readExactly(int fd, void *buf, int bytes)
     return(r);
 }
 
+#ifndef INET6
+/* read to EOF, until the deadline at most */
 int
-readtoeof(int fd, void *buf, int bytes, int secs)
+readtoeof(int fd, void *buf, int bytes, double deadline)
 {
-    fd_set rfds;
     int r = 0;
 
-    FD_ZERO(&rfds);
-
-    for (;;) {
-	struct timeval tv = { 0, 0 };
+    while (bytes > 0 && AuthWait(fd, POLLIN, deadline) > 0) {
 	int n;
 
-	tv.tv_sec = secs;
-	FD_SET(fd, &rfds);
-
-	if (select(fd + 1, &rfds, NULL, NULL, &tv) == 0)
-	    break;
 	errno = 0;
 	n = read(fd, buf, bytes);
 	if (n == 0)
@@ -2798,6 +3097,7 @@ readtoeof(int fd, void *buf, int bytes, int secs)
     }
     return(r);
 }
+#endif
 
 void
 sigSegVDNS(int sigNo)
@@ -3098,6 +3398,72 @@ accessValue(char *dst, size_t size, const char *val, const char *opt, int lineco
 }
 
 /*
+ * RenameAccessCache() - install the .new cache files.  The lock file means
+ * no other processes should make updates from the cache; its time is also
+ * checked to cater for possible race conditions.
+ *
+ * The renames are done under an exclusive lock: ReadAccessCache() opens
+ * the five files under a shared one, so it gets all old or all new files.
+ * While a reader holds it, the caller tries again on its next pass rather
+ * than wait.  Returns 1 when done, 0 when the lock is busy, -1 on error.
+ */
+static int AccessRenamePending = 0;
+static time_t AccessRenameSince = 0;	/* when the renames were first put off */
+static time_t AccessRenameLogged = 0;
+
+/* log a wait of more than 10 s, then once a minute */
+static void
+AccessRenameWaits(void)
+{
+    time_t now = time(NULL);
+
+    if (now - AccessRenameSince < 10 ||
+		(AccessRenameLogged && now - AccessRenameLogged < 60))
+	return;
+    logit(LOG_WARNING, "access cache install waits %d s: a process holds a lock on %s",
+		(int)(now - AccessRenameSince), PatDbExpand(DRAccessLockPat));
+    AccessRenameLogged = now;
+}
+
+static int
+RenameAccessCache(void)
+{
+    const char *pats[5];
+    char newbuf[PATH_MAX];
+    int tfp;
+    int i;
+
+    pats[0] = DRVserverCachePat;
+    pats[1] = DRGroupCachePat;
+    pats[2] = DRAuthCachePat;
+    pats[3] = DRReaderCachePat;
+    pats[4] = DRAccessCachePat;
+
+    if ((tfp = open(PatDbExpand(DRAccessLockPat), O_RDWR|O_CREAT, 0600)) < 0) {
+	logit(LOG_CRIT, "Cannot create access lock %s",
+		PatDbExpand(DRAccessLockPat));
+	return(-1);
+    }
+    if (xflock(tfp, XLOCK_EX|XLOCK_NB) < 0) {
+	int busy = (errno == EAGAIN || errno == EACCES || errno == EWOULDBLOCK);
+
+	if (DebugOpt)
+	    printf("Unable to obtain access lock (%s)\n", strerror(errno));
+	close(tfp);
+	return(busy ? 0 : -1);
+    }
+    for (i = 0; i < 5; ++i) {
+	snprintf(newbuf, sizeof(newbuf), "%s.new", PatDbExpand(pats[i]));
+	rename(newbuf, PatDbExpand(pats[i]));
+    }
+
+    WriteBestEffort(tfp, &tfp, 1);
+    xflock(tfp, XLOCK_UN);
+    close(tfp);
+    return(1);
+}
+
+/*
  * The group list names of a readerdef, checked against the groupdefs once all
  * of dreader.access is read: a groupdef may come after the readerdef using it.
  */
@@ -3149,7 +3515,6 @@ InstallAccessCache(void) {
     struct stat st;
     char buf[1024];
     int linecount = 0;
-    int tfp;
     FILE *fp;
     FILE *vsf;
     FILE *grf;
@@ -3177,6 +3542,19 @@ InstallAccessCache(void) {
     char aunewbuf[PATH_MAX];
     char rdnewbuf[PATH_MAX];
     char ranewbuf[PATH_MAX];
+
+    /* the last build is waiting for its renames */
+    if (AccessRenamePending) {
+	switch (RenameAccessCache()) {
+	case 0:
+	    AccessRenameWaits();
+	    return;
+	case -1:
+	    Access_LastUpdate = 0;
+	    break;
+	}
+	AccessRenamePending = 0;
+    }
 
     /*
      * Rebuild when dreader.access changed in any way, not only when it got
@@ -4086,35 +4464,16 @@ InstallAccessCache(void) {
 	    Access_LastUpdate = 0;
 	return;
     }
-    /*
-     * We create a lock file that means no other processes should make
-     * updates from the cache. The lock file time is also checked to
-     * cater for possible race conditions.
-     */
-
-    if ((tfp = open(PatDbExpand(DRAccessLockPat), O_RDWR|O_CREAT, 0600)) < 0) {
-	logit(LOG_CRIT, "Cannot create access lock %s",
-		PatDbExpand(DRAccessLockPat));
+    switch (RenameAccessCache()) {
+    case 0:
+	AccessRenamePending = 1;
+	AccessRenameSince = time(NULL);
+	AccessRenameLogged = 0;
+	break;
+    case -1:
 	Access_LastUpdate = 0;
-	return;
+	break;
     }
-    if (xflock(tfp, XLOCK_SH) < 0) {
-	if (DebugOpt)
-	    printf("Unable to obtain access lock (%s)\n", strerror(errno));
-	close(tfp);
-	Access_LastUpdate = 0;
-	return;
-    }
-
-    rename(vsnewbuf, PatDbExpand(DRVserverCachePat));
-    rename(grnewbuf, PatDbExpand(DRGroupCachePat));
-    rename(aunewbuf, PatDbExpand(DRAuthCachePat));
-    rename(rdnewbuf, PatDbExpand(DRReaderCachePat));
-    rename(ranewbuf, PatDbExpand(DRAccessCachePat));
-
-    WriteBestEffort(tfp, &tfp, 1);
-    xflock(tfp, XLOCK_UN);
-    close(tfp);
 }
 
 /*
