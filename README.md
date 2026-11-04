@@ -18,6 +18,8 @@ This build system replaces the requirement for Matt Dillon's `xmake` while prese
 
 Traditional Solaris Make is not supported. On illumos systems, use GNU Make (`gmake`) rather than the system's native `make` when it is Solaris Make.
 
+OpenBSD builds (GNU Make, Clang; CI checks the build) but is not supported: it has no unified buffer cache, so the readers' `MAP_SHARED` maps do not see the `pwrite()` writes of other processes. See [ISSUES.md D-171](ISSUES.md#d-171-on-openbsd-readers-do-not-see-writes-through-their-shared-maps).
+
 ## Build Requirements
 
 A working C compiler and the appropriate Make implementation are required.

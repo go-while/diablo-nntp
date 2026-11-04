@@ -2,6 +2,8 @@
 
 Diablo builds with GNU Make (Linux, illumos/SmartOS/OmniOS, optionally
 FreeBSD) or with FreeBSD's own make.  XMake is no longer needed.
+OpenBSD builds with gmake but is not supported: the readers' MAP_SHARED
+maps do not see pwrite() there (ISSUES.md D-171).
 README.md lists the build requirements and the packages to install.
 Run ./configure first, then make (gmake on illumos and on FreeBSD with GNU
 Make).  ./configure looks for the optional libraries (zlib, libcanlock for

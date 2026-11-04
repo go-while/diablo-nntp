@@ -16,6 +16,7 @@ import (
 // articles that the current peer has not accepted.
 func TestDnewslinkPipePreservesPreviousQueue(t *testing.T) {
 	s := NewSite(t, SiteOptions{NoStart: true})
+	dnlSpool(t, s)
 	port := dnlPeer(t, func(line string) (string, bool) {
 		switch {
 		case strings.HasPrefix(line, "mode stream"):
@@ -61,6 +62,7 @@ func TestDnewslinkPipePreservesPreviousQueue(t *testing.T) {
 // unlinked old inode.
 func TestDnewslinkPipeQueueReplacedWhileWaiting(t *testing.T) {
 	s := NewSite(t, SiteOptions{NoStart: true})
+	dnlSpool(t, s)
 	port := dnlPeer(t, func(line string) (string, bool) {
 		switch {
 		case strings.HasPrefix(line, "mode stream"):

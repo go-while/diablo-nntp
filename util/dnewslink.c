@@ -133,6 +133,16 @@ rewriteBatchFile(const char *path, int pipeMode)
 #define T_STREAMING	5
 #define T_FAILEDEXIT	6
 #define T_DEFERIT	7
+#define T_UNOFFERED	8	/* article could not be read: nothing sent (SpoolFault) */
+#define T_UNSENT	9	/* the same after the peer asked for it (238, 335) */
+
+/*
+ * Why an article could not be read from the spool (SpoolFault).
+ */
+#define SPOOL_OK	0
+#define SPOOL_GONE	1	/* file not there (ENOENT, ENOTDIR): expired, drop */
+#define SPOOL_BAD	2	/* entry is not a readable article: corrupt, drop */
+#define SPOOL_ERR	3	/* other error (EACCES, EIO, EMFILE, memory): keep */
 
 #define INF_HELP        100     /* Help text on way */
 #define INF_AUTH        180     /* Authorization capabilities */
@@ -228,7 +238,6 @@ rewriteBatchFile(const char *path, int pipeMode)
 
 typedef struct Stream {
     int	st_State;		/* state	*/
-    int st_DumpRCode;
     char *st_RelPath;		/* path		*/
     char *st_MsgId;		/* message id	*/
     off_t st_Off;		/* file offset	*/
@@ -238,7 +247,24 @@ typedef struct Stream {
 
 int connectTo(const char *hostName, const char *serviceName, int defPort);
 int Transact(int cfd, const char *relPath, char *msgId, off_t off, int size, int cSize, int defers, char *stage, char *reason, char *buf, int *sentSize);
-int DumpArticle(int cfd, const char *relPath, off_t off, int size, int cSize);
+/*
+ * An article mapped from the spool, from MapArticle() until DumpArticle()
+ * or UnmapArticle() releases it.
+ */
+typedef struct ArtMap {
+    char	*am_Base;
+    int		am_Size;
+    int		am_MultiArtFile;
+    int		am_Compressed;
+} ArtMap;
+
+const char *spoolArtPath(const char *relPath);
+int spoolFaultNote(char *msgId, const char *relPath, const char *stage);
+void keepQueueLine(FILE **pfo, const char *path, int *keepOld, const char *line);
+int ArticleCheck(const char *relPath);
+int MapArticle(const char *relPath, off_t off, int size, int cSize, ArtMap *am);
+void UnmapArticle(ArtMap *am);
+int DumpArticle(int cfd, ArtMap *am);
 int writeLarge(int cfd, char *buffer, size_t size);
 int StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, int cSize, int defers, char *stage, char *reason, char *buf, int *sentSize);
 void StreamReload(int cfd);
@@ -257,6 +283,7 @@ int ValidMsgId(char *msgid);
 void AttemptRemoveRenamedFile(struct stat *st, const char *spoolFile);
 void cdinit(void);
 char *cdmap(const char *path, off_t off, int *psize, int cSize, int *multiArtFile);
+int cdcheck(const char *path);
 void cdunmap(char *ptr, int bytes, int multiArtFile, int compressed);
 int extractFeedLine(const char *buf, char *relPath, char *msgId, off_t *poff, int *psize, int *pheadOnly, time_t *queuedTime, int *cSize);
 void cdflush(void);
@@ -309,6 +336,15 @@ int PipeOpt = 0;
 int RealTimeOpt = 0;
 char *NotifyOpt = NULL;
 int ArticleStatOpt = 0;
+int SpoolFault = SPOOL_OK;	/* why the last article could not be read */
+int SpoolErrno = 0;		/* and the errno, for SPOOL_ERR */
+/*
+ * Articles not read from the spool since the last stats line, and for
+ * the whole batch file: gone (expired), bad (corrupt entry), and spool
+ * errors (kept in the queue).
+ */
+int GoneCnt, BadCnt, SpoolErrCnt;
+int GoneTotal, BadTotal, SpoolErrTotal;
 int LogAfterCount = -1;
 int CloseReopenCount = -1;
 int KillFd = -1;
@@ -473,7 +509,7 @@ Usage(char *progname)
     puts(
 	    "-A[levels]      - turn on article logging, default all\n"
 	    "                  levels is either all or comma-separated list\n"
-	    "                  of accept,reject,defer,refuse,error\n"
+	    "                  of accept,reject,defer,refuse,error,gone\n"
 	    "-B ip           - set source ip address for outbound connections\n"
 	    "-b batchfile    - specify batchfile\n"
 	    "-b template%d   - template: %% is literal %; one %d sequence conversion\n"
@@ -732,6 +768,7 @@ main(int ac, char **av)
 	Stats->SentStats.DeferredFailTotal = 0;
 	Stats->SentStats.RejectedBytesTotal = 0.0;
 	Stats->SentStats.AcceptedBytesTotal = 0.0;
+	GoneTotal = BadTotal = SpoolErrTotal = 0;
 
 	Stats->SentStats.ConnectCnt = 0;
 	Stats->SentStats.OfferedCnt = 0;
@@ -742,6 +779,7 @@ main(int ac, char **av)
 	Stats->SentStats.DeferredFailCnt = 0;
 	Stats->SentStats.RejectedBytes = 0.0;
 	Stats->SentStats.AcceptedBytes = 0.0;
+	GoneCnt = BadCnt = SpoolErrCnt = 0;
 
 #ifdef	USE_ZLIB
 	CompressedBytes = 0;
@@ -1063,16 +1101,22 @@ main(int ac, char **av)
 			t = Transact(cfd, NULL, msgId, 0, 0, 0, (deferbegin > 0),
 				     stage, reason, buf, &sentFileSize);
 		    else {
-			struct stat st;
 			if (fileSize == 0) {
 			    if (DebugOpt > 1)
 				printf("%s instant expired article\n", dtstamp());
 			    bufInval = 1;
 
 			    continue;
-			} else if (ArticleStatOpt && stat(relPath, &st) == -1) {
-			    if (DebugOpt > 1)
-				printf("%s expired article\n", dtstamp());
+			} else if (ArticleCheck(relPath) != SPOOL_OK) {
+			    /*
+			     * The spool file cannot be opened: do not offer
+			     * the article, the peer would get an empty one.
+			     * Expired, it is gone for good: dropped, not
+			     * refiled or deferred.  On another error the
+			     * entry stays in the queue.
+			     */
+			    if (spoolFaultNote(msgId, relPath, "pre-offer"))
+				keepQueueLine(&fo, path, &keepOld, buf);
 			    bufInval = 1;
 
 			    continue;
@@ -1196,6 +1240,21 @@ main(int ac, char **av)
 			}
 			doArtLog("reject", msgId, "rejected", stage, reason);
 			break;
+		    case T_UNSENT:
+			/*
+			 * The peer answered the offer (238, 335): this was
+			 * a transaction.
+			 */
+			++connectCount;
+			/* fall through */
+		    case T_UNOFFERED:
+			/*
+			 * The article could not be read when it was to be
+			 * sent (SpoolFault).  buf holds its queue line.
+			 */
+			if (spoolFaultNote(msgId, NULL, stage))
+			    keepQueueLine(&fo, path, &keepOld, buf);
+			break;
 		    case T_FAILED:
 		    case T_FAILEDEXIT:
 			/*
@@ -1281,7 +1340,7 @@ main(int ac, char **av)
 		     * Bump transaction count
 		     */
 
-		    if (t != T_STREAMING && deferbegin == 0) {
+		    if (t != T_STREAMING && t != T_UNOFFERED && deferbegin == 0) {
 			++Stats->SentStats.OfferedCnt;
 			++Stats->SentStats.OfferedTotal;
 			if (HostStats != NULL) {
@@ -1482,6 +1541,9 @@ main(int ac, char **av)
 	    Stats->SentStats.RejectedCnt = Stats->SentStats.RejectedTotal;
 	    Stats->SentStats.DeferredCnt = Stats->SentStats.DeferredTotal;
 	    Stats->SentStats.DeferredFailCnt = Stats->SentStats.DeferredFailTotal;
+	    GoneCnt = GoneTotal;
+	    BadCnt = BadTotal;
+	    SpoolErrCnt = SpoolErrTotal;
 	    Stats->SentStats.RejectedBytes = Stats->SentStats.AcceptedBytesTotal;
 	    Stats->SentStats.AcceptedBytes = Stats->SentStats.AcceptedBytesTotal;
 
@@ -2170,6 +2232,68 @@ connectTo(const char *hostName, const char *serviceName, int defPort)
 }
 
 /*
+ * spoolFaultNote() - count and log an article that could not be read
+ * from the spool (SpoolFault).  Returns 1 if its queue entry is to be
+ * kept: a spool error other than expiry may pass.
+ */
+int
+spoolFaultNote(char *msgId, const char *relPath, const char *stage)
+{
+    const char *what;
+    int keep = 0;
+
+    switch (SpoolFault) {
+    case SPOOL_GONE:
+	what = "gone";
+	++GoneCnt;
+	++GoneTotal;
+	break;
+    case SPOOL_BAD:
+	what = "bad";
+	++BadCnt;
+	++BadTotal;
+	break;
+    default:
+	what = "spoolerr";
+	keep = 1;
+	if (SpoolErrTotal++ == 0)
+	    dl_logit("cannot read %s%s%s from the spool: %s; kept in the queue",
+		msgId, relPath ? " " : "", relPath ? relPath : "",
+		strerror(SpoolErrno));
+	++SpoolErrCnt;
+	break;
+    }
+    if (DebugOpt)
+	printf("%s %s not read from the spool (%s%s%s), not sent%s\n",
+	    dtstamp(), msgId, what,
+	    SpoolErrno ? ": " : "", SpoolErrno ? strerror(SpoolErrno) : "",
+	    keep ? ", kept" : "");
+    doArtLog(keep ? "error" : "gone", msgId, (char *)what, stage,
+	SpoolErrno ? strerror(SpoolErrno) : "article not read from the spool");
+    return(keep);
+}
+
+/*
+ * keepQueueLine() - put a queue line back into the queue: into the
+ * rewrite of the batch file, which is opened if it is not open yet.  A
+ * realtime feed cannot rewrite its queue.
+ */
+void
+keepQueueLine(FILE **pfo, const char *path, int *keepOld, const char *line)
+{
+    if (RealTimeOpt) {
+	++WouldHaveRefiled;
+	return;
+    }
+    if (*pfo == NULL && *keepOld == 0)
+	*pfo = rewriteBatchFile(path, PipeOpt);
+    if (*pfo != NULL)
+	fputs(line, *pfo);
+    else
+	*keepOld = 1;
+}
+
+/*
  * Transact() - begin a streaming or non-streaming transaction, or
  *		complete a streaming transaction.
  */
@@ -2179,6 +2303,7 @@ Transact(int cfd, const char *relPath, char *msgId, off_t off, int size, int cSi
 {
     int r = 0;
     static char *ptr = NULL;
+    ArtMap am;
 
     if (sentSize)
 	*sentSize = 0;
@@ -2238,9 +2363,27 @@ Transact(int cfd, const char *relPath, char *msgId, off_t off, int size, int cSi
     StrnCpyNull(stage, "ihave", MAXREASON);
     StrnCpyNull(reason, (ptr ? ptr : "<Unexpected EOF>"), MAXREASON);
     if (r == 0) {
-	r = DumpArticle(cfd, relPath, off, size, cSize);
-	if (sentSize)
-	    *sentSize = size;
+	int unsent = 0;
+
+	/*
+	 * The article is mapped only now, so that an offer the peer
+	 * refuses costs no read.  Its file was opened before the offer
+	 * (ArticleCheck) and is still open in the cache, so expiry cannot
+	 * take it away here.  If it still cannot be read (a corrupt entry,
+	 * out of memory), the peer waits for an article after its 335 and
+	 * IHAVE has no way to take the offer back: send an empty article,
+	 * which the peer rejects, as innfeed does, and ignore the reply.
+	 * Closing the connection instead would cost a reconnect, and the
+	 * entry would come back and do it again.
+	 */
+	if (MapArticle(relPath, off, size, cSize, &am) != SPOOL_OK) {
+	    unsent = 1;
+	    commandResponse(cfd, NULL, ".\r\n");
+	} else {
+	    r = DumpArticle(cfd, &am);
+	    if (sentSize)
+		*sentSize = size;
+	}
 	switch(commandResponse(cfd, &ptr, NULL)) {
 	case OK_XFERED:
 	    if (r == 0)
@@ -2265,27 +2408,115 @@ Transact(int cfd, const char *relPath, char *msgId, off_t off, int size, int cSi
 	StrnCpyNull(reason, (ptr ? ptr : "<Unexpected EOF>"), MAXREASON);
 
 	/*
-	 * If we couldn't send the article, we ignore the
-	 * response code because the remote might send the
-	 * wrong response to the null article.
+	 * The peer's reply to an empty article says nothing about the
+	 * article.
 	 */
-	if (r < 0) {
-	    StrnCpyNull(reason, "Error sending article (1)", MAXREASON);
-	    r = T_REJECTED;
+	if (unsent) {
+	    StrnCpyNull(reason, "article not read from the spool, empty article sent", MAXREASON);
+	    r = T_UNSENT;
 	}
     }
     return(r);
 }
 
-int
-DumpArticle(int cfd, const char *relPath, off_t off, int size, int cSize)
+/*
+ * spoolArtPath() - the path of a queue entry's spool file, NULL if too long.
+ */
+const char *
+spoolArtPath(const char *relPath)
 {
     static char pathBase[PATH_MAX];
-    char *path;
-    char *ptr = NULL;
-    char *base = NULL;
-    int r = -1;
-    int multiArtFile = 0;
+    int n;
+
+    if (*relPath == '/')
+	return(relPath);
+    n = snprintf(pathBase, sizeof(pathBase), "%s/%s",
+	PatExpand(SpoolHomePat), relPath);
+    if (n < 0 || n >= (int)sizeof(pathBase)) {
+	logit(LOG_ERR, "spool path too long: %s", relPath);
+	return(NULL);
+    }
+    return(pathBase);
+}
+
+/*
+ * ArticleCheck() - can the spool file of a queue entry be opened?
+ * SPOOL_OK, or why not (SpoolFault).  Looked up in the open-file cache
+ * that the article is mapped from later, so an article whose file is
+ * still open (or opens now) can be sent.  With -x the file must also
+ * still exist by name.
+ */
+int
+ArticleCheck(const char *relPath)
+{
+    const char *path = spoolArtPath(relPath);
+    struct stat st;
+
+    SpoolFault = SPOOL_OK;
+    SpoolErrno = 0;
+    if (path == NULL) {
+	SpoolFault = SPOOL_BAD;
+	return(SpoolFault);
+    }
+    if (ArticleStatOpt && stat(path, &st) == -1) {
+	SpoolErrno = errno;
+	SpoolFault = (errno == ENOENT || errno == ENOTDIR) ? SPOOL_GONE : SPOOL_ERR;
+	return(SpoolFault);
+    }
+    return(cdcheck(path));
+}
+
+/*
+ * MapArticle() - map a queue entry's article from the spool.  Returns
+ * SPOOL_OK, or why it cannot be mapped (SpoolFault); then nothing has
+ * been mapped.
+ */
+int
+MapArticle(const char *relPath, off_t off, int size, int cSize, ArtMap *am)
+{
+    const char *path = spoolArtPath(relPath);
+
+    bzero(am, sizeof(*am));
+    SpoolFault = SPOOL_OK;
+    SpoolErrno = 0;
+    if (path == NULL) {
+	SpoolFault = SPOOL_BAD;
+	return(SpoolFault);
+    }
+    am->am_Size = size;
+    am->am_Compressed = (cSize > 0);
+    if (DebugOpt > 1)
+	printf("%s >> map %s %lld,%d\n", dtstamp(), relPath, (long long)off, size);
+    am->am_Base = cdmap(path, off, &am->am_Size, cSize, &am->am_MultiArtFile);
+    if (am->am_Base == NULL) {
+	if (SpoolFault == SPOOL_OK)
+	    SpoolFault = SPOOL_ERR;
+	if (DebugOpt > 1)
+	    printf("%s >> (file not found or other error)\n", dtstamp());
+	return(SpoolFault);
+    }
+    return(SPOOL_OK);
+}
+
+void
+UnmapArticle(ArtMap *am)
+{
+    if (am->am_Base != NULL)
+	cdunmap(am->am_Base, am->am_Size, am->am_MultiArtFile, am->am_Compressed);
+    am->am_Base = NULL;
+}
+
+/*
+ * DumpArticle() - send an article mapped by MapArticle() and its
+ * terminator, and unmap it.  Returns 0 or T_FAILED.
+ */
+int
+DumpArticle(int cfd, ArtMap *am)
+{
+    char *ptr = am->am_Base;
+    char *base = am->am_Base;
+    int size = am->am_Size;
+    int r = 0;
     int wasControl = 0;
     int haveLines = 0;
     int doBytes = 1;
@@ -2295,28 +2526,10 @@ DumpArticle(int cfd, const char *relPath, off_t off, int size, int cSize)
 
     HeaderSize = 0;
 
-    if (*relPath == '/') {
-	path = (char *)relPath;
-    } else {
-	int n;
-
-	path = pathBase;
-	n = snprintf(pathBase, sizeof(pathBase), "%s/%s",
-	    PatExpand(SpoolHomePat), relPath);
-	if (n < 0 || n >= (int)sizeof(pathBase)) {
-	    logit(LOG_ERR, "spool path too long: %s", relPath);
-	    return(-1);
-	}
-    }
-
-    if (cfd >= 0 &&
-	(base = ptr = cdmap(path, off, &size, cSize, &multiArtFile)) != NULL
-    ) {
+    {
 	int i;
 	int b;
 	int inHeaders = 1;
-
-	r = 0;
 
 	if (DebugOpt > 1) {
 	    printf("%s >> (article, %d bytes)\n", dtstamp(), size);
@@ -2350,15 +2563,10 @@ DumpArticle(int cfd, const char *relPath, off_t off, int size, int cSize)
 			!CompressOn &&
 #endif
 			artSize > CMDBUFFSIZE ) { 
-	    if (writeLarge(cfd, ptr, artSize) < 0) {
-		if (base != NULL)
-		    cdunmap(base, size, multiArtFile, cSize > 0);
-		return(T_FAILED);
-	    } else {
-		if (base != NULL)
-		    cdunmap(base, size, multiArtFile, cSize > 0);
-		return(0);
-	    }
+	    if (writeLarge(cfd, ptr, artSize) < 0)
+		r = T_FAILED;
+	    UnmapArticle(am);
+	    return(r);
 	}
 	    
 	for (i = b = 0; i < artSize; b = i) {
@@ -2368,7 +2576,7 @@ DumpArticle(int cfd, const char *relPath, off_t off, int size, int cSize)
 
 	    if (ptr[i] == '.' && !wireFormat)
 		if (commandWrite(cfd, ".", 1, 1) < 0)
-		    return(T_FAILED);
+		    goto failed;
 
 	    /*
 	     * dump the article (body in a single write if wireformat).
@@ -2376,7 +2584,7 @@ DumpArticle(int cfd, const char *relPath, off_t off, int size, int cSize)
 
 	    if (wireFormat && !inHeaders) {
 		if (commandWrite(cfd, ptr + i, artSize - i, 1) < 0)
-		    return(T_FAILED);
+		    goto failed;
 		i = artSize;
 		continue;
 	    }
@@ -2386,7 +2594,7 @@ DumpArticle(int cfd, const char *relPath, off_t off, int size, int cSize)
 	    if (wireFormat && i > 0 && ptr[i-1] == '\r')
 		--i;
 	    if (commandWrite(cfd, ptr + b, i - b, 1) < 0)
-		return(T_FAILED);
+		goto failed;
 
 	    if (inHeaders) {
 		HeaderSize += i - b;
@@ -2436,7 +2644,7 @@ DumpArticle(int cfd, const char *relPath, off_t off, int size, int cSize)
 
 		    snprintf(tmp, sizeof(tmp), "Lines: %d\r\n", lineCount);
 		    if (commandWrite(cfd, tmp, strlen(tmp), 1) < 0)
-			return(T_FAILED);
+			goto failed;
 		    HeaderSize += strlen(tmp);
 		}
 
@@ -2449,17 +2657,17 @@ DumpArticle(int cfd, const char *relPath, off_t off, int size, int cSize)
 		    char tmp[32];
 		    snprintf(tmp, sizeof(tmp), "Bytes: %d\r\n", artSize);
 		    if (commandWrite(cfd, tmp, strlen(tmp), 1) < 0)
-			return(T_FAILED);
+			goto failed;
 		    HeaderSize += strlen(tmp);
 		}
 		if (commandWrite(cfd, "\r\n", 2, 1) < 0)
-		    return(T_FAILED);
+		    goto failed;
 		inHeaders = 0;
 		if (HeaderOnlyFeed && wasControl == 0)
 		    break;
 	    } else {
 		if (commandWrite(cfd, "\r\n", 2, 1) < 0)
-		    return(T_FAILED);
+		    goto failed;
 	    }
 	}
 #ifdef	USE_ZLIB
@@ -2467,17 +2675,16 @@ DumpArticle(int cfd, const char *relPath, off_t off, int size, int cSize)
 	    flushCompressBuffer(cfd);
 #endif
 	credtime(THEIR_DELAY);
-    } else {
-	if (DebugOpt > 1)
-	    printf("%s >> (file not found or other error)\n", dtstamp());
     }
-    if (base != NULL)
-	cdunmap(base, size, multiArtFile, cSize > 0);
+    UnmapArticle(am);
 
     if (!wireFormat || (HeaderOnlyFeed && !wasControl))
 	commandResponse(cfd, NULL, ".\r\n");
 
     return(r);
+failed:
+    UnmapArticle(am);
+    return(T_FAILED);
 }
 	
 #ifdef NOTDEF
@@ -2528,16 +2735,22 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 	s->st_Off = off;
 	s->st_Size = size;
 	s->st_CompSize = cSize;
-	s->st_DumpRCode = 0;
 	if (NoCheckOpt) {
-	    int r;
+	    ArtMap am;
 
+	    if (MapArticle(s->st_RelPath, s->st_Off, s->st_Size,
+					s->st_CompSize, &am) != SPOOL_OK) {
+		/* not offered: the slot is not taken */
+		zfreeStr(&SysMemPool, &s->st_RelPath);
+		zfreeStr(&SysMemPool, &s->st_MsgId);
+		memset(s, 0, sizeof(Stream));
+		StrnCpyNull(stage, "takethis-nocheck", MAXREASON);
+		StrnCpyNull(reason, "article not read from the spool", MAXREASON);
+		return(T_UNOFFERED);
+	    }
 	    commandResponse(cfd, NULL, "takethis %s\r\n", s->st_MsgId);
-	    r = DumpArticle(cfd, s->st_RelPath, s->st_Off, s->st_Size,
-							s->st_CompSize);
-	    /* Trap: This r is NOT the r returned by StreamTransact! */
+	    (void)DumpArticle(cfd, &am);
 	    s->st_State = STATE_POSTED;
-	    s->st_DumpRCode = r;
 	    if (msgId && s->st_MsgId)
 		StrnCpyNull(msgId, s->st_MsgId, 1024);
 	    StrnCpyNull(stage, "takethis-nocheck", MAXREASON);
@@ -2588,10 +2801,6 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 		if (stage && !*stage)
 		    StrnCpyNull(stage, (defers? "resend-stream": "stream"), MAXREASON);
 		StrnCpyNull(reason, ptr, MAXREASON);
-		if (s->st_DumpRCode < 0) {
-		    StrnCpyNull(reason, "Error sending article (2)", MAXREASON);
-		    r = T_REJECTED;
-		}
 		break;
 	    }
 	    if (!defers && ((s = LocateStream(ptr, STATE_CHECK)) != NULL)) {
@@ -2621,18 +2830,44 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 	    /* fall through */
 	case OK_STRMCHECK:
 	    if ((s = LocateStream(ptr, STATE_CHECK)) != NULL) {
-		int r;
+		ArtMap am;
 
-		commandResponse(cfd, NULL, "takethis %s\r\n", s->st_MsgId);
-		r = DumpArticle(cfd, s->st_RelPath, s->st_Off, s->st_Size,
-							s->st_CompSize);
 		/*
-		 * Trap: This r is NOT the r returned by StreamTransact!
+		 * The article cannot be read after the CHECK (it went
+		 * missing, or the entry is corrupt): send no TAKETHIS
+		 * rather than an empty article.  CHECK replies are advisory
+		 * (RFC 4644 2.4.2: the server must not rely on a TAKETHIS
+		 * following a 238); innfeed drops a missing article here
+		 * the same way.  buf gets the queue line, in case the entry
+		 * is to be kept (SPOOL_ERR).
+		 */
+		if (MapArticle(s->st_RelPath, s->st_Off, s->st_Size,
+					s->st_CompSize, &am) != SPOOL_OK) {
+		    char cst[16];
+
+		    delMe = 1;
+		    r = T_UNSENT;
+		    StrnCpyNull(msgId, s->st_MsgId, 1024);
+		    if (stage && !*stage)
+			StrnCpyNull(stage, (defers? "resend-takethis": "takethis"), MAXREASON);
+		    StrnCpyNull(reason, "article not read from the spool, TAKETHIS not sent", MAXREASON);
+		    if (s->st_CompSize > 0)
+			snprintf(cst, sizeof(cst), " C%d", s->st_CompSize);
+		    else
+			cst[0] = 0;
+		    snprintf(buf, QLINESIZE, "%s %s %lld,%d %c%s\n", s->st_RelPath, s->st_MsgId,
+			(long long)s->st_Off, s->st_Size,
+			HeaderOnlyFeed ? 'H' : ' ', cst);
+		    break;
+		}
+		commandResponse(cfd, NULL, "takethis %s\r\n", s->st_MsgId);
+		(void)DumpArticle(cfd, &am);
+		/*
 		 * Note that we are not waiting for a response here. The
 		 * response is handled in the next call of StreamTransact.
+		 * A failed write shows as a failed connection.
 		 */
 		s->st_State = STATE_POSTED;
-		s->st_DumpRCode = r;
 		StrnCpyNull(msgId, s->st_MsgId, 1024);
 		if (stage && !*stage)
 		    StrnCpyNull(stage, (defers? "resend-takethis": "takethis"), MAXREASON);
@@ -2671,11 +2906,6 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 		r = T_ACCEPTED;
 		if (sentSize)
 		    *sentSize = s->st_Size;
-		if (s->st_DumpRCode < 0) {
-		    if (reason)
-			StrnCpyNull(reason, "Error sending article (3)", MAXREASON);
-		    r = T_REJECTED;
-		}
 	    }
 #ifdef NOTDEF
 	    if (NumStream < MaxStream && ++NumStreamFrac == STREAMFRAC) {
@@ -2708,11 +2938,6 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 		if (stage && !*stage)
 		    StrnCpyNull(stage, (defers? "resend-stream": "stream"), MAXREASON);
 		StrnCpyNull(reason, ptr, MAXREASON);
-		if (s->st_DumpRCode < 0) {
-		    if (reason)
-			StrnCpyNull(reason, "Error sending article (4)", MAXREASON);
-		    r = T_REJECTED;
-		}
 	    }
 	    break;
 	case ERR_GOODBYE:
@@ -2963,6 +3188,14 @@ logStats(const char *description)
 	    Stats->SentStats.DeferredCnt,
 	    Stats->SentStats.DeferredFailCnt
 	);
+    if (GoneCnt > 0 || BadCnt > 0 || SpoolErrCnt > 0)
+	dl_logit("%s secs=%-4d gone=%-4d bad=%-4d spoolerr=%-4d",
+	    description,
+	    secs,
+	    GoneCnt,
+	    BadCnt,
+	    SpoolErrCnt
+	);
 #ifdef	USE_ZLIB
     if (CompressOn > 0)
 	dl_logit("%s compbytes=%lld decompbytes=%lld (%.2f%% compression)\n",
@@ -2982,6 +3215,7 @@ logStats(const char *description)
     Stats->SentStats.DeferredFailCnt = 0;
     Stats->SentStats.RejectedBytes = 0.0;
     Stats->SentStats.AcceptedBytes = 0.0;
+    GoneCnt = BadCnt = SpoolErrCnt = 0;
 
 #ifdef	USE_ZLIB
     RawBytesTotal+=RawBytes;
@@ -3080,6 +3314,10 @@ flushCommandBuffer(int cfd)
 		    return(-1);
 	    }
 	    r = 0;
+	} else if (r == 0) {
+	    /* no progress and no error: poll() would not end it, give up */
+	    Cmde = 0;
+	    return(-1);
 	}
 	b += r;
 
@@ -3850,7 +4088,12 @@ AttemptRemoveRenamedFile(struct stat *st, const char *spoolFile)
  *	     file.
  */
 
-#define MAXMCACHE	32
+/*
+ * Open spool files kept.  Each queue entry's file is opened before the
+ * offer, so a queue that interleaves the files of many incoming feeds
+ * would reopen them all the time with fewer slots.
+ */
+#define MAXMCACHE	128
 
 typedef struct XCache {
     char	*mc_Path;
@@ -3860,6 +4103,7 @@ typedef struct XCache {
 } XCache;
 
 XCache	XCacheAry[MAXMCACHE];
+static char *cdGonePath;	/* the last spool file found not there */
 
 void
 cdinit(void)
@@ -3872,10 +4116,112 @@ cdinit(void)
     }
 }
 
+/*
+ * cdfault() - note why an article could not be read (SPOOL_*).
+ */
+static void
+cdfault(int fault, int error)
+{
+    SpoolFault = fault;
+    SpoolErrno = error;
+}
+
+/*
+ * cdevict() - close cache slot i.
+ */
+static void
+cdevict(int i)
+{
+    XCache *mc = &XCacheAry[i];
+
+    close(mc->mc_Fd);
+    zfreeStr(&SysMemPool, &mc->mc_Path);
+    mc->mc_Fd = -1;
+    mc->mc_Size = 0;
+    mc->mc_OpenTime = 0;
+}
+
+/*
+ * cdlookup() - the cache slot of path, opened if it was not open yet;
+ * NULL if it cannot be opened (SpoolFault says why).  A file that cannot
+ * be opened does not push an open one out of a full cache, unless we are
+ * out of descriptors.
+ */
+static XCache *
+cdlookup(const char *path)
+{
+    int i;
+    int fd;
+    int freeSlot = -1;
+    XCache *mc;
+    struct stat st;
+
+    /* cdflush() leaves holes: look at every slot */
+    for (i = 0; i < MAXMCACHE; ++i) {
+	mc = &XCacheAry[i];
+	if (mc->mc_Path == NULL) {
+	    if (freeSlot < 0)
+		freeSlot = i;
+	    continue;
+	}
+	if (strcmp(path, mc->mc_Path) == 0)
+	    return(mc);
+    }
+
+    /* a run of entries in an expired file: do not try it again each time */
+    if (cdGonePath != NULL && strcmp(path, cdGonePath) == 0) {
+	cdfault(SPOOL_GONE, ENOENT);
+	return(NULL);
+    }
+    fd = cdopen(path, O_RDONLY, 0);
+    if (fd < 0 && (errno == EMFILE || errno == ENFILE) && freeSlot < 0) {
+	freeSlot = random() % MAXMCACHE;
+	cdevict(freeSlot);
+	fd = cdopen(path, O_RDONLY, 0);
+    }
+    if (fd < 0) {
+	if (errno == ENOENT || errno == ENOTDIR) {
+	    cdfault(SPOOL_GONE, errno);
+	    zfreeStr(&SysMemPool, &cdGonePath);
+	    cdGonePath = zallocStr(&SysMemPool, path);
+	} else {
+	    cdfault(SPOOL_ERR, errno);
+	}
+	return(NULL);
+    }
+    if (freeSlot < 0) {
+	freeSlot = random() % MAXMCACHE;
+	cdevict(freeSlot);
+    }
+    mc = &XCacheAry[freeSlot];
+
+    st.st_size = 0;
+    fstat(fd, &st);
+    mc->mc_Fd = fd;
+    mc->mc_Size = st.st_size;
+    mc->mc_Path = zallocStr(&SysMemPool, path);
+    mc->mc_OpenTime = time(NULL);
+    return(mc);
+}
+
+/*
+ * cdcheck() - can the spool file be opened?  SPOOL_OK, or why not.  It
+ * stays open in the cache for cdmap().
+ */
+int
+cdcheck(const char *path)
+{
+    if (cdlookup(path) == NULL)
+	return(SpoolFault);
+    return(SPOOL_OK);
+}
+
+/*
+ * cdmap() - map an article; NULL if it cannot be read (SpoolFault says why).
+ */
 char *
 cdmap(const char *path, off_t off, int *psize, int cSize, int *multiArtFile)
 {
-    int i;
     XCache *mc;
     char *ptr = NULL;
 
@@ -3884,115 +4230,128 @@ cdmap(const char *path, off_t off, int *psize, int cSize, int *multiArtFile)
 	*multiArtFile = 1;
     }
 
-    for (i = 0; i < MAXMCACHE; ++i) {
-	if (XCacheAry[i].mc_Path == NULL)
-	    break;
-	if (strcmp(path, XCacheAry[i].mc_Path) == 0)
-	    break;
-    }
-    if (i == MAXMCACHE) {
-	i = random() % MAXMCACHE;
-
-	mc = &XCacheAry[i];
-	close(mc->mc_Fd);
-	zfreeStr(&SysMemPool, &mc->mc_Path);
-	mc->mc_Fd = -1;
-	mc->mc_Size = 0;
-	mc->mc_OpenTime = 0;
-    }
-    mc = &XCacheAry[i];
-
-    if (mc->mc_Path == NULL) {
-	if ((mc->mc_Fd = cdopen(path, O_RDONLY, 0)) >= 0) {
-	    struct stat st;
-
-	    st.st_size = 0;
-	    fstat(mc->mc_Fd, &st);
-	    mc->mc_Size = st.st_size;
-	    mc->mc_Path = zallocStr(&SysMemPool, path);
-	    mc->mc_OpenTime = time(NULL);
-	}
-    }
+    if ((mc = cdlookup(path)) == NULL)
+	return(NULL);
 
     /*
      * When mapping multi-article files, a \0 terminator must also be mapped.
      * There is no \0 terminator for regular files.
      */
 
-    if (mc->mc_Fd >= 0) {
-	if (!*multiArtFile)
-	    *psize = mc->mc_Size;
+    if (!*multiArtFile)
+	*psize = mc->mc_Size;
 
-	if (cSize > 0) {
+    if (cSize > 0) {
 #ifdef USE_ZLIB
-	    char *p;
-	    gzFile gzf;
-	    SpoolArtHdr tah = { 0 };
+	char *p;
+	gzFile gzf;
+	int dfd;
+	int n;
+	SpoolArtHdr tah = { 0 };
 
+	lseek(mc->mc_Fd, off, 0);
+	n = read(mc->mc_Fd, &tah, sizeof(tah));
+	if (n != sizeof(tah)) {
+	    if (n < 0)
+		cdfault(SPOOL_ERR, errno);
+	    else
+		cdfault(SPOOL_BAD, 0);
+	    return(NULL);
+	}
+	if ((uint8)tah.Magic1 != (uint8)STORE_MAGIC1 &&
+			    (uint8)tah.Magic2 != (uint8)STORE_MAGIC2) {
 	    lseek(mc->mc_Fd, off, 0);
-	    if (read(mc->mc_Fd, &tah, sizeof(tah)) != sizeof(tah))
-		return(NULL);
-	    if ((uint8)tah.Magic1 != (uint8)STORE_MAGIC1 &&
-				(uint8)tah.Magic2 != (uint8)STORE_MAGIC2) {
-		lseek(mc->mc_Fd, off, 0);
-		tah.Magic1 = STORE_MAGIC1;
-		tah.Magic2 = STORE_MAGIC2;
-		tah.HeadLen = sizeof(tah);
-		tah.ArtLen = *psize;
-		tah.ArtHdrLen = *psize;
-		tah.StoreLen = *psize;
-		tah.StoreType = STORETYPE_TEXT;
-		*multiArtFile = 1;
-	    }
-	    gzf = gzdopen(dup(mc->mc_Fd), "r");
-	    if (gzf == NULL)
-		return(NULL);
+	    tah.Magic1 = STORE_MAGIC1;
+	    tah.Magic2 = STORE_MAGIC2;
+	    tah.HeadLen = sizeof(tah);
+	    tah.ArtLen = *psize;
+	    tah.ArtHdrLen = *psize;
+	    tah.StoreLen = *psize;
+	    tah.StoreType = STORETYPE_TEXT;
+	    *multiArtFile = 1;
+	}
+	if (tah.HeadLen > sizeof(tah) || tah.ArtLen > (1U << 30)) {
+	    logit(LOG_CRIT, "Bad article header length (%d/%d)\n",
+			    (int)tah.HeadLen, (int)tah.ArtLen);
+	    cdfault(SPOOL_BAD, 0);
+	    return(NULL);
+	}
+	if ((dfd = dup(mc->mc_Fd)) < 0) {
+	    cdfault(SPOOL_ERR, errno);
+	    return(NULL);
+	}
+	if ((gzf = gzdopen(dfd, "r")) == NULL) {
+	    cdfault(SPOOL_ERR, errno ? errno : ENOMEM);
+	    close(dfd);
+	    return(NULL);
+	}
+	{
+	    size_t need = (size_t)tah.ArtLen + (size_t)tah.HeadLen + 2;
 
-	    if (tah.HeadLen > sizeof(tah) || tah.ArtLen > (1U << 30)) {
-		logit(LOG_CRIT, "Bad article header length (%d/%d)\n",
-				(int)tah.HeadLen, (int)tah.ArtLen);
+	    ptr = (char *)malloc(need);
+	    if (ptr == NULL) {
+		logit(LOG_CRIT, "Unable to malloc %lu bytes for article (%s)\n",
+			    (unsigned long)need, strerror(errno));
+		cdfault(SPOOL_ERR, ENOMEM);
 		gzclose(gzf);
 		return(NULL);
 	    }
-	    {
-		size_t need = (size_t)tah.ArtLen + (size_t)tah.HeadLen + 2;
+	}
+	p = ptr;
+	bcopy(&tah, p, tah.HeadLen);
+	p += tah.HeadLen;
+	if ((n = gzread(gzf, p, tah.ArtLen)) != (int)tah.ArtLen) {
+	    int zerr = Z_OK;
 
-		ptr = (char *)malloc(need);
-		if (ptr == NULL) {
-		    logit(LOG_CRIT, "Unable to malloc %lu bytes for article (%s)\n",
-				(unsigned long)need, strerror(errno));
-		    gzclose(gzf);
-		    return(NULL);
-		}
-	    }
-	    p = ptr;
-	    bcopy(&tah, p, tah.HeadLen);
-	    p += tah.HeadLen;
-	    if (gzread(gzf, p, tah.ArtLen) != tah.ArtLen) {
-		free(ptr);
+	    (void)gzerror(gzf, &zerr);
+	    if (n < 0 && zerr == Z_ERRNO)
+		cdfault(SPOOL_ERR, errno);
+	    else
+		cdfault(SPOOL_BAD, 0);
+	    free(ptr);
+	    gzclose(gzf);
+	    return(NULL);
+	}
+	p[tah.ArtLen] = 0;
+	*psize = tah.ArtLen + tah.HeadLen;
+	gzclose(gzf);
+#else
+	logit(LOG_CRIT, "Queue batch file indicates compressed file and compression not enabled");
+	cdfault(SPOOL_ERR, EOPNOTSUPP);
+#endif
+    } else {
+	/*
+	 * An entry past the end of the file (truncated, or a bad queue
+	 * line) would fault when it is read.  The size is from the open:
+	 * the current spool file may have grown since.
+	 */
+	if (*multiArtFile && off + *psize + 1 > (off_t)mc->mc_Size) {
+	    struct stat st;
+
+	    if (fstat(mc->mc_Fd, &st) == 0)
+		mc->mc_Size = st.st_size;
+	    if (off + *psize + 1 > (off_t)mc->mc_Size) {
+		logit(LOG_CRIT, "article batch truncated: %s @ %lld,%d", path, (long long)off, *psize);
+		cdfault(SPOOL_BAD, 0);
 		return(NULL);
 	    }
-	    p[tah.ArtLen] = 0;
-	    *psize = tah.ArtLen + tah.HeadLen;
-	    gzclose(gzf);
-#else
-	    logit(LOG_CRIT, "Queue batch file indicates compressed file and compression not enabled");
-#endif
-	} else {
-	    ptr = xmap(NULL, *psize + *multiArtFile, PROT_READ, MAP_SHARED, mc->mc_Fd, off);
-	    if (ptr == NULL)
-		return(ptr);
-	    if (ptr && HeaderOnlyFeed==0) {
-		if (DOpts.FeederPreloadArt)
-		    xadvise(ptr, *psize, XADV_WILLNEED);
-		else
-		    xadvise(ptr, *psize, XADV_SEQUENTIAL);
-	    }
-	    if (*multiArtFile && ptr && ptr[*psize] != 0) {
-		logit(LOG_CRIT, "article batch corrupted: %s @ %lld,%ld", path, off, *psize);
-		xunmap(ptr, *psize + *multiArtFile);
-		ptr = NULL;
-	    }
+	}
+	ptr = xmap(NULL, *psize + *multiArtFile, PROT_READ, MAP_SHARED, mc->mc_Fd, off);
+	if (ptr == NULL) {
+	    cdfault(SPOOL_ERR, errno);
+	    return(ptr);
+	}
+	if (HeaderOnlyFeed==0) {
+	    if (DOpts.FeederPreloadArt)
+		xadvise(ptr, *psize, XADV_WILLNEED);
+	    else
+		xadvise(ptr, *psize, XADV_SEQUENTIAL);
+	}
+	if (*multiArtFile && ptr[*psize] != 0) {
+	    logit(LOG_CRIT, "article batch corrupted: %s @ %lld,%d", path, (long long)off, *psize);
+	    xunmap(ptr, *psize + *multiArtFile);
+	    cdfault(SPOOL_BAD, 0);
+	    ptr = NULL;
 	}
     }
     return(ptr);

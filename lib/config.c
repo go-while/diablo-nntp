@@ -145,6 +145,7 @@ initDOpts(void)
     DOpts.FeederAutoAddToActive = 0;
     DOpts.ReaderDetailLog = 1;
     DOpts.ReaderIdentTimeout = 10;
+    DOpts.ReaderAuthTimeout = 10;
     DOpts.RememberSecs = 14 * 24 * 60 * 60;
     DOpts.FeederMaxAcceptAge = DOpts.RememberSecs;
     DOpts.FeederStrictDate = 0;
@@ -637,6 +638,9 @@ SetCommand(FILE *fo, char *cmd, char *opt, int *cmdErr)
 		DOpts.ReaderIdentTimeout = strtol(opt, NULL, 0);
 		optErr = 0;
 	    }
+	} else if (strcasecmp(cmd, "readerauthtimeout") == 0) {
+	    if (opt && confRange(opt, 0, 300, &DOpts.ReaderAuthTimeout))
+		optErr = 0;
 	} else if (strcasecmp(cmd, "readerthreads") == 0) {
 	    if (opt) {
 		DOpts.ReaderThreads = strtol(opt, NULL, 0);
@@ -988,6 +992,8 @@ dumpConfigReader(FILE *fo, char *cmd)
 	fprintf(fo, "readerdnsqueue: %d\n", DOpts.ReaderDnsQueue);
     if (cmd == NULL || strcasecmp(cmd, "readerdnswait") == 0)
 	fprintf(fo, "readerdnswait: %d\n", DOpts.ReaderDnsWait);
+    if (cmd == NULL || strcasecmp(cmd, "readerauthtimeout") == 0)
+	fprintf(fo, "readerauthtimeout: %d\n", DOpts.ReaderAuthTimeout);
     if (cmd == NULL || strcasecmp(cmd, "readerbindhost") == 0)
 	fprintf(fo, "*readerbindhost: %s\n",
 					safestr(DOpts.ReaderBindHost, "ANY"));
