@@ -224,12 +224,16 @@ main(int ac, char **av)
 	size_t n;
 
 	while ((n = ArtRead(buf, sizeof(buf))) > 0) {
-	    Body = realloc(Body, BodyLen + n + 1);
+	    char *nb = realloc(Body, BodyLen + n + 1);
+
+	    if (nb == NULL)
+		exit(2);
+	    Body = nb;
 	    memcpy(Body + BodyLen, buf, n);
 	    BodyLen += n;
 	}
-	if (Body == NULL)
-	    Body = strdup("");
+	if (Body == NULL && (Body = strdup("")) == NULL)
+	    exit(2);
 	Body[BodyLen] = 0;
     }
 
@@ -397,7 +401,13 @@ VerifyGpgv(char **argv, const char *keyring, const char *version,
      * signed text
      */
 
-    fo = fdopen(mfd, "w");
+    if ((fo = fdopen(mfd, "w")) == NULL) {
+	close(mfd);
+	close(sfd);
+	unlink(msgfile);
+	unlink(sigfile);
+	return(2);
+    }
     fprintf(fo, "X-Signed-Headers: %s\n", sheaders);
     for (name = strtok(sheaders, ","); name; name = strtok(NULL, ",")) {
 	fprintf(fo, "%s:", name);
@@ -411,7 +421,12 @@ VerifyGpgv(char **argv, const char *keyring, const char *version,
      * ASCII-armored signature
      */
 
-    fo = fdopen(sfd, "w");
+    if ((fo = fdopen(sfd, "w")) == NULL) {
+	close(sfd);
+	unlink(msgfile);
+	unlink(sigfile);
+	return(2);
+    }
     fprintf(fo, "-----BEGIN PGP SIGNATURE-----\n");
     fprintf(fo, "Version: %s\n", version);
     fprintf(fo, "\n");
@@ -482,8 +497,11 @@ VerifyGpgv(char **argv, const char *keyring, const char *version,
      * [GNUPG:] GOODSIG <keyid> <user id>
      */
 
-    fi = fdopen(fds[0], "r");
-    while (fgets(buf, sizeof(buf), fi) != NULL) {
+    if ((fi = fdopen(fds[0], "r")) == NULL) {
+	close(fds[0]);
+	r = 2;		/* gpgv's answer cannot be read */
+    }
+    while (fi != NULL && fgets(buf, sizeof(buf), fi) != NULL) {
 	if (DebugOpt)
 	    fprintf(stderr, ">> %s", buf);
 	if (r == 3 && strncmp(buf, "[GNUPG:] GOODSIG ", 17) == 0) {
@@ -496,7 +514,8 @@ VerifyGpgv(char **argv, const char *keyring, const char *version,
 	    }
 	}
     }
-    fclose(fi);
+    if (fi != NULL)
+	fclose(fi);
     {
 	int status = 0;
 
@@ -542,6 +561,13 @@ VerifyPgp2(char **argv, const char *version, char *sheaders,
 	FILE *fo = fdopen(fds[1], "w");
 	const char *p;
 
+	if (fo == NULL) {
+	    close(fds[1]);
+	    close(fds[2]);
+	    waitpid(pid, NULL, 0);
+	    return(2);
+	}
+
 	fprintf(fo, "-----BEGIN PGP SIGNED MESSAGE-----\n");
 	fprintf(fo, "\n");
 	fprintf(fo, "X-Signed-Headers: %s\n", sheaders);
@@ -579,6 +605,12 @@ VerifyPgp2(char **argv, const char *version, char *sheaders,
 
     {
 	FILE *fi = fdopen(fds[2], "r");
+
+	if (fi == NULL) {
+	    close(fds[2]);
+	    waitpid(pid, NULL, 0);
+	    return(2);
+	}
 	while (fgets(buf, sizeof(buf), fi) != NULL) {
 	    char *good;
 
