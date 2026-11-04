@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/binary"
 	"errors"
+	testkit "github.com/go-while/nntp-testkit"
 	"net"
 	"os/exec"
 	"path/filepath"
@@ -24,7 +25,7 @@ func TestReaderAccessLongLineRefused(t *testing.T) {
 		Config: map[string]string{"path_generallog": "%s/general.log"}})
 	startReaderNoWait(t, s)
 	var log string
-	waitFor(t, 5*time.Second, "the refusal in the log", func() bool {
+	testkit.WaitFor(t, 5*time.Second, "the refusal in the log", func() bool {
 		log = generalLog(s)
 		return strings.Contains(log, "line 2 is longer than")
 	})

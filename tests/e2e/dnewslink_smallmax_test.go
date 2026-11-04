@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"github.com/go-while/nntp-testkit/fakeserver"
 	"os"
 	"strconv"
 	"strings"
@@ -17,20 +18,22 @@ func TestDnewslinkSmallMaxstream(t *testing.T) {
 	dnlSpool(t, s)
 	var mu sync.Mutex
 	var checks []string
-	port := dnlPeer(t, func(line string) (string, bool) {
+	srv := fakeserver.New(t, fakeserver.Options{Greeting: "200 fake", Handler: fakeserver.LineHandler(func(_ *fakeserver.Conn, line string) ([]string, bool) {
+		line = strings.ToLower(strings.TrimSpace(line))
 		switch {
 		case strings.HasPrefix(line, "mode stream"):
-			return "203 stream ok\r\n", false
+			return []string{"203 stream ok"}, false
 		case strings.HasPrefix(line, "check "):
 			mu.Lock()
 			checks = append(checks, strings.Fields(line)[1])
 			mu.Unlock()
-			return "238 " + strings.Fields(line)[1] + "\r\n", false
+			return []string{"238 " + strings.Fields(line)[1]}, false
 		case strings.HasPrefix(line, "takethis "):
-			return "239 " + strings.Fields(line)[1] + "\r\n", false
+			return []string{"239 " + strings.Fields(line)[1]}, false
 		}
-		return "", false
-	})
+		return nil, false
+	})})
+	port := srv.Port()
 	var q string
 	for i := 1; i <= 6; i++ {
 		q += "D.00000001/B.0001 <m" + strconv.Itoa(i) + "@e2e.test> " + strconv.Itoa(i*100) + ",100\n"

@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"bufio"
+	testkit "github.com/go-while/nntp-testkit"
 	"net"
 	"os"
 	"os/exec"
@@ -75,7 +76,7 @@ func TestReaderdefNumbersValidated(t *testing.T) {
 				Config: map[string]string{"path_generallog": "%s/general.log"}})
 			startReaderNoWait(t, s)
 			var log string
-			waitFor(t, 5*time.Second, "bad value in the log", func() bool {
+			testkit.WaitFor(t, 5*time.Second, "bad value in the log", func() bool {
 				log = generalLog(s)
 				return strings.Contains(log, "bad value")
 			})
@@ -100,7 +101,7 @@ func TestReaderdefNumbersRejectedReload(t *testing.T) {
 	s.WriteFile(t, "dreader.access", accessWith("maxconnperhost 1x"))
 	// a new connection makes dreaderd look at dreader.access
 	var log string
-	waitFor(t, 10*time.Second, "bad value in the log", func() bool {
+	testkit.WaitFor(t, 10*time.Second, "bad value in the log", func() bool {
 		readerGreeting(s.Addr)
 		log = generalLog(s)
 		return strings.Contains(log, "bad value")
@@ -134,7 +135,7 @@ func TestAccessCacheWithStdinClosed(t *testing.T) {
 		"-d", "-p", PathHost, "-h", PathHost, "-P", "[127.0.0.1]:"+port)
 	runDetached(t, s, cmd)
 	var g string
-	waitFor(t, 10*time.Second, "a greeting", func() bool {
+	testkit.WaitFor(t, 10*time.Second, "a greeting", func() bool {
 		g = readerGreeting(s.Addr)
 		return g != ""
 	})
@@ -155,10 +156,10 @@ func TestDserverHostsNumbers(t *testing.T) {
 	s := NewReaderSite(t, ReaderOptions{Spool: spool, Files: map[string]string{"dserver.hosts": hosts},
 		Config: map[string]string{"path_generallog": "%s/general.log"}})
 	c := s.Reader(t)
-	expect(t, c, 211, "GROUP e2e.test")
-	expect(t, c, 205, "QUIT")
+	c.ExpectCmd(211, "GROUP e2e.test")
+	c.ExpectCmd(205, "QUIT")
 	var log string
-	waitFor(t, 10*time.Second, "the log lines", func() bool {
+	testkit.WaitFor(t, 10*time.Second, "the log lines", func() bool {
 		log = generalLog(s)
 		return strings.Contains(log, "bad number after 'p'") && strings.Contains(log, "cachemin=abc") && strings.Contains(log, "cachemax=12junk")
 	})

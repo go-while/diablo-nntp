@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"fmt"
+	"github.com/go-while/nntp-testkit/client"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,11 +26,11 @@ expire * trad
 	// The site's 127.0.0.2 label may also read from the spool (STAT).
 	id := msgID(t)
 	p := s.Peer(t)
-	expect(t, p, 335, "IHAVE %s", id)
-	send(t, p, wire(newArticle(id, "e2e.test", "to be expired", "old body")))
-	status(t, p, 235, "IHAVE "+id)
-	expect(t, p, 223, "STAT %s", id)
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(335, "IHAVE %s", id)
+	p.MustSend(client.Stuff(newArticle(id, "e2e.test", "to be expired", "old body")))
+	p.ExpectStatus(235, "IHAVE "+id)
+	p.ExpectCmd(223, "STAT %s", id)
+	p.ExpectCmd(205, "QUIT")
 
 	dirs, _ := filepath.Glob(filepath.Join(s.Dir, "spool", "news", "D.*"))
 	if len(dirs) == 0 {
@@ -45,15 +46,15 @@ expire * trad
 		}
 	}
 	p = s.Peer(t)
-	expect(t, p, 430, "STAT %s", id)
+	p.ExpectCmd(430, "STAT %s", id)
 	if code, line := p.Cmd("IHAVE %s", id); code != 435 {
 		t.Errorf("IHAVE of the expired %s: %q, want 435 (still in history)", id, line)
 		if code == 335 {
-			send(t, p, wire(newArticle(id, "e2e.test", "to be expired", "old body")))
+			p.MustSend(client.Stuff(newArticle(id, "e2e.test", "to be expired", "old body")))
 			_, _, _ = p.ReadStatus()
 		}
 	}
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(205, "QUIT")
 	if strings.Contains(out, "error") {
 		t.Logf("dexpire output mentions an error:\n%s", out)
 	}
@@ -88,13 +89,13 @@ func TestDexpireKeepsNewestDir(t *testing.T) {
 		t.Errorf("dexpire didn't say it kept the newest directory:\n%s", out)
 	}
 	p := s.Peer(t)
-	expect(t, p, 223, "STAT %s", id)
+	p.ExpectCmd(223, "STAT %s", id)
 	next := msgID(t)
-	expect(t, p, 335, "IHAVE %s", next)
-	send(t, p, wire(newArticle(next, "e2e.test", "after dexpire", "body")))
-	status(t, p, 235, "IHAVE after dexpire")
-	expect(t, p, 223, "STAT %s", next)
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(335, "IHAVE %s", next)
+	p.MustSend(client.Stuff(newArticle(next, "e2e.test", "after dexpire", "body")))
+	p.ExpectStatus(235, "IHAVE after dexpire")
+	p.ExpectCmd(223, "STAT %s", next)
+	p.ExpectCmd(205, "QUIT")
 }
 
 // TestDexpireKeepsHistoryOfUnremovedDir (D-157): a spool directory that dexpire cannot enter is
@@ -128,6 +129,6 @@ func TestDexpireKeepsHistoryOfUnremovedDir(t *testing.T) {
 		t.Errorf("dexpire did not say that it kept the directory:\n%s", out)
 	}
 	p := s.Peer(t)
-	expect(t, p, 223, "STAT %s", id) // the history still has the article
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(223, "STAT %s", id) // the history still has the article
+	p.ExpectCmd(205, "QUIT")
 }

@@ -57,10 +57,10 @@ func TestReaderAccessCachePrivate(t *testing.T) {
 	startReader(t, s, "[127.0.0.1]:"+port)
 
 	c := s.Reader(t)
-	expect(t, c, 381, "AUTHINFO USER fred")
-	expect(t, c, 281, "AUTHINFO PASS fredspass")
-	expect(t, c, 211, "GROUP e2e.test")
-	expect(t, c, 205, "QUIT")
+	c.ExpectCmd(381, "AUTHINFO USER fred")
+	c.ExpectCmd(281, "AUTHINFO PASS fredspass")
+	c.ExpectCmd(211, "GROUP e2e.test")
+	c.ExpectCmd(205, "QUIT")
 
 	for _, name := range accessCaches {
 		fi, err := os.Stat(filepath.Join(s.Dir, name))

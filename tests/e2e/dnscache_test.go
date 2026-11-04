@@ -178,9 +178,9 @@ access *.bench.test userfred
 			s := startDNSCacheReader(t, sh, access, tc.conf, "")
 			ip := "127.1.0.3"
 			c := s.dialFrom(t, ip)
-			expect(t, c, 381, "AUTHINFO USER fred")
-			expect(t, c, 281, "AUTHINFO PASS fredspass")
-			expect(t, c, 211, "GROUP e2e.test")
+			c.ExpectCmd(381, "AUTHINFO USER fred")
+			c.ExpectCmd(281, "AUTHINFO PASS fredspass")
+			c.ExpectCmd(211, "GROUP e2e.test")
 			c.Cmd("QUIT")
 			c.Close()
 			if n := sh.lookups(ip); n != 2 {
@@ -372,11 +372,11 @@ func TestReaderDNSAuthinfoAfterTempFail(t *testing.T) {
 	if !strings.HasPrefix(c.Greeting, "201") {
 		t.Errorf("greeting %q, want 201 (address rule, no name yet)", c.Greeting)
 	}
-	expect(t, c, 381, "AUTHINFO USER fred")
-	expect(t, c, 281, "AUTHINFO PASS fredspass")
+	c.ExpectCmd(381, "AUTHINFO USER fred")
+	c.ExpectCmd(281, "AUTHINFO PASS fredspass")
 	code, line := c.Cmd("POST")
 	if code == 340 {
-		send(t, c, ".\r\n")
+		c.MustSend(".\r\n")
 		c.ReadStatus()
 	}
 	c.TryCmd("QUIT")

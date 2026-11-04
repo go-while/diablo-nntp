@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	testkit "github.com/go-while/nntp-testkit"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,7 +65,7 @@ func TestCheckgroupsChanges(t *testing.T) {
 		"e2e.flip\tNow moderated. (Moderated)",
 		"other.listed\tOutside the pattern of dcontrol.ctl.",
 	)
-	waitFor(t, 10*time.Second, "e2e.new in LIST ACTIVE", func() bool { _, ok := cgActive(t, s)["e2e.new"]; return ok })
+	testkit.WaitFor(t, 10*time.Second, "e2e.new in LIST ACTIVE", func() bool { _, ok := cgActive(t, s)["e2e.new"]; return ok })
 	act := cgActive(t, s)
 	for g, flag := range map[string]string{"e2e.new": "y", "e2e.mod": "m", "e2e.flip": "m", "e2e.test": "y", "other.keep": "y"} {
 		if act[g] != flag {
@@ -82,7 +83,7 @@ func TestCheckgroupsChanges(t *testing.T) {
 		t.Errorf("descriptions: %v", desc)
 	}
 	c := s.Reader(t)
-	defer expect(t, c, 205, "QUIT")
+	defer c.ExpectCmd(205, "QUIT")
 	if code, line := c.Cmd("GROUP e2e.new"); code != 211 || !strings.HasPrefix(line, "211 0 ") {
 		t.Errorf("GROUP e2e.new: %d %q", code, line)
 	}
@@ -104,7 +105,7 @@ func TestCheckgroupsLimit(t *testing.T) {
 	}
 	t.Run("default", func(t *testing.T) {
 		s := cgSite(t, []string{"e2e.test", "e2e.obsolete"}, "checkgroups:*:*:doit=checkgroups.log\n", lines...)
-		waitFor(t, 10*time.Second, "the description", func() bool {
+		testkit.WaitFor(t, 10*time.Second, "the description", func() bool {
 			return iscDescriptions(iscList(t, s, "NEWSGROUPS"))["e2e.test"] == "Described."
 		})
 		act := cgActive(t, s)
@@ -123,7 +124,7 @@ func TestCheckgroupsLimit(t *testing.T) {
 	})
 	t.Run("raised", func(t *testing.T) {
 		s := cgSite(t, []string{"e2e.test", "e2e.obsolete"}, "maxcheckgroups:*:*:12\ncheckgroups:*:*:doit\n", lines...)
-		waitFor(t, 10*time.Second, "e2e.newa in LIST ACTIVE", func() bool { _, ok := cgActive(t, s)["e2e.newa"]; return ok })
+		testkit.WaitFor(t, 10*time.Second, "e2e.newa in LIST ACTIVE", func() bool { _, ok := cgActive(t, s)["e2e.newa"]; return ok })
 		act := cgActive(t, s)
 		if _, ok := act["e2e.newk"]; !ok {
 			t.Error("e2e.newk was not created with the limit raised to 12")
@@ -142,7 +143,7 @@ func TestCheckgroupsLimitLines(t *testing.T) {
 	}
 	made := func(t *testing.T, dcontrol string) bool {
 		s := cgSite(t, []string{"e2e.test"}, dcontrol, eleven...)
-		waitFor(t, 10*time.Second, "the description", func() bool {
+		testkit.WaitFor(t, 10*time.Second, "the description", func() bool {
 			return iscDescriptions(iscList(t, s, "NEWSGROUPS"))["e2e.test"] == "Described."
 		})
 		_, ok := cgActive(t, s)["e2e.newk"]
@@ -174,7 +175,7 @@ func TestCheckgroupsLimitLines(t *testing.T) {
 		}
 		// 12 status changes are over the limit of 10: the flags stay, the descriptions are updated
 		s := cgSite(t, groups, "checkgroups:*:*:doit=checkgroups.log\n", lines...)
-		waitFor(t, 10*time.Second, "the descriptions", func() bool {
+		testkit.WaitFor(t, 10*time.Second, "the descriptions", func() bool {
 			return iscDescriptions(iscList(t, s, "NEWSGROUPS"))["e2e.flaga"] == "Now moderated a. (Moderated)"
 		})
 		act := cgActive(t, s)
@@ -189,7 +190,7 @@ func TestCheckgroupsLimitLines(t *testing.T) {
 		}
 		// and with the limit raised they are changed
 		s = cgSite(t, groups, "maxcheckgroups:*:*:12\ncheckgroups:*:*:doit\n", lines...)
-		waitFor(t, 10*time.Second, "the flags", func() bool { return cgActive(t, s)["e2e.flagl"] == "m" })
+		testkit.WaitFor(t, 10*time.Second, "the flags", func() bool { return cgActive(t, s)["e2e.flagl"] == "m" })
 	})
 }
 
@@ -202,10 +203,10 @@ func TestCheckgroupsLocal(t *testing.T) {
 		"e2e.test\tThe test group.",
 		"e2e.local\tThe description of the sender. (Moderated)",
 	)
-	waitFor(t, 10*time.Second, "e2e.test described", func() bool {
+	testkit.WaitFor(t, 10*time.Second, "e2e.test described", func() bool {
 		return iscDescriptions(iscList(t, s, "NEWSGROUPS"))["e2e.test"] == "The test group."
 	})
-	waitFor(t, 10*time.Second, "e2e.obsolete removed", func() bool { _, ok := cgActive(t, s)["e2e.obsolete"]; return !ok })
+	testkit.WaitFor(t, 10*time.Second, "e2e.obsolete removed", func() bool { _, ok := cgActive(t, s)["e2e.obsolete"]; return !ok })
 	act := cgActive(t, s)
 	if act["e2e.local"] != "y" {
 		t.Errorf("e2e.local: flag %q, want y: it is in localgroups", act["e2e.local"])
@@ -230,7 +231,7 @@ func TestCheckgroupsKeepsDescriptions(t *testing.T) {
 		map[string]string{"dcontrol.ctl": "checkgroups:*:e2e.*:doit\n"},
 		[]string{"e2e.obsolete=Not removed: over the limit.", "other.keep=Another hierarchy."},
 		lines...)
-	waitFor(t, 10*time.Second, "the description", func() bool {
+	testkit.WaitFor(t, 10*time.Second, "the description", func() bool {
 		return iscDescriptions(iscList(t, s, "NEWSGROUPS"))["e2e.test"] == "Described."
 	})
 	act := cgActive(t, s)

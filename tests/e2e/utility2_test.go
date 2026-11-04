@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	testkit "github.com/go-while/nntp-testkit"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -61,8 +62,8 @@ func TestDcancelDryRunDoesNotRewriteSpool(t *testing.T) {
 		t.Errorf("dcancel -a -n entered the spool rewrite path:\n%s", out)
 	}
 	p := s.Peer(t)
-	expect(t, p, 223, "STAT %s", id)
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(223, "STAT %s", id)
+	p.ExpectCmd(205, "QUIT")
 }
 
 // TestDcancelDryRunReaderDoesNotCancelOverview: -n applies to reader-index cancellation too.
@@ -72,12 +73,12 @@ func TestDcancelDryRunReaderDoesNotCancelOverview(t *testing.T) {
 	id := msgID(t)
 	feedReader(t, s, st, "e2e.test", newArticle(id, "e2e.test", "dry-run reader cancel", "body"))
 	c := s.Reader(t)
-	waitFor(t, 10*time.Second, "the article in the reader overview", func() bool {
+	testkit.WaitFor(t, 10*time.Second, "the article in the reader overview", func() bool {
 		_, line := c.Cmd("GROUP e2e.test")
 		f := strings.Fields(line)
 		return len(f) > 1 && f[1] != "0"
 	})
-	expect(t, c, 223, "STAT 1")
+	c.ExpectCmd(223, "STAT 1")
 
 	cmd := exec.Command(filepath.Join(s.Bin, "dcancel"), "-n", "-r")
 	cmd.Dir = s.Dir
@@ -90,6 +91,6 @@ func TestDcancelDryRunReaderDoesNotCancelOverview(t *testing.T) {
 	if !strings.Contains(string(out), "Would cancel 1 in e2e.test") {
 		t.Errorf("dcancel -n -r did not report the planned cancellation:\n%s", out)
 	}
-	expect(t, c, 223, "STAT 1")
-	expect(t, c, 205, "QUIT")
+	c.ExpectCmd(223, "STAT 1")
+	c.ExpectCmd(205, "QUIT")
 }

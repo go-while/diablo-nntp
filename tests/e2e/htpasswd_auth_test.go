@@ -112,7 +112,7 @@ access ` + PeerIP + ` others
 	login := func(user, pass string) bool {
 		t.Helper()
 		c := s.Reader(t)
-		expect(t, c, 381, "AUTHINFO USER %s", user)
+		c.ExpectCmd(381, "AUTHINFO USER %s", user)
 		code, _ := c.Cmd("AUTHINFO PASS %s", pass)
 		c.Close()
 		return code == 281
@@ -161,7 +161,7 @@ access ` + PeerIP + ` others
 	login2 := func(user, pass string) bool {
 		t.Helper()
 		c := s.dialFrom(t, PeerIP)
-		expect(t, c, 381, "AUTHINFO USER %s", user)
+		c.ExpectCmd(381, "AUTHINFO USER %s", user)
 		code, _ := c.Cmd("AUTHINFO PASS %s", pass)
 		c.Close()
 		return code == 281
@@ -222,7 +222,7 @@ access ` + PeerIP + ` feed
 	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: access})
 	for i := 0; i < 3; i++ {
 		c := s.Reader(t)
-		expect(t, c, 381, "AUTHINFO USER pat")
+		c.ExpectCmd(381, "AUTHINFO USER pat")
 		if code, line := c.Cmd("AUTHINFO PASS patspass"); code == 281 {
 			t.Errorf("logged in through a script that cannot start: %s", line)
 		}

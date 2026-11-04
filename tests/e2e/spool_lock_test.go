@@ -3,6 +3,7 @@ package e2e
 import (
 	"encoding/binary"
 	"fmt"
+	testkit "github.com/go-while/nntp-testkit"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -91,9 +92,9 @@ func testSpoolLockKept(t *testing.T, spoolCtl string, gzipped bool) {
 
 	c1 := s.Peer(t)
 	a := msgID(t)
-	expect(t, c1, 335, "IHAVE %s", a)
-	send(t, c1, wire(newArticle(a, "e2e.test", "article a", "body of a")))
-	status(t, c1, 235, "IHAVE a")
+	c1.ExpectCmd(335, "IHAVE %s", a)
+	c1.MustSend(client.Stuff(newArticle(a, "e2e.test", "article a", "body of a")))
+	c1.ExpectStatus(235, "IHAVE a")
 
 	files := spoolFiles(t, s)
 	if len(files) != 1 {
@@ -126,9 +127,9 @@ func testSpoolLockKept(t *testing.T, spoolCtl string, gzipped bool) {
 
 	b := msgID(t)
 	bBody := []string{"body of b", strings.Repeat("b", 200)}
-	expect(t, c1, 335, "IHAVE %s", b)
-	send(t, c1, wire(newArticle(b, "e2e.test", "article b", bBody...)))
-	status(t, c1, 235, "IHAVE b")
+	c1.ExpectCmd(335, "IHAVE %s", b)
+	c1.MustSend(client.Stuff(newArticle(b, "e2e.test", "article b", bBody...)))
+	c1.ExpectStatus(235, "IHAVE b")
 	if got := spoolFiles(t, s); !slices.Equal(got, files) {
 		t.Errorf("spool files after the second article: %q, want %q", got, files)
 	}
@@ -140,8 +141,8 @@ func testSpoolLockKept(t *testing.T, spoolCtl string, gzipped bool) {
 	if got := fetchBody(t, c2, b); got != nil && !slices.Equal(got, bBody) {
 		t.Errorf("ARTICLE %s body %q, want %q", b, got, bBody)
 	}
-	expect(t, c2, 205, "QUIT")
-	expect(t, c1, 205, "QUIT")
+	c2.ExpectCmd(205, "QUIT")
+	c1.ExpectCmd(205, "QUIT")
 }
 
 // TestFeederArticleKeepsSpoolLock: ARTICLE, HEAD and BODY of an article in the spool file
@@ -164,9 +165,9 @@ func TestFeederCompressedSpoolKeepsLock(t *testing.T) {
 // spoolIhave offers and sends an article with IHAVE and expects 235.
 func spoolIhave(tb testing.TB, c *client.Conn, id string, body ...string) {
 	tb.Helper()
-	expect(tb, c, 335, "IHAVE %s", id)
-	send(tb, c, wire(newArticle(id, "e2e.test", "spool lock", body...)))
-	status(tb, c, 235, "IHAVE "+id)
+	c.ExpectCmd(335, "IHAVE %s", id)
+	c.MustSend(client.Stuff(newArticle(id, "e2e.test", "spool lock", body...)))
+	c.ExpectStatus(235, "IHAVE "+id)
 }
 
 const compressedSpoolCtl = `spool 00
@@ -196,9 +197,9 @@ func TestFeederCorruptSpoolHeader(t *testing.T) {
 	aBody := []string{"body of a", strings.Repeat("hello world ", 50)}
 	spoolIhave(t, c, a, aBody...)
 	spoolIhave(t, c, b, "body of b")
-	expect(t, c, 205, "QUIT")
+	c.ExpectCmd(205, "QUIT")
 	file := spoolFiles(t, s)[0]
-	waitFor(t, 10*time.Second, "the child to let go of the spool file", func() bool { return spoolLockPid(t, file) == 0 })
+	testkit.WaitFor(t, 10*time.Second, "the child to let go of the spool file", func() bool { return spoolLockPid(t, file) == 0 })
 
 	// a is the first article of the file: its spool header is at offset 0. Layout:
 	// Magic1 Magic2 Version HeadLen StoreType, 3 bytes padding, ArtHdrLen, ArtLen,
@@ -233,11 +234,11 @@ func TestFeederCorruptSpoolHeader(t *testing.T) {
 			}
 			defer func() { _, _ = f.WriteAt(hdr, 0) }()
 			c := s.Peer(t)
-			expect(t, c, 430, "ARTICLE %s", a)
+			c.ExpectCmd(430, "ARTICLE %s", a)
 			if got := fetchBody(t, c, b); got != nil && !slices.Equal(got, []string{"body of b"}) {
 				t.Errorf("ARTICLE %s after the refused one: body %q", b, got)
 			}
-			expect(t, c, 205, "QUIT")
+			c.ExpectCmd(205, "QUIT")
 			if log := s.ReadFile(t, "log/general.log"); !strings.Contains(log, "corrupt spool header") || !strings.Contains(log, tc.logline) {
 				t.Errorf("general.log has no \"corrupt spool header ... %s\" line:\n%s", tc.logline, log)
 			}
@@ -247,7 +248,7 @@ func TestFeederCorruptSpoolHeader(t *testing.T) {
 	if got := fetchBody(t, c, a); got != nil && !slices.Equal(got, aBody) {
 		t.Errorf("ARTICLE %s with its header restored: body %q", a, got)
 	}
-	expect(t, c, 205, "QUIT")
+	c.ExpectCmd(205, "QUIT")
 }
 
 // TestFeederFullSpoolFileKeepsLock: when an article does not fit in the spool file a child
@@ -262,9 +263,9 @@ func TestFeederFullSpoolFileKeepsLock(t *testing.T) {
 	// The first connection shows where connections start now.
 	c0 := s.Peer(t)
 	spoolIhave(t, c0, msgID(t), "x")
-	expect(t, c0, 205, "QUIT")
+	c0.ExpectCmd(205, "QUIT")
 	f0 := spoolFiles(t, s)[0]
-	waitFor(t, 10*time.Second, "the child to let go of the spool file", func() bool { return spoolLockPid(t, f0) == 0 })
+	testkit.WaitFor(t, 10*time.Second, "the child to let go of the spool file", func() bool { return spoolLockPid(t, f0) == 0 })
 	dir := filepath.Dir(f0)
 	i0, err := strconv.ParseUint(strings.TrimPrefix(filepath.Base(f0), "B."), 16, 16)
 	if err != nil {
@@ -311,7 +312,7 @@ func TestFeederFullSpoolFileKeepsLock(t *testing.T) {
 		t.Errorf("after the child moved on to a new file, the lock on the full %s is held by pid %d, want %d (the feeder child)",
 			filepath.Base(full), pid, owner)
 	}
-	expect(t, c1, 205, "QUIT")
+	c1.ExpectCmd(205, "QUIT")
 }
 
 // TestFeederSlotAliasKeepsLock: with reallocint 1m a child reopens its spool file under a
@@ -362,7 +363,7 @@ expire * trad
 		t.Errorf("after ARTICLE of an article stored under the previous slot, the lock on %s is held by pid %d, want %d (the feeder child)",
 			filepath.Base(file), pid, owner)
 	}
-	expect(t, c, 205, "QUIT")
+	c.ExpectCmd(205, "QUIT")
 }
 
 // TestFeederCorruptGzipData: a compressed article must inflate to exactly its length and end
@@ -383,9 +384,9 @@ func TestFeederCorruptGzipData(t *testing.T) {
 	bBody := []string{"body of b", strings.Repeat("goodbye world ", 50)}
 	spoolIhave(t, c, a, aBody...)
 	spoolIhave(t, c, b, bBody...)
-	expect(t, c, 205, "QUIT")
+	c.ExpectCmd(205, "QUIT")
 	file := spoolFiles(t, s)[0]
-	waitFor(t, 10*time.Second, "the child to let go of the spool file", func() bool { return spoolLockPid(t, file) == 0 })
+	testkit.WaitFor(t, 10*time.Second, "the child to let go of the spool file", func() bool { return spoolLockPid(t, file) == 0 })
 
 	orig, err := os.ReadFile(file)
 	if err != nil {
@@ -449,7 +450,7 @@ func TestFeederCorruptGzipData(t *testing.T) {
 			if got := fetchBody(t, c, tc.good); got != nil && !slices.Equal(got, tc.goodBody) {
 				t.Errorf("ARTICLE %s next to the damaged one: body %q", tc.good, got)
 			}
-			expect(t, c, 205, "QUIT")
+			c.ExpectCmd(205, "QUIT")
 			if log := s.ReadFile(t, "log/general.log"); !strings.Contains(log, "Error uncompressing article") {
 				t.Errorf("general.log has no \"Error uncompressing article\" line:\n%s", log)
 			}
@@ -464,5 +465,5 @@ func TestFeederCorruptGzipData(t *testing.T) {
 			t.Errorf("ARTICLE %s with the file restored: body %q", x.id, got)
 		}
 	}
-	expect(t, c, 205, "QUIT")
+	c.ExpectCmd(205, "QUIT")
 }

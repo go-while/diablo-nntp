@@ -8,6 +8,7 @@ package e2e
 import (
 	"bufio"
 	"fmt"
+	testkit "github.com/go-while/nntp-testkit"
 	"net"
 	"os"
 	"os/exec"
@@ -157,9 +158,9 @@ func TestReaderDNSOverload400(t *testing.T) {
 		t.Errorf("%d greeted and %d got 400, want some of each", greeted, busy)
 	}
 	c := s.Reader(t)
-	expect(t, c, 381, "AUTHINFO USER fred")
-	expect(t, c, 281, "AUTHINFO PASS fredspass")
-	expect(t, c, 205, "QUIT")
+	c.ExpectCmd(381, "AUTHINFO USER fred")
+	c.ExpectCmd(281, "AUTHINFO PASS fredspass")
+	c.ExpectCmd(205, "QUIT")
 }
 
 // TestReaderDNSOverloadAuthFirst: 20 greeted clients send AUTHINFO PASS together while a
@@ -319,7 +320,7 @@ func TestReaderDNSOverloadProxied(t *testing.T) {
 	startReader(t, s, "[127.0.0.1]:"+port)
 
 	fred := s.dialFrom(t, "127.2.0.1")
-	expect(t, fred, 381, "AUTHINFO USER fred")
+	fred.ExpectCmd(381, "AUTHINFO USER fred")
 
 	const n = 150
 	type cl struct {
@@ -541,7 +542,7 @@ func TestReaderListenBacklog(t *testing.T) {
 	}
 	// it still serves once it has worked through the closed ones
 	var g string
-	waitFor(t, 20*time.Second, "a greeting after the backlog drained", func() bool {
+	testkit.WaitFor(t, 20*time.Second, "a greeting after the backlog drained", func() bool {
 		g = readerGreeting(s.Addr)
 		return strings.HasPrefix(g, "200") || strings.HasPrefix(g, "201")
 	})

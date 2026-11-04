@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	testkit "github.com/go-while/nntp-testkit"
 	"os"
 	"path/filepath"
 	"slices"
@@ -31,13 +32,13 @@ func TestControlMailRuleTempFile(t *testing.T) {
 	}
 	exists := func(g string) bool {
 		c := s.Reader(t)
-		defer expect(t, c, 205, "QUIT")
-		expect(t, c, 215, "LIST ACTIVE %s", g)
+		defer c.ExpectCmd(205, "QUIT")
+		c.ExpectCmd(215, "LIST ACTIVE %s", g)
 		return slices.ContainsFunc(c.ReadDotLines(), func(l string) bool { return strings.HasPrefix(l, g+" ") })
 	}
 
 	feedReader(t, s, st, "e2e.test", a)
-	waitFor(t, 10*time.Second, "e2e.mailrule created by a control message under a mail rule", func() bool { return exists("e2e.mailrule") })
+	testkit.WaitFor(t, 10*time.Second, "e2e.mailrule created by a control message under a mail rule", func() bool { return exists("e2e.mailrule") })
 
 	time.Sleep(500 * time.Millisecond)
 	for _, pid := range sitePids(s, "dreaderd") {

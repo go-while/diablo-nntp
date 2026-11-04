@@ -61,9 +61,9 @@ func TestReaderHandbackFdLostReleased(t *testing.T) {
 			}
 			c := s.Reader(t)
 			if tc.access == "" {
-				expect(t, c, 205, "QUIT")
+				c.ExpectCmd(205, "QUIT")
 			} else {
-				expect(t, c, 381, "AUTHINFO USER fred")
+				c.ExpectCmd(381, "AUTHINFO USER fred")
 				// The descriptor is lost on its way to the authentication: the client
 				// gets no answer, only the end of the connection.
 				code, line, err := c.TryCmd("AUTHINFO PASS fredspass")
@@ -87,11 +87,11 @@ func TestReaderHandbackFdLostReleased(t *testing.T) {
 			}
 			c = s.Reader(t)
 			if tc.access != "" {
-				expect(t, c, 381, "AUTHINFO USER fred")
-				expect(t, c, 281, "AUTHINFO PASS fredspass")
+				c.ExpectCmd(381, "AUTHINFO USER fred")
+				c.ExpectCmd(281, "AUTHINFO PASS fredspass")
 			}
-			expect(t, c, 211, "GROUP e2e.test")
-			expect(t, c, 205, "QUIT")
+			c.ExpectCmd(211, "GROUP e2e.test")
+			c.ExpectCmd(205, "QUIT")
 			act0("after the next session")
 		})
 	}

@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	testkit "github.com/go-while/nntp-testkit"
+	"github.com/go-while/nntp-testkit/client"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -525,9 +527,9 @@ func TestKPDBReadLockFailureKeepsReader(t *testing.T) {
 
 	r := s.Reader(t)
 	for i := 0; i < 2; i++ {
-		expect(t, r, 211, "GROUP e2e.test")
+		r.ExpectCmd(211, "GROUP e2e.test")
 	}
-	expect(t, r, 205, "QUIT")
+	r.ExpectCmd(205, "QUIT")
 }
 
 // TestKPDBLockFailureStops: when a record lock or the append lock of a KP
@@ -652,8 +654,8 @@ func TestKPDBLockWaitSignal(t *testing.T) {
 	startReader(t, s, "[127.0.0.1]:"+port)
 
 	r := s.Reader(t)
-	expect(t, r, 211, "GROUP e2e.test") // the database is open (and sorted)
-	expect(t, r, 205, "QUIT")
+	r.ExpectCmd(211, "GROUP e2e.test") // the database is open (and sorted)
+	r.ExpectCmd(205, "QUIT")
 	db := filepath.Join(s.Dir, "dactive.kp")
 	live := regexp.MustCompile(`(?m)^\+[0-9a-f]+\.[0-9a-f]+:e2e\.test\b.*$`)
 	record := func() (int64, string) {
@@ -680,7 +682,7 @@ func TestKPDBLockWaitSignal(t *testing.T) {
 	head, body := splitArticle(a)
 	id := headerValue(head, "Message-ID")
 	st.AddArticle("e2e.test", fakeserver.Article{MessageID: id, Headers: head, Body: body})
-	expect(t, p, 335, "IHAVE %s", id)
+	p.ExpectCmd(335, "IHAVE %s", id)
 	time.Sleep(time.Second) // other waits on the record are logged by now
 	// The waits on the record logged before the article was sent (the reader fork of the
 	// GROUP above may wait there too) are left alone; each process that starts a wait on it
@@ -699,10 +701,10 @@ func TestKPDBLockWaitSignal(t *testing.T) {
 		return pids
 	}
 	before := len(waits())
-	if _, err := p.Conn.Write([]byte(wire(a))); err != nil {
+	if _, err := p.Conn.Write([]byte(client.Stuff(a))); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, 10*time.Second, "the feed fork waiting for the record lock", func() bool { return len(waits()) > before })
+	testkit.WaitFor(t, 10*time.Second, "the feed fork waiting for the record lock", func() bool { return len(waits()) > before })
 	time.Sleep(300 * time.Millisecond) // into the wait
 	for _, pid := range waits()[before:] {
 		if err := syscall.Kill(pid, syscall.SIGUSR1); err != nil && err != syscall.ESRCH {
@@ -721,5 +723,5 @@ func TestKPDBLockWaitSignal(t *testing.T) {
 		t.Fatalf("IHAVE after the lock was released: %q %v", line, err)
 	}
 	p.Conn.SetReadDeadline(time.Time{})
-	waitFor(t, 10*time.Second, "NE after the lock was released", func() bool { _, ne := record(); return ne != ne0 })
+	testkit.WaitFor(t, 10*time.Second, "NE after the lock was released", func() bool { _, ne := record(); return ne != ne0 })
 }

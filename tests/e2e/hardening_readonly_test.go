@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"github.com/go-while/nntp-testkit/client"
 	"os"
 	"testing"
 )
@@ -18,10 +19,10 @@ end
 `})
 	p := s.Peer(t)
 	id := msgID(t)
-	send(t, p, "TAKETHIS "+id+"\r\n"+wire(newArticle(id, "e2e.test", "read-only", "FEEDRSET", "FEEDADD alt.e2e.*", "FEEDCOMMIT")))
-	status(t, p, 480, "TAKETHIS on a read-only connection")
+	p.MustSend("TAKETHIS " + id + "\r\n" + client.Stuff(newArticle(id, "e2e.test", "read-only", "FEEDRSET", "FEEDADD alt.e2e.*", "FEEDCOMMIT")))
+	p.ExpectStatus(480, "TAKETHIS on a read-only connection")
 	// Nothing but the reply to QUIT may follow.
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(205, "QUIT")
 	if b, err := os.ReadFile(s.Dir + "/feeds/peer"); err == nil {
 		t.Errorf("feeds/peer was written from the article body: %q", b)
 	}

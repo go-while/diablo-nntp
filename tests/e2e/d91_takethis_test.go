@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"fmt"
+	"github.com/go-while/nntp-testkit/client"
 	"testing"
 )
 
@@ -18,21 +19,21 @@ func TestFeederTakethisNoArg(t *testing.T) {
 	s := NewSite(t, SiteOptions{})
 	p := s.Peer(t)
 
-	expect(t, p, 203, "MODE STREAM")
+	p.ExpectCmd(203, "MODE STREAM")
 
 	// TAKETHIS with no argument: the article body still follows on the wire.
-	if err := p.Send(fmt.Sprintf("TAKETHIS\r\n%s", wire(art))); err != nil {
+	if err := p.Send(fmt.Sprintf("TAKETHIS\r\n%s", client.Stuff(art))); err != nil {
 		t.Fatal(err)
 	}
-	status(t, p, 501, "TAKETHIS no-arg")
+	p.ExpectStatus(501, "TAKETHIS no-arg")
 
 	// The session must still work: a valid TAKETHIS after the 501 should be accepted.
 	id2 := msgID(t)
 	art2 := newArticle(id2, "e2e.test", "d91 follow-up", "body line")
-	if err := p.Send(fmt.Sprintf("TAKETHIS %s\r\n%s", id2, wire(art2))); err != nil {
+	if err := p.Send(fmt.Sprintf("TAKETHIS %s\r\n%s", id2, client.Stuff(art2))); err != nil {
 		t.Fatal(err)
 	}
-	status(t, p, 239, "TAKETHIS valid after no-arg")
+	p.ExpectStatus(239, "TAKETHIS valid after no-arg")
 
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(205, "QUIT")
 }
