@@ -12,7 +12,7 @@ re-checked yet.
 Status values: **open**, **PR** (fix waiting for review, with its number), **fixed** (with
 the PR that fixed it), **decision** (needs the maintainer to decide), **won't fix**.
 
-Last updated 2026-11-04: F-07 added (dreaderd POST against RFC 5536/5537). Before that, 2026-11-03: D-172 (retained control connections inherited) and D-173 (NETREMOTE accounting destination) added from go-while's review; D-164 to D-166 marked fixed (#280: readerdef typos, access cache reload); D-167 marked fixed (#169: one Perl interpreter per script); D-134 marked fixed (#257: dkp -t); D-168 and D-169 marked fixed (#185); D-170 added (illumos loses a hand-back at the descriptor limit); D-171 added (OpenBSD shared maps, won't fix). Before that, 2026-10-30: D-167 to D-169 added (Perl authentication, the file and cdb deny lists); F-06 (Perl authentication) added; F-02 noted in progress (#167). Before that, 2026-10-29: D-16 marked fixed (#127). D-135 to D-146 and D-156, D-157 marked fixed (#145, #151 to #154); D-158 won't fix; D-150 to D-155 marked fixed (#158); D-147 to D-149 marked fixed (#159); D-159 to D-162 marked fixed (#160); D-164 to D-166 added from go-while's review of #160. Before that, 2026-10-28: D-91, D-96, D-98 and D-131 to D-133 marked fixed (#146 to #149). F-01 marked done, F-04 (NoCeM) and F-05 (init scripts, done) added, D-163 (file modes, fixed in #139) added; D-135 to D-162 added from go-while's batch of `main` at `0401451`, and a note on D-94. Before that, D-110 to D-134 added from go-while's third review pass of `main` at `6a4b97d`. Before that, 2026-10-27: D-66 to D-109 added from the second review pass and the reviews of the fixes
+Last updated 2026-11-04: F-07 added (dreaderd POST against RFC 5536/5537); D-174 added (empty overview Lines column). Before that, 2026-11-03: D-172 (retained control connections inherited) and D-173 (NETREMOTE accounting destination) added from go-while's review; D-164 to D-166 marked fixed (#280: readerdef typos, access cache reload); D-167 marked fixed (#169: one Perl interpreter per script); D-134 marked fixed (#257: dkp -t); D-168 and D-169 marked fixed (#185); D-170 added (illumos loses a hand-back at the descriptor limit); D-171 added (OpenBSD shared maps, won't fix). Before that, 2026-10-30: D-167 to D-169 added (Perl authentication, the file and cdb deny lists); F-06 (Perl authentication) added; F-02 noted in progress (#167). Before that, 2026-10-29: D-16 marked fixed (#127). D-135 to D-146 and D-156, D-157 marked fixed (#145, #151 to #154); D-158 won't fix; D-150 to D-155 marked fixed (#158); D-147 to D-149 marked fixed (#159); D-159 to D-162 marked fixed (#160); D-164 to D-166 added from go-while's review of #160. Before that, 2026-10-28: D-91, D-96, D-98 and D-131 to D-133 marked fixed (#146 to #149). F-01 marked done, F-04 (NoCeM) and F-05 (init scripts, done) added, D-163 (file modes, fixed in #139) added; D-135 to D-162 added from go-while's batch of `main` at `0401451`, and a note on D-94. Before that, D-110 to D-134 added from go-while's third review pass of `main` at `6a4b97d`. Before that, 2026-10-27: D-66 to D-109 added from the second review pass and the reviews of the fixes
 (D-77 is documented behaviour and only needs a note); the fixed ones are marked with their PR. Before that, D-53 to D-65 added from the review of `main` at `ca648d4`. Before that, 2026-10-26, after batch 1 (#30, #31, #37 to #44, #47 to #49) and the first part
 of batch 2 (#46, #50, #52, #62) were merged. Open: #35 (GnuPG pgpverify, held for a private
 advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
@@ -187,6 +187,7 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-171](#d-171-on-openbsd-readers-do-not-see-writes-through-their-shared-maps) | Medium (OpenBSD only) | On OpenBSD readers do not see writes through their shared maps | won't fix (design) |
 | [D-172](#d-172-feed-children-and-programs-diablo-runs-inherit-retained-control-connections) | Low | Feed children and programs diablo runs inherit retained control connections | PR (#294) |
 | [D-173](#d-173-netremote-session-accounting-goes-to-a-placeholder-host) | Low | NETREMOTE session accounting goes to a placeholder host | open |
+| [D-174](#d-174-the-reader-overview-lines-column-is-empty-for-articles-without-a-lines-header) | Low | The reader overview Lines column is empty for articles without a Lines header | open |
 
 Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315), [F-02 configure script](#f-02-configure-script-for-the-build-options), [F-03 refeed a whole spool](#f-03-refeed-a-whole-spool-to-another-server), [F-04 NoCeM notices](#f-04-nocem-notices), [F-05 init scripts](#f-05-init-scripts-and-adm-script-replacements), [F-06 Perl authentication](#f-06-perl-authentication-for-dreaderd).
 
@@ -1046,6 +1047,9 @@ History, the KPDB files (`dactive.kp`) and overview are read through `MAP_SHARED
 ### D-173 NETREMOTE session accounting goes to a placeholder host
 `dreaderd/dns.c`, `netRemoteAccounting()` (only with `NETREMOTE_ENABLED`, off in `lib/vendor.h`): at every session end of a user who logged in with a password, the DNS worker sends the session's accounting to the hard-coded `Password@accounting.server:8998`, not to the `netremote` server of the authdef the user logged in through. Found by go-while from reading. Before #292 NETREMOTE did not compile with OpenSSL 1.1 or later (the old `des_*` names), and the lookup, connect and read had no timeouts; #292 maps the names to the `DES_` calls and bounds the exchange with `readerauthtimeout`. The maintainer keeps NETREMOTE now that it builds (2026-11-03). Left: the accounting destination (use the authdef's `netremote` setting, or send nothing without one).
 
+### D-174 The reader overview Lines column is empty for articles without a Lines header
+`dreaderd/xover.c` builds each OVER/XOVER line from the stored header block: a missing `Bytes:` is computed, a missing `Lines:` gives an empty column. dreaderd gets headers only (header feed), so it cannot count the lines; `dnewslink -L` (label option `genlines`) adds a `Lines:` header to the header feed when the article has none, but it is off by default and `samples/dnewsfeeds` says it "is not necessary for dreaderd". Verified on the SmartOS test reader (2026-11-04): 97 of 353 XOVER lines of alt.test have an empty Lines column (articles without a Lines header, for example from a remailer); in a sample of overview data files 160 of 7510 stored headers had none. Readers show 0 or nothing as the size. Fix: `genlines` on by default for header feeds (the feed to dreaderd is internal, so the added header is not an article change under RFC 5537), and correct the sample text. Needed before F-07 stops generating Lines in POST.
+
 ## Feature requests
 
 ### F-01 Cancel-Lock (RFC 8315)
@@ -1221,10 +1225,11 @@ the readerdef's permission, the moderator forwarding, group status `n`/`x` refus
 
 Maintainer decisions (2026-11-04):
 - **Lines: no longer generated and not deleted** (RFC 5536 3.3.1 "SHOULD NOT generate"; RFC 5537
-  3.5 step 6). A poster's own Lines header is kept as it is. Before the change, check that
-  dreaderd's overview (OVER/XOVER "Lines" column) does not depend on the header;
-  `samples/dnewsfeeds` says genlines "is not necessary for dreaderd", but that is not traced in
-  the code yet. If it does depend on it, the overview counts the lines itself.
+  3.5 step 6). A poster's own Lines header is kept as it is. Checked: dreaderd's overview "Lines"
+  column is the stored `Lines:` header and stays empty without one (D-174), and dreaderd gets only
+  headers, so it cannot count lines itself. The count therefore has to come with the header feed
+  (dnewslink `-L`, label option `genlines`); with that on by default for header feeds (D-174),
+  local posts keep their Lines column after this change.
 - **posttrailer: removed** (RFC 5537 3.5 step 6, MUST NOT alter the body). Since #283 an unknown
   vserverdef option makes dreader.access invalid, so the keyword stays known: it is logged once
   as no longer supported and ignored, and an old dreader.access still loads.
