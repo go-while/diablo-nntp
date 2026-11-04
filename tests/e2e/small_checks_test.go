@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"errors"
+	"github.com/go-while/nntp-testkit/client"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,10 +28,10 @@ expire * trad
 `})
 	id := msgID(t)
 	p := s.Peer(t)
-	expect(t, p, 335, "IHAVE %s", id)
-	send(t, p, wire(newArticle(id, "e2e.test", "to be expired", "old body")))
-	status(t, p, 235, "IHAVE "+id)
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(335, "IHAVE %s", id)
+	p.MustSend(client.Stuff(newArticle(id, "e2e.test", "to be expired", "old body")))
+	p.ExpectStatus(235, "IHAVE "+id)
+	p.ExpectCmd(205, "QUIT")
 	dirs, _ := filepath.Glob(filepath.Join(s.Dir, "spool", "news", "D.*"))
 	if len(dirs) == 0 {
 		t.Fatalf("no spool directory after storing %s", id)
@@ -59,10 +60,10 @@ func TestDhisexpireBadRecordSize(t *testing.T) {
 	s := NewSite(t, SiteOptions{})
 	p := s.Peer(t)
 	id := msgID(t)
-	expect(t, p, 335, "IHAVE %s", id)
-	send(t, p, wire(newArticle(id, "e2e.test", "history", "body")))
-	status(t, p, 235, "IHAVE")
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(335, "IHAVE %s", id)
+	p.MustSend(client.Stuff(newArticle(id, "e2e.test", "history", "body")))
+	p.ExpectStatus(235, "IHAVE")
+	p.ExpectCmd(205, "QUIT")
 	h, err := os.ReadFile(filepath.Join(s.Dir, "dhistory"))
 	if err != nil || len(h) < 16 {
 		t.Fatalf("dhistory: %v (%d bytes)", err, len(h))

@@ -2,69 +2,23 @@ package e2e
 
 import (
 	"fmt"
-	"net"
+	testkit "github.com/go-while/nntp-testkit"
+	"github.com/go-while/nntp-testkit/fakeserver"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
-	"sync"
 	"syscall"
 	"testing"
 	"time"
 )
 
-// holdPeer accepts connections and never answers, so every dnewslink that connects stays
-// connected. It reports the number of connections open now and the most seen at once.
-type holdPeer struct {
-	ln       net.Listener
-	mu       sync.Mutex
-	open     int
-	max      int
-	accepted int
-}
-
-func newHoldPeer(tb testing.TB) *holdPeer {
+// newHoldPeer is a peer that accepts connections and never answers (no greeting, no reply), so
+// every dnewslink that connects stays connected. Its Open, MaxOpen and Accepted count the
+// connections open now, the most seen at once and all accepted.
+func newHoldPeer(tb testing.TB) *fakeserver.Server {
 	tb.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		tb.Fatal(err)
-	}
-	p := &holdPeer{ln: ln}
-	go func() {
-		for {
-			c, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			p.mu.Lock()
-			p.open++
-			p.accepted++
-			p.max = max(p.max, p.open)
-			p.mu.Unlock()
-			go func() {
-				buf := make([]byte, 512)
-				for {
-					if _, err := c.Read(buf); err != nil {
-						break
-					}
-				}
-				c.Close()
-				p.mu.Lock()
-				p.open--
-				p.mu.Unlock()
-			}()
-		}
-	}()
-	tb.Cleanup(func() { ln.Close() })
-	return p
-}
-
-func (p *holdPeer) port() int { return p.ln.Addr().(*net.TCPAddr).Port }
-
-func (p *holdPeer) counts() (open, most, accepted int) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.open, p.max, p.accepted
+	return fakeserver.New(tb, fakeserver.Options{NoGreeting: true})
 }
 
 // TestMaxParallelCountsRealtime: maxparallel is the number of connections to the host, and a
@@ -79,7 +33,7 @@ func TestMaxParallelCountsRealtime(t *testing.T) {
 	peer := newHoldPeer(t)
 	feeds := GlobalLabel + `label ` + OutLabel + `
     hostname 127.0.0.1
-    port ` + strconv.Itoa(peer.port()) + `
+    port ` + strconv.Itoa(peer.Port()) + `
     alias e2e.fake
     addgroup *
     realtime on
@@ -110,8 +64,8 @@ end
 		t.Fatal(err)
 	}
 	s.Run(t, "dspoolout")
-	waitFor(t, 10*time.Second, "the realtime and the first batch worker connected", func() bool {
-		open, _, _ := peer.counts()
+	testkit.WaitFor(t, 10*time.Second, "the realtime and the first batch worker connected", func() bool {
+		open := peer.Open()
 		return open == 2 && realtimeWorker(s) > 0
 	})
 
@@ -127,7 +81,7 @@ end
 	}
 	s.Run(t, "dspoolout")
 	time.Sleep(4 * time.Second) // time for another batch worker to connect, if one starts
-	open, most, accepted := peer.counts()
+	open, most, accepted := peer.Open(), peer.MaxOpen(), peer.Accepted()
 	if most > 2 {
 		t.Errorf("up to %d connections to the peer with maxparallel 2 (open now %d, accepted %d); want at most 2, the realtime worker included", most, open, accepted)
 	}

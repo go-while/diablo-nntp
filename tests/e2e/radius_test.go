@@ -200,7 +200,7 @@ func TestReaderRadiusAuth(t *testing.T) {
 
 	login := func(user, pass string) (*client.Conn, int) {
 		c := s.Reader(t)
-		expect(t, c, 381, "AUTHINFO USER %s", user)
+		c.ExpectCmd(381, "AUTHINFO USER %s", user)
 		code, _ := c.Cmd("AUTHINFO PASS %s", pass)
 		return c, code
 	}
@@ -209,7 +209,7 @@ func TestReaderRadiusAuth(t *testing.T) {
 	if code != 281 {
 		t.Fatalf("pat with the right password: %d, want 281", code)
 	}
-	expect(t, c, 200, "MODE READER") // the poster readerdef: posting allowed
+	c.ExpectCmd(200, "MODE READER") // the poster readerdef: posting allowed
 
 	if _, code = login("long", "a-password-of-more-than-sixteen-bytes"); code != 281 {
 		t.Errorf("a password of more than 16 bytes: %d, want 281", code)
@@ -225,7 +225,7 @@ func TestReaderRadiusAuth(t *testing.T) {
 	if code != 281 {
 		t.Fatalf("vip: %d, want 281", code)
 	}
-	expect(t, c, 201, "MODE READER") // the readerdef named by the Filter-Id: no posting
+	c.ExpectCmd(201, "MODE READER") // the readerdef named by the Filter-Id: no posting
 
 	var sawPat bool
 	for _, r := range srv.requests() {
@@ -266,12 +266,12 @@ func TestReaderRadiusServerDown(t *testing.T) {
 	for name, conf := range map[string]string{"no answer": downConf, "missing file": filepath.Join(dir, "no-such.conf")} {
 		s := radiusSite(t, conf)
 		c := s.Reader(t)
-		expect(t, c, 381, "AUTHINFO USER pat")
+		c.ExpectCmd(381, "AUTHINFO USER pat")
 		if code, line := c.Cmd("AUTHINFO PASS patspass"); code == 281 {
 			t.Errorf("%s: logged in: %s", name, line)
 		}
 		c2 := s.Reader(t) // dreaderd and its auth worker are still there
-		expect(t, c2, 381, "AUTHINFO USER pat")
+		c2.ExpectCmd(381, "AUTHINFO USER pat")
 	}
 }
 
@@ -301,6 +301,6 @@ func TestReaderRadiusNativeConfig(t *testing.T) {
 	}
 	s := radiusSite(t, conf)
 	c := s.Reader(t)
-	expect(t, c, 381, "AUTHINFO USER pat")
-	expect(t, c, 281, "AUTHINFO PASS patspass")
+	c.ExpectCmd(381, "AUTHINFO USER pat")
+	c.ExpectCmd(281, "AUTHINFO PASS patspass")
 }

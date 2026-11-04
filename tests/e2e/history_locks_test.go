@@ -3,6 +3,7 @@ package e2e
 import (
 	"bytes"
 	"encoding/binary"
+	testkit "github.com/go-while/nntp-testkit"
 	"io"
 	"os"
 	"os/exec"
@@ -270,7 +271,7 @@ func TestDcancelAfterHistorySwap(t *testing.T) {
 
 	_, in, out, done := histCmd(t, s, nil, "dcancel", "-h")
 	io.WriteString(in, ids[0]+"\n")
-	waitFor(t, 30*time.Second, "the first cancel", func() bool {
+	testkit.WaitFor(t, 30*time.Second, "the first cancel", func() bool {
 		exp, _ := histExp(t, s, hist, ids[0])
 		return exp&expfExpired != 0
 	})
@@ -341,7 +342,7 @@ func TestDcancelRewriteStoresLatestRecord(t *testing.T) {
 			_, in, out, done := histCmd(t, s, []string{lockFaultEnv(so), "RENAMEHOLD=" + hold}, "dcancel", "-s")
 			io.WriteString(in, ids[0]+"\n")
 			in.Close()
-			waitFor(t, 30*time.Second, "dcancel -s at its rename", func() bool {
+			testkit.WaitFor(t, 30*time.Second, "dcancel -s at its rename", func() bool {
 				return fileExists(filepath.Join(hold, "reached"))
 			})
 			if mode == "expired" {
@@ -576,7 +577,7 @@ func TestHistoryUpdateDuringDhisexpire(t *testing.T) {
 			_, in, out, done := histCmd(t, s, env, "dcancel", args...)
 			io.WriteString(in, ids[0]+"\n")
 			in.Close()
-			waitFor(t, 30*time.Second, "dcancel in its update", func() bool {
+			testkit.WaitFor(t, 30*time.Second, "dcancel in its update", func() bool {
 				return fileExists(filepath.Join(hold, "reached"))
 			})
 			xcmd, xin, xout, xdone := histCmd(t, s, nil, "dhisexpire", "-a", hist)
@@ -628,7 +629,7 @@ func TestHistoryDeadWithoutDhisexpire(t *testing.T) {
 			if mode == "reopen" {
 				_, in, out, done = histCmd(t, s, nil, "diload", hist)
 				io.WriteString(in, dumpLine(0x6789abc, 0xdef0123))
-				waitFor(t, 30*time.Second, "the first add", func() bool {
+				testkit.WaitFor(t, 30*time.Second, "the first add", func() bool {
 					_, found := histExp(t, s, hist, "06789abc.0def0123")
 					return found
 				})
@@ -1010,7 +1011,7 @@ func TestDhisexpireCopyModeBackupElsewhere(t *testing.T) {
 	_, xin, xout, xdone := histCmd(t, s, []string{lockFaultEnv(so), "RENAMEHOLD=" + hold},
 		"dhisexpire", "-m", "-a", "-o", bak, hist)
 	xin.Close()
-	waitFor(t, 30*time.Second, "dhisexpire at its first rename", func() bool {
+	testkit.WaitFor(t, 30*time.Second, "dhisexpire at its first rename", func() bool {
 		return fileExists(filepath.Join(hold, "reached"))
 	})
 	if !fileExists(hist) {

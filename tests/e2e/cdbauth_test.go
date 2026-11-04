@@ -101,7 +101,7 @@ access ` + PeerIP + ` feed
 	}{{"pat", "patspass", true}, {"sam", "samspass", true}, {"pat", "samspass", false},
 		{"pat", "wrong", false}, {"nobody", "patspass", false}} {
 		r := s.Reader(t)
-		expect(t, r, 381, "AUTHINFO USER %s", c.user)
+		r.ExpectCmd(381, "AUTHINFO USER %s", c.user)
 		code, line := r.Cmd("AUTHINFO PASS %s", c.pass)
 		if (code == 281) != c.ok {
 			t.Errorf("%s/%s: %s, want login %v", c.user, c.pass, line, c.ok)
@@ -156,7 +156,7 @@ access ` + PeerIP + ` feed
 	// A listed user is refused (and the old found-user return leaked fd).
 	for i := 0; i < 10; i++ {
 		c := s.Reader(t)
-		expect(t, c, 381, "AUTHINFO USER deny")
+		c.ExpectCmd(381, "AUTHINFO USER deny")
 		code, line := c.Cmd("AUTHINFO PASS secret")
 		if code == 281 {
 			t.Fatalf("listed user logged in: %s", line)
@@ -166,7 +166,7 @@ access ` + PeerIP + ` feed
 
 	// The authdef's own user/pass is not in the deny cdb and must log in.
 	c := s.Reader(t)
-	expect(t, c, 381, "AUTHINFO USER allowed")
-	expect(t, c, 281, "AUTHINFO PASS secret")
-	expect(t, c, 205, "QUIT")
+	c.ExpectCmd(381, "AUTHINFO USER allowed")
+	c.ExpectCmd(281, "AUTHINFO PASS secret")
+	c.ExpectCmd(205, "QUIT")
 }

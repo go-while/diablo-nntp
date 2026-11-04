@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"embed"
 	"errors"
+	testkit "github.com/go-while/nntp-testkit"
 	"net"
 	"os"
 	"os/exec"
@@ -281,8 +282,8 @@ func iscSiteCtl(t *testing.T, groups []string, dcontrol string) (*Site, *fakeser
 func iscList(t *testing.T, s *Site, what string) []string {
 	t.Helper()
 	c := s.Reader(t)
-	defer expect(t, c, 205, "QUIT")
-	expect(t, c, 215, "LIST %s", what)
+	defer c.ExpectCmd(205, "QUIT")
+	c.ExpectCmd(215, "LIST %s", what)
 	return c.ReadDotLines()
 }
 
@@ -355,7 +356,7 @@ func TestISCControlCheckgroups(t *testing.T) {
 
 			if accepted {
 				var got map[string]string
-				waitFor(t, 20*time.Second, "the ISC descriptions in LIST NEWSGROUPS", func() bool {
+				testkit.WaitFor(t, 20*time.Second, "the ISC descriptions in LIST NEWSGROUPS", func() bool {
 					got = iscDescriptions(iscList(t, s, "NEWSGROUPS"), "comp.ai", "comp.ai.genetic", "comp.admin.policy")
 					return got["comp.ai"] == want["comp.ai"] && got["comp.ai.genetic"] == want["comp.ai.genetic"] &&
 						got["comp.admin.policy"] == want["comp.admin.policy"]
@@ -407,7 +408,7 @@ func TestISCControlCheckgroupsAll(t *testing.T) {
 	feedReader(t, s, st, "news.announce.newgroups", art)
 
 	var act map[string]string
-	waitFor(t, 60*time.Second, "the groups of the list in LIST ACTIVE", func() bool {
+	testkit.WaitFor(t, 60*time.Second, "the groups of the list in LIST ACTIVE", func() bool {
 		act = cgActive(t, s)
 		_, ok := act["comp.lang.c"]
 		return ok
@@ -452,12 +453,12 @@ func TestISCControlNewgroup(t *testing.T) {
 			feedReader(t, s, st, "news.announce.newgroups", art)
 
 			if accepted {
-				waitFor(t, 20*time.Second, group+" in LIST ACTIVE", func() bool {
+				testkit.WaitFor(t, 20*time.Second, group+" in LIST ACTIVE", func() bool {
 					return iscGroupNames(iscList(t, s, "ACTIVE"))[group]
 				})
 				c := s.Reader(t)
-				defer expect(t, c, 205, "QUIT")
-				expect(t, c, 211, "GROUP %s", group)
+				defer c.ExpectCmd(205, "QUIT")
+				c.ExpectCmd(211, "GROUP %s", group)
 				if got := iscDescriptions(iscList(t, s, "NEWSGROUPS"), group)[group]; got != desc {
 					t.Errorf("%s: description %q, want %q", group, got, desc)
 				}
@@ -486,11 +487,11 @@ func TestISCControlRmgroup(t *testing.T) {
 			feedReader(t, s, st, "news.announce.newgroups", art)
 
 			if accepted {
-				waitFor(t, 20*time.Second, group+" gone from LIST ACTIVE", func() bool {
+				testkit.WaitFor(t, 20*time.Second, group+" gone from LIST ACTIVE", func() bool {
 					return !iscGroupNames(iscList(t, s, "ACTIVE"))[group]
 				})
 				c := s.Reader(t)
-				defer expect(t, c, 205, "QUIT")
+				defer c.ExpectCmd(205, "QUIT")
 				if code, line := c.Cmd("GROUP %s", group); code != 411 {
 					t.Errorf("GROUP %s: %d %q, want 411", group, code, line)
 				}

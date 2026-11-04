@@ -140,9 +140,9 @@ func TestReaderDNSQueueStreamIPC(t *testing.T) {
 		return
 	}
 	c := s.Reader(t)
-	expect(t, c, 381, "AUTHINFO USER fred")
-	expect(t, c, 281, "AUTHINFO PASS fredspass")
-	expect(t, c, 205, "QUIT")
+	c.ExpectCmd(381, "AUTHINFO USER fred")
+	c.ExpectCmd(281, "AUTHINFO PASS fredspass")
+	c.ExpectCmd(205, "QUIT")
 }
 
 // TestReaderStoppedDuringLoginBurst: the reader is stopped (SIGSTOP) for 2 s in the middle of
@@ -211,9 +211,9 @@ func TestReaderStoppedDuringLoginBurst(t *testing.T) {
 		return
 	}
 	c := s.Reader(t)
-	expect(t, c, 381, "AUTHINFO USER fred")
-	expect(t, c, 281, "AUTHINFO PASS fredspass")
-	expect(t, c, 205, "QUIT")
+	c.ExpectCmd(381, "AUTHINFO USER fred")
+	c.ExpectCmd(281, "AUTHINFO PASS fredspass")
+	c.ExpectCmd(205, "QUIT")
 }
 
 // TestReaderForkKeepsNoQueuedClients: with readerforks 2, one reader is stopped, so the main
@@ -341,7 +341,7 @@ func TestReaderQueueWaitLimit(t *testing.T) {
 		t.Errorf("no client was greeted after the reader went on")
 	}
 	c := s.Reader(t)
-	expect(t, c, 381, "AUTHINFO USER fred")
-	expect(t, c, 281, "AUTHINFO PASS fredspass")
-	expect(t, c, 205, "QUIT")
+	c.ExpectCmd(381, "AUTHINFO USER fred")
+	c.ExpectCmd(281, "AUTHINFO PASS fredspass")
+	c.ExpectCmd(205, "QUIT")
 }

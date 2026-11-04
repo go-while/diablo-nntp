@@ -29,8 +29,8 @@ access 127.0.0.1 rf
 		startReader(t, s, "[127.0.0.1]:"+strings.Split(s.Addr, ":")[1])
 
 		c := s.Reader(t)
-		expect(t, c, 381, "AUTHINFO USER bad")
-		send(t, c, "AUTHINFO PASS pw\r\n")
+		c.ExpectCmd(381, "AUTHINFO USER bad")
+		c.MustSend("AUTHINFO PASS pw\r\n")
 		code, line, err := c.ReadStatus()
 		if err == nil && code != 500 {
 			t.Errorf("attempt %d: %d %q, want 500", i, code, line)
@@ -43,8 +43,8 @@ access 127.0.0.1 rf
 		default:
 		}
 		c = s.Reader(t)
-		expect(t, c, 381, "AUTHINFO USER good")
-		expect(t, c, 281, "AUTHINFO PASS pw2")
+		c.ExpectCmd(381, "AUTHINFO USER good")
+		c.ExpectCmd(281, "AUTHINFO PASS pw2")
 		c.Close()
 	}
 }

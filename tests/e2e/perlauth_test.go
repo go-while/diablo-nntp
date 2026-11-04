@@ -53,13 +53,13 @@ access ` + PeerIP + ` feed
 	// a refused login: dreaderd drops the connection (as it does for any failed AUTHINFO via
 	// its DNS/auth worker), it does not answer 481
 	bad := s.Reader(t)
-	expect(t, bad, 381, "AUTHINFO USER pat")
+	bad.ExpectCmd(381, "AUTHINFO USER pat")
 	if code, line := bad.Cmd("AUTHINFO PASS wrong"); code == 281 {
 		t.Errorf("AUTHINFO PASS with a wrong password: %s", line)
 	}
 
 	c := s.Reader(t)
-	expect(t, c, 381, "AUTHINFO USER pat")
-	expect(t, c, 281, "AUTHINFO PASS patspass")
-	expect(t, c, 211, "GROUP e2e.test")
+	c.ExpectCmd(381, "AUTHINFO USER pat")
+	c.ExpectCmd(281, "AUTHINFO PASS patspass")
+	c.ExpectCmd(211, "GROUP e2e.test")
 }
