@@ -227,6 +227,7 @@ typedef struct BindList {
 
 #define READERFORKS_AUTO	(-1)	/* readerforks auto: set from the CPU count */
 #define READERFORKS_MAX		1024
+#define READERDNS_MAX		1024
 
 struct DiabloOpts {
     int HashMethod;

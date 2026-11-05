@@ -194,6 +194,7 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-178](#d-178-dsyncgroups-cuts-a-long-authinfo-user-name-or-password) | Low | dsyncgroups cuts a long AUTHINFO user name or password | fixed (#296) |
 | [D-179](#d-179-netbsd-embedded-perl-loads-no-script) | Low | NetBSD: embedded Perl loads no script | open |
 | [D-180](#d-180-netbsd-reader-fork-and-queue-wait-tests-are-intermittent) | Low | NetBSD: reader fork and queue-wait tests are intermittent | fixed |
+| [D-181](#d-181-readerdns-and-readerfeedforks-take-any-value) | Low | readerdns and readerfeedforks take any value | fixed |
 
 Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315), [F-02 configure script](#f-02-configure-script-for-the-build-options), [F-03 refeed a whole spool](#f-03-refeed-a-whole-spool-to-another-server), [F-04 NoCeM notices](#f-04-nocem-notices), [F-05 init scripts](#f-05-init-scripts-and-adm-script-replacements), [F-06 Perl authentication](#f-06-perl-authentication-for-dreaderd).
 
@@ -804,6 +805,7 @@ starts over each time. Found while testing a full file system on the scratch ins
 build the offsets in memory and write them in one or a few large writes.
 
 Fixed (#301): `KPDBSort()` stores the offsets through a writable mapping of the file, one 8-byte store per record in memory and no system call per record (a sort of 600 records uses 3 `pwrite` calls instead of 603); the old per-record `pwrite` stays as the fallback when the mapping fails. One big `write()` of the records was not used: a field replaced in place holds only the record lock, not the append lock the sort holds, and would be overwritten with the old bytes. The "needs sort" marker is still written first and cleared last, so an interrupted sort is resorted by the next open. Not measured on a full ZFS dataset (none here): a mapped store on a COW file system at its quota may still be slow or fail at write-back. Test: `TestKPDBSortFewWrites`, `TestKPDBInterruptedSortResorts`.
+On OpenBSD the sort keeps one `pwrite` per record: without a unified buffer cache (D-171) a writable map would write back stale page bytes over a field another process has just replaced with `pwrite()` (jesse/cc-1, review of #301).
 
 ### D-91 TAKETHIS without an argument answers 439 instead of 501
 `util/diablo.c:2076`: `TAKETHIS` with no message-id answers 439 (MsgIdMismatch); the other commands answer 501. From reading, not run (deep review of main 76578ae by go-while's reviewers).
@@ -1121,6 +1123,10 @@ With pkgsrc perl on NetBSD 11, dreaderd logs `PERL: cannot load <script> (perl_p
 In fork CI on NetBSD 11, TestReaderForkKeepsNoQueuedClients failed in 3 of 4 runs (once "only 3 of 60 clients greeted") and TestReaderQueueWaitLimit once ("40 greeted, 0 refused" in 3.5 s). Both pass on Linux, FreeBSD and illumos. Not skipped and no timeout raised; the NetBSD job is continue-on-error. Possible causes: NetBSD timing, the 8 KiB AF_UNIX buffer the shim asks for being ignored, or a bug in the stream-IPC fork path. Needs a NetBSD host to reproduce.
 
 **Status: fixed** (test bug, not dreaderd). TestReaderStoppedDuringLoginBurst failed the same way (#302's CI). The three tests took the lowest child pid as the reader, but NetBSD hands out random pids: in #302's run the children were 4575 (DNS worker), 8030 and 18839 (readers) and 27944 (feed fork), so the test stopped the DNS worker and killed a reader. Every refusal and every "0 refused" follows from stopping the wrong process. The tests now take the reader pids from dreaderd's "forked reader child process N" lines (`readerPids` in `tests/e2e/streamipc_test.go`).
+
+### D-181 readerdns and readerfeedforks take any value
+`lib/config.c` and the `-D`/`-F` options of `dreaderd/main.c` read `readerdns` and `readerfeedforks` with `strtol()` and no check. `readerdns 0`, a typo such as `readerdns five`, or `-D bogus` gave no DNS worker at all: dreaderd started, and every client got `400 Server too busy` ("No DNS thread running"). A negative `readerfeedforks` was taken as well. Found while checking what was left of the DNS-queue burst work (mc-report F1-b: its sizing note and the queue that absorbs bursts are on main already).
+Fixed: `readerdns` must be 1..1024 and `readerfeedforks` 0..1024, in diablo.config and as `-D`/`-F`; anything else stops dreaderd at startup with an error, as an invalid `readerforks` does. Test: `TestReaderDnsFeedForksInvalid`.
 
 ## Feature requests
 

@@ -5,4 +5,4 @@
 - `dnewslink`: a write that times out is reported as failed, so the article is not counted as sent (D-116).
 - `dspool.ctl`: an unknown option inside a spool or metaspool block stops the program, as an unknown definition already does; a typo no longer leaves the default in place (D-120).
 - `dicmd`: a command line longer than 255 bytes is sent whole before the reply is read, and a long reply line is not mistaken for the end of the reply (D-127).
-- `dreaderd`: LIST MODERATORS, LIST DISTRIBUTIONS and LIST DISTRIB.PATS send a long line of the local file as one line; `dcontrol.ctl`, `dnewsfeeds` (and its included and alternate files) refuse a line that is too long with a log line instead of reading its tail as a new line (D-94; `dserver.hosts` is left to go-while's dreaderd/server.c work).
+- `dreaderd`: LIST MODERATORS, LIST DISTRIBUTIONS and LIST DISTRIB.PATS send a long line of the local file as one line; `dcontrol.ctl`, `dnewsfeeds` (and its included and alternate files) refuse a line that is too long with a log line instead of reading its tail as a new line (D-94; `dserver.hosts` was done in #298).

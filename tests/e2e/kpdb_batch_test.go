@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -133,9 +134,23 @@ func TestKPDBTooLarge(t *testing.T) {
 		out, err := exec.CommandContext(ctx, dkp, args...).CombinedOutput()
 		return string(out), err
 	}
-	mk := func(t *testing.T, size int64) string {
+	mk := func(t *testing.T, size int64, scan bool) string {
 		t.Helper()
-		db := filepath.Join(t.TempDir(), "kp.db")
+		dir := t.TempDir()
+		// tmpfs backs every page of the sparse file that dkp reads through its map
+		// (a read fault on a hole allocates there), so the scan needs that much
+		// free space, or the kernel kills dkp with SIGBUS.
+		if out, err := exec.Command("df", "-Pk", dir).Output(); scan && err == nil {
+			if l := strings.Split(strings.TrimSpace(string(out)), "\n"); len(l) == 2 {
+				if f := strings.Fields(l[1]); len(f) >= 4 {
+					if kb, err := strconv.ParseInt(f[3], 10, 64); err == nil && kb*1024 < size {
+						t.Skipf("%s has %d MB free, the %d MB sparse file needs that much on tmpfs",
+							dir, kb>>10, size>>20)
+					}
+				}
+			}
+		}
+		db := filepath.Join(dir, "kp.db")
 		if out, err := run("-w", db, "aa", "x=1"); err != nil {
 			t.Fatalf("dkp -w: %v\n%s", err, out)
 		}
@@ -153,7 +168,7 @@ func TestKPDBTooLarge(t *testing.T) {
 		return db
 	}
 	t.Run("open", func(t *testing.T) {
-		db := mk(t, 3<<30)
+		db := mk(t, 3<<30, false)
 		out, err := run("-r", db, "aa")
 		if err == nil || !strings.Contains(out, "too large") {
 			t.Errorf("dkp -r on a 3 GB file: err=%v out=%q, want exit != 0 and 'too large'", err, out)
@@ -165,7 +180,7 @@ func TestKPDBTooLarge(t *testing.T) {
 			t.Skip("slow: scans a 2 GB sparse file")
 		}
 		const size = 1<<31 - 10
-		db := mk(t, size)
+		db := mk(t, size, true)
 		out, err := run("-w", db, "bb", "x=1")
 		if err == nil || !strings.Contains(out, "too large") {
 			t.Errorf("dkp -w that would pass 2 GB: err=%v out=%q, want exit != 0 and 'too large'", err, out)
