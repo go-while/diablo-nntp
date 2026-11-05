@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -31,17 +32,31 @@ func histDrvBuild(t *testing.T) string {
 		t.Fatal(err)
 	}
 	exe := filepath.Join(dir, "histdrv")
-	var out []byte
-	var err error
-	for _, libs := range [][]string{{"-lm"}, {"-lm", "-lcrypto", "-lz"}, {"-lm", "-lcrypto", "-lz", "-lpam"}} {
-		args := append([]string{"-O1", "-g", "-I" + filepath.Join(root, "lib"), "-I" + root,
-			"-o", exe, c, "-L" + filepath.Join(root, "obj"), "-ldiablo"}, libs...)
-		if out, err = exec.Command(cc, args...).CombinedOutput(); err == nil {
-			return exe
+	// The flags and libraries the Makefile builds libdiablo.a with: the driver
+	// must agree with it on off_t (a History record holds one) and link what it
+	// needs. config.mk lists the libraries of the optional features.
+	cflags := []string{"-O1", "-g", "-D_FILE_OFFSET_BITS=64"}
+	libs := []string{"-lm", "-lcrypto"}
+	switch runtime.GOOS {
+	case "illumos", "solaris":
+		cflags = append(cflags, "-D_LARGEFILE_SOURCE", "-D_XOPEN_SOURCE=600", "-D__EXTENSIONS__")
+		libs = append(libs, "-lnsl", "-lsocket", "-lposix4", "-lmd")
+	case "freebsd":
+		libs = append(libs, "-lmd")
+	}
+	if b, err := os.ReadFile(filepath.Join(root, "config.mk")); err == nil {
+		for _, l := range strings.Split(string(b), "\n") {
+			if v, ok := strings.CutPrefix(strings.TrimSpace(l), "LDLIBS +="); ok {
+				libs = append(libs, strings.Fields(v)...)
+			}
 		}
 	}
-	t.Fatalf("compiling the history driver: %v\n%s", err, out)
-	return ""
+	args := append(append(cflags, "-I"+filepath.Join(root, "lib"), "-I"+root,
+		"-o", exe, c, "-L"+filepath.Join(root, "obj"), "-ldiablo"), libs...)
+	if out, err := exec.Command(cc, args...).CombinedOutput(); err != nil {
+		t.Fatalf("compiling the history driver: %v\n%s", err, out)
+	}
+	return exe
 }
 
 func histDrvRun(t *testing.T, exe, mode string) map[string]bool {
