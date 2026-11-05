@@ -21,7 +21,7 @@ func TestReaderPostRefusesInjected(t *testing.T) {
 		t.Helper()
 		c := s.Reader(t)
 		defer c.Close()
-		expect(t, c, 340, "POST")
+		c.ExpectCmd(340, "POST")
 		lines := []string{
 			"From: E2E Poster <poster@example.invalid>",
 			"Newsgroups: e2e.test",
@@ -32,7 +32,7 @@ func TestReaderPostRefusesInjected(t *testing.T) {
 			lines = append(lines, extra)
 		}
 		lines = append(lines, "", "body")
-		send(t, c, strings.Join(lines, "\r\n")+"\r\n.\r\n")
+		c.MustSend(strings.Join(lines, "\r\n")+"\r\n.\r\n")
 		code, line, err := c.ReadStatus()
 		if err != nil {
 			t.Fatalf("POST with %q: %v", extra, err)
