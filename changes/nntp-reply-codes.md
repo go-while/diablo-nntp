@@ -1,0 +1,3 @@
+- `dreaderd`: after a successful AUTHINFO login (281) every further AUTHINFO answers 502 (RFC 4643 section 2.2), also for a login without a password (ident); before, that was taken from a non-empty stored password (D-123).
+- `dreaderd`: `CAPABILITIES` with an argument that is not a keyword, or with two, answers 501; an unknown keyword still gets the list (RFC 3977 section 5.2.2) (D-124).
+- `dreaderd`: a command this connection may not use answers 502 instead of 500: a transit command (TAKETHIS, CHECK) on a reader connection, a reader command on a feed-only connection. A feed connection that may still use MODE READER keeps 500, as RFC 3977 section 3.2.1 forbids 502 for "available after MODE READER" (D-125).

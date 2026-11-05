@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"bytes"
+	"github.com/go-while/nntp-testkit/client"
 	"net"
 	"os"
 	"strings"
@@ -21,10 +22,10 @@ func TestDhisexpireFailureKeepsHistoryAlive(t *testing.T) {
 	s := NewSite(t, SiteOptions{})
 	p := s.Peer(t)
 	id := msgID(t)
-	expect(t, p, 335, "IHAVE %s", id)
-	send(t, p, wire(newArticle(id, "e2e.test", "history", "body")))
-	status(t, p, 235, "IHAVE")
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(335, "IHAVE %s", id)
+	p.MustSend(client.Stuff(newArticle(id, "e2e.test", "history", "body")))
+	p.ExpectStatus(235, "IHAVE")
+	p.ExpectCmd(205, "QUIT")
 
 	out, err := s.TryRun("dhisexpire", "-a", "-o", s.Dir+"/missing-dir/dhistory.bak", s.Dir+"/dhistory")
 	if err == nil {
@@ -62,10 +63,10 @@ func TestDhisexpireKeepsBackup(t *testing.T) {
 	s := NewSite(t, SiteOptions{})
 	p := s.Peer(t)
 	id := msgID(t)
-	expect(t, p, 335, "IHAVE %s", id)
-	send(t, p, wire(newArticle(id, "e2e.test", "history", "body")))
-	status(t, p, 235, "IHAVE")
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(335, "IHAVE %s", id)
+	p.MustSend(client.Stuff(newArticle(id, "e2e.test", "history", "body")))
+	p.ExpectStatus(235, "IHAVE")
+	p.ExpectCmd(205, "QUIT")
 
 	bak := s.Dir + "/dhistory.bak"
 	if err := os.WriteFile(bak, []byte("an earlier backup"), 0o644); err != nil {
@@ -82,8 +83,8 @@ func TestDhisexpireKeepsBackup(t *testing.T) {
 		t.Errorf("temporary backup name left behind")
 	}
 	p = s.Peer(t)
-	expect(t, p, 438, "CHECK %s", id)
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(438, "CHECK %s", id)
+	p.ExpectCmd(205, "QUIT")
 }
 
 // TestDhisexpireNoteWithoutA (D-77): without -a the old history stays marked dead and the new
@@ -93,10 +94,10 @@ func TestDhisexpireNoteWithoutA(t *testing.T) {
 	s := NewSite(t, SiteOptions{})
 	p := s.Peer(t)
 	id := msgID(t)
-	expect(t, p, 335, "IHAVE %s", id)
-	send(t, p, wire(newArticle(id, "e2e.test", "history", "body")))
-	status(t, p, 235, "IHAVE")
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(335, "IHAVE %s", id)
+	p.MustSend(client.Stuff(newArticle(id, "e2e.test", "history", "body")))
+	p.ExpectStatus(235, "IHAVE")
+	p.ExpectCmd(205, "QUIT")
 
 	out, err := s.TryRun("dhisexpire", s.Dir+"/dhistory", s.Dir+"/dhistory.new")
 	if err != nil {

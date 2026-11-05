@@ -110,7 +110,7 @@ func slowLogin(t *testing.T, s *Site, user, pass string) {
 	t.Helper()
 	c := client.DialWith(t, s.Addr, 2*authTimeoutBound)
 	defer c.Close()
-	expect(t, c, 381, "AUTHINFO USER %s", user)
+	c.ExpectCmd(381, "AUTHINFO USER %s", user)
 	t0 := time.Now()
 	code, line, err := c.TryCmd("AUTHINFO PASS %s", pass)
 	took := time.Since(t0)
@@ -130,8 +130,8 @@ func goodLogin(t *testing.T, s *Site) {
 	t.Helper()
 	c := client.DialWith(t, s.Addr, 2*authTimeoutBound)
 	defer c.Close()
-	expect(t, c, 381, "AUTHINFO USER pat")
-	expect(t, c, 281, "AUTHINFO PASS patspass")
+	c.ExpectCmd(381, "AUTHINFO USER pat")
+	c.ExpectCmd(281, "AUTHINFO PASS patspass")
 }
 
 // wantTimeoutLog: dreaderd logged n timeouts of backend what (n > 0), and replaced the DNS
@@ -391,6 +391,7 @@ func TestAuthTimeoutLDAPSlowSteps(t *testing.T) {
 func perlSite(t *testing.T, script string) *Site {
 	t.Helper()
 	builtWith(t, "PERL auth request", "Perl support (PERL_ENABLED)")
+	perlEmbedWorks(t)
 	path := filepath.Join(t.TempDir(), "auth.pl")
 	if err := os.WriteFile(path, []byte(script), 0o644); err != nil {
 		t.Fatal(err)
@@ -413,8 +414,8 @@ func TestAuthTimeoutPerlSleep(t *testing.T) {
 	goodLogin(t, s)
 	c := client.DialWith(t, s.Addr, 2*authTimeoutBound)
 	defer c.Close()
-	expect(t, c, 381, "AUTHINFO USER ok@slow")
-	expect(t, c, 281, "AUTHINFO PASS pw")
+	c.ExpectCmd(381, "AUTHINFO USER ok@slow")
+	c.ExpectCmd(281, "AUTHINFO PASS pw")
 	wantTimeoutLog(t, s, "Perl", 1, true)
 }
 
@@ -441,8 +442,8 @@ func backendLogin(t *testing.T, s *Site, user string) {
 	t.Helper()
 	c := client.DialWith(t, s.Addr, 2*authTimeoutBound)
 	defer c.Close()
-	expect(t, c, 381, "AUTHINFO USER %s", user)
-	expect(t, c, 281, "AUTHINFO PASS pw")
+	c.ExpectCmd(381, "AUTHINFO USER %s", user)
+	c.ExpectCmd(281, "AUTHINFO PASS pw")
 }
 
 // TestAuthTimeoutPerlManyTimeouts: two perl authdefs and more timeouts than a worker keeps
@@ -451,6 +452,7 @@ func backendLogin(t *testing.T, s *Site, user string) {
 // interpreter each time; after 16 every perl login was refused.
 func TestAuthTimeoutPerlManyTimeouts(t *testing.T) {
 	builtWith(t, "PERL auth request", "Perl support (PERL_ENABLED)")
+	perlEmbedWorks(t)
 	perlMultiplicity(t)
 	dir := t.TempDir()
 	sc := "sub checkuser { sleep 60 if $_[0] eq 'x'; return \"100 Success\" if $_[0] eq 'ok'; return '0'; }\n1;\n"
@@ -490,6 +492,7 @@ func TestAuthTimeoutPerlManyTimeouts(t *testing.T) {
 // time only) is cut off; the next login loads it again in the new worker.
 func TestAuthTimeoutPerlSlowLoad(t *testing.T) {
 	builtWith(t, "PERL auth request", "Perl support (PERL_ENABLED)")
+	perlEmbedWorks(t)
 	perlMultiplicity(t)
 	dir := t.TempDir()
 	a, b := filepath.Join(dir, "a.pl"), filepath.Join(dir, "b.pl")

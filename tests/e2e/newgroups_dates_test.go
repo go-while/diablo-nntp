@@ -13,8 +13,8 @@ import (
 func newgroupsList(t *testing.T, s *Site, want int, args string) []string {
 	t.Helper()
 	c := s.Reader(t)
-	defer expect(t, c, 205, "QUIT")
-	expect(t, c, want, "NEWGROUPS %s", args)
+	defer c.ExpectCmd(205, "QUIT")
+	c.ExpectCmd(want, "NEWGROUPS %s", args)
 	if want != 231 {
 		return nil
 	}
@@ -87,7 +87,7 @@ func TestNewgroupsGMTAnyCase(t *testing.T) {
 func newnewsReply(t *testing.T, s *Site, args string) int {
 	t.Helper()
 	c := s.Reader(t)
-	defer expect(t, c, 205, "QUIT")
+	defer c.ExpectCmd(205, "QUIT")
 	code, _ := c.Cmd("NEWNEWS %s", args)
 	if code == 230 {
 		c.ReadDotLines()

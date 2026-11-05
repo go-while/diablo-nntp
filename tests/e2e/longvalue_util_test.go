@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	testkit "github.com/go-while/nntp-testkit"
+	"github.com/go-while/nntp-testkit/client"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -51,10 +53,10 @@ func TestDreadartLongDumpLine(t *testing.T) {
 	s := NewSite(t, SiteOptions{})
 	p := s.Peer(t)
 	id := msgID(t)
-	expect(t, p, 335, "IHAVE %s", id) // creates dhistory
-	send(t, p, wire(newArticle(id, "e2e.test", "history", "body")))
-	status(t, p, 235, "IHAVE")
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(335, "IHAVE %s", id) // creates dhistory
+	p.MustSend(client.Stuff(newArticle(id, "e2e.test", "history", "body")))
+	p.ExpectStatus(235, "IHAVE")
+	p.ExpectCmd(205, "QUIT")
 
 	in := filepath.Join(s.Dir, "dump.txt")
 	line := "DUMP " + strings.Repeat("a", 4000) + " gm=1 ex=1 boff=1 bsize=1\n"
@@ -118,7 +120,7 @@ func TestDnewslinkDqueuePattern(t *testing.T) {
 		},
 	})
 	ids := s.Inject(t, "e2e.test", 2)
-	waitFor(t, 10*time.Second, "the queue in dq%dq", func() bool {
+	testkit.WaitFor(t, 10*time.Second, "the queue in dq%dq", func() bool {
 		s.Dicmd(t, "flush")
 		b, _ := os.ReadFile(filepath.Join(s.Dir, "dq%dq", OutLabel))
 		return strings.Count(string(b), "\n") >= 2

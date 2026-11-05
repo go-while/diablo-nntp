@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"github.com/go-while/nntp-testkit/client"
 	"os"
 	"path/filepath"
 	"testing"
@@ -36,20 +37,20 @@ end
 				t.Fatalf("greeting %q, want %s", p.Greeting, c.greeting)
 			}
 			if c.mode {
-				expect(t, p, 250, "MODE READONLY")
+				p.ExpectCmd(250, "MODE READONLY")
 			}
-			expect(t, p, 203, "MODE STREAM")
+			p.ExpectCmd(203, "MODE STREAM")
 			id := msgID(t)
 			art := newArticle(id, "e2e.test", "read-only takethis",
 				"FEEDRSET", "FEEDADD e2e.injected.*", "FEEDCOMMIT", "MODE HEADFEED")
-			send(t, p, "TAKETHIS "+id+"\r\n"+wire(art))
-			status(t, p, 480, "TAKETHIS on a read-only connection")
+			p.MustSend("TAKETHIS " + id + "\r\n" + client.Stuff(art))
+			p.ExpectStatus(480, "TAKETHIS on a read-only connection")
 			// The next reply must be the one for this command, not one for an article line.
-			expect(t, p, 203, "MODE STREAM")
+			p.ExpectCmd(203, "MODE STREAM")
 			if err := p.ExpectNoPending(500 * time.Millisecond); err != nil {
 				t.Errorf("after TAKETHIS: %v", err)
 			}
-			expect(t, p, 205, "QUIT")
+			p.ExpectCmd(205, "QUIT")
 			for _, f := range []string{"feeds/peer", "feeds/peer.new"} {
 				if _, err := os.Stat(filepath.Join(s.Dir, f)); err == nil {
 					t.Errorf("%s exists: the article's FEEDRSET/FEEDCOMMIT lines were run", f)

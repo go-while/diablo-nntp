@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	testkit "github.com/go-while/nntp-testkit"
+	"github.com/go-while/nntp-testkit/client"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -283,7 +285,7 @@ func TestDexpireoverLockTimeoutKept(t *testing.T) {
 	}
 }
 
-// lockFaultShim builds an LD_PRELOAD library (Linux, illumos) for fcntl locks; lockFaultEnv
+// lockFaultShim builds an LD_PRELOAD library (Linux, illumos, FreeBSD, NetBSD) for fcntl locks; lockFaultEnv
 // gives the variable that loads it.
 //
 //	LOCKFAULT=eintr        fail the first blocking lock (F_SETLKW) with EINTR
@@ -301,13 +303,197 @@ func lockFaultShim(t *testing.T) string {
 	return preloadShim(t, "lockfault", lockFaultSource)
 }
 
-// preloadShim builds the C source src into an LD_PRELOAD library (Linux, illumos) named
-// <name>.so; lockFaultEnv gives the variable that loads it.
+// preloadHost reports whether LD_PRELOAD shims run on this system: Linux, FreeBSD and NetBSD,
+// and illumos when withIllumos (the shims that were never ported there stay off).
+func preloadHost(withIllumos bool) bool {
+	switch runtime.GOOS {
+	case "linux", "freebsd", "netbsd":
+		return true
+	case "illumos":
+		return withIllumos
+	}
+	return false
+}
+
+// shimLibs is what a shim links with: dlsym() is in libc on the BSDs, which need no libdl.
+func shimLibs() []string {
+	if runtime.GOOS == "freebsd" || runtime.GOOS == "netbsd" {
+		return nil
+	}
+	return []string{"-ldl"}
+}
+
+// fdPathC is the C function fdpath(fd, buf, len) for the shims that need the file name of a
+// descriptor (the text /*FDPATH*/ in their source, after the includes). It leaves "" when the
+// system does not tell. Linux and illumos read /proc. FreeBSD and NetBSD have no /proc: the
+// kernel can name a file (fcntl F_KINFO, F_GETPATH) only while the name is in its name cache,
+// which it often is not for a file created a moment ago, so the shim also remembers the path
+// of every open() and fopen() (and forgets it at close()) and uses that when the kernel does
+// not know. FDPATH_TRACK makes it do that on any system.
+const fdPathC = `
+#include <stdarg.h>
+#include <stdlib.h>
+#if defined(__FreeBSD__)
+#include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/socket.h>
+#include <sys/user.h>
+#endif
+#if defined(__NetBSD__)
+#include <sys/param.h>
+#endif
+#if defined(__FreeBSD__) || defined(__NetBSD__) || defined(FDPATH_TRACK)
+#define FDPATH_TRACKED 1
+#define TRACKMAX 4096
+static char tracked[TRACKMAX][512];
+
+static void
+track(int fd, const char *path)
+{
+    char cwd[400];
+
+    if (fd < 0 || fd >= TRACKMAX || path == NULL)
+	return;
+    tracked[fd][0] = 0;
+    if (path[0] == '/')
+	snprintf(tracked[fd], sizeof(tracked[fd]), "%s", path);
+    else if (getcwd(cwd, sizeof(cwd)) != NULL)
+	snprintf(tracked[fd], sizeof(tracked[fd]), "%s/%s", cwd, path);
+}
+
+static int
+open_tracked(const char *name, const char *path, int flags, mode_t mode)
+{
+    int (*real)(const char *, int, ...) = (int (*)(const char *, int, ...))dlsym(RTLD_NEXT, name);
+    int fd = real(path, flags, mode);
+
+    if (fd >= 0)
+	track(fd, path);
+    return fd;
+}
+
+int
+open(const char *path, int flags, ...)
+{
+    mode_t mode = 0;
+
+    if (flags & O_CREAT) {
+	va_list ap;
+
+	va_start(ap, flags);
+	mode = (mode_t)va_arg(ap, int);
+	va_end(ap);
+    }
+    return open_tracked("open", path, flags, mode);
+}
+
+static FILE *
+fopen_tracked(const char *name, const char *path, const char *mode)
+{
+    FILE *(*real)(const char *, const char *) = (FILE *(*)(const char *, const char *))dlsym(RTLD_NEXT, name);
+    FILE *f = real(path, mode);
+
+    if (f != NULL)
+	track(fileno(f), path);
+    return f;
+}
+
+FILE *
+fopen(const char *path, const char *mode)
+{
+    return fopen_tracked("fopen", path, mode);
+}
+
+#ifdef __linux__	/* glibc with _FILE_OFFSET_BITS=64 */
+int
+open64(const char *path, int flags, ...)
+{
+    mode_t mode = 0;
+
+    if (flags & O_CREAT) {
+	va_list ap;
+
+	va_start(ap, flags);
+	mode = (mode_t)va_arg(ap, int);
+	va_end(ap);
+    }
+    return open_tracked("open64", path, flags, mode);
+}
+
+FILE *
+fopen64(const char *path, const char *mode)
+{
+    return fopen_tracked("fopen64", path, mode);
+}
+#endif
+
+int
+close(int fd)
+{
+    static int (*real)(int);
+
+    if (real == NULL)
+	real = (int (*)(int))dlsym(RTLD_NEXT, "close");
+    if (fd >= 0 && fd < TRACKMAX)
+	tracked[fd][0] = 0;
+    return real(fd);
+}
+#endif
+
+static void
+fdpath(int fd, char *path, size_t len)
+{
+    path[0] = 0;
+#if defined(__FreeBSD__)
+    {
+	struct kinfo_file kf;
+
+	memset(&kf, 0, sizeof(kf));
+	kf.kf_structsize = sizeof(kf);
+	if (fcntl(fd, F_KINFO, &kf) == 0)
+	    snprintf(path, len, "%s", kf.kf_path);
+    }
+#elif defined(__NetBSD__)
+    {
+	char buf[MAXPATHLEN + 1];
+
+	if (fcntl(fd, F_GETPATH, buf) == 0)
+	    snprintf(path, len, "%s", buf);
+    }
+#elif !defined(FDPATH_TRACK)
+    {
+	char link[64];
+	ssize_t n;
+
+#ifdef __sun
+	snprintf(link, sizeof(link), "/proc/self/path/%d", fd);
+#else
+	snprintf(link, sizeof(link), "/proc/self/fd/%d", fd);
+#endif
+	n = readlink(link, path, len - 1);
+	path[n > 0 ? n : 0] = 0;
+    }
+#endif
+#ifdef FDPATH_TRACKED
+    if (path[0] == 0 && fd >= 0 && fd < TRACKMAX)
+	snprintf(path, len, "%s", tracked[fd]);
+#endif
+}
+`
+
+// withFdPath puts fdPathC into a shim source at its /*FDPATH*/ mark.
+func withFdPath(src string) string {
+	return strings.Replace(src, "/*FDPATH*/", fdPathC, 1)
+}
+
+// preloadShim builds the C source src into an LD_PRELOAD library (Linux, illumos, FreeBSD,
+// NetBSD) named <name>.so; lockFaultEnv gives the variable that loads it.
 func preloadShim(t *testing.T, name, src string) string {
 	t.Helper()
-	if runtime.GOOS != "linux" && runtime.GOOS != "illumos" {
-		t.Skip("the fault injector uses LD_PRELOAD on Linux and illumos")
+	if !preloadHost(true) {
+		t.Skip("the fault injector uses LD_PRELOAD on Linux, illumos, FreeBSD and NetBSD")
 	}
+	src = withFdPath(src)
 	cc := wmCC(t)
 	dir := t.TempDir()
 	c := filepath.Join(dir, name+".c")
@@ -315,7 +501,7 @@ func preloadShim(t *testing.T, name, src string) string {
 	if err := os.WriteFile(c, []byte(src), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	args := []string{"-shared", "-fPIC", "-o", so, c, "-ldl"}
+	args := append([]string{"-shared", "-fPIC", "-o", so, c}, shimLibs()...)
 	if runtime.GOOS == "illumos" {
 		args = append([]string{"-m64"}, args...) // the Diablo programs are 64-bit
 	}
@@ -347,7 +533,7 @@ const lockFaultSource = `#define _GNU_SOURCE
 #include <unistd.h>
 
 typedef int (*fcntl_fn)(int, int, ...);
-
+/*FDPATH*/
 static void
 logline(const char *env, const char *line)
 {
@@ -368,18 +554,11 @@ fault(int fd, int cmd, struct flock *fl)
     const char *only = getenv("LOCKFAULT_FILE");
     const char *on = getenv("LOCKFAULT_ON");
     const char *skip = getenv("LOCKFAULT_SKIP");
-    char link[64], path[4096], line[4200];
-    ssize_t n;
+    char path[4096], line[4200];
 
     if (cmd != F_SETLK && cmd != F_SETLKW)
 	return 0;
-#ifdef __sun
-    snprintf(link, sizeof(link), "/proc/self/path/%d", fd);
-#else
-    snprintf(link, sizeof(link), "/proc/self/fd/%d", fd);
-#endif
-    n = readlink(link, path, sizeof(path) - 1);
-    path[n > 0 ? n : 0] = 0;
+    fdpath(fd, path, sizeof(path));
     snprintf(line, sizeof(line), "%s %c %lld %lld %s\n",
 	cmd == F_SETLKW ? "SETLKW" : "SETLK",
 	fl->l_type == F_WRLCK ? 'W' : fl->l_type == F_RDLCK ? 'R' : 'U',
@@ -525,9 +704,9 @@ func TestKPDBReadLockFailureKeepsReader(t *testing.T) {
 
 	r := s.Reader(t)
 	for i := 0; i < 2; i++ {
-		expect(t, r, 211, "GROUP e2e.test")
+		r.ExpectCmd(211, "GROUP e2e.test")
 	}
-	expect(t, r, 205, "QUIT")
+	r.ExpectCmd(205, "QUIT")
 }
 
 // TestKPDBLockFailureStops: when a record lock or the append lock of a KP
@@ -652,8 +831,8 @@ func TestKPDBLockWaitSignal(t *testing.T) {
 	startReader(t, s, "[127.0.0.1]:"+port)
 
 	r := s.Reader(t)
-	expect(t, r, 211, "GROUP e2e.test") // the database is open (and sorted)
-	expect(t, r, 205, "QUIT")
+	r.ExpectCmd(211, "GROUP e2e.test") // the database is open (and sorted)
+	r.ExpectCmd(205, "QUIT")
 	db := filepath.Join(s.Dir, "dactive.kp")
 	live := regexp.MustCompile(`(?m)^\+[0-9a-f]+\.[0-9a-f]+:e2e\.test\b.*$`)
 	record := func() (int64, string) {
@@ -680,7 +859,7 @@ func TestKPDBLockWaitSignal(t *testing.T) {
 	head, body := splitArticle(a)
 	id := headerValue(head, "Message-ID")
 	st.AddArticle("e2e.test", fakeserver.Article{MessageID: id, Headers: head, Body: body})
-	expect(t, p, 335, "IHAVE %s", id)
+	p.ExpectCmd(335, "IHAVE %s", id)
 	time.Sleep(time.Second) // other waits on the record are logged by now
 	// The waits on the record logged before the article was sent (the reader fork of the
 	// GROUP above may wait there too) are left alone; each process that starts a wait on it
@@ -699,10 +878,10 @@ func TestKPDBLockWaitSignal(t *testing.T) {
 		return pids
 	}
 	before := len(waits())
-	if _, err := p.Conn.Write([]byte(wire(a))); err != nil {
+	if _, err := p.Conn.Write([]byte(client.Stuff(a))); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, 10*time.Second, "the feed fork waiting for the record lock", func() bool { return len(waits()) > before })
+	testkit.WaitFor(t, 10*time.Second, "the feed fork waiting for the record lock", func() bool { return len(waits()) > before })
 	time.Sleep(300 * time.Millisecond) // into the wait
 	for _, pid := range waits()[before:] {
 		if err := syscall.Kill(pid, syscall.SIGUSR1); err != nil && err != syscall.ESRCH {
@@ -721,5 +900,5 @@ func TestKPDBLockWaitSignal(t *testing.T) {
 		t.Fatalf("IHAVE after the lock was released: %q %v", line, err)
 	}
 	p.Conn.SetReadDeadline(time.Time{})
-	waitFor(t, 10*time.Second, "NE after the lock was released", func() bool { _, ne := record(); return ne != ne0 })
+	testkit.WaitFor(t, 10*time.Second, "NE after the lock was released", func() bool { _, ne := record(); return ne != ne0 })
 }

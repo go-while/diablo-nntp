@@ -14,6 +14,7 @@
 Prototype void ReaderTask(int fd, const char *id);
 Prototype void NNCommand(Connection *conn);
 Prototype void NNCommand2(Connection *conn);
+static int CommandKnown(const char *cmd);
 Prototype void NNBadCommandUse(Connection *conn);
 Prototype void NNUnknownCommand(Connection *conn);
 Prototype void NNTerminate(Connection *conn);
@@ -747,6 +748,7 @@ NNAuthDone(Connection *conn)
     conn->co_Auth.dr_ResultFlags = 0;
     if (conn->co_Auth.dr_Code == 1 && (conn->co_Auth.dr_Flags & DF_AUTHREQUIRED) == 0) {
 	conn->co_Auth.dr_Flags &= ~DF_AUTHREQUIRED;
+	conn->co_Flags |= COF_AUTHINFO;
 	ClientSetTCPOpts(conn);
 	MBLogPrintf(conn, &conn->co_TMBuf, "281 Ok\r\n");
 	logit(LOG_DEBUG,
@@ -1368,6 +1370,18 @@ NNCommand2(Connection *conn)
 	    conn->co_ByteCountType = scan->cmd_DRBC_Type;
 	    scan->cmd_Func(conn, &ptr);
 	}
+    } else if (CommandKnown(cmd) && ((conn->co_Flags & COF_SERVER) == 0 ||
+		(conn->co_Auth.dr_Flags & DF_FEEDONLY))) {
+	/*
+	 * RFC 3977 3.2.1: a command this server has but this connection
+	 * may not use answers 502 (a new connection with other access is
+	 * needed): a transit command on a reader connection, or a reader
+	 * command on a feed-only one.  On a feed connection that may still
+	 * switch with MODE READER, 502 must not be used for that, so it
+	 * stays 500.
+	 */
+	MBLogPrintf(conn, &conn->co_TMBuf, "502 Command not available on this connection\r\n");
+	NNCommand(conn);
     } else {
 	NNUnknownCommand(conn);
     }
@@ -1378,6 +1392,22 @@ NNBadCommandUse(Connection *conn)
 {
     MBLogPrintf(conn, &conn->co_TMBuf, "501 Bad command use\r\n");
     NNCommand(conn);
+}
+
+/*
+ * CommandKnown() - is cmd (lower case) one of this server's commands, for
+ *		    any kind of connection?
+ */
+static int
+CommandKnown(const char *cmd)
+{
+    const Command *scan;
+
+    for (scan = &Cmds[0]; scan < &Cmds[arysize(Cmds)]; ++scan) {
+	if (strcmp(cmd, scan->cmd_Name) == 0)
+	    return(1);
+    }
+    return(0);
 }
 
 void
@@ -1451,6 +1481,28 @@ void
 NNTPCapabilities(Connection *conn, char **pptr)
 {
     int flags = conn->co_Auth.dr_Flags;
+    char *kw = parseword(pptr, " \t");
+
+    /*
+     * RFC 3977 5.2.2: an argument the server does not know is ignored if
+     * it is a keyword (ALPHA 2*(ALPHA / DIGIT / "." / "-")); anything else
+     * is a syntax error.
+     */
+    if (kw != NULL) {
+	int ok = isalpha((unsigned char)kw[0]) && strlen(kw) >= 3 &&
+		    parseword(pptr, " \t") == NULL;
+	const char *p;
+
+	for (p = kw + 1; ok && *p; ++p) {
+	    if (!isalnum((unsigned char)*p) && *p != '.' && *p != '-')
+		ok = 0;
+	}
+	if (!ok) {
+	    MBLogPrintf(conn, &conn->co_TMBuf, "501 Syntax error\r\n");
+	    NNCommand(conn);
+	    return;
+	}
+    }
 
     MBLogPrintf(conn, &conn->co_TMBuf, "101 Capability list:\r\n");
     MBPrintf(&conn->co_TMBuf, "VERSION 2\r\n");

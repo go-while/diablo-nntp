@@ -40,7 +40,6 @@
 Prototype void ArticleFileName(char *path, int pathSize, History *h, int opt);
 Prototype int SpoolCompressed(uint16 spool);
 Prototype char *GetSpoolPath(uint16 spool, int gmt, int opt);
-Prototype uint16 GetSpoolFromPath(char *path);
 Prototype uint16 GetSpool(const char *msgid, const char *nglist, int size, int arttype, char *label, int *t, int *complvl);
 Prototype uint32 SpoolDirTime(void);
 Prototype int AllocateSpools(time_t t);
@@ -187,21 +186,6 @@ path_too_long:
     logit(LOG_CRIT, "Spool %u pathname exceeds PATH_MAX; refusing a truncated path",
 		(unsigned)spool);
     exit(1);
-}
-
-/*
- * Get the spool object given a path to a spool or spool directory
- */
-uint16
-GetSpoolFromPath(char *path)
-{
-    SpoolObject *ts;
-    for (ts = SpoolObjects; ts != NULL; ts = ts->so_Next) {
-	printf("XX:%s:%s:\n", path, ts->so_Path);
-	if (strncmp(ts->so_Path, path, strlen(ts->so_Path)) == 0)
-	    return(ts->so_SpoolNum);
-    }
-    return((uint16)-1);
 }
 
 /*

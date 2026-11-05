@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"github.com/go-while/nntp-testkit/client"
 	"os"
 	"strconv"
 	"strings"
@@ -30,12 +31,12 @@ expire * trad
 `})
 	p := s.Peer(t)
 	id := msgID(t)
-	expect(t, p, 335, "IHAVE %s", id)
-	send(t, p, wire(newArticle(id, "e2e.test", "long spool path", "body")))
-	status(t, p, 235, "IHAVE")
+	p.ExpectCmd(335, "IHAVE %s", id)
+	p.MustSend(client.Stuff(newArticle(id, "e2e.test", "long spool path", "body")))
+	p.ExpectStatus(235, "IHAVE")
 	if len(long) < 120 {
 		t.Fatalf("spool path of %d characters is too short to test STAT's buffer", len(long))
 	}
-	expect(t, p, 223, "STAT %s", id)
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(223, "STAT %s", id)
+	p.ExpectCmd(205, "QUIT")
 }

@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	testkit "github.com/go-while/nntp-testkit"
 	"os"
 	"path/filepath"
 	"slices"
@@ -48,7 +49,7 @@ func TestReaderdefUnknownGroupList(t *testing.T) {
 				NoStart: true, Config: map[string]string{"path_generallog": "%s/general.log"}})
 			startReaderNoWait(t, s)
 			var log string
-			waitFor(t, 5*time.Second, "the unknown group list in the log", func() bool {
+			testkit.WaitFor(t, 5*time.Second, "the unknown group list in the log", func() bool {
 				log = generalLog(s)
 				return strings.Contains(log, "testonlx")
 			})
@@ -63,9 +64,9 @@ func TestReaderdefUnknownGroupList(t *testing.T) {
 	t.Run("known name", func(t *testing.T) {
 		s := NewReaderSite(t, ReaderOptions{SpoolAddr: "127.0.0.1:1", Access: groupListAccess("groups testonly")})
 		c := s.Reader(t)
-		expect(t, c, 215, "LIST ACTIVE")
+		c.ExpectCmd(215, "LIST ACTIVE")
 		names := activeNames(c.ReadDotLines())
-		expect(t, c, 205, "QUIT")
+		c.ExpectCmd(205, "QUIT")
 		if !slices.Equal(names, []string{"e2e.test"}) {
 			t.Errorf("LIST ACTIVE with groups testonly: %v, want [e2e.test]", names)
 		}
@@ -73,9 +74,9 @@ func TestReaderdefUnknownGroupList(t *testing.T) {
 	t.Run("default", func(t *testing.T) {
 		s := NewReaderSite(t, ReaderOptions{SpoolAddr: "127.0.0.1:1", Access: groupListAccess("read yes")})
 		c := s.Reader(t)
-		expect(t, c, 215, "LIST ACTIVE")
+		c.ExpectCmd(215, "LIST ACTIVE")
 		n := len(activeNames(c.ReadDotLines()))
-		expect(t, c, 205, "QUIT")
+		c.ExpectCmd(205, "QUIT")
 		if n != 2 {
 			t.Errorf("LIST ACTIVE without a groups setting: %d groups, want 2 (the first list, everything)", n)
 		}
@@ -93,7 +94,7 @@ func TestReaderdefUnknownOption(t *testing.T) {
 			NoStart: true, Config: map[string]string{"path_generallog": "%s/general.log"}})
 		startReaderNoWait(t, s)
 		var log string
-		waitFor(t, 5*time.Second, "the invalid option in the log", func() bool {
+		testkit.WaitFor(t, 5*time.Second, "the invalid option in the log", func() bool {
 			log = generalLog(s)
 			return strings.Contains(log, "maxconperhost")
 		})
@@ -130,7 +131,7 @@ func TestAccessDefUnknownOption(t *testing.T) {
 				Config: map[string]string{"path_generallog": "%s/general.log"}})
 			startReaderNoWait(t, s)
 			var log string
-			waitFor(t, 5*time.Second, "the invalid option in the log", func() bool {
+			testkit.WaitFor(t, 5*time.Second, "the invalid option in the log", func() bool {
 				log = generalLog(s)
 				return strings.Contains(log, "Invalid "+tc.name+" option")
 			})
@@ -163,7 +164,7 @@ func TestReaderAccessCacheFileMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	var log string
-	waitFor(t, 10*time.Second, "the missing cache file in the log", func() bool {
+	testkit.WaitFor(t, 10*time.Second, "the missing cache file in the log", func() bool {
 		readerGreeting(s.Addr)
 		log = generalLog(s)
 		return strings.Contains(log, "Unable to open") && strings.Contains(log, "cache.groupdef")

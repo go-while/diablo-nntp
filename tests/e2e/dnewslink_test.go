@@ -3,6 +3,8 @@ package e2e
 // Diablo as the client: dnewslink sends the outgoing queue to a fake peer.
 
 import (
+	testkit "github.com/go-while/nntp-testkit"
+	"github.com/go-while/nntp-testkit/client"
 	"os"
 	"path/filepath"
 	"slices"
@@ -67,11 +69,11 @@ func (s *Site) Inject(tb testing.TB, group string, n int) []string {
 	ids := make([]string, n)
 	for i := range ids {
 		ids[i] = msgID(tb)
-		expect(tb, p, 335, "IHAVE %s", ids[i])
-		send(tb, p, wire(newArticle(ids[i], group, "injected "+strconv.Itoa(i+1), "body of "+ids[i])))
-		status(tb, p, 235, "IHAVE "+ids[i])
+		p.ExpectCmd(335, "IHAVE %s", ids[i])
+		p.MustSend(client.Stuff(newArticle(ids[i], group, "injected "+strconv.Itoa(i+1), "body of "+ids[i])))
+		p.ExpectStatus(235, "IHAVE "+ids[i])
 	}
-	expect(tb, p, 205, "QUIT")
+	p.ExpectCmd(205, "QUIT")
 	return ids
 }
 
@@ -96,7 +98,7 @@ func (s *Site) queue(tb testing.TB, label string) []string {
 func (s *Site) waitQueue(tb testing.TB, label string, n int) []string {
 	tb.Helper()
 	var q []string
-	waitFor(tb, 10*time.Second, strconv.Itoa(n)+" entries in dqueue/"+label, func() bool {
+	testkit.WaitFor(tb, 10*time.Second, strconv.Itoa(n)+" entries in dqueue/"+label, func() bool {
 		q = s.queue(tb, label)
 		return len(q) >= n
 	})

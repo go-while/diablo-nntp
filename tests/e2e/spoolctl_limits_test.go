@@ -3,6 +3,8 @@ package e2e
 import (
 	"strings"
 	"testing"
+
+	"github.com/go-while/nntp-testkit/client"
 )
 
 // TestSpoolCtlDontstoreWithoutSpools (D-107): a "dontstore yes" metaspool needs no spool lines.
@@ -25,11 +27,11 @@ expire * trad
 `})
 	id := msgID(t)
 	p := s.Peer(t)
-	expect(t, p, 335, "IHAVE %s", id)
-	send(t, p, wire(newArticle(id, "e2e.test", "dontstore", "body")))
-	status(t, p, 235, "IHAVE "+id)
-	expect(t, p, 223, "STAT %s", id)
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(335, "IHAVE %s", id)
+	p.MustSend(client.Stuff(newArticle(id, "e2e.test", "dontstore", "body")))
+	p.ExpectStatus(235, "IHAVE "+id)
+	p.ExpectCmd(223, "STAT %s", id)
+	p.ExpectCmd(205, "QUIT")
 }
 
 // TestSpoolCtlTooManySpoolLines (D-107): a metaspool holds at most 100 spools; a 101st

@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	testkit "github.com/go-while/nntp-testkit"
 	"strings"
 	"testing"
 	"time"
@@ -23,13 +24,13 @@ func TestReaderCheckgroupsControl(t *testing.T) {
 	feedReader(t, s, st, "e2e.test", a)
 
 	c := s.Reader(t)
-	defer expect(t, c, 205, "QUIT")
+	defer c.ExpectCmd(205, "QUIT")
 	// the control message is applied by dreaderd after it took the article
-	waitFor(t, 10*time.Second, "the new group in LIST ACTIVE", func() bool {
-		expect(t, c, 215, "LIST ACTIVE")
+	testkit.WaitFor(t, 10*time.Second, "the new group in LIST ACTIVE", func() bool {
+		c.ExpectCmd(215, "LIST ACTIVE")
 		return strings.Contains(strings.Join(c.ReadDotLines(), "\n"), "e2e.ghost ")
 	})
-	expect(t, c, 215, "LIST NEWSGROUPS")
+	c.ExpectCmd(215, "LIST NEWSGROUPS")
 	all := strings.Join(c.ReadDotLines(), "\n")
 	if !strings.Contains(all, "e2e.test\tRenamed test group.") {
 		t.Errorf("the description of the existing group was not updated:\n%s", all)

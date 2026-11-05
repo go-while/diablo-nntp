@@ -71,7 +71,7 @@ func NewReaderSite(tb testing.TB, o ReaderOptions) *Site {
 		tb.Fatalf("NewReaderSite: Spool or SpoolAddr is required: %v", err)
 	}
 	s := &Site{Dir: tb.TempDir(), Bin: bin(tb)}
-	port := freePort(tb)
+	port := testkit.FreePort(tb)
 	s.Addr = net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
 	s.Env = []string{"DIABLO_CONFIG_PATH=" + filepath.Join(s.Dir, "diablo.config")}
 
@@ -169,11 +169,11 @@ func feedReader(tb testing.TB, s *Site, st *fakeserver.Store, group string, arts
 		head, body := splitArticle(a)
 		id := headerValue(head, "Message-ID")
 		st.AddArticle(group, fakeserver.Article{MessageID: id, Headers: head, Body: body})
-		expect(tb, p, 335, "IHAVE %s", id)
-		send(tb, p, wire(a))
-		status(tb, p, 235, "IHAVE "+id)
+		p.ExpectCmd(335, "IHAVE %s", id)
+		p.MustSend(client.Stuff(a))
+		p.ExpectStatus(235, "IHAVE "+id)
 	}
-	expect(tb, p, 205, "QUIT")
+	p.ExpectCmd(205, "QUIT")
 }
 
 // TestReaderFeedAndRead feeds an article into dreaderd and reads it back: GROUP, OVER,
@@ -188,25 +188,25 @@ func TestReaderFeedAndRead(t *testing.T) {
 	if code, _ := client.ParseCode(c.Greeting); code != 200 {
 		t.Fatalf("reader greeting %q, want 200", c.Greeting)
 	}
-	waitFor(t, testkit.Deadline(), "the article in GROUP e2e.test", func() bool {
+	testkit.WaitFor(t, testkit.Deadline(), "the article in GROUP e2e.test", func() bool {
 		_, line := c.Cmd("GROUP e2e.test")
 		f := strings.Fields(line)
 		return len(f) > 1 && f[0] == "211" && f[1] != "0"
 	})
-	expect(t, c, 224, "OVER 1")
+	c.ExpectCmd(224, "OVER 1")
 	over := c.ReadDotLines()
 	if len(over) != 1 || !strings.Contains(over[0], id) {
 		t.Fatalf("OVER 1: %q, want one line with %s", over, id)
 	}
-	expect(t, c, 222, "BODY %s", id)
+	c.ExpectCmd(222, "BODY %s", id)
 	if got := c.ReadDotLines(); len(got) != 2 || got[0] != "hello reader" || got[1] != ".dot line" {
 		t.Errorf("BODY: %q", got)
 	}
-	expect(t, c, 220, "ARTICLE 1")
+	c.ExpectCmd(220, "ARTICLE 1")
 	if got := c.ReadDotLines(); !containsLine(got, "Message-ID: "+id) {
 		t.Errorf("ARTICLE 1: no Message-ID %s in %q", id, got)
 	}
-	expect(t, c, 205, "QUIT")
+	c.ExpectCmd(205, "QUIT")
 }
 
 // TestReaderQuitAlone: QUIT on an idle dreaderd connection gets 205 and the connection closes
@@ -216,7 +216,7 @@ func TestReaderQuitAlone(t *testing.T) {
 	s := NewReaderSite(t, ReaderOptions{Spool: spool})
 	for i := range 3 {
 		c := s.Reader(t)
-		expect(t, c, 205, "QUIT")
+		c.ExpectCmd(205, "QUIT")
 		if err := c.ExpectNoPending(500 * time.Millisecond); err != nil {
 			t.Errorf("connection %d: after QUIT's 205: %v", i+1, err)
 		}
@@ -243,8 +243,8 @@ func TestReaderPost(t *testing.T) {
 	s := NewReaderSite(t, ReaderOptions{Spool: spool, Post: post, Access: access})
 	c := s.Reader(t)
 	id := msgID(t)
-	expect(t, c, 340, "POST")
-	send(t, c, wire([]string{
+	c.ExpectCmd(340, "POST")
+	c.MustSend(client.Stuff([]string{
 		"From: E2E Poster <poster@example.invalid>",
 		"Newsgroups: e2e.test",
 		"Subject: posted through dreaderd",
@@ -253,8 +253,8 @@ func TestReaderPost(t *testing.T) {
 		"posted body",
 		".dot line",
 	}))
-	status(t, c, 240, "POST article")
-	waitFor(t, 15*time.Second, "the outgoing server to receive the post", func() bool {
+	c.ExpectStatus(240, "POST article")
+	testkit.WaitFor(t, 15*time.Second, "the outgoing server to receive the post", func() bool {
 		mu.Lock()
 		defer mu.Unlock()
 		return len(arts) > 0
@@ -292,7 +292,7 @@ func TestReaderQuitWhileConnecting(t *testing.T) {
 			}
 			next <- c
 		}()
-		expect(t, prev, 205, "QUIT")
+		prev.ExpectCmd(205, "QUIT")
 		if err := prev.ExpectNoPending(300 * time.Millisecond); err != nil {
 			t.Errorf("round %d: after QUIT's 205: %v", i+1, err)
 		}
@@ -304,7 +304,7 @@ func TestReaderQuitWhileConnecting(t *testing.T) {
 		prev = prev.WithTB(t)
 		t.Cleanup(prev.Close)
 	}
-	expect(t, prev, 205, "QUIT")
+	prev.ExpectCmd(205, "QUIT")
 }
 
 // TestHeaderFeedToReader: diablo feeds dreaderd a header-only feed (dnewsfeeds headfeed,
@@ -330,10 +330,10 @@ end
 
 	id := msgID(t)
 	p := feeder.Peer(t)
-	expect(t, p, 335, "IHAVE %s", id)
-	send(t, p, wire(newArticle(id, "e2e.test", "header feed", "body from the spool", ".dot")))
-	status(t, p, 235, "IHAVE "+id)
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(335, "IHAVE %s", id)
+	p.MustSend(client.Stuff(newArticle(id, "e2e.test", "header feed", "body from the spool", ".dot")))
+	p.ExpectStatus(235, "IHAVE "+id)
+	p.ExpectCmd(205, "QUIT")
 	feeder.waitQueue(t, label, 1)
 
 	_, rport, _ := net.SplitHostPort(r.Addr)
@@ -341,20 +341,20 @@ end
 	feeder.Run(t, "dnewslink", "-b", label, "-h", "127.0.0.1", "-P", rport, "-H", "-B", PeerIP)
 
 	c := r.Reader(t)
-	waitFor(t, testkit.Deadline(), "the article in the reader's GROUP e2e.test", func() bool {
+	testkit.WaitFor(t, testkit.Deadline(), "the article in the reader's GROUP e2e.test", func() bool {
 		_, line := c.Cmd("GROUP e2e.test")
 		f := strings.Fields(line)
 		return len(f) > 1 && f[0] == "211" && f[1] == "1"
 	})
-	expect(t, c, 224, "OVER 1")
+	c.ExpectCmd(224, "OVER 1")
 	if over := c.ReadDotLines(); len(over) != 1 || !strings.Contains(over[0], id) {
 		t.Fatalf("OVER 1: %q, want one line with %s", over, id)
 	}
-	expect(t, c, 222, "BODY %s", id)
+	c.ExpectCmd(222, "BODY %s", id)
 	if got := c.ReadDotLines(); len(got) != 2 || got[0] != "body from the spool" || got[1] != ".dot" {
 		t.Errorf("BODY (fetched from diablo): %q", got)
 	}
-	expect(t, c, 205, "QUIT")
+	c.ExpectCmd(205, "QUIT")
 }
 
 // TestReaderBindHostPort: dreaderd -P 127.0.0.1:port listens there (before the fix it passed
@@ -366,5 +366,5 @@ func TestReaderBindHostPort(t *testing.T) {
 	if code, _ := client.ParseCode(c.Greeting); code != 200 {
 		t.Fatalf("greeting %q, want 200", c.Greeting)
 	}
-	expect(t, c, 205, "QUIT")
+	c.ExpectCmd(205, "QUIT")
 }

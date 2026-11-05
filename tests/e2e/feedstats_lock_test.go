@@ -22,6 +22,7 @@ package e2e
 import (
 	"bufio"
 	"context"
+	testkit "github.com/go-while/nntp-testkit"
 	"net"
 	"os"
 	"os/exec"
@@ -80,9 +81,9 @@ func TestFeedStatsHostLock(t *testing.T) {
 
 	// The first session creates the record of label "peer" after the dummy one.
 	c := s.Peer(t)
-	expect(t, c, 205, "QUIT")
+	c.ExpectCmd(205, "QUIT")
 	var size int64
-	waitFor(t, 10*time.Second, "the peer's feedstats record", func() bool {
+	testkit.WaitFor(t, 10*time.Second, "the peer's feedstats record", func() bool {
 		st, err := os.Stat(path)
 		if err == nil {
 			size = st.Size()
@@ -118,7 +119,7 @@ func TestFeedStatsHostLock(t *testing.T) {
 		}
 		nc.Write([]byte("QUIT\r\n"))
 		// The in and spool counts are separate updates: wait for both.
-		waitFor(t, 10*time.Second, "in and spool con=2", func() bool {
+		testkit.WaitFor(t, 10*time.Second, "in and spool con=2", func() bool {
 			return feedStatsCon(t, s, "-i", "peer") == 2 && feedStatsCon(t, s, "-s", "peer") == 2
 		})
 	})
@@ -132,7 +133,7 @@ func TestFeedStatsHostLock(t *testing.T) {
 		g, gerr := greetingWithin(nc, r, 5*time.Second)
 		if gerr == nil {
 			nc.Write([]byte("QUIT\r\n"))
-			waitFor(t, 10*time.Second, "spool con=3", func() bool { return feedStatsCon(t, s, "-s", "peer") == 3 })
+			testkit.WaitFor(t, 10*time.Second, "spool con=3", func() bool { return feedStatsCon(t, s, "-s", "peer") == 3 })
 		}
 		lockRange(t, f, syscall.F_UNLCK, 4, rec-4)
 		if gerr != nil || !strings.HasPrefix(g, "200 ") {

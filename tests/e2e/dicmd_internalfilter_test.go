@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"github.com/go-while/nntp-testkit/client"
 	"strings"
 	"testing"
 )
@@ -14,8 +15,8 @@ func feedSameBody(t *testing.T, s *Site, n int, body string) int {
 	for i := 0; i < n; i++ {
 		id := msgID(t)
 		ids = append(ids, id)
-		expect(t, p, 335, "IHAVE %s", id)
-		send(t, p, wire(newArticle(id, "e2e.test", "same body", body)))
+		p.ExpectCmd(335, "IHAVE %s", id)
+		p.MustSend(client.Stuff(newArticle(id, "e2e.test", "same body", body)))
 		if _, _, err := p.ReadStatus(); err != nil {
 			t.Fatalf("IHAVE %s: %v", id, err)
 		}
@@ -26,7 +27,7 @@ func feedSameBody(t *testing.T, s *Site, n int, body string) int {
 			stored++
 		}
 	}
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(205, "QUIT")
 	return stored
 }
 

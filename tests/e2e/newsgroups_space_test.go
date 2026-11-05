@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"github.com/go-while/nntp-testkit/client"
 	"strings"
 	"testing"
 )
@@ -11,9 +12,9 @@ func offerGroups(t *testing.T, s *Site, newsgroups string) string {
 	t.Helper()
 	id := msgID(t)
 	p := s.Peer(t)
-	defer expect(t, p, 205, "QUIT")
-	expect(t, p, 335, "IHAVE %s", id)
-	send(t, p, wire(newArticle(id, newsgroups, "groups "+newsgroups, "body")))
+	defer p.ExpectCmd(205, "QUIT")
+	p.ExpectCmd(335, "IHAVE %s", id)
+	p.MustSend(client.Stuff(newArticle(id, newsgroups, "groups "+newsgroups, "body")))
 	line, err := p.ReadLine()
 	if err != nil {
 		t.Fatalf("IHAVE with Newsgroups: %q: %v", newsgroups, err)
