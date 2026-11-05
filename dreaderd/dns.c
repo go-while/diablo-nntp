@@ -1186,7 +1186,8 @@ netRemoteConnect(const char *confhn, int port, double deadline)
 void
 netRemoteAccounting(DnsReq *dreq)
 {
-    char *conf = "Password@accounting.server:8998";
+    const char *conf;
+    DnsRes adres;
     int fd = -1, port = 8998;
     char buffer[NETREMOTE_DATASIZE], output[NETREMOTE_DATASIZE], *ptr, *optr;
     char confpw[1024], confhn[1024], *colon;
@@ -1194,6 +1195,27 @@ netRemoteAccounting(DnsReq *dreq)
     des_cblock key;
     des_key_schedule sched;
     double deadline;
+
+    /*
+     * The session goes to the netremote server of the authdef the user
+     * logged in through (via its readerdef), as the login did; without
+     * one nothing is sent.  Before, every session of a password login
+     * went to a placeholder, "Password@accounting.server:8998" (D-173).
+     */
+    bzero(&adres, sizeof(adres));
+    dreq->dr_ReaderName[sizeof(dreq->dr_ReaderName) - 1] = 0;
+    SetAuthDetails(&adres, dreq->dr_ReaderName);
+    /*
+     * SetAuthDetails() falls back to the first readerdef for a name it
+     * does not find (empty, or renamed or removed by a reload during the
+     * session): that one's netremote is not this session's.
+     */
+    if (dreq->dr_ReaderName[0] == 0 || adres.dr_ReaderDef == NULL ||
+	    strcmp(adres.dr_ReaderDef->rd_Name, dreq->dr_ReaderName) != 0)
+	return;
+    if (adres.dr_AuthDef == NULL || adres.dr_AuthDef->au_NetRemote[0] == 0)
+	return;
+    conf = adres.dr_AuthDef->au_NetRemote;
 
     snprintf(confpw, sizeof(confpw), "%s", conf);
     if ((ptr = strchr(confpw, '@'))) {
