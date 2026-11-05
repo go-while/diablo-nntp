@@ -917,8 +917,17 @@ spoolCtlValid(FILE *fi)
     }
     if (pid < 0)
 	return(1);
-    while (waitpid(pid, &status, 0) < 0 && errno == EINTR)
-	;
+    while (waitpid(pid, &status, 0) < 0) {
+	if (errno == EINTR)
+	    continue;
+	/*
+	 * No status (for example ECHILD when diablo was started with
+	 * SIGCHLD ignored, so the child is reaped by the system): the
+	 * check proves nothing, and the reload goes on as before D-175.
+	 */
+	fseek(fi, 0L, SEEK_SET);
+	return(1);
+    }
     fseek(fi, 0L, SEEK_SET);
     return(WIFEXITED(status) && WEXITSTATUS(status) == 0);
 }
