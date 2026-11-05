@@ -59,27 +59,79 @@ func startStreamIPCReader(t *testing.T, conf map[string]string) *Site {
 	return s
 }
 
-// readerPids waits until dreaderd -d has written "forked reader child process N" for n
-// readers and returns their pids in fork order. The pid order does not tell the readers
-// from the feed fork and the DNS workers: NetBSD and OpenBSD hand out random pids. A fork
-// line is flushed before the next fork, and the feed fork comes right after the readers.
+// forkLine is one complete "forked reader child process N" line of dreaderd -d. The
+// newline is required: the captured output may end in the middle of a line, and the digits
+// of a cut line ("...process 123" of 12345) would name another process.
+var forkLine = regexp.MustCompile(`forked reader child process ([0-9]+)\r?\n`)
+
+// readerPidsFrom returns, in fork order, the readers named in out that are still in
+// children (the main process may have reaped and replaced a reader since its line).
+func readerPidsFrom(out string, children []int) []int {
+	alive := map[int]bool{}
+	for _, p := range children {
+		alive[p] = true
+	}
+	var pids []int
+	for _, m := range forkLine.FindAllStringSubmatch(out, -1) {
+		if p, err := strconv.Atoi(m[1]); err == nil && alive[p] {
+			pids = append(pids, p)
+		}
+	}
+	return pids
+}
+
+// readerPids waits until dreaderd -d has reported n readers that are still its children
+// and returns their pids in fork order. The pid order does not tell the readers from the
+// feed fork and the DNS workers: NetBSD and OpenBSD hand out random pids. A fork line is
+// flushed before the next fork, and the feed fork comes right after the readers. A reader
+// replaced before this runs may have its line still unflushed: then the test fails here
+// instead of signalling a process it did not identify.
 func readerPids(t *testing.T, s *Site, n int) []int {
 	t.Helper()
-	re := regexp.MustCompile(`forked reader child process (\d+)`)
-	var pids []int
 	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(50 * time.Millisecond) {
-		pids = pids[:0]
-		for _, m := range re.FindAllStringSubmatch(s.Proc.Stderr(), -1) {
-			if p, err := strconv.Atoi(m[1]); err == nil {
-				pids = append(pids, p)
-			}
-		}
+		pids := readerPidsFrom(s.Proc.Stderr(), procChildren(t, s.Proc.Pid()))
 		if len(pids) >= n {
 			return pids[:n]
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("dreaderd reported %d forked readers (%v), want %d", len(pids), pids, n)
+			t.Fatalf("dreaderd reported %d live readers (%v), want %d", len(pids), pids, n)
 		}
+	}
+}
+
+// signalReader sends sig to reader after checking that it is still a child of the main
+// process, so a reader that died and was reaped (its pid free for reuse) is never signalled.
+func signalReader(t *testing.T, s *Site, reader int, sig syscall.Signal) {
+	t.Helper()
+	for _, p := range procChildren(t, s.Proc.Pid()) {
+		if p == reader {
+			if err := syscall.Kill(reader, sig); err != nil {
+				t.Fatalf("signal %v to reader %d: %v", sig, reader, err)
+			}
+			return
+		}
+	}
+	t.Fatalf("reader %d is no longer a child of dreaderd; not sending %v", reader, sig)
+}
+
+// TestReaderPidsFromLog: readerPidsFrom takes only complete fork lines and only readers
+// that are still children: a reader replaced before the selection is skipped, and the cut
+// last line is not read as a shorter pid.
+func TestReaderPidsFromLog(t *testing.T) {
+	out := "dreaderd[9]: Waiting for connections\n" +
+		"forked reader child process 4100\n" +
+		"forked reader child process 777\n" +
+		"forked feed child process 52\n" +
+		"dreaderd[9]: Lost reader process 4100\n" +
+		"forked reader child process 31\r\n" +
+		"forked reader child process 123" // cut: the line is 12345
+	children := []int{777, 52, 31, 123, 12345}
+	got := readerPidsFrom(out, children)
+	if fmt.Sprint(got) != "[777 31]" {
+		t.Errorf("readerPidsFrom = %v, want [777 31] (4100 replaced, 123 a cut line)", got)
+	}
+	if got := readerPidsFrom(out+"45\n", children); fmt.Sprint(got) != "[777 31 12345]" {
+		t.Errorf("after the rest of the line: %v, want [777 31 12345]", got)
 	}
 }
 
@@ -209,9 +261,7 @@ func TestReaderStoppedDuringLoginBurst(t *testing.T) {
 		fmt.Fprintf(cs[i].c, "AUTHINFO PASS fredspass\r\n")
 	}
 	time.Sleep(3 * time.Millisecond)
-	if err := syscall.Kill(reader, syscall.SIGSTOP); err != nil {
-		t.Fatal(err)
-	}
+	signalReader(t, s, reader, syscall.SIGSTOP)
 	cont := func() { syscall.Kill(reader, syscall.SIGCONT) }
 	defer cont()
 	var late []*ipcConn
@@ -267,9 +317,7 @@ func TestReaderForkKeepsNoQueuedClients(t *testing.T) {
 		initial[p] = true
 	}
 	stopped, other := readers[0], readers[1]
-	if err := syscall.Kill(stopped, syscall.SIGSTOP); err != nil {
-		t.Fatal(err)
-	}
+	signalReader(t, s, stopped, syscall.SIGSTOP)
 	cont := func() { syscall.Kill(stopped, syscall.SIGCONT) }
 	defer cont()
 
@@ -279,9 +327,7 @@ func TestReaderForkKeepsNoQueuedClients(t *testing.T) {
 	w.Add(1)
 	go func() { defer w.Done(); cs, gs = dialGreet(s.Addr, 60, 30*time.Second) }()
 	time.Sleep(1500 * time.Millisecond)
-	if err := syscall.Kill(other, syscall.SIGKILL); err != nil {
-		t.Fatal(err)
-	}
+	signalReader(t, s, other, syscall.SIGKILL)
 	respawned := 0
 	for deadline := time.Now().Add(20 * time.Second); respawned == 0 && time.Now().Before(deadline); {
 		time.Sleep(100 * time.Millisecond)
@@ -342,9 +388,7 @@ func TestReaderForkKeepsNoQueuedClients(t *testing.T) {
 func TestReaderQueueWaitLimit(t *testing.T) {
 	s := startStreamIPCReader(t, map[string]string{"readerdnswait": "1"})
 	reader := readerPids(t, s, 1)[0]
-	if err := syscall.Kill(reader, syscall.SIGSTOP); err != nil {
-		t.Fatal(err)
-	}
+	signalReader(t, s, reader, syscall.SIGSTOP)
 	cont := func() { syscall.Kill(reader, syscall.SIGCONT) }
 	defer cont()
 	start := time.Now()
