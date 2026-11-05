@@ -92,7 +92,7 @@ void ArticleFileSetSize(int artFd);
 void ngAddControl(char *nglist, int ngSize, const char *ctl);
 void writePath(time_t t, char *path);
 
-void writeFeedOut(const char *label, const char *file, const char *msgid, const char *offSize, int rt, int headOnly, const char *artType, const char *cSize);
+void writeFeedOut(const char *label, const char *file, const char *msgid, const char *offSize, int rt, int headOnly, const char *artType, int lines, const char *cSize);
 void flushFeeds(int justClose);
 void flushFeedOut(Feed *fe);
 
@@ -1491,9 +1491,9 @@ authenticate:
  */
 
 int 
-fwCallBack(const char *hlabel, const char *msgid, const char *path, const char *offsize, int plfo, int headOnly, const char *artType, const char *cSize)
+fwCallBack(const char *hlabel, const char *msgid, const char *path, const char *offsize, int plfo, int headOnly, const char *artType, int lines, const char *cSize)
 {
-    writeFeedOut(hlabel, path, msgid, offsize, ((plfo > 0) ? 1 : 0), headOnly, artType, cSize);
+    writeFeedOut(hlabel, path, msgid, offsize, ((plfo > 0) ? 1 : 0), headOnly, artType, lines, cSize);
     TtlStats.ArtsFed += 1.0;
     return(0);
 }
@@ -1531,6 +1531,13 @@ DoPipe(int fd)
 	    char *headOnly = strtok(NULL, "\t\n");
 	    char *artType = strtok(NULL, "\t\n");
 	    char *cSize = strtok(NULL, "\t\n");
+	    int lines = -1;
+
+	    /* L<lines> (D-174), before cSize: see FeedAdd() */
+	    if (cSize != NULL && cSize[0] == 'L') {
+		lines = (int)strtol(cSize + 1, NULL, 10);
+		cSize = strtok(NULL, "\t\n");
+	    }
 
 	    if (DebugOpt > 2) {
 		ddprintf(
@@ -1566,7 +1573,7 @@ DoPipe(int fd)
 		    spamArt = DiabFilter(DOpts.FeederFilter, loc, DOpts.WireFormat);
 		}
 		FeedWrite(1, fwCallBack, msgid, path, offsize, nglist,
-				npath, dist, headOnly, artType, spamArt, cSize);
+				npath, dist, headOnly, artType, spamArt, lines, cSize);
 		{
 		    TtlStats.ArtsBytes += (double)bytes;
 		}
@@ -1605,10 +1612,11 @@ DoPipe(int fd)
  */
 
 void
-writeFeedOut(const char *label, const char *file, const char *msgid, const char *offSize, int rt, int headOnly, const char *artType, const char *cSize)
+writeFeedOut(const char *label, const char *file, const char *msgid, const char *offSize, int rt, int headOnly, const char *artType, int lines, const char *cSize)
 {
     Feed *fe;
     char delayTime[16];
+    char lineField[16];
 
     /*
      * locate feed
@@ -1697,7 +1705,8 @@ writeFeedOut(const char *label, const char *file, const char *msgid, const char 
      */
 
     if (fe->fe_Fd >= 0) {
-	int l = strlen(file) + strlen(msgid) + strlen(offSize) + (3 + 32 + 1);
+	/* 32: " H" and " D<time>"; 12: " L<lines>" (D-174) */
+	int l = strlen(file) + strlen(msgid) + strlen(offSize) + (3 + 32 + 12 + 1);
 
 	/*
 	 * cSize is the " C<size>" field.  Count it: it is not bounded by
@@ -1728,12 +1737,17 @@ writeFeedOut(const char *label, const char *file, const char *msgid, const char 
 		sprintf(delayTime, " D%d", (int)time(NULL));
 	    else
 		delayTime[0] = 0;
+	    if (lines >= 0)
+		snprintf(lineField, sizeof(lineField), " L%d", lines);
+	    else
+		lineField[0] = 0;
 	    snprintf(fe->fe_Buf + fe->fe_BufIdx,
 		fe->fe_BufMax - fe->fe_BufIdx,
-		"%s %s %s%s%s%s%s\n",
+		"%s %s %s%s%s%s%s%s\n",
 		file, msgid, offSize, 
 		(headOnly ? " H" : ""),
 		delayTime,
+		lineField,
 		cSize != NULL ? " C" : "",
 		cSize != NULL ? cSize : ""
 	    );
@@ -2917,6 +2931,7 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 	int responded = 0;
 	int headerEndLine;
 	int bodyLines = 0;
+	int artLines = 0;	/* body lines, for the queue's L<lines> */
 	int addRejectToHistory = 0;
 	int arttype = ARTTYPE_DEFAULT;
 	char nglist[MAXLINE];
@@ -3419,6 +3434,14 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 	     * is less so), but will still catch a shitload of spam since
 	     * the article body is usually 100% duplicated.
 	     */
+
+	    /*
+	     * D-174: count the body lines (a line longer than the input
+	     * buffer comes in pieces: count the piece that ends it).  The
+	     * final "." line ended the loop above and is not counted.
+	     */
+	    if (!inHeader && !headerEndLine && thisNl)
+		++artLines;
 
 	    if (buffer != NULL && !skipHeader && !artError) {
 		if (BodyFilterFd != -1 && !inHeader && !headerEndLine) {
@@ -3953,8 +3976,10 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		StoreStats.StoreBytes += h.bsize;
 		if (compressedSize != -1)
 		    StoreStats.StoreCompressedBytes += compressedSize;
+		/* a header-only article has no body here to count */
 		if (FeedAdd(msgid, t, &h, nglist, npath, dist,
-					headerOnly, artType, cSize) < 0) {
+					headerOnly, artType,
+					headerOnly ? -1 : artLines, cSize) < 0) {
 		    /*
 		     * If we lose our pipe, exit immediately.
 		     */

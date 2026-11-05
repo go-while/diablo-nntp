@@ -3,6 +3,7 @@ package e2e
 import (
 	"maps"
 	"net"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -85,10 +86,11 @@ func TestReaderOverviewLinesFullFeed(t *testing.T) {
 	c.ExpectCmd(205, "QUIT")
 }
 
-// TestReaderOverviewLinesHeaderFeed (D-174): dnewslink -H sends the body line count with the
-// size ("Bytes: <size> <lines>"), and the reader's :lines is that count; a wire format article
-// on the spool ends with the "." line, which is not counted.
-func TestReaderOverviewLinesHeaderFeed(t *testing.T) {
+// headFeedLines feeds three articles to a feeder, sends them with dnewslink -H to a reader
+// and returns the reader and the feeder's queue lines. With stripL the queue's L<lines>
+// fields are removed first, as in a queue an older diablo wrote.
+func headFeedLines(t *testing.T, stripL bool) (*client.Conn, []string) {
+	t.Helper()
 	const label = "reader"
 	feeds := GlobalLabel + `label peer
     inhost ` + PeerIP + `
@@ -117,13 +119,34 @@ end
 		p.ExpectStatus(235, "IHAVE "+id)
 	}
 	p.ExpectCmd(205, "QUIT")
-	feeder.waitQueue(t, label, 3)
+	q := feeder.waitQueue(t, label, 3)
+	if stripL {
+		var b strings.Builder
+		for _, l := range q {
+			b.WriteString(regexp.MustCompile(` L[0-9]+`).ReplaceAllString(l, "") + "\n")
+		}
+		feeder.WriteFile(t, "dqueue/"+label, b.String())
+	}
 
 	_, rport, _ := net.SplitHostPort(r.Addr)
 	feeder.Run(t, "dnewslink", "-b", label, "-h", "127.0.0.1", "-P", rport, "-H", "-B", PeerIP)
 
 	c := r.Reader(t)
 	waitGroupCount(t, c, "3")
+	return c, q
+}
+
+// TestReaderOverviewLinesHeaderFeed (D-174): diablo counts the body lines when the article
+// comes in and writes them to the queue line (L<lines>, the "." line not counted); dnewslink
+// -H sends them with the size ("Bytes: <size> <lines>") without reading the bodies, and the
+// reader's :lines is that count.
+func TestReaderOverviewLinesHeaderFeed(t *testing.T) {
+	c, q := headFeedLines(t, false)
+	for i, want := range []string{" L3", " L2", " L4"} {
+		if !strings.Contains(q[i]+" ", want+" ") {
+			t.Errorf("queue line %d %q, want %s", i+1, q[i], want)
+		}
+	}
 	checkLines(t, c, map[string]string{"1": "3", "2": "2", "3": "4"})
 	// the size field stays a number, and the Bytes: line is not stored as a header
 	c.ExpectCmd(224, "OVER 1-")
@@ -137,6 +160,16 @@ end
 		if strings.HasPrefix(strings.ToLower(l), "bytes:") {
 			t.Errorf("HEAD 1 shows the feed's %q", l)
 		}
+	}
+	c.ExpectCmd(205, "QUIT")
+}
+
+// TestReaderOverviewLinesOldQueue (D-174): a queue line without L<lines> (written by an older
+// diablo) gives "Bytes: <size>" alone, and the reader keeps the Lines header, as before.
+func TestReaderOverviewLinesOldQueue(t *testing.T) {
+	c, _ := headFeedLines(t, true)
+	if got := overLines(t, c, "OVER 1-"); !maps.Equal(got, map[string]string{"1": "", "2": "99", "3": ""}) {
+		t.Errorf("OVER :lines %v, want the Lines headers (empty, 99, empty)", got)
 	}
 	c.ExpectCmd(205, "QUIT")
 }

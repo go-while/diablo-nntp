@@ -243,10 +243,11 @@ typedef struct Stream {
     off_t st_Off;		/* file offset	*/
     int32 st_Size;		/* file size	*/
     int32 st_CompSize;		/* compressed file size	*/
+    int32 st_Lines;		/* body lines (L), -1: none */
 } Stream;
 
 int connectTo(const char *hostName, const char *serviceName, int defPort);
-int Transact(int cfd, const char *relPath, char *msgId, off_t off, int size, int cSize, int defers, char *stage, char *reason, char *buf, int *sentSize);
+int Transact(int cfd, const char *relPath, char *msgId, off_t off, int size, int cSize, int lines, int defers, char *stage, char *reason, char *buf, int *sentSize);
 /*
  * An article mapped from the spool, from MapArticle() until DumpArticle()
  * or UnmapArticle() releases it.
@@ -256,17 +257,18 @@ typedef struct ArtMap {
     int		am_Size;
     int		am_MultiArtFile;
     int		am_Compressed;
+    int		am_Lines;	/* body lines from the queue line, -1: none */
 } ArtMap;
 
 const char *spoolArtPath(const char *relPath);
 int spoolFaultNote(char *msgId, const char *relPath, const char *stage);
 void keepQueueLine(FILE **pfo, const char *path, int *keepOld, const char *line);
 int ArticleCheck(const char *relPath);
-int MapArticle(const char *relPath, off_t off, int size, int cSize, ArtMap *am);
+int MapArticle(const char *relPath, off_t off, int size, int cSize, int lines, ArtMap *am);
 void UnmapArticle(ArtMap *am);
 int DumpArticle(int cfd, ArtMap *am);
 int writeLarge(int cfd, char *buffer, size_t size);
-int StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, int cSize, int defers, char *stage, char *reason, char *buf, int *sentSize);
+int StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, int cSize, int lines, int defers, char *stage, char *reason, char *buf, int *sentSize);
 void StreamReload(int cfd);
 Stream *LocateStream(const char *msgId, int state);
 int RefilePendingStreams(FILE *fo);
@@ -285,7 +287,8 @@ void cdinit(void);
 char *cdmap(const char *path, off_t off, int *psize, int cSize, int *multiArtFile);
 int cdcheck(const char *path);
 void cdunmap(char *ptr, int bytes, int multiArtFile, int compressed);
-int extractFeedLine(const char *buf, char *relPath, char *msgId, off_t *poff, int *psize, int *pheadOnly, time_t *queuedTime, int *cSize);
+int extractFeedLine(const char *buf, char *relPath, char *msgId, off_t *poff, int *psize, int *pheadOnly, time_t *queuedTime, int *cSize, int *plines);
+void streamFlags(const Stream *s, char *buf, int size);
 void cdflush(void);
 const char *dtstamp(void);
 void clearCommandBuffer(void);
@@ -924,6 +927,7 @@ main(int ac, char **av)
 	    int deferend = 0;
 	    int keepOld = 0;	/* queue rewrite could not be opened */
 	    int cSize = 0;
+	    int qLines = -1;
 	    /* We kept a list of defer requests (431 response) and procedd
 	     * it from time to time.
 	     */
@@ -1061,7 +1065,7 @@ main(int ac, char **av)
 
 		if (bufInval || 
 		    extractFeedLine(buf, relPath, msgId, &fileOff, &fileSize,
-					&headOnly, &queuedTime, &cSize) == 0
+					&headOnly, &queuedTime, &cSize, &qLines) == 0
 		) {
 		    int t;
 		    char stage[MAXREASON], reason[MAXREASON];
@@ -1098,7 +1102,7 @@ main(int ac, char **av)
 		    stprintf("%s %s process %d", HostName, CurrentBatchFile + CBFIndex, connectCount);
 
 		    if (bufInval)
-			t = Transact(cfd, NULL, msgId, 0, 0, 0, (deferbegin > 0),
+			t = Transact(cfd, NULL, msgId, 0, 0, 0, -1, (deferbegin > 0),
 				     stage, reason, buf, &sentFileSize);
 		    else {
 			if (fileSize == 0) {
@@ -1122,7 +1126,7 @@ main(int ac, char **av)
 			    continue;
 			} else 
 			t = Transact(cfd, relPath, msgId, fileOff, fileSize,
-				     cSize,
+				     cSize, qLines,
 				     (deferbegin > 0), stage, reason, buf,
 				     &sentFileSize);
 		    }
@@ -2299,7 +2303,7 @@ keepQueueLine(FILE **pfo, const char *path, int *keepOld, const char *line)
  */
 
 int
-Transact(int cfd, const char *relPath, char *msgId, off_t off, int size, int cSize, int defers, char *stage, char *reason, char *buf, int *sentSize)
+Transact(int cfd, const char *relPath, char *msgId, off_t off, int size, int cSize, int lines, int defers, char *stage, char *reason, char *buf, int *sentSize)
 {
     int r = 0;
     static char *ptr = NULL;
@@ -2322,7 +2326,7 @@ Transact(int cfd, const char *relPath, char *msgId, off_t off, int size, int cSi
     }
 #endif
     if (StreamMode == STREAM_ON) {
-	r = StreamTransact(cfd, relPath, msgId, off, size, cSize, defers, stage, reason, buf, sentSize);
+	r = StreamTransact(cfd, relPath, msgId, off, size, cSize, lines, defers, stage, reason, buf, sentSize);
 	if (r)
 	    return(r);
     }
@@ -2376,7 +2380,7 @@ Transact(int cfd, const char *relPath, char *msgId, off_t off, int size, int cSi
 	 * Closing the connection instead would cost a reconnect, and the
 	 * entry would come back and do it again.
 	 */
-	if (MapArticle(relPath, off, size, cSize, &am) != SPOOL_OK) {
+	if (MapArticle(relPath, off, size, cSize, lines, &am) != SPOOL_OK) {
 	    unsent = 1;
 	    commandResponse(cfd, NULL, ".\r\n");
 	} else {
@@ -2472,7 +2476,7 @@ ArticleCheck(const char *relPath)
  * been mapped.
  */
 int
-MapArticle(const char *relPath, off_t off, int size, int cSize, ArtMap *am)
+MapArticle(const char *relPath, off_t off, int size, int cSize, int lines, ArtMap *am)
 {
     const char *path = spoolArtPath(relPath);
 
@@ -2485,6 +2489,7 @@ MapArticle(const char *relPath, off_t off, int size, int cSize, ArtMap *am)
     }
     am->am_Size = size;
     am->am_Compressed = (cSize > 0);
+    am->am_Lines = lines;
     if (DebugOpt > 1)
 	printf("%s >> map %s %lld,%d\n", dtstamp(), relPath, (long long)off, size);
     am->am_Base = cdmap(path, off, &am->am_Size, cSize, &am->am_MultiArtFile);
@@ -2624,24 +2629,13 @@ DumpArticle(int cfd, ArtMap *am)
 	     * If the article is a control message, we push the whole thing
 	     */
 	    if (inHeaders && (i - b == 1 || (wireFormat && i - b == 2))) {
-		int lineCount = 0;
+		/*
+		 * the body lines: from the queue line (diablo counts them
+		 * when the article comes in, D-174), so a header feed does
+		 * not read the bodies; -1 for an older queue line.
+		 */
+		int lineCount = am->am_Lines;
 
-		if (HeaderOnlyFeed) {
-		    int j;
-
-		    /*
-		     * the body lines; a wire format article on the spool
-		     * ends with the "." line, which is not one of them
-		     */
-		    for (j = i; j < artSize; ++j) {
-			if (ptr[j] == '\n')
-			    ++lineCount;
-		    }
-		    if (wireFormat && lineCount > 0 && artSize - i >= 3 &&
-			memcmp(ptr + artSize - 3, ".\r\n", 3) == 0 &&
-			(artSize - i == 3 || ptr[artSize - 4] == '\n'))
-			--lineCount;
-		}
 		/*
 		 * add Lines: header, if requested. note that we can only
 		 * do so if we are going to otherwise discard the rest of
@@ -2650,6 +2644,25 @@ DumpArticle(int cfd, ArtMap *am)
 		if(HeaderOnlyFeed && GenLinesHeader &&
 		   haveLines == 0 && wasControl == 0) {
 		    char tmp[32];
+
+		    if (lineCount < 0) {
+			int j;
+
+			/*
+			 * an older queue line: count them here; a wire
+			 * format article on the spool ends with the "."
+			 * line, which is not one of them
+			 */
+			lineCount = 0;
+			for (j = i; j < artSize; ++j) {
+			    if (ptr[j] == '\n')
+				++lineCount;
+			}
+			if (wireFormat && lineCount > 0 && artSize - i >= 3 &&
+			    memcmp(ptr + artSize - 3, ".\r\n", 3) == 0 &&
+			    (artSize - i == 3 || ptr[artSize - 4] == '\n'))
+			    --lineCount;
+		    }
 
 		    snprintf(tmp, sizeof(tmp), "Lines: %d\r\n", lineCount);
 		    if (commandWrite(cfd, tmp, strlen(tmp), 1) < 0)
@@ -2660,13 +2673,16 @@ DumpArticle(int cfd, ArtMap *am)
 		/*
 		 * add Bytes: header, dreaderd needs it!  header feeds 
 		 * *require* it, but non-header-only feeds can calculate it 
-		 * themselves.  The body line count follows the size, for
-		 * the reader's overview :lines (D-174); an older dreaderd
-		 * reads the size alone.
+		 * themselves.  The body line count from the queue line
+		 * follows the size, for the reader's overview :lines
+		 * (D-174); an older dreaderd reads the size alone.
 		 */
 		if (HeaderOnlyFeed && doBytes) {
 		    char tmp[48];
-		    snprintf(tmp, sizeof(tmp), "Bytes: %d %d\r\n", artSize, lineCount);
+		    if (am->am_Lines >= 0)
+			snprintf(tmp, sizeof(tmp), "Bytes: %d %d\r\n", artSize, am->am_Lines);
+		    else
+			snprintf(tmp, sizeof(tmp), "Bytes: %d\r\n", artSize);
 		    if (commandWrite(cfd, tmp, strlen(tmp), 1) < 0)
 			goto failed;
 		    HeaderSize += strlen(tmp);
@@ -2725,7 +2741,7 @@ StreamReload(int cfd)
 #endif
 
 int
-StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, int cSize, int defers, char *stage, char *reason, char *buf, int *sentSize)
+StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, int cSize, int lines, int defers, char *stage, char *reason, char *buf, int *sentSize)
 {
     Stream *s;
     int r = T_STREAMING;
@@ -2746,11 +2762,12 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 	s->st_Off = off;
 	s->st_Size = size;
 	s->st_CompSize = cSize;
+	s->st_Lines = lines;
 	if (NoCheckOpt) {
 	    ArtMap am;
 
 	    if (MapArticle(s->st_RelPath, s->st_Off, s->st_Size,
-					s->st_CompSize, &am) != SPOOL_OK) {
+					s->st_CompSize, s->st_Lines, &am) != SPOOL_OK) {
 		/* not offered: the slot is not taken */
 		zfreeStr(&SysMemPool, &s->st_RelPath);
 		zfreeStr(&SysMemPool, &s->st_MsgId);
@@ -2815,17 +2832,14 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 		break;
 	    }
 	    if (!defers && ((s = LocateStream(ptr, STATE_CHECK)) != NULL)) {
-		char cst[16];
+		char cst[32];
 		delMe = 1;
 		StrnCpyNull(msgId, s->st_MsgId, 1024);
 		if (stage && !*stage)
 		    StrnCpyNull(stage, "stream", MAXREASON);
 		StrnCpyNull(reason, ptr, MAXREASON);
 		r = T_DEFERIT;
-		if (s->st_CompSize > 0)
-		    snprintf(cst, sizeof(cst), " C%d", s->st_CompSize);
-		else
-		    cst[0] = 0;
+		streamFlags(s, cst, sizeof(cst));
 		/* buf is the caller's queue line buffer (QLINESIZE) */
 		snprintf(buf, QLINESIZE, "%s %s %lld,%d %c%s\n", s->st_RelPath, s->st_MsgId,
 			(long long)s->st_Off, s->st_Size,
@@ -2853,8 +2867,8 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 		 * is to be kept (SPOOL_ERR).
 		 */
 		if (MapArticle(s->st_RelPath, s->st_Off, s->st_Size,
-					s->st_CompSize, &am) != SPOOL_OK) {
-		    char cst[16];
+					s->st_CompSize, s->st_Lines, &am) != SPOOL_OK) {
+		    char cst[32];
 
 		    delMe = 1;
 		    r = T_UNSENT;
@@ -2862,10 +2876,7 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 		    if (stage && !*stage)
 			StrnCpyNull(stage, (defers? "resend-takethis": "takethis"), MAXREASON);
 		    StrnCpyNull(reason, "article not read from the spool, TAKETHIS not sent", MAXREASON);
-		    if (s->st_CompSize > 0)
-			snprintf(cst, sizeof(cst), " C%d", s->st_CompSize);
-		    else
-			cst[0] = 0;
+		    streamFlags(s, cst, sizeof(cst));
 		    snprintf(buf, QLINESIZE, "%s %s %lld,%d %c%s\n", s->st_RelPath, s->st_MsgId,
 			(long long)s->st_Off, s->st_Size,
 			HeaderOnlyFeed ? 'H' : ' ', cst);
@@ -3076,13 +3087,10 @@ RefilePendingStreams(FILE *fo)
 	     */
 
 	    if (fo) {
-		/* the ' H' and ' C<size>' flags are those of the queue line */
-		char cst[16];
+		/* the ' H', ' L<lines>' and ' C<size>' flags are those of the queue line */
+		char cst[32];
 
-		if (s->st_CompSize > 0)
-		    snprintf(cst, sizeof(cst), " C%d", s->st_CompSize);
-		else
-		    cst[0] = 0;
+		streamFlags(s, cst, sizeof(cst));
 		if (s->st_Off || s->st_Size) {
 		    fprintf(fo, "%s\t%s\t%d,%d%s%s\n", 
 			s->st_RelPath, 
@@ -3742,13 +3750,10 @@ readretry(char *buf, int size)
 	    Stream *s = &StreamAry[i];
 
 	    if (s->st_State == STATE_RETRY) {
-		/* the ' H' and ' C<size>' flags are those of the queue line */
-		char cst[16];
+		/* the ' H', ' L<lines>' and ' C<size>' flags are those of the queue line */
+		char cst[32];
 
-		if (s->st_CompSize > 0)
-		    snprintf(cst, sizeof(cst), " C%d", s->st_CompSize);
-		else
-		    cst[0] = 0;
+		streamFlags(s, cst, sizeof(cst));
 		if (s->st_Off || s->st_Size) {
 		    snprintf(buf, size,
 			"%s\t%s\t%lld,%d%s%s\n",
@@ -4425,8 +4430,25 @@ doArtLog(const char *class, char *msgid, char *message, const char *stage, const
  * Extract a line from the dqueue file
  * Return 0 for success and -1 for failure
  */
+
+/*
+ * streamFlags() - the " L<lines>" and " C<size>" flags of a stream's queue
+ *		   line, for writing it back.
+ */
+void
+streamFlags(const Stream *s, char *buf, int size)
+{
+    int n = 0;
+
+    buf[0] = 0;
+    if (s->st_Lines >= 0)
+	n = snprintf(buf, size, " L%d", (int)s->st_Lines);
+    if (s->st_CompSize > 0 && n >= 0 && n < size)
+	snprintf(buf + n, size - n, " C%d", (int)s->st_CompSize);
+}
+
 int
-extractFeedLine(const char *buf, char *relPath, char *msgId, off_t *poff, int *psize, int *pheadOnly, time_t *queuedTime, int *cSize)
+extractFeedLine(const char *buf, char *relPath, char *msgId, off_t *poff, int *psize, int *pheadOnly, time_t *queuedTime, int *cSize, int *plines)
 {
     const char *s = buf;
     const char *b;
@@ -4445,6 +4467,7 @@ extractFeedLine(const char *buf, char *relPath, char *msgId, off_t *poff, int *p
     *psize = 0;
     *queuedTime = 0;
     *cSize = 0;
+    *plines = -1;
 
     /*
      * RELPATH
@@ -4494,6 +4517,9 @@ extractFeedLine(const char *buf, char *relPath, char *msgId, off_t *poff, int *p
 		break;
 	    case 'C' :
 		*cSize = atol(s);
+		break;
+	    case 'L' :		/* body lines, from diablo (D-174) */
+		*plines = atol(s);
 		break;
 	    case 'H' :
 		*pheadOnly = 1;

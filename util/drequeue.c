@@ -18,8 +18,8 @@ Feed    *FeBase;
 MemPool *ParProcMemPool;
 char    *MySpoolHome;
 
-int fwCallBack(const char *hlabel, const char *msgid, const char *path, const char *offsize, int plfo, int headOnly, const char *artType, const char *cSize);
-void writeFeedOut(const char *label, const char *file, const char *msgid, const char *offSize, int rt, int headOnly, const char *cSize);
+int fwCallBack(const char *hlabel, const char *msgid, const char *path, const char *offsize, int plfo, int headOnly, const char *artType, int lines, const char *cSize);
+void writeFeedOut(const char *label, const char *file, const char *msgid, const char *offSize, int rt, int headOnly, int lines, const char *cSize);
 void flushFeeds(int justClose);
 void flushFeedOut(Feed *fe);
 
@@ -119,6 +119,13 @@ main(int ac, char **av)
             char *headOnly = strtok(NULL, "\t\n");
             const char *artType = strtok(NULL, "\t\n");
             const char *cSize = strtok(NULL, "\t\n");
+            int lines = -1;
+
+            /* L<lines> before cSize (D-174); older SOUT lines have none */
+            if (cSize != NULL && cSize[0] == 'L') {
+                lines = (int)strtol(cSize + 1, NULL, 10);
+                cSize = strtok(NULL, "\t\n");
+            }
             if (path && offsize && msgid && nglist) {
                 int spamArt = 0;
 		if (npath == NULL) npath = "1";
@@ -138,7 +145,7 @@ main(int ac, char **av)
 			cSize != NULL ? cSize : ""
 		    );
 
-    		FeedWrite(0, fwCallBack, msgid, path, offsize, nglist, npath, dist, headOnly, artType, spamArt, cSize);
+    		FeedWrite(0, fwCallBack, msgid, path, offsize, nglist, npath, dist, headOnly, artType, spamArt, lines, cSize);
 	    }
 	}
     }
@@ -147,14 +154,14 @@ main(int ac, char **av)
 }
 
 int 
-fwCallBack(const char *hlabel, const char *msgid, const char *path, const char *offsize, int plfo, int headOnly, const char *artType, const char *cSize)
+fwCallBack(const char *hlabel, const char *msgid, const char *path, const char *offsize, int plfo, int headOnly, const char *artType, int lines, const char *cSize)
 {
-    writeFeedOut(hlabel, path, msgid, offsize, ((plfo > 0) ? 1 : 0), headOnly, cSize);
+    writeFeedOut(hlabel, path, msgid, offsize, ((plfo > 0) ? 1 : 0), headOnly, lines, cSize);
     return(0);
 }
 
 void
-writeFeedOut(const char *label, const char *file, const char *msgid, const char *offSize, int rt, int headOnly, const char *cSize)
+writeFeedOut(const char *label, const char *file, const char *msgid, const char *offSize, int rt, int headOnly, int lines, const char *cSize)
 {
     Feed *fe;
 
@@ -200,18 +207,24 @@ writeFeedOut(const char *label, const char *file, const char *msgid, const char 
      */
 
     if (fe->fe_Fd >= 0) {
+	char lineField[16];
 	/*
-	 * " H", " C" + cSize, the spaces, newline and nul.  cSize was not
+	 * " H", " L" + lines, " C" + cSize, the spaces, newline and nul.
+	 * cSize was not
 	 * counted: it comes from the SOUT line on stdin, and a line whose
 	 * fields are shifted can put a long value there (as in diablo's
 	 * writeFeedOut()).
 	 */
 	int l = strlen(file) + strlen(msgid) + strlen(offSize) +
-		(cSize != NULL ? strlen(cSize) : 0) + (3 + 32 + 1);
+		(cSize != NULL ? strlen(cSize) : 0) + (3 + 32 + 12 + 1);
 
 	/*
 	 * line would be too long?
 	 */
+	if (lines >= 0)
+	    snprintf(lineField, sizeof(lineField), " L%d", lines);
+	else
+	    lineField[0] = 0;
 	if (l < fe->fe_BufMax) {
 	    /*
 	     * line fits in buffer with trailing nul ?
@@ -220,9 +233,10 @@ writeFeedOut(const char *label, const char *file, const char *msgid, const char 
 		flushFeedOut(fe);
 
 	    snprintf(fe->fe_Buf + fe->fe_BufIdx, fe->fe_BufMax - fe->fe_BufIdx,
-		"%s %s %s%s%s%s\n",
+		"%s %s %s%s%s%s%s\n",
 		file, msgid, offSize, 
 		(headOnly ? " H" : ""),
+		lineField,
 		(cSize != NULL ? " C" : ""),
 		(cSize != NULL ? cSize : "")
 	    );
