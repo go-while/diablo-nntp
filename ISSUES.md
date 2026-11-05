@@ -188,7 +188,7 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-172](#d-172-feed-children-and-programs-diablo-runs-inherit-retained-control-connections) | Low | Feed children and programs diablo runs inherit retained control connections | fixed (#294) |
 | [D-173](#d-173-netremote-session-accounting-goes-to-a-placeholder-host) | Low | NETREMOTE session accounting goes to a placeholder host | open |
 | [D-174](#d-174-the-reader-overview-lines-column-is-empty-for-articles-without-a-lines-header) | Low | The reader overview Lines column is empty for articles without a Lines header | open |
-| [D-175](#d-175-a-bad-dspoolctl-on-reload-stops-a-running-diablo) | Medium | A bad dspool.ctl on reload stops a running diablo | open |
+| [D-175](#d-175-a-bad-dspoolctl-on-reload-stops-a-running-diablo) | Medium | A bad dspool.ctl on reload stops a running diablo | PR |
 | [D-176](#d-176-gz-header-parse-of-an-overview-data-file-is-not-bounded-by-the-file-size) | Low | .gz header parse of an overview data file is not bounded by the file size | fixed (#296) |
 | [D-177](#d-177-dreaderaccess-line-longer-than-the-read-buffer-is-parsed-in-pieces) | Low | dreader.access line longer than the read buffer is parsed in pieces | fixed (#296) |
 | [D-178](#d-178-dsyncgroups-cuts-a-long-authinfo-user-name-or-password) | Low | dsyncgroups cuts a long AUTHINFO user name or password | fixed (#296) |
@@ -1132,6 +1132,8 @@ Plan (maintainer, 2026-11-04: "dreaderd gets :lines from the feeder"):
 
 ### D-175 A bad dspool.ctl on reload stops a running diablo
 `lib/spool.c`, `loadSpoolCtl()`: the master reloads `dspool.ctl` when its mtime changes (`LoadSpoolCtl(t, 0)` in the main loop of `util/diablo.c`), and every error in it calls `exit(1)`: an unknown definition, an unknown spool, a missing group, and since D-120 also an unknown spool or metaspool option. So a typo saved while diablo runs stops the feeder at the next check, with no error shown to the admin who edited the file. At start an error should still stop it. Fix (maintainer, 2026-11-04: queued as the follow-up to D-120): parse a reload into a new set of spool and metaspool objects, install it only when the whole file is valid, and otherwise log the error and keep the old set, as #283 does for `dreader.access`. The other programs that read the file once (dexpire, dcancel, dreadart and others) keep stopping on an error.
+
+Fixed (PR #308): the reload is parsed in a forked child first; on an error the master logs it and keeps the old configuration until the file changes again. At start an error still stops the program.
 
 ### D-176 .gz header parse of an overview data file is not bounded by the file size
 `dreaderd/group.c` (`MakeOverHFile()`) and `util/dexpireover.c` (`RewriteData()`): the gzip header of a `.gz` data file was walked with no check against the file size (extra field length, file name and comment strings, header CRC), so a damaged or hostile `.gz` made `inflate` read past the mapping. A wrong magic was logged and parsed anyway, and the extra-field length skipped two bytes too few. The files are written by `dexpireover -z`; needs a damaged file. Found in our own audit. Fixed by one bounded header length function in both files; a bad header is reported as an inflate error.
