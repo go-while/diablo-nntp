@@ -29,16 +29,31 @@
 # clustername	 : The name of this cluster - used in various posting headers
 #		   Defaults to the same as the hostname
 #
-# postpath	 : The Path: entry to add to posts (Default: None)
+# postpath	 : The Path: entry to add to posts, followed by the ".POSTED"
+#		   diagnostic (RFC 5537 3.2.1), for example
+#		   "Path: path.host!.POSTED!not-for-mail". (Default: None)
 #
 # newsadmin	 : News Admin contact address added to connect banners
 #		   Defaults to news@hostname.
 # organisation	 : Organisation: line added to local posts (the US spelling
 #		   with a 'z' can be used too). (Default: None)
-# abuseto	 : X-Complaints-To: line. (Default: None)
+# abuseto	 : The mail-complaints-to of the Injection-Info: line
+#		   (X-Complaints-To: with legacytrace). (Default: None)
 #
-# cryptpw	 : The password used to DES encrypt X-Trace, if set in vendor.h
-#		   Default: No crypting of X-Trace:
+# cryptpw	 : The password used to encrypt the logging-data of the
+#		   Injection-Info: line (X-Trace: with legacytrace), if set in
+#		   vendor.h (POST_CRYPTXTRACE). With it the posting host is
+#		   given as an hourly hash in posting-account instead of
+#		   posting-host. "G=gen,P=password" adds the generation.
+#		   Default: No crypting.
+#
+# legacytrace	 : 'yes' writes the old trace headers to local posts:
+#		   NNTP-Posting-Host:, X-Trace:, X-Complaints-To: (and
+#		   NNTP-Posting-Date: where built in), and no Injection-Info:
+#		   or Injection-Date:, and no ".POSTED" in the Path. By
+#		   default posts get Injection-Info: (RFC 5536 3.2.8) and,
+#		   when dreaderd supplied the Message-ID or Date,
+#		   Injection-Date: (RFC 5537 3.5). Default: no.
 #
 # canlockadmin	 : A secret for Cancel-Lock (RFC 8315), the same as INN's
 #		   canlockadmin in inn-secrets.conf. With it, every local post

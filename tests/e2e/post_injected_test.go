@@ -45,6 +45,7 @@ func TestReaderPostRefusesInjected(t *testing.T) {
 		"Xref: news.example.invalid e2e.test:1",
 		"Path: news.example.invalid!.POSTED!not-for-mail",
 		"Path: news.example.invalid!.POSTED.192.0.2.1!not-for-mail",
+		"Path: news.example.invalid!.posted!not-for-mail", // ABNF strings are case-insensitive
 	} {
 		if code, line := postWith(h); code != 441 {
 			t.Errorf("POST with %q: %q, want 441", h, line)
