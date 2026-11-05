@@ -114,6 +114,16 @@ func TestKPDBLookupDuringSort(t *testing.T) {
 	kpbWant(t, lines, "sorter at marker", "P2 misses 0", "table ok")
 }
 
+// TestKPDBMissNoWaitPastLimit: with the C counter just past the resort limit
+// (the next write sorts; no sort is running) a miss in another process comes
+// back at once while a writer holds the append lock. Before, every miss in
+// that state waited for the append lock and searched again.
+func TestKPDBMissNoWaitPastLimit(t *testing.T) {
+	exe := kpbBuild(t)
+	lines := kpbRun(t, exe, "nowait")
+	kpbWant(t, lines, "append lock held", "miss did not wait")
+}
+
 // TestKPDBWriteNullToken (D-118): a NULL token only unlocks or looks up; it
 // does not crash, write or create.
 func TestKPDBWriteNullToken(t *testing.T) {
@@ -574,6 +584,59 @@ modeWindow(const char *path)
     return 0;
 }
 
+/*
+ * nowait: the C counter just past the resort limit (no sort running: the
+ * next write sorts) while another process holds the append lock.  A miss
+ * must come back at once, not wait for that lock.
+ */
+static int
+modeNowait(const char *path)
+{
+    KPDB *db = KPDBOpen(path, O_RDWR|O_CREAT);
+    int a[2], b[2];
+    pid_t p;
+    int st, i;
+    char k[32], c;
+
+    db->kp_ResortLimit = 4;
+    for (i = 0; i < 6; ++i) {	/* the 6th write sorts, then C = 1 ... */
+	snprintf(k, sizeof(k), "nw%d", i);
+	KPDBWrite(db, k, "NX", "0000000001", 0);
+    }
+    for (; i < 10; ++i) {	/* ... and C passes 4 again, no sort yet */
+	snprintf(k, sizeof(k), "nw%d", i);
+	KPDBWrite(db, k, "NX", "0000000001", 0);
+    }
+    if (pipe(a) || pipe(b)) exit(2);
+    if ((p = fork()) == 0) {
+	/* open before the parent takes the append lock: KPDBOpen() takes it too */
+	KPDB *d = KPDBOpen(path, O_RDWR);	/* second opener: no sort */
+
+	d->kp_ResortLimit = 4;
+	d->kp_AppendSeq = KPDBAppendCount(d);	/* no remap on the miss */
+	(void)!write(a[1], "R", 1);
+	if (read(b[0], &c, 1) != 1) _exit(5);	/* the parent holds the lock */
+	alarm(3);
+	if (KPDBLookup(d, "nokey", 0, 0) != 0 && KPDBLookup(d, "nw9", 0, 0) == 0)
+	    _exit(0);
+	_exit(1);
+    }
+    if (read(a[0], &c, 1) != 1) exit(5);
+    if (hflock(db->kp_Fd, 4, XLOCK_EX) != 0)
+	exit(2);
+    say("append lock held\n");
+    (void)!write(b[1], "G", 1);
+    waitpid(p, &st, 0);
+    if (WIFEXITED(st) && WEXITSTATUS(st) == 0)
+	say("miss did not wait\n");
+    else if (WIFSIGNALED(st) && WTERMSIG(st) == SIGALRM)
+	say("miss waited for the append lock\n");
+    else
+	say("child status %d\n", st);
+    hflock(db->kp_Fd, 4, XLOCK_UN);
+    return 0;
+}
+
 static int
 modeNulltok(const char *path)
 {
@@ -621,6 +684,7 @@ main(int ac, char **av)
     if (strcmp(av[1], "interrupt") == 0) return modeInterrupt(av[2]);
     if (strcmp(av[1], "window") == 0) return modeWindow(av[2]);
     if (strcmp(av[1], "nulltok") == 0) return modeNulltok(av[2]);
+    if (strcmp(av[1], "nowait") == 0) return modeNowait(av[2]);
     return 2;
 }
 `

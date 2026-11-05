@@ -195,6 +195,7 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-179](#d-179-netbsd-embedded-perl-loads-no-script) | Low | NetBSD: embedded Perl loads no script | fixed (#307) |
 | [D-180](#d-180-netbsd-reader-fork-and-queue-wait-tests-are-intermittent) | Low | NetBSD: reader fork and queue-wait tests are intermittent | fixed (#303) |
 | [D-181](#d-181-readerdns-and-readerfeedforks-take-any-value) | Low | readerdns and readerfeedforks take any value | fixed (#305) |
+| [D-182](#d-182-kpdb-lookup-misses-wait-for-the-append-lock-after-the-resort-limit) | Low | KPDB lookup misses wait for the append lock after the resort limit | fixed (#311) |
 
 Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315), [F-02 configure script](#f-02-configure-script-for-the-build-options), [F-03 refeed a whole spool](#f-03-refeed-a-whole-spool-to-another-server), [F-04 NoCeM notices](#f-04-nocem-notices), [F-05 init scripts](#f-05-init-scripts-and-adm-script-replacements), [F-06 Perl authentication](#f-06-perl-authentication-for-dreaderd).
 
@@ -1155,6 +1156,10 @@ In fork CI on NetBSD 11, TestReaderForkKeepsNoQueuedClients failed in 3 of 4 run
 ### D-181 readerdns and readerfeedforks take any value
 `lib/config.c` and the `-D`/`-F` options of `dreaderd/main.c` read `readerdns` and `readerfeedforks` with `strtol()` and no check. `readerdns 0`, a typo such as `readerdns five`, or `-D bogus` gave no DNS worker at all: dreaderd started, and every client got `400 Server too busy` ("No DNS thread running"). A negative `readerfeedforks` was taken as well. Found while checking what was left of the DNS-queue burst work (mc-report F1-b: its sizing note and the queue that absorbs bursts are on main already).
 Fixed: `readerdns` must be 1..1024 and `readerfeedforks` 0..1024, in diablo.config and as `-D`/`-F`; anything else stops dreaderd at startup with an error, as an invalid `readerforks` does. Test: `TestReaderDnsFeedForksInvalid`.
+
+### D-182 KPDB lookup misses wait for the append lock after the resort limit
+`lib/kpdb.c`, `KPDBLookup()`: the D-117 fix (#301) waited once on the append lock (offset 4) after a miss whenever the C counter was above `kp_ResortLimit`. But the sort runs only at the start of the next write, so after the write that passes the limit the counter stays above it until then, and every miss in every process (a GROUP or a newgroup check for a group that is not there) took that lock, waited for any writer holding it, and searched again. Not wrong, only slow under writes. Found in our review pass of the code merged since #296.
+Fixed (#311): only the marker the sort writes first and clears last (`0FFFFFFF`) means a sort is running; a counter just past the limit leaves an unsorted tail that the search scans anyway. Test: `TestKPDBMissNoWaitPastLimit` (another process holds the append lock; the miss must come back at once). `TestKPDBLookupDuringSort` still passes.
 
 ## Feature requests
 

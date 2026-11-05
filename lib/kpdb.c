@@ -1223,10 +1223,13 @@ again:
      * half rewritten sends the binary search the wrong way (D-117).  Wait
      * for the append lock, which is free when the sort is over, and search
      * again once.  A process that holds the lock itself is the sorter or
-     * the writer behind it: nothing to wait for.
+     * the writer behind it: nothing to wait for.  Only the marker means a
+     * sort: a counter just past the limit stays so until the next write
+     * sorts, and the search scans that unsorted tail anyway, so a miss
+     * then is real and must not wait on every writer.
      */
     if (found < 0 && kpdb->kp_Lock4 == 0 && sortWaited == 0 &&
-	(uint32)strtol(kpdb->kp_MapBase + C_OFF, NULL, 16) > (uint32)kpdb->kp_ResortLimit
+	strncmp(kpdb->kp_MapBase + C_OFF, "0FFFFFFF", 8) == 0
     ) {
 	sortWaited = 1;
 	if (hflock(kpdb->kp_Fd, 4, XLOCK_EX) == 0) {

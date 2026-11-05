@@ -1,0 +1,1 @@
+- `lib/kpdb.c`: a lookup miss waits for the append lock only while a sort runs (the `0FFFFFFF` marker), not whenever the C counter is past the resort limit; before, every miss after the limit was passed waited for any writer until the next write sorted (ISSUES.md D-182).
