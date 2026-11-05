@@ -12,7 +12,7 @@ func listenBacklogLimit() (int, string, error) {
 	var b []byte
 	var err error
 	var key string
-	switch runtime.GOOS {
+	switch inspectionOS(runtime.GOOS) {
 	case "linux":
 		key = "net.core.somaxconn"
 		b, err = os.ReadFile("/proc/sys/net/core/somaxconn")

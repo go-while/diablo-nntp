@@ -73,6 +73,7 @@ end
 			time.Sleep(500 * time.Millisecond)
 		}
 	})
+	logWorkerInspectionOnFailure(t, s)
 	accepted := func(id string) {
 		t.Helper()
 		testkit.WaitFor(t, 15*time.Second, "the peer to accept "+id, func() bool { return slices.Contains(got.list(), id) })

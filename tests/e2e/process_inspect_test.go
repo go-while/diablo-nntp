@@ -4,6 +4,7 @@ package e2e
 // both children of the site master and workers orphaned after dspoolout exits.
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -17,12 +18,26 @@ import (
 	"time"
 )
 
+// Go has distinct illumos and solaris targets. Both use the same native tools.
+func inspectionOS(goos string) string {
+	if goos == "illumos" {
+		return "solaris"
+	}
+	return goos
+}
+
 func inspectionOutput(name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = append(os.Environ(), "LC_ALL=C")
-	return cmd.Output()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	b, err := cmd.Output()
+	if err != nil {
+		return b, fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
+	}
+	return b, nil
 }
 
 func requireProcessInspection(t *testing.T, descriptors bool) {
@@ -31,11 +46,11 @@ func requireProcessInspection(t *testing.T, descriptors bool) {
 		return
 	}
 	var tools []string
-	switch runtime.GOOS {
+	switch inspectionOS(runtime.GOOS) {
 	case "freebsd":
-		tools = []string{"ps"}
+		tools = []string{"ps", "procstat"}
 		if descriptors {
-			tools = append(tools, "procstat")
+			tools = append(tools, "fstat")
 		}
 	case "netbsd":
 		tools = []string{"ps"}
@@ -77,12 +92,7 @@ type inspectedProcess struct {
 }
 
 func inspectProcesses() ([]inspectedProcess, error) {
-	args := []string{"-ax", "-o", "pid=", "-o", "ppid=", "-o", "ucomm="}
-	if runtime.GOOS == "solaris" {
-		// /usr/bin/ps on illumos uses System V selection, not BSD -ax.
-		args = []string{"-e", "-o", "pid=", "-o", "ppid=", "-o", "fname="}
-	}
-	b, err := inspectionOutput("ps", args...)
+	b, err := inspectionOutput("ps", processTableArgs(runtime.GOOS)...)
 	if err != nil {
 		return nil, err
 	}
@@ -91,6 +101,15 @@ func inspectProcesses() ([]inspectedProcess, error) {
 		return nil, fmt.Errorf("no process records in ps output %q", b)
 	}
 	return ps, nil
+}
+
+func processTableArgs(goos string) []string {
+	if inspectionOS(goos) == "solaris" {
+		// System V selection, and comm rather than fname: fname is
+		// only eight bytes on illumos and truncates "dnewslink".
+		return []string{"-e", "-o", "pid=", "-o", "ppid=", "-o", "comm="}
+	}
+	return []string{"-ax", "-o", "pid=", "-o", "ppid=", "-o", "ucomm="}
 }
 
 func parseProcesses(out string) []inspectedProcess {
@@ -110,8 +129,11 @@ func parseProcesses(out string) []inspectedProcess {
 }
 
 func processEnvironment(pid int) ([]byte, error) {
-	if runtime.GOOS == "solaris" {
+	switch inspectionOS(runtime.GOOS) {
+	case "solaris":
 		return inspectionOutput("pargs", "-e", strconv.Itoa(pid))
+	case "freebsd":
+		return inspectionOutput("procstat", "-e", strconv.Itoa(pid))
 	}
 	return inspectionOutput("ps", "eww", "-p", strconv.Itoa(pid), "-o", "command=")
 }
@@ -173,7 +195,7 @@ func portableRealtimeWorker(t testing.TB, s *Site) int {
 	for _, pid := range sitePids(t, s, "dnewslink") {
 		var b []byte
 		var err error
-		if runtime.GOOS == "solaris" {
+		if inspectionOS(runtime.GOOS) == "solaris" {
 			b, err = inspectionOutput("pargs", "-a", strconv.Itoa(pid))
 		} else {
 			b, err = inspectionOutput("ps", "-ww", "-p", strconv.Itoa(pid), "-o", "args=")
@@ -197,9 +219,10 @@ func holdsRealtimeQueue(s *Site, pid int) bool {
 	if _, err := os.Stat(queue); err != nil {
 		return false // between rotation and creation of the new active queue
 	}
-	if runtime.GOOS == "netbsd" {
-		b, err := inspectionOutput("fstat", "-p", strconv.Itoa(pid), queue)
-		return err == nil && len(parseDescriptors("netbsd", pid, string(b))) > 0
+	if runtime.GOOS == "freebsd" || runtime.GOOS == "netbsd" {
+		// Match filesystem/inode identity, not procstat's optional NAME.
+		fds, err := fstatFileDescriptors(pid, queue)
+		return err == nil && len(fds) > 0
 	}
 	fds, err := inspectDescriptors(pid)
 	if err != nil {
@@ -222,9 +245,43 @@ func descriptorNamesFile(fd inspectedFD, names ...string) bool {
 
 func portableProcessStatus(pid int) string {
 	state := "stat="
-	if runtime.GOOS == "solaris" {
+	if inspectionOS(runtime.GOOS) == "solaris" {
 		state = "s="
 	}
 	b, err := inspectionOutput("ps", "-p", strconv.Itoa(pid), "-o", "pid=", "-o", "ppid=", "-o", state, "-o", "wchan=")
 	return fmt.Sprintf("%s (ps: %v)", strings.TrimSpace(string(b)), err)
+}
+
+// Register after worker cleanup so this runs before those workers are killed.
+func logWorkerInspectionOnFailure(t *testing.T, s *Site) {
+	t.Helper()
+	if runtime.GOOS == "linux" {
+		return
+	}
+	t.Cleanup(func() {
+		if !t.Failed() {
+			return
+		}
+		ps, err := inspectProcesses()
+		t.Logf("worker inspection: process table error=%v", err)
+		for _, p := range ps {
+			if p.name != "dnewslink" && p.name != "dspoolout" {
+				continue
+			}
+			env, err := processEnvironment(p.pid)
+			matches := err == nil && hasSiteEnvironment(string(env), s.Env[0])
+			// Do not print environments (which may contain CI credentials),
+			// or inspect another site's descriptors.
+			t.Logf("candidate pid=%d parent=%d name=%s site-match=%v environment-error=%v", p.pid, p.parent, p.name, matches, err)
+			if !matches {
+				continue
+			}
+			fds, err := inspectDescriptors(p.pid)
+			t.Logf("candidate pid=%d descriptors=%+v error=%v", p.pid, fds, err)
+			if runtime.GOOS == "freebsd" || runtime.GOOS == "netbsd" {
+				fds, err := fstatFileDescriptors(p.pid, filepath.Join(s.Dir, "dqueue", OutLabel))
+				t.Logf("candidate pid=%d active-queue-fds=%+v error=%v", p.pid, fds, err)
+			}
+		}
+	})
 }

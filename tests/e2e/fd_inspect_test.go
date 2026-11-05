@@ -19,7 +19,7 @@ type inspectedFD struct {
 func inspectDescriptors(pid int) ([]inspectedFD, error) {
 	var b []byte
 	var err error
-	switch runtime.GOOS {
+	switch inspectionOS(runtime.GOOS) {
 	case "freebsd":
 		b, err = inspectionOutput("procstat", "-f", strconv.Itoa(pid))
 	case "netbsd":
@@ -42,6 +42,10 @@ func inspectDescriptors(pid int) ([]inspectedFD, error) {
 }
 
 func parseDescriptors(goos string, pid int, out string) []inspectedFD {
+	goos = inspectionOS(goos)
+	if goos == "netbsd" {
+		return parseFstatDescriptors(pid, out)
+	}
 	var fds []inspectedFD
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.Fields(line)
@@ -75,7 +79,16 @@ func parseDescriptors(goos string, pid int, out string) []inspectedFD {
 			}
 			continue
 		}
-		// NetBSD: USER CMD PID FD MOUNT INUM ...; a socket has a
+	}
+	slices.SortFunc(fds, func(a, b inspectedFD) int { return a.number - b.number })
+	return fds
+}
+
+func parseFstatDescriptors(pid int, out string) []inspectedFD {
+	var fds []inspectedFD
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		// BSD fstat: USER CMD PID FD MOUNT INUM ...; a socket has a
 		// starred FD and domain/type/PCB (and endpoints) in the tail.
 		if len(f) < 5 || f[2] != strconv.Itoa(pid) {
 			continue
@@ -91,35 +104,47 @@ func parseDescriptors(goos string, pid int, out string) []inspectedFD {
 	return fds
 }
 
+func fstatFileDescriptors(pid int, files ...string) ([]inspectedFD, error) {
+	if len(files) == 0 {
+		return nil, fmt.Errorf("fstat file matching requires at least one file")
+	}
+	args := append([]string{"-p", strconv.Itoa(pid)}, files...)
+	b, err := inspectionOutput("fstat", args...)
+	if err != nil {
+		return nil, err
+	}
+	return parseFstatDescriptors(pid, string(b)), nil
+}
+
 func portableFDTargets(s *Site, pid int) ([]string, error) {
 	fds, err := inspectDescriptors(pid)
 	if err != nil {
 		return nil, err
 	}
 	spoolFDs := map[int]bool{}
-	if runtime.GOOS == "netbsd" {
+	if runtime.GOOS == "freebsd" || runtime.GOOS == "netbsd" {
 		// fstat normally reports mount/inode, not path. Supplying the
 		// site's actual spool files identifies just their FD numbers,
 		// preserving the Linux exclusion of variable article caches.
-		args := []string{"-p", strconv.Itoa(pid)}
+		var files []string
 		err := filepath.WalkDir(filepath.Join(s.Dir, "spool", "news"), func(path string, e fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
 			if e.Type().IsRegular() {
-				args = append(args, path)
+				files = append(files, path)
 			}
 			return nil
 		})
 		if err != nil {
 			return nil, err
 		}
-		if len(args) > 2 {
-			b, err := inspectionOutput("fstat", args...)
+		if len(files) > 0 {
+			matches, err := fstatFileDescriptors(pid, files...)
 			if err != nil {
 				return nil, err
 			}
-			for _, fd := range parseDescriptors("netbsd", pid, string(b)) {
+			for _, fd := range matches {
 				spoolFDs[fd.number] = true
 			}
 		}
