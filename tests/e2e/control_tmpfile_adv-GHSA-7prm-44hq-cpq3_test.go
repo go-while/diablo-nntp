@@ -41,7 +41,7 @@ func TestControlMailRuleTempFile(t *testing.T) {
 	testkit.WaitFor(t, 10*time.Second, "e2e.mailrule created by a control message under a mail rule", func() bool { return exists("e2e.mailrule") })
 
 	time.Sleep(500 * time.Millisecond)
-	for _, pid := range sitePids(s, "dreaderd") {
+	for _, pid := range sitePids(t, s, "dreaderd") {
 		// the old fixed name and the mkstemp names of this pid ("." keeps pid 123 from
 		// matching the files of pid 1234)
 		base := "/tmp/dreaderd.ctl" + strconv.Itoa(pid)

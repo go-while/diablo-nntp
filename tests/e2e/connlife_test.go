@@ -36,8 +36,17 @@ func linkBin(tb testing.TB, s *Site) {
 }
 
 // sitePids returns the pids of the running processes called name whose environment has this
-// site's DIABLO_CONFIG_PATH, in ascending order. Linux only (/proc).
-func sitePids(s *Site, name string) []int {
+// site's DIABLO_CONFIG_PATH, in ascending order. Off Linux, also walk the
+// master's process tree; detached workers retain the exact site environment.
+func sitePids(t testing.TB, s *Site, name string) []int {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		pids, err := portableSitePids(s, name)
+		if err != nil {
+			t.Fatalf("inspect site processes: %v", err)
+		}
+		return pids
+	}
 	var pids []int
 	want := []byte(s.Env[0])
 	entries, _ := os.ReadDir("/proc")
@@ -61,7 +70,15 @@ func sitePids(s *Site, name string) []int {
 }
 
 // fdCount returns the number of open descriptors of pid, or -1.
-func fdCount(pid int) int {
+func fdCount(t testing.TB, pid int) int {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		fds, err := inspectDescriptors(pid)
+		if err != nil {
+			t.Fatalf("inspect descriptors of %d: %v", pid, err)
+		}
+		return len(fds)
+	}
 	fds, err := os.ReadDir(filepath.Join("/proc", strconv.Itoa(pid), "fd"))
 	if err != nil {
 		return -1
@@ -71,8 +88,11 @@ func fdCount(pid int) int {
 
 // realtimeWorker returns the pid of this site's realtime dnewslink (an argument -r or -r-1),
 // or 0.
-func realtimeWorker(s *Site) int {
-	for _, pid := range sitePids(s, "dnewslink") {
+func realtimeWorker(t testing.TB, s *Site) int {
+	if runtime.GOOS != "linux" {
+		return portableRealtimeWorker(t, s)
+	}
+	for _, pid := range sitePids(t, s, "dnewslink") {
 		cmd, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "cmdline"))
 		if err != nil {
 			continue
@@ -87,7 +107,22 @@ func realtimeWorker(s *Site) int {
 }
 
 // sockets returns the socket inodes ("socket:[N]") among the open descriptors of pid.
-func sockets(pid int) []string {
+func sockets(t testing.TB, pid int) []string {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		fds, err := inspectDescriptors(pid)
+		if err != nil {
+			t.Fatalf("inspect sockets of %d: %v", pid, err)
+		}
+		var socks []string
+		for _, fd := range fds {
+			if fd.socket {
+				socks = append(socks, strconv.Itoa(fd.number)+" -> "+fd.target)
+			}
+		}
+		slices.Sort(socks)
+		return socks
+	}
 	dir := filepath.Join("/proc", strconv.Itoa(pid), "fd")
 	fds, _ := os.ReadDir(dir)
 	var socks []string
@@ -102,7 +137,15 @@ func sockets(pid int) []string {
 
 // fdTargets returns "fd -> target" for the open descriptors of pid, without spool article
 // files: dnewslink keeps a few of those open as a cache, and their number varies.
-func fdTargets(pid int) []string {
+func fdTargets(t testing.TB, s *Site, pid int) []string {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		targets, err := portableFDTargets(s, pid)
+		if err != nil {
+			t.Fatalf("inspect descriptor targets of %d: %v", pid, err)
+		}
+		return targets
+	}
 	dir := filepath.Join("/proc", strconv.Itoa(pid), "fd")
 	fds, _ := os.ReadDir(dir)
 	var out []string
@@ -122,9 +165,7 @@ func fdTargets(pid int) []string {
 // first, and every article reaches the peer once, in order.
 // Batch workers that dspoolout starts for rotated queue files are not counted.
 func TestDnewslinkConnlife(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("reads /proc")
-	}
+	requireProcessInspection(t, true)
 	peer, got := newPeer(t, &fakeserver.PeerOptions{})
 	feeds := GlobalLabel + `label peer
     inhost ` + PeerIP + `
@@ -150,7 +191,7 @@ end
 		// replacement through dspoolout -J: kill until none is left for a while.
 		quiet := 0
 		for range 40 {
-			pids := append(sitePids(s, "dnewslink"), sitePids(s, "dspoolout")...)
+			pids := append(sitePids(t, s, "dnewslink"), sitePids(t, s, "dspoolout")...)
 			if len(pids) == 0 {
 				if quiet++; quiet == 3 {
 					return
@@ -163,7 +204,7 @@ end
 			}
 			time.Sleep(500 * time.Millisecond)
 		}
-		t.Errorf("dnewslink workers still running after cleanup: %v", sitePids(s, "dnewslink"))
+		t.Errorf("dnewslink workers still running after cleanup: %v", sitePids(t, s, "dnewslink"))
 	})
 	accepted := func(id string) {
 		t.Helper()
@@ -179,9 +220,9 @@ end
 	var w1 int
 	var sock1 []string
 	testkit.WaitFor(t, 10*time.Second, "the realtime worker connected", func() bool {
-		w1 = realtimeWorker(s)
+		w1 = realtimeWorker(t, s)
 		if w1 > 0 {
-			sock1 = sockets(w1)
+			sock1 = sockets(t, w1)
 		}
 		return w1 > 0 && len(sock1) > 0
 	})
@@ -194,9 +235,9 @@ end
 	c := s.Inject(t, "e2e.test", 1)
 	accepted(c[0])
 	if since := time.Since(start); since < 7*time.Second {
-		if w := realtimeWorker(s); w != w1 {
+		if w := realtimeWorker(t, s); w != w1 {
 			t.Errorf("realtime worker changed across the rotation after %v: %d -> %d", since.Round(time.Millisecond), w1, w)
-		} else if sk := sockets(w); !slices.Equal(sk, sock1) {
+		} else if sk := sockets(t, w); !slices.Equal(sk, sock1) {
 			t.Errorf("realtime worker reconnected across the rotation: sockets %v -> %v", sock1, sk)
 		}
 	} else {
@@ -216,18 +257,18 @@ end
 		accepted(id)
 		var w int
 		testkit.WaitFor(t, 10*time.Second, "realtime worker "+strconv.Itoa(n)+" after connlife, a rotation and an article", func() bool {
-			w = realtimeWorker(s)
+			w = realtimeWorker(t, s)
 			return w > 0 && w != prev
 		})
 		return w, id
 	}
-	fdl1 := fdTargets(w1)
+	fdl1 := fdTargets(t, s, w1)
 	w2, d := cycle(w1, start, 2)
-	fdl2 := fdTargets(w2)
+	fdl2 := fdTargets(t, s, w2)
 	w3, e := cycle(w2, time.Now(), 3)
-	fdl3 := fdTargets(w3)
+	fdl3 := fdTargets(t, s, w3)
 	w4, f := cycle(w3, time.Now(), 4)
-	fdl4 := fdTargets(w4)
+	fdl4 := fdTargets(t, s, w4)
 	for i, l := range [][]string{fdl2, fdl3, fdl4} {
 		if len(l) > len(fdl1) {
 			t.Errorf("descriptors grew across replacements:\n worker 1: %q\n worker %d: %q", fdl1, i+2, l)
