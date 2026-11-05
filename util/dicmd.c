@@ -54,18 +54,30 @@ main(int ac, char **av)
     }
 
     if (ac == 1) {
+	/*
+	 * A line longer than buf comes in pieces (D-127): send them all
+	 * before reading the reply, and take ".\n" as the end of the reply
+	 * only when it is a whole line.
+	 */
 	while(fgets(buf, sizeof(buf), stdin) != NULL) {
+	    size_t n = strlen(buf);
+	    int bol = 1;
+
 	    r = 1;
 	    stprintf("sending %s", buf);
 	    fprintf(fo, "%s", buf);
 	    fflush(fo);
+	    if (n == 0 || buf[n - 1] != '\n')
+		continue;
 	    while (fgets(buf, sizeof(buf), fi) != NULL) {
 	        stprintf("received %s", buf);
 		printf("%s", buf);
-		if (strcmp(buf, ".\n") == 0) {
+		if (bol && strcmp(buf, ".\n") == 0) {
 		    r = 0;
 		    break;
 		}
+		n = strlen(buf);
+		bol = (n > 0 && buf[n - 1] == '\n');
 	    }
 	}
     } else {
@@ -87,13 +99,20 @@ main(int ac, char **av)
 	fprintf(fo, "quit\n");
 	fflush(fo);
 	r = 1;
-	while (fgets(buf, sizeof(buf), fi) != NULL) {
-	    stprintf("received %s", buf);
-	    if (strcmp(buf, ".\n") == 0) {
-		r = 0;
-		break;
+	{
+	    int bol = 1;	/* see above: a long reply line comes in pieces */
+
+	    while (fgets(buf, sizeof(buf), fi) != NULL) {
+		size_t n = strlen(buf);
+
+		stprintf("received %s", buf);
+		if (bol && strcmp(buf, ".\n") == 0) {
+		    r = 0;
+		    break;
+		}
+		printf("%s", buf);
+		bol = (n > 0 && buf[n - 1] == '\n');
 	    }
-	    printf("%s", buf);
 	}
     }
     return(r);

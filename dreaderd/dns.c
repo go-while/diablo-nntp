@@ -4705,8 +4705,25 @@ ClearOldAccessMap(void) {
     if (oldaccessmap.VServerList != NULL)
 	xunmap(oldaccessmap.VServerList, oldaccessmap.VServerCount * sizeof(Vserver));
     if (oldaccessmap.GroupMap != NULL) {
+	GroupDef *gp;
+
+	/*
+	 * Every node and group name of the old lists, not only the first
+	 * node: each reload leaked the rest (D-103).  gr_Name points into
+	 * the map itself.
+	 */
+	while ((gp = oldaccessmap.GroupsList) != NULL) {
+	    GroupList *gl;
+
+	    oldaccessmap.GroupsList = gp->gr_Next;
+	    while ((gl = gp->gr_Groups) != NULL) {
+		gp->gr_Groups = gl->next;
+		zfreeStr(&DnsMemPool, &gl->group);
+		zfree(&DnsMemPool, gl, sizeof(GroupList));
+	    }
+	    zfree(&DnsMemPool, gp, sizeof(GroupDef));
+	}
 	xunmap(oldaccessmap.GroupMap, oldaccessmap.GroupMapSize);
-	zfree(&DnsMemPool, oldaccessmap.GroupsList, sizeof(GroupDef));
     }
     if (oldaccessmap.AuthList != NULL)
 	xunmap(oldaccessmap.AuthList, oldaccessmap.AuthCount * sizeof(AuthDef));

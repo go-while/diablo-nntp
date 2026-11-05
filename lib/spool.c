@@ -773,6 +773,7 @@ loadSpoolCtl(FILE *fi)
 	    } else {
 		logit(LOG_ERR, "%s: Unknown spool option '%s' in line %d",
 					PatLibExpand(DSpoolCtlPat), cmd, line);
+		exit(1);	/* a typo must not leave the default (D-120) */
 	    }
 	}
 	if (status == EXSTAT_META) {
@@ -884,6 +885,7 @@ loadSpoolCtl(FILE *fi)
 	    } else {
 		logit(LOG_ERR, "%s: Unknown metaspool option '%s' in line %d",
 					PatLibExpand(DSpoolCtlPat), cmd, line);
+		exit(1);	/* a typo must not leave the default (D-120) */
 	    }
 	}
     }
