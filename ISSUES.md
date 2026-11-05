@@ -196,6 +196,8 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-180](#d-180-netbsd-reader-fork-and-queue-wait-tests-are-intermittent) | Low | NetBSD: reader fork and queue-wait tests are intermittent | fixed (#303) |
 | [D-181](#d-181-readerdns-and-readerfeedforks-take-any-value) | Low | readerdns and readerfeedforks take any value | fixed (#305) |
 | [D-182](#d-182-kpdb-lookup-misses-wait-for-the-append-lock-after-the-resort-limit) | Low | KPDB lookup misses wait for the append lock after the resort limit | fixed (#311) |
+| [D-186](#d-186-a-refused-dspoolctl-reload-is-not-tried-again) | Low | A refused dspool.ctl reload is not tried again | PR |
+| [D-187](#d-187-list-file-lines-get-rrn-at-the-read-buffer-edge) | Low | LIST file lines get "\r\r\n" at the read buffer edge | PR |
 
 Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315), [F-02 configure script](#f-02-configure-script-for-the-build-options), [F-03 refeed a whole spool](#f-03-refeed-a-whole-spool-to-another-server), [F-04 NoCeM notices](#f-04-nocem-notices), [F-05 init scripts](#f-05-init-scripts-and-adm-script-replacements), [F-06 Perl authentication](#f-06-perl-authentication-for-dreaderd).
 
@@ -1160,6 +1162,14 @@ Fixed: `readerdns` must be 1..1024 and `readerfeedforks` 0..1024, in diablo.conf
 ### D-182 KPDB lookup misses wait for the append lock after the resort limit
 `lib/kpdb.c`, `KPDBLookup()`: the D-117 fix (#301) waited once on the append lock (offset 4) after a miss whenever the C counter was above `kp_ResortLimit`. But the sort runs only at the start of the next write, so after the write that passes the limit the counter stays above it until then, and every miss in every process (a GROUP or a newgroup check for a group that is not there) took that lock, waited for any writer holding it, and searched again. Not wrong, only slow under writes. Found in our review pass of the code merged since #296.
 Fixed (#311): only the marker the sort writes first and clears last (`0FFFFFFF`) means a sort is running; a counter just past the limit leaves an unsorted tail that the search scans anyway. Test: `TestKPDBMissNoWaitPastLimit` (another process holds the append lock; the miss must come back at once). `TestKPDBLookupDuringSort` still passes.
+
+### D-186 A refused dspool.ctl reload is not tried again
+`lib/spool.c`, `LoadSpoolCtl()`: the D-175 fix (#308) set `SpoolMTime` before the reload was checked, so a file refused for a reason that passes without a change to it (a spool partition not mounted yet: "Missing spool partition") was not looked at again until its mtime changed; diablo kept the old spool set without saying so again. Found in go-while's review pass of the code merged since #296.
+Fixed: a refused file is tried again after 1, 2, 4 ... minutes, then every 60 minutes, and each refusal logs the time of the next try; a changed file is tried at the next minute check as before. Test: `TestSpoolCtlBadReloadRetried`.
+
+### D-187 LIST file lines get "\r\r\n" at the read buffer edge
+`dreaderd/list.c`, `ListFileLines()` (#306): a local file with CRLF line ends is read in 255-byte chunks; when a chunk ended between the "\r" and the "\n", the "\r" went out as part of the line, and the line ended "\r\r\n". Only lines of 254 bytes or more. Found in go-while's review pass of the code merged since #296.
+Fixed: a "\r" at the end of a chunk is held back and dropped when the next chunk is the "\n". Test: `TestReaderListLongFileLines` (a 254-byte CRLF line).
 
 ## Feature requests
 

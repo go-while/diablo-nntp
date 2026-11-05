@@ -81,5 +81,16 @@ func TestReaderListLongFileLines(t *testing.T) {
 	if len(lines) != 2 || lines[0] != dist {
 		t.Errorf("LIST DISTRIBUTIONS: %d lines, want the long line whole and one more", len(lines))
 	}
+
+	// review note on #306: a CRLF line whose "\r" is the last byte the 255-byte read takes
+	// went out as "\r\r\n"
+	edge := "local.edge" + strings.Repeat("z", 254-len("local.edge\tE")) + "\tE"
+	if err := os.WriteFile(filepath.Join(m.Dir, "distributions"), []byte(edge+"\r\nworld\tEverywhere\r\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c.ExpectCmd(215, "LIST DISTRIBUTIONS")
+	if raw, want := string(c.RawUntilDot()), edge+"\r\nworld\tEverywhere\r\n.\r\n"; raw != want {
+		t.Errorf("LIST DISTRIBUTIONS of a CRLF file: %q, want %q", raw, want)
+	}
 	c.ExpectCmd(205, "QUIT")
 }

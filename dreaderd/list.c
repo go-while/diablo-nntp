@@ -449,19 +449,29 @@ ListFileLines(Connection *conn, FILE *fi, int comments)
     char buf[256];
     int bol = 1;
     int skip = 0;
+    int cr = 0;		/* the last chunk ended in "\r", held back */
 
     while (fgets(buf, sizeof(buf), fi) != NULL) {
 	int l = strlen(buf);
 	int eol = (l > 0 && buf[l-1] == '\n');
+	int crlf;
 
-	if (eol) {
+	if (eol)
 	    buf[--l] = 0;
-	    if (l > 0 && buf[l-1] == '\r')
-		buf[--l] = 0;
-	}
+	/* a "\r\n" the buffer split: the "\r" was held back below */
+	crlf = (eol && l == 0 && cr);
+	if (eol && !crlf && l > 0 && buf[l-1] == '\r')
+	    buf[--l] = 0;
 	if (bol)
 	    skip = comments && ((l == 0 && eol) || buf[0] == '#');
 	if (!skip) {
+	    if (cr && !crlf)	/* it was part of the line */
+		MBWrite(&conn->co_TMBuf, "\r", 1);
+	    cr = 0;
+	    if (!eol && l > 0 && buf[l-1] == '\r') {
+		buf[--l] = 0;
+		cr = 1;
+	    }
 	    if (bol && buf[0] == '.')
 		MBWrite(&conn->co_TMBuf, ".", 1);
 	    MBWrite(&conn->co_TMBuf, buf, l);
