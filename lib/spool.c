@@ -176,7 +176,9 @@ GetSpoolPath(uint16 spool, int gmt, int opt)
 		goto path_too_long;
 	}
     } else {
-	return("");
+	/* not configured (removed from dspool.ctl): ArticleFileName() maps
+	 * NULL to /dev/null, "" would give a path relative to the cwd */
+	return(NULL);
     }
     return(path);
 
@@ -285,9 +287,11 @@ AllocateSpools(time_t t)
 
     for (ms = MetaSpools; ms; ms = ms->ms_Next) {
 	/*
-	 * Don't look for spool objects if we don't need them
+	 * Don't look for spool objects if we don't need them.  A dontstore
+	 * metaspool may have none: there is nothing to allocate (and the
+	 * strategies below would divide by zero or index -1).
 	 */
-	if (ms->ms_RejectArts)
+	if (ms->ms_RejectArts || ms->ms_NumSpoolObjects == 0)
 	    continue;
 	if (ms->ms_ReAllocInterval / 60 == 0)
 	    DirTime = gmt;
@@ -846,6 +850,12 @@ loadSpoolCtl(FILE *fi)
 	    } else if (strcmp(cmd, "spool") == 0) {
 		SpoolObject *ts;
 		uint16 sn = strtol(arg, NULL, 10);
+		if (metaSpool->ms_NumSpoolObjects >= MAX_SPOOL_OBJECTS) {
+		    logit(LOG_ERR, "%s: More than %d spool lines in metaspool '%s' in line %d",
+				PatLibExpand(DSpoolCtlPat), MAX_SPOOL_OBJECTS,
+				metaSpool->ms_Name, line);
+		    exit(1);
+		}
 		for (ts = SpoolObjects; ts != NULL; ts = ts->so_Next) {
 		    if (ts->so_SpoolNum == sn) {
 			metaSpool->ms_SpoolObjects[metaSpool->ms_NumSpoolObjects++] = ts;

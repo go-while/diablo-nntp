@@ -2561,7 +2561,8 @@ FeedGetMaxInboundRate(const char *hlabel, int *bps)
 		while (*ptr && *ptr != ':') {
 		    ptr++;
 		}
-		ptr++;
+		if (*ptr)	/* "speed" without ":hours" ends the string */
+		    ptr++;
 
 		/* Process hour range(s) */
 		while (*ptr && *ptr != ';') {
@@ -2579,7 +2580,7 @@ FeedGetMaxInboundRate(const char *hlabel, int *bps)
 			} else {
 			    hours[hourtmp] = bpstmp;
 			}
-			if (*ptr != ';') {
+			if (*ptr && *ptr != ';') {	/* not past the end */
 			    ptr++;
 			}
 		    } else if (*ptr == '-') {
@@ -2601,7 +2602,7 @@ FeedGetMaxInboundRate(const char *hlabel, int *bps)
 			        hours[i] = bpstmp;
 			    }
 			}
-			if (*ptr != ';') {
+			if (*ptr && *ptr != ';') {	/* not past the end */
 			    ptr++;
 			}
 		    } else {

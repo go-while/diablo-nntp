@@ -12,7 +12,7 @@ re-checked yet.
 Status values: **open**, **PR** (fix waiting for review, with its number), **fixed** (with
 the PR that fixed it), **decision** (needs the maintainer to decide), **won't fix**.
 
-Last updated 2026-11-04: D-97, D-104, D-105, D-111, D-112, D-115 and D-121 marked fixed (#291); audit of the open items against main: D-70, D-77, D-88, D-102, D-106, D-108, D-109, D-113 and D-114 marked fixed (their PRs had not updated this file), D-100 marked fixed (#230), D-55 and D-101 noted as partly fixed, six index links and the F-02/F-06 status corrected; D-172 (retained control connections inherited) and D-173 (NETREMOTE accounting destination) added from go-while's review; D-164 to D-166 marked fixed (#280: readerdef typos, access cache reload); D-167 marked fixed (#169: one Perl interpreter per script); D-134 marked fixed (#257: dkp -t); D-168 and D-169 marked fixed (#185); D-170 added (illumos loses a hand-back at the descriptor limit); D-171 added (OpenBSD shared maps, won't fix). Before that, 2026-10-30: D-167 to D-169 added (Perl authentication, the file and cdb deny lists); F-06 (Perl authentication) added; F-02 noted in progress (#167). Before that, 2026-10-29: D-16 marked fixed (#127). D-135 to D-146 and D-156, D-157 marked fixed (#145, #151 to #154); D-158 won't fix; D-150 to D-155 marked fixed (#158); D-147 to D-149 marked fixed (#159); D-159 to D-162 marked fixed (#160); D-164 to D-166 added from go-while's review of #160. Before that, 2026-10-28: D-91, D-96, D-98 and D-131 to D-133 marked fixed (#146 to #149). F-01 marked done, F-04 (NoCeM) and F-05 (init scripts, done) added, D-163 (file modes, fixed in #139) added; D-135 to D-162 added from go-while's batch of `main` at `0401451`, and a note on D-94. Before that, D-110 to D-134 added from go-while's third review pass of `main` at `6a4b97d`. Before that, 2026-10-27: D-66 to D-109 added from the second review pass and the reviews of the fixes
+Last updated 2026-11-05: F-07 added (dreaderd POST against RFC 5536/5537); D-174 added (empty overview Lines column; plan: the line count from diablo through the queue line); D-93, D-95, D-107, D-119 and D-126 marked fixed (#300); D-90, D-117, D-118 and D-122 marked fixed (#301). Before that, 2026-11-04: D-97, D-104, D-105, D-111, D-112, D-115 and D-121 marked fixed (#291); audit of the open items against main: D-70, D-77, D-88, D-102, D-106, D-108, D-109, D-113 and D-114 marked fixed (their PRs had not updated this file), D-100 marked fixed (#230), D-55 and D-101 noted as partly fixed, six index links and the F-02/F-06 status corrected; D-172 (retained control connections inherited) and D-173 (NETREMOTE accounting destination) added from go-while's review; D-164 to D-166 marked fixed (#280: readerdef typos, access cache reload); D-167 marked fixed (#169: one Perl interpreter per script); D-134 marked fixed (#257: dkp -t); D-168 and D-169 marked fixed (#185); D-170 added (illumos loses a hand-back at the descriptor limit); D-171 added (OpenBSD shared maps, won't fix). Before that, 2026-10-30: D-167 to D-169 added (Perl authentication, the file and cdb deny lists); F-06 (Perl authentication) added; F-02 noted in progress (#167). Before that, 2026-10-29: D-16 marked fixed (#127). D-135 to D-146 and D-156, D-157 marked fixed (#145, #151 to #154); D-158 won't fix; D-150 to D-155 marked fixed (#158); D-147 to D-149 marked fixed (#159); D-159 to D-162 marked fixed (#160); D-164 to D-166 added from go-while's review of #160. Before that, 2026-10-28: D-91, D-96, D-98 and D-131 to D-133 marked fixed (#146 to #149). F-01 marked done, F-04 (NoCeM) and F-05 (init scripts, done) added, D-163 (file modes, fixed in #139) added; D-135 to D-162 added from go-while's batch of `main` at `0401451`, and a note on D-94. Before that, D-110 to D-134 added from go-while's third review pass of `main` at `6a4b97d`. Before that, 2026-10-27: D-66 to D-109 added from the second review pass and the reviews of the fixes
 (D-77 is documented behaviour and only needs a note); the fixed ones are marked with their PR. Before that, D-53 to D-65 added from the review of `main` at `ca648d4`. Before that, 2026-10-26, after batch 1 (#30, #31, #37 to #44, #47 to #49) and the first part
 of batch 2 (#46, #50, #52, #62) were merged. Open: #35 (GnuPG pgpverify, held for a private
 advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
@@ -104,12 +104,12 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-87](#d-87-numeric-ipv6-host-in-diablohosts-dropped-on-a-machine-without-ipv6) | Low | `getaddrinfo()` with NULL hints in `lib/hostauth.c` drops a numeric IPv6 `diablo.hosts` entry on glibc 2.39 without a global IPv6 address | fixed (#115) |
 | [D-88](#d-88-dnewslink--p-overwrites-leftover-lines-of-an-earlier-run) | Low | `dnewslink -p`: a later pipe run overwrites the leftover lines an earlier run wrote to the batch file | fixed (#256) |
 | [D-89](#d-89-ai_addrconfig-still-passed-for-listen-bind-and-connect-addresses) | Low | `dreaderd` listen, bind and connect and `dsyncgroups` still pass `AI_ADDRCONFIG` | PR |
-| [D-90](#d-90-kpdb-sort-writes-the-offsets-one-record-at-a-time) | Low | `KPDBSort()` does one 8-byte write per record; on a full ZFS dataset a sort of 259 records took about 51 s | open |
+| [D-90](#d-90-kpdb-sort-writes-the-offsets-one-record-at-a-time) | Low | `KPDBSort()` does one 8-byte write per record; on a full ZFS dataset a sort of 259 records took about 51 s | fixed (#301) |
 | [D-91](#d-91-takethis-without-an-argument-answers-439-instead-of-501) | Low | TAKETHIS without an argument answers 439 instead of 501 | fixed (#146) |
 | [D-92](#d-92-header-only-feed-reports-unknownreject-for-laerr_nobytes) | Low | Header-only feed reports UnknownReject for LAERR_NOBYTES | PR |
-| [D-93](#d-93-kpdbgetfield-key-scan-is-not-bounded-by-the-record-length) | Low | KPDBGetField key scan is not bounded by the record length | open |
+| [D-93](#d-93-kpdbgetfield-key-scan-is-not-bounded-by-the-record-length) | Low | KPDBGetField key scan is not bounded by the record length | fixed (#300) |
 | [D-94](#d-94-dcontrolctl-dnewsfeeds-and-dserverhosts-split-long-lines) | Low | dcontrol.ctl, dnewsfeeds and dserver.hosts split long lines | PR |
-| [D-95](#d-95-maxinboundrate-value-is-read-past-its-end) | Low | MaxInboundRate value ending in ';' or in an hour number is read past its end | open |
+| [D-95](#d-95-maxinboundrate-value-is-read-past-its-end) | Low | MaxInboundRate value ending in ';' or in an hour number is read past its end | fixed (#300) |
 | [D-96](#d-96-spamfilter-s0-turns-the-filter-off-and-use_spam_rw_map-0-does-not-compile) | Low | spamfilter: s0 turns the filter off, and USE_SPAM_RW_MAP 0 does not compile | fixed (#147) |
 | [D-97](#d-97-diab-filter-writes-one-byte-past-its-reply-buffer-writeall-loops-on-a-zero-write) | Low | diab-filter writes one byte past its reply buffer; writeAll loops on a zero write | fixed (#291) |
 | [D-98](#d-98-ctype-calls-on-plain-char) | Low | ctype calls on plain char | fixed (#148) |
@@ -120,7 +120,7 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-104](#d-104-dhisexpire-uses-the-history-record-size-without-a-check) | Low | dhisexpire uses the history record size without a check | fixed (#291) |
 | [D-105](#d-105-dexpire--o-uses-a-null-file-after-a-failed-fopen) | Low | dexpire -o uses a NULL FILE after a failed fopen | fixed (#291) |
 | [D-106](#d-106-dexpireover-getfirstartage-trusts-the-over-file-header) | Low | dexpireover getFirstArtAge trusts the over file header | fixed (#162) |
-| [D-107](#d-107-metaspool-with-more-than-100-spool-lines-or-dontstore-with-no-spools) | Low | metaspool with more than 100 spool lines, or dontstore with no spools | open |
+| [D-107](#d-107-metaspool-with-more-than-100-spool-lines-or-dontstore-with-no-spools) | Low | metaspool with more than 100 spool lines, or dontstore with no spools | fixed (#300) |
 | [D-108](#d-108-dcancel-stores-the-history-offsets-before-the-rewritten-spool-file-is-in-place) | Medium | dcancel stores the history offsets before the rewritten spool file is in place | fixed (#170) |
 | [D-109](#d-109-dsyncgroups-use-after-free-of-the-address-lists-unchecked-strtok-results) | Medium | dsyncgroups: use after free of the address lists, unchecked strtok results | fixed (#171) |
 | [D-110](#d-110-dcontrolctl-ct_verify-leaks-or-keeps-a-stale-value-when-two-rules-match) | Low | dcontrol.ctl: ct_Verify leaks or keeps a stale value when two rules match | PR |
@@ -130,16 +130,16 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-114](#d-114-egets-loses-the-prefix-of-an-overlong-line) | Medium | egets() loses the prefix of an overlong line | fixed (#166) |
 | [D-115](#d-115-dnewslink-flushcommandbuffer-can-spin-on-a-zero-write) | Low | dnewslink flushCommandBuffer() can spin on a zero write | fixed (#291) |
 | [D-116](#d-116-dnewslink-writelarge-reports-a-write-timeout-as-success) | Low | dnewslink writeLarge() reports a write timeout as success | PR |
-| [D-117](#d-117-kpdbsort-is-not-synchronized-with-readers) | Medium | KPDBSort() is not synchronized with readers | open |
-| [D-118](#d-118-kpdbwrite-with-a-null-token-the-documented-behaviour-does-not-exist) | Low | KPDBWrite() with a NULL token: the documented behaviour does not exist | open |
-| [D-119](#d-119-articlefilename-builds-a-relative-path-for-an-unconfigured-spool) | Low | ArticleFileName builds a relative path for an unconfigured spool | open |
+| [D-117](#d-117-kpdbsort-is-not-synchronized-with-readers) | Medium | KPDBSort() is not synchronized with readers | fixed (#301) |
+| [D-118](#d-118-kpdbwrite-with-a-null-token-the-documented-behaviour-does-not-exist) | Low | KPDBWrite() with a NULL token: the documented behaviour does not exist | fixed (#301) |
+| [D-119](#d-119-articlefilename-builds-a-relative-path-for-an-unconfigured-spool) | Low | ArticleFileName builds a relative path for an unconfigured spool | fixed (#300) |
 | [D-120](#d-120-unknown-options-inside-spool-and-metaspool-blocks-are-only-logged) | Low | Unknown options inside spool and metaspool blocks are only logged | PR |
 | [D-121](#d-121-getspoolfrompath-is-dead-code-with-a-stray-printf-and-a-prefix-match) | Low | GetSpoolFromPath is dead code with a stray printf and a prefix match | fixed (#291) |
-| [D-122](#d-122-kp-files-above-2-gb-wrap-the-int-offsets) | Low | KP files above 2 GB wrap the int offsets | open |
+| [D-122](#d-122-kp-files-above-2-gb-wrap-the-int-offsets) | Low | KP files above 2 GB wrap the int offsets | fixed (#301) |
 | [D-123](#d-123-authinfo-user-accepted-again-after-a-passwordless-authentication) | Low | AUTHINFO USER accepted again after a passwordless authentication | PR (#297) |
 | [D-124](#d-124-capabilities-with-an-argument-answers-101) | Low | CAPABILITIES with an argument answers 101 | PR (#297) |
 | [D-125](#d-125-reader-only-command-on-a-transit-connection-answers-500-not-502) | Low | Reader-only command on a transit connection answers 500, not 502 | PR (#297) |
-| [D-126](#d-126-strtoll-overflow-into-artno_input) | Low | strtoll() overflow into artno_input() | open |
+| [D-126](#d-126-strtoll-overflow-into-artno_input) | Low | strtoll() overflow into artno_input() | fixed (#300) |
 | [D-127](#d-127-dicmd-splits-lines-longer-than-255-bytes) | Low | dicmd splits lines longer than 255 bytes | PR |
 | [D-128](#d-128-dkp-parses-the-second-piece-of-a-long-input-line-as-a-new-record) | Low | dkp parses the second piece of a long input line as a new record | fixed (#288) |
 | [D-129](#d-129-dclient-is-ipv4-only-gethostbyname) | Low | dclient is IPv4-only (gethostbyname) | fixed (#298) |
@@ -187,12 +187,13 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-171](#d-171-on-openbsd-readers-do-not-see-writes-through-their-shared-maps) | Medium (OpenBSD only) | On OpenBSD readers do not see writes through their shared maps | won't fix (design) |
 | [D-172](#d-172-feed-children-and-programs-diablo-runs-inherit-retained-control-connections) | Low | Feed children and programs diablo runs inherit retained control connections | fixed (#294) |
 | [D-173](#d-173-netremote-session-accounting-goes-to-a-placeholder-host) | Low | NETREMOTE session accounting goes to a placeholder host | open |
+| [D-174](#d-174-the-reader-overview-lines-column-is-empty-for-articles-without-a-lines-header) | Low | The reader overview Lines column is empty for articles without a Lines header | open |
 | [D-175](#d-175-a-bad-dspoolctl-on-reload-stops-a-running-diablo) | Medium | A bad dspool.ctl on reload stops a running diablo | open |
 | [D-176](#d-176-gz-header-parse-of-an-overview-data-file-is-not-bounded-by-the-file-size) | Low | .gz header parse of an overview data file is not bounded by the file size | fixed (#296) |
 | [D-177](#d-177-dreaderaccess-line-longer-than-the-read-buffer-is-parsed-in-pieces) | Low | dreader.access line longer than the read buffer is parsed in pieces | fixed (#296) |
 | [D-178](#d-178-dsyncgroups-cuts-a-long-authinfo-user-name-or-password) | Low | dsyncgroups cuts a long AUTHINFO user name or password | fixed (#296) |
 | [D-179](#d-179-netbsd-embedded-perl-loads-no-script) | Low | NetBSD: embedded Perl loads no script | open |
-| [D-180](#d-180-netbsd-reader-fork-and-queue-wait-tests-are-intermittent) | Low | NetBSD: reader fork and queue-wait tests are intermittent | open |
+| [D-180](#d-180-netbsd-reader-fork-and-queue-wait-tests-are-intermittent) | Low | NetBSD: reader fork and queue-wait tests are intermittent | fixed |
 
 Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315), [F-02 configure script](#f-02-configure-script-for-the-build-options), [F-03 refeed a whole spool](#f-03-refeed-a-whole-spool-to-another-server), [F-04 NoCeM notices](#f-04-nocem-notices), [F-05 init scripts](#f-05-init-scripts-and-adm-script-replacements), [F-06 Perl authentication](#f-06-perl-authentication-for-dreaderd).
 
@@ -802,6 +803,8 @@ interrupted sort is safe (the next open sorts again), but a sort that is interru
 starts over each time. Found while testing a full file system on the scratch instance. Fix idea:
 build the offsets in memory and write them in one or a few large writes.
 
+Fixed (#301): `KPDBSort()` stores the offsets through a writable mapping of the file, one 8-byte store per record in memory and no system call per record (a sort of 600 records uses 3 `pwrite` calls instead of 603); the old per-record `pwrite` stays as the fallback when the mapping fails. One big `write()` of the records was not used: a field replaced in place holds only the record lock, not the append lock the sort holds, and would be overwritten with the old bytes. The "needs sort" marker is still written first and cleared last, so an interrupted sort is resorted by the next open. Not measured on a full ZFS dataset (none here): a mapped store on a COW file system at its quota may still be slow or fail at write-back. Test: `TestKPDBSortFewWrites`, `TestKPDBInterruptedSortResorts`.
+
 ### D-91 TAKETHIS without an argument answers 439 instead of 501
 `util/diablo.c:2076`: `TAKETHIS` with no message-id answers 439 (MsgIdMismatch); the other commands answer 501. From reading, not run (deep review of main 76578ae by go-while's reviewers).
 
@@ -898,8 +901,12 @@ Fixed in #166: egets() keeps the prefix of an overlong line. Test: tests/e2e/sou
 ### D-117 KPDBSort() is not synchronized with readers
 `lib/kpdb.c:1286-1361`. `KPDBSort` takes no lock of its own and rewrites each record's offset field with one 8-byte write per record (`:1341-1361`). `KPDBLookup` locks only on a miss with `KP_LOCK` (`:1120-1122`), and the offset check at `:1163` accepts stale offsets that are in range. A reader that looks up a key during a resort can take a wrong branch and report not found for an existing key until the sort ends (a false hit is not possible, the final key compare is exact). The sort runs from `KPDBWrite` (every 128 appends), and D-90 measured it at about 51 s on a slow disk. Transient "no such group" style errors, no corruption. The caller's append lock (`kpdb.c:804-805`) and the read lock (`:261`) were not re-traced. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
 
+Fixed (#301): the sort already runs under the append lock (offset 4) in all three callers (`KPDBWrite`, `KPDBReSort`, the open), but readers do not take it. A lookup that misses while the "needs sort" marker is set now waits once for the append lock and searches again. Traced: the marker is set before the first offset is stored and cleared after the last, so a miss seen with the marker clear (read after the search) cannot come from a half rewritten table. A process that holds the lock itself (the sorter, `KPDBWrite`) does not wait. Test: `TestKPDBLookupDuringSort` (stops the sorter right after its marker write, with half of the offsets stored; 114 of 600 keys missed on main, 0 now).
+
 ### D-118 KPDBWrite() with a NULL token: the documented behaviour does not exist
 `lib/kpdb.c:636-640` says a NULL token unlocks a record without writing and creates a record if the key is missing. The code does neither: `strlen(tok)` at `:870` (copy-old path) and `sprintf("%s", tok)` at `:912` (new record) use the NULL, and a same-length replacement at `:744-766` can write over the key if `KPDBGetField(NULL)` returns it (that last point was taken from the report, not re-traced). Every current caller passes a token, so this is latent. Fix the comment or handle NULL. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
+
+Fixed (#301): a NULL token writes nothing and creates nothing: `KP_UNLOCK` unlocks the record, `KP_LOCK` looks it up and locks it, otherwise it only looks it up; returns 0 if the record exists, -1 if not. The comment says so. All callers in the tree pass a token. Test: `TestKPDBWriteNullToken`.
 
 ### D-119 ArticleFileName builds a relative path for an unconfigured spool
 `lib/spool.c:179-181`: `GetSpoolPath()` returns `""` when the spool object is missing (spool number below `MAX_SPOOL_OBJECTS` but not configured); only numbers at or above `MAX_SPOOL_OBJECTS` give `/dev/null` (`spool.c:150-151`). `ArtFileName` (`spool.c:94-108`) then builds `D.%08x/...` with no leading directory, so dexpire, dcancel and dreadart open or unlink that name in the current directory. Trigger: a history record that refers to a spool number the admin has removed from `dspool.ctl`. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
@@ -912,6 +919,8 @@ Fixed in #166: egets() keeps the prefix of an overlong line. Test: tests/e2e/sou
 
 ### D-122 KP files above 2 GB wrap the int offsets
 `lib/kpdb.c:800` (`int nlockoff` from `lseek`) and `:289` (`kp_MapSize = (int)st.st_size`). Between 2 and 4 GB the append offset goes negative (lock failure, then a controlled `KPDBFatalIO` exit); past 4 GB it could wrap to a wrong positive offset. KP files are small control databases and the format itself holds 8 hex digits, so this is a design-limit note. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
+
+Fixed (#301), as a limit and not a widening: a file at or past 2 GB (`INT_MAX`) is refused with a log line, a message on stderr and exit 1 when it is opened, and an append that would pass it is refused before anything is written (same fatal path as the other KPDB write failures; a returned error would be ignored by callers such as `GenerateXRef`). Also found while testing near the limit: the binary search computed `(b + e) >> 1` in int and crashed for a file within a few bytes of 2 GB; now `b + ((e - b) >> 1)`. Test: `TestKPDBTooLarge` (sparse files; the append case takes about 15 s and is skipped with `-short`).
 
 ### D-123 AUTHINFO USER accepted again after a passwordless authentication
 `dreaderd/nntp.c:92-94` answers 502 "Already authenticated" only when `dr_AuthPass[0]` is non-empty. A connection authorized by host or address in `dreader.access` with no password has an empty `dr_AuthPass`, so `AUTHINFO USER x` falls through to `:104-111`, answers `381 PASS required` and replaces `dr_AuthUser`. The following PASS re-verifies the new identity, so this is not an access bypass; it deviates from RFC 4643 (502 expected) and is a leftover of D-46. What state a passwordless connection starts with was not traced (that part is the reviewer's claim). Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
@@ -1085,23 +1094,33 @@ History, the KPDB files (`dactive.kp`) and overview are read through `MAP_SHARED
 ### D-173 NETREMOTE session accounting goes to a placeholder host
 `dreaderd/dns.c`, `netRemoteAccounting()` (only with `NETREMOTE_ENABLED`, off in `lib/vendor.h`): at every session end of a user who logged in with a password, the DNS worker sends the session's accounting to the hard-coded `Password@accounting.server:8998`, not to the `netremote` server of the authdef the user logged in through. Found by go-while from reading. Before #292 NETREMOTE did not compile with OpenSSL 1.1 or later (the old `des_*` names), and the lookup, connect and read had no timeouts; #292 maps the names to the `DES_` calls and bounds the exchange with `readerauthtimeout`. The maintainer keeps NETREMOTE now that it builds (2026-11-03). Left: the accounting destination (use the authdef's `netremote` setting, or send nothing without one).
 
+### D-174 The reader overview Lines column is empty for articles without a Lines header
+`dreaderd/xover.c` builds each OVER/XOVER line from the stored header block: the `:bytes` field comes from the overview record (`oa_ArtSize`, filled from the `Bytes:` line the header feed adds), but the `:lines` field is the stored `Lines:` header and stays empty without one. RFC 3977 8.4.2 says the 8th field MUST be the `:lines` metadata, which 8.1.2 defines as the number of lines in the body, whatever the headers say. Verified on the SmartOS test reader (2026-11-04): 97 of 353 XOVER lines of alt.test have an empty Lines column (articles without a Lines header, for example from a remailer); in a sample of overview data files 160 of 7510 stored headers had none. Readers then show no size for those articles. dreaderd gets headers only, so it cannot count the lines itself.
+
+Plan (maintainer, 2026-11-04: "dreaderd gets :lines from the feeder"):
+- diablo counts the body lines while it receives an article and writes them to the queue entry as ` L<lines>`, next to ` H` and ` C<size>` (2026-11-05, Jesse and go-while: counting in dnewslink would read every body, which a header feed otherwise does not touch on an uncompressed spool). Every queue writer keeps the field (dnewslink's requeue and refile writes, drequeue); an older dnewslink ignores it.
+- `dnewslink -H` passes the count to dreaderd with the size it already sends, as feed-only data, not as an article header: `Bytes: <size> <lines>`, which an older dreaderd's `strtol()` reads as the size alone. A queue entry without ` L` gives `Bytes: <size>` as before. With `-HB` a stored Bytes line passes through unchanged.
+- On a full feed dreaderd counts the body lines itself.
+- dreaderd takes the count out as it does `Bytes:` today, and stores it in the overview record. `OverArt` has an unused field (`oa_UnusedX`, always written as 0), so the files keep their format.
+- OVER/XOVER/XZVER and HDR `:lines` use the stored count. Records written before the change (count 0, or the field never set) fall back to the `Lines:` header. LIST OVERVIEW.FMT may then say `:lines` (RFC 3977 8.4.3 prefers it to `Lines:`).
+- No `Lines:` header is added to any article (RFC 5536 3.3.1, F-07). `genlines` (`-L`) stays for feeds to other servers that want it, with the sample text corrected: it is not what dreaderd needs.
+- Needed before F-07 stops generating Lines in POST, so local posts keep a correct Lines column.
+
 ### D-175 A bad dspool.ctl on reload stops a running diablo
 `lib/spool.c`, `loadSpoolCtl()`: the master reloads `dspool.ctl` when its mtime changes (`LoadSpoolCtl(t, 0)` in the main loop of `util/diablo.c`), and every error in it calls `exit(1)`: an unknown definition, an unknown spool, a missing group, and since D-120 also an unknown spool or metaspool option. So a typo saved while diablo runs stops the feeder at the next check, with no error shown to the admin who edited the file. At start an error should still stop it. Fix (maintainer, 2026-11-04: queued as the follow-up to D-120): parse a reload into a new set of spool and metaspool objects, install it only when the whole file is valid, and otherwise log the error and keep the old set, as #283 does for `dreader.access`. The other programs that read the file once (dexpire, dcancel, dreadart and others) keep stopping on an error.
 
 ### D-176 .gz header parse of an overview data file is not bounded by the file size
 `dreaderd/group.c` (`MakeOverHFile()`) and `util/dexpireover.c` (`RewriteData()`): the gzip header of a `.gz` data file was walked with no check against the file size (extra field length, file name and comment strings, header CRC), so a damaged or hostile `.gz` made `inflate` read past the mapping. A wrong magic was logged and parsed anyway, and the extra-field length skipped two bytes too few. The files are written by `dexpireover -z`; needs a damaged file. Found in our own audit. Fixed by one bounded header length function in both files; a bad header is reported as an inflate error.
-
 ### D-177 dreader.access line longer than the read buffer is parsed in pieces
 `dreaderd/dns.c`, `InstallAccessCache()` read `dreader.access` with `fgets(buf[1024])`; the tail of a longer line was parsed as a line of its own (the same class as D-82 and D-94). A line that does not fit is now refused with its line number and the file is not installed (as for other errors); a long comment line is skipped whole. Our own audit.
-
 ### D-178 dsyncgroups cuts a long AUTHINFO user name or password
 `util/dsyncgroups.c`: `authinfo user` / `authinfo pass` were built with `snprintf()` in a 4096-byte buffer and sent cut. A cut password is another password. Now dsyncgroups says the name or password is too long and exits 1 before sending it. Our own audit.
-
 ### D-179 NetBSD: embedded Perl loads no script
 With pkgsrc perl on NetBSD 11, dreaderd logs `PERL: cannot load <script> (perl_parse or perl_run failed)` for every script, even a one-line auth script. The 6 Perl e2e tests (TestReaderPerlAuth, TestReaderHtpasswdAuth, TestReaderHtpasswdNoFile, TestAuthTimeoutPerl*) fail there and are skipped on NetBSD with that reason; they pass on Linux and FreeBSD. Not diagnosed: Diablo's embedding or a pkgsrc perl build option. Found by the BSD e2e coverage work (fork CI), not run on a local NetBSD host.
-
 ### D-180 NetBSD: reader fork and queue-wait tests are intermittent
 In fork CI on NetBSD 11, TestReaderForkKeepsNoQueuedClients failed in 3 of 4 runs (once "only 3 of 60 clients greeted") and TestReaderQueueWaitLimit once ("40 greeted, 0 refused" in 3.5 s). Both pass on Linux, FreeBSD and illumos. Not skipped and no timeout raised; the NetBSD job is continue-on-error. Possible causes: NetBSD timing, the 8 KiB AF_UNIX buffer the shim asks for being ignored, or a bug in the stream-IPC fork path. Needs a NetBSD host to reproduce.
+
+**Status: fixed** (test bug, not dreaderd). TestReaderStoppedDuringLoginBurst failed the same way (#302's CI). The three tests took the lowest child pid as the reader, but NetBSD hands out random pids: in #302's run the children were 4575 (DNS worker), 8030 and 18839 (readers) and 27944 (feed fork), so the test stopped the DNS worker and killed a reader. Every refusal and every "0 refused" follows from stopping the wrong process. The tests now take the reader pids from dreaderd's "forked reader child process N" lines (`readerPids` in `tests/e2e/streamipc_test.go`).
 
 ## Feature requests
 
@@ -1220,3 +1239,101 @@ review findings are fixed — notably the htpasswd no-cache DoS and the `call_ch
 (patch sent), the configure missing-`config.mk` hard error, and the radcli Filter-Id fail-open — and
 (2) a second deep code review of the fixed auth path (`dreaderd/dns.c` `PerlAuthenticate`/`perlWords`,
 `contrib/htpasswd-auth.pl`, the radcli adapter). Agreed with the maintainer on 2026-10-30.
+
+### F-07 dreaderd POST as an RFC 5536/5537 injecting agent
+The maintainer's gold standard for Netnews behavior is the USEFOR index
+(https://www.eyrie.org/~eagle/usefor/): RFC 5536 (article format, on RFC 5322) and RFC 5537
+(architecture; section 3.5 lists the duties of an injecting agent, which dreaderd's POST is).
+Review of `dreaderd/post.c` (`NNPostBuffer()`) at main e92a51f, from reading, not run. Each
+item gives the requirement and what dreaderd does today.
+
+MUST, not met:
+- **Injection-Date** (RFC 5536 3.2.7, RFC 5537 3.5 step 11): it must be added at injection
+  unless the proto-article has both Message-ID and Date, and an existing one must never be
+  changed. dreaderd never adds it, and passes a client's own through unchecked.
+- **Reject proto-articles with Injection-Info or Xref** (RFC 5537 3.5 step 2). dreaderd keeps
+  a client's Injection-Info and silently deletes Xref.
+- **Reject a Path containing the "POSTED" diag-keyword** (RFC 5537 3.5 step 2). dreaderd deletes
+  the client's Path without looking for `.POSTED`; it only counts `!` elements (`pathcomponents`)
+  and, with `POST_CKPATHLOOP`, a fixed string.
+- **Do not alter the body** (RFC 5537 3.5 step 6). The vserverdef `posttrailer` option appends
+  lines to the body.
+- **Do not generate obs-zone dates** (RFC 5322 3.3, restated in RFC 5536 3.1.1): the generated
+  `Date:` is `%d %b %Y %H:%M:%S GMT`; it should be `+0000` (an optional day name is fine). The
+  same applies to `NNTP-Posting-Date` with `POST_NNTP_POSTING_DATE_GMT`.
+- **Syntactically valid as defined by RFC 5536** (RFC 5537 3.5 step 2). dreaderd checks
+  little syntax: Message-ID only through `MsgId()` and an `@`; Date not at all; header lines
+  over 998 octets (RFC 5322 2.1.1) are not refused; the From check (`ckaddress()`) is
+  compile-time only (`POST_CKADDRESS`).
+
+SHOULD, not met:
+- **Injection-Info** (RFC 5536 3.2.8, RFC 5537 3.5 step 10) instead of the older trace fields:
+  dreaderd adds `NNTP-Posting-Host`, `X-Trace`, `X-Complaints-To` and (optionally)
+  `NNTP-Posting-Date`. These could move into Injection-Info (`posting-host`, `logging-data`,
+  `mail-complaints-to`), as INN does, keeping the old fields behind an option during a
+  transition.
+- **`.POSTED` in Path** (RFC 5537 3.2.1 step 2): the injecting agent should prepend
+  `!.POSTED[.<host>]`. dreaderd writes `Path: <postpath>!not-for-mail`.
+- **Date window** (RFC 5537 3.5 step 3): refuse a Date (or Injection-Date) more than 24 hours
+  in the future, or older than the relaying cutoff (at least 72 hours). Not checked.
+- **Reserved newsgroup names** (RFC 5536 3.1.4, RFC 5537 3.5 step 4): `example.*`, `poster`,
+  `to.*`, `control.*`, `junk`, `all` should be refused unless a specific purpose applies.
+  `checkpostgroups` only refuses groups that do not exist.
+- **Lines** (RFC 5536 3.3.1): obsolescent; agents should not generate it. dreaderd deletes the
+  client's and adds its own.
+- **Do not alter, delete or reorder existing header fields except Path** (RFC 5537 3.5 step 6):
+  dreaderd puts Path first, deletes Lines and an empty Distribution, can rewrite Newsgroups
+  (`POST_CLEANUPNEWSGROUPSLINE`), and with `POST_BOFHCLEANUP` refuses To and Cc, which are
+  valid RFC 5322 fields in news.
+- **Moderated groups** (RFC 5537 3.5 step 7, 3.5.1): forwarding must happen after Message-ID and
+  Date are added and before the injection fields; dreaderd builds its trace fields before
+  `MailIfModerated()`, so they go to the moderator too. To be checked when Injection-Info is
+  added.
+
+Met, for reference: the required From, Newsgroups and Subject, Message-ID and Date added when
+missing, a client Message-ID kept unchanged (without `POST_FORCEMSGID`), Approved only with
+the readerdef's permission, the moderator forwarding, group status `n`/`x` refusals, Cancel-Lock
+(RFC 8315, F-01).
+
+Maintainer decisions (2026-11-04):
+- **Lines: no longer generated and not deleted** (RFC 5536 3.3.1 "SHOULD NOT generate"; RFC 5537
+  3.5 step 6). A poster's own Lines header is kept as it is. Checked: dreaderd's overview "Lines"
+  column is the stored `Lines:` header and stays empty without one (D-174), and dreaderd gets only
+  headers, so it cannot count lines itself. The count comes from the feeder with the header feed
+  as overview data (`:lines`, D-174), not as an article header, so local posts keep their Lines
+  column after this change.
+- **posttrailer: removed** (RFC 5537 3.5 step 6, MUST NOT alter the body). Since #283 an unknown
+  vserverdef option makes dreader.access invalid, so the keyword stays known: it is logged once
+  as no longer supported and ignored, and an old dreader.access still loads.
+- **X-Trace: dropped; its information moves into Injection-Info** (RFC 5536 3.2.8), with the
+  same encryption that `cryptpw` gives X-Trace today (AES, `C=`, with the optional key
+  generation `G=`). Mapping:
+  - `<path-identity>`: the vserverdef's path identity (as used for Path).
+  - `posting-host`: the client's host or address. With `cryptpw`, the same mangled form as
+    today's NNTP-Posting-Host, or left out. The readerdef's NNTP-Posting-Host switch
+    (`rd_TurnOffNNPH`) turns it off.
+  - `posting-account`: the authenticated user (and ident user). With `cryptpw`, encrypted.
+  - `logging-data`: what X-Trace carried (time, server, process, user, address). With
+    `cryptpw`, encrypted as `G=...,C=...` as in X-Trace today.
+  - `mail-complaints-to`: the vserverdef's abuse address, replacing X-Complaints-To.
+  - NNTP-Posting-Date gives way to Injection-Date.
+  NNTP-Posting-Host and X-Complaints-To are not generated any more either, since Injection-Info
+  carries them. A poster's own X-Trace, NNTP-Posting-Host or X-Complaints-To is still refused
+  (RFC 5537 3.5 step 2 allows refusing trace fields of an earlier injection).
+
+Compatibility (maintainer, 2026-11-04): the default follows the standards; where the code
+allows it cheaply, an opt-in option keeps today's behavior for sites that depend on it, and each
+PR says whether it has one. For the trace fields the option is either-or, never both: by default
+Injection-Info and Injection-Date; with the option the old X-Trace, NNTP-Posting-Host and
+X-Complaints-To (and NNTP-Posting-Date where built in) instead, with no Injection-Info or
+Injection-Date. An option to keep generating Lines is possible the same way. posttrailer stays
+removed with no option: it should never have existed.
+
+Suggested order, one PR each: (1) the step-2 refusals (Injection-Info, Xref, `.POSTED`);
+(2) Path `.POSTED`, Injection-Info and Injection-Date in place of X-Trace, NNTP-Posting-Host and
+X-Complaints-To (with `cryptpw`, and the either-or option; Injection-Date moved here from (1)
+because the legacy mode adds none); (3) the Date format and window; (4) syntax
+checks (Message-ID, Date, line length); (5) reserved group names; (6) the header-preservation
+items, Lines among them; (7) removing posttrailer.
+
+Status: (1) PR (#304). The rest open; (6)'s Lines part needs D-174 first.

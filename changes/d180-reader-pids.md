@@ -1,0 +1,1 @@
+tests/e2e: the stream-IPC reader tests (TestReaderStoppedDuringLoginBurst, TestReaderForkKeepsNoQueuedClients, TestReaderQueueWaitLimit) find the reader processes by dreaderd's "forked reader child process N" lines instead of taking the lowest child pid, which on NetBSD (random pids) was often the DNS worker or the feed fork (D-180).

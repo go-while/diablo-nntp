@@ -129,6 +129,25 @@ HeaderCmp(const char *big, const char *little, char **errMsg)
 
 
 
+/*
+ * PathPosted() - does a Path header field body (len bytes) contain the
+ *		  "POSTED" <diag-keyword> (RFC 5537 3.2.1: ".POSTED", optionally
+ *		  followed by "." and a host), the mark an injecting agent leaves?
+ */
+static int
+PathPosted(const char *p, int len)
+{
+    int i;
+
+    for (i = 0; i + 7 <= len; ++i) {
+	if ((i == 0 || p[i-1] == '!' || p[i-1] == ' ' || p[i-1] == '\t') &&
+	    strncmp(p + i, ".POSTED", 7) == 0 &&
+	    (i + 7 == len || strchr("!.\r\n \t", p[i+7]) != NULL))
+	    return(1);
+    }
+    return(0);
+}
+
 #define CANLOCK_HDRMAX	1024	/* longest Cancel-Lock or Cancel-Key value of a poster that we add to */
 #define CANLOCK_ELEMMAX	400	/* longest element in it: keeps a header line below 998 bytes */
 #define CANLOCK_LISTMAX	(CANLOCK_HDRMAX + 2 * CANLOCK_MAXSECRETS * 2 * 2 * 64)
@@ -330,14 +349,15 @@ canLockEmit(MBufHead *mb, const char *name, const char *list)
  *	(2) add internally generated headers
  *	
  * Internally generated headers:
- *	Path:			(removed, generated)
+ *	Path:			(removed, generated; refused with a POSTED entry)
  *	Date:			(removed, generated)
  *	Lines:			(removed, generated)
  *	Message-ID:		(checked, generated)
  *	NNTP-Posting-Date:	(removed, generated - optionally)
  *	NNTP-Posting-Host:	(removed, generated)
  *	X-Trace:		(removed, generated)
- *	Xref:			(removed, RIP)
+ *	Xref:			(refused, RFC 5537 3.5)
+ *	Injection-Info:		(refused, RFC 5537 3.5)
  *	Distribution:		(checked, generated)
  *
  * Errors:
@@ -385,6 +405,12 @@ NNPostBuffer(Connection *conn)
     if (!errMsg && conn->co_Flags & COF_POSTTOOBIG) {
 	conn->co_Flags &= ~COF_POSTTOOBIG;
 	errMsg = "441 Article too big for this server\r\n";
+    }
+    /* RFC 5537 3.5 step 2; the Xref line was taken out while reading */
+    if (conn->co_Flags & COF_POSTXREF) {
+	conn->co_Flags &= ~COF_POSTXREF;
+	if (!errMsg)
+	    errMsg = "441 Xref header not allowed in a post\r\n";
     }
 
 #ifdef	POST_CFILTERHOOK
@@ -505,6 +531,9 @@ NNPostBuffer(Connection *conn)
 #endif
 	    }
 	    zfreeStr(&conn->co_MemPool, &ptr);
+	    /* RFC 5537 3.5 step 2: an article an injecting agent has seen */
+	    if (PathPosted(base + 5, l - 5))
+		errMsg = "441 Already injected: Path has a POSTED entry\r\n";
 	    keep = 0;	/* delete */
 	} else if (HeaderCmp(base, "Date", &errMsg) == 0) {
 	    keep = 0;	/* delete */
@@ -554,8 +583,12 @@ NNPostBuffer(Connection *conn)
 		errMsg = "441 Illegal \"NNTP-Posting-Host\" header rejected\r\n";
 	} else if (HeaderCmp(base, "X-Trace", &errMsg) == 0) {
 		errMsg = "441 Illegal \"X-Trace\" header rejected\r\n";
+	} else if (HeaderCmp(base, "Injection-Info", &errMsg) == 0) {
+	    /* RFC 5537 3.5 step 2: only an injecting agent writes it */
+	    errMsg = "441 Injection-Info header not allowed in a post\r\n";
 	} else if (HeaderCmp(base, "Xref", &errMsg) == 0) {
-	    keep = 0;	/* delete */
+	    /* RFC 5537 3.5 step 2; before, it was removed silently */
+	    errMsg = "441 Xref header not allowed in a post\r\n";
 	} else if (HeaderCmp(base, "Control", &errMsg) == 0) {
 		if (strncasecmp(base, "Control: cancel", 15)) {
 			if (! (conn->co_Auth.dr_Flags & DF_CONTROLPOST)) {
