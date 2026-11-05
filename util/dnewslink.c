@@ -2624,6 +2624,24 @@ DumpArticle(int cfd, ArtMap *am)
 	     * If the article is a control message, we push the whole thing
 	     */
 	    if (inHeaders && (i - b == 1 || (wireFormat && i - b == 2))) {
+		int lineCount = 0;
+
+		if (HeaderOnlyFeed) {
+		    int j;
+
+		    /*
+		     * the body lines; a wire format article on the spool
+		     * ends with the "." line, which is not one of them
+		     */
+		    for (j = i; j < artSize; ++j) {
+			if (ptr[j] == '\n')
+			    ++lineCount;
+		    }
+		    if (wireFormat && lineCount > 0 && artSize - i >= 3 &&
+			memcmp(ptr + artSize - 3, ".\r\n", 3) == 0 &&
+			(artSize - i == 3 || ptr[artSize - 4] == '\n'))
+			--lineCount;
+		}
 		/*
 		 * add Lines: header, if requested. note that we can only
 		 * do so if we are going to otherwise discard the rest of
@@ -2631,16 +2649,7 @@ DumpArticle(int cfd, ArtMap *am)
 		 */
 		if(HeaderOnlyFeed && GenLinesHeader &&
 		   haveLines == 0 && wasControl == 0) {
-		    int lineCount = 0;
 		    char tmp[32];
-
-		    while (i < artSize) {
-			while (i < artSize && ptr[i] != '\n')
-			    ++i;
-			if (i < artSize && ptr[i] == '\n')
-			    ++lineCount;
-			++i;
-		    }
 
 		    snprintf(tmp, sizeof(tmp), "Lines: %d\r\n", lineCount);
 		    if (commandWrite(cfd, tmp, strlen(tmp), 1) < 0)
@@ -2651,11 +2660,13 @@ DumpArticle(int cfd, ArtMap *am)
 		/*
 		 * add Bytes: header, dreaderd needs it!  header feeds 
 		 * *require* it, but non-header-only feeds can calculate it 
-		 * themselves.
+		 * themselves.  The body line count follows the size, for
+		 * the reader's overview :lines (D-174); an older dreaderd
+		 * reads the size alone.
 		 */
 		if (HeaderOnlyFeed && doBytes) {
-		    char tmp[32];
-		    snprintf(tmp, sizeof(tmp), "Bytes: %d\r\n", artSize);
+		    char tmp[48];
+		    snprintf(tmp, sizeof(tmp), "Bytes: %d %d\r\n", artSize, lineCount);
 		    if (commandWrite(cfd, tmp, strlen(tmp), 1) < 0)
 			goto failed;
 		    HeaderSize += strlen(tmp);

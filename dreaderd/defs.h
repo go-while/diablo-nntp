@@ -528,6 +528,8 @@ typedef struct Connection {
     int		co_FCounter;
     double	co_ByteCounter;
     int		co_BytesHeader;
+    int		co_LinesHeader;	/* body lines from Bytes:, -1: none */
+    int		co_BodyLines;	/* body lines received		*/
     int		co_Flags;
     int		co_Numbering;
     TimeRestrict co_TimeRestrict;
@@ -720,8 +722,11 @@ typedef struct OverArt {
     hash_t	oa_MsgHash;	/* locate message-id (used by cancel)	*/
     int		oa_ArtSize;	/* used for xover Bytes: header		*/
     int		oa_TimeRcvd;	/* time received			*/
-    int		oa_UnusedX;	/* unused padding                       */
+    int		oa_Lines;	/* body lines + 1 from the feed, 0: none	*/
 } OverArt;
+
+/* the :lines of a record (RFC 3977 8.4.2), -1 when the feed gave none */
+#define	OA_LINES(x)		((x)->oa_Lines - 1)
 
 typedef struct OverData {
     struct OverData *od_Next;

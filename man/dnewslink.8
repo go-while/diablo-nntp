@@ -201,14 +201,25 @@ headers to assign article numbers.  The remote end must support
 \&'mode headfeed' as a safety feature to prevent a header-only feed from being
 sent to a normal feed and propogating outward.  Beyond that, the header-only
 feed uses the same ihave/check/takethis protocols that a normal feed uses.
+At the end of the headers dnewslink adds
+.B "Bytes: \fIsize\fP \fIlines\fP"
+with the article size and the number of body lines, which dreaderd keeps
+for the overview (\fB:bytes\fP and \fB:lines\fP) and does not store as a
+header; an older dreaderd reads the size alone.
+With
+.BR \-HB ,
+an article that already has a Bytes: line (one stored from a header feed)
+keeps it, so the counts of the first feed are passed on.
 
 .PP
 .B \-L
 .PP
 This option will enable generation of Lines: headers in headfeed mode
-(see above); the reason for this option is to always have a meaningful
-lines count in overview. Specifying the 'genlines' option in dnntpspool.ctl
-will make dspoolout pass \-L to dnewslink.
+(see above) for articles that have none.  dreaderd does not need it: it
+takes the line count from the Bytes: line.  The Lines: header is obsolete
+(RFC 5536 3.3.1); use this only for another header-only server that wants
+one.  Specifying the 'genlines' option in dnntpspool.ctl will make dspoolout
+pass \-L to dnewslink.
 
 .PP
 .B \-h remote-host

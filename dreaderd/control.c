@@ -734,7 +734,7 @@ canLockDecide(OverInfo *ov, artno_t artNo, const char *ckey, const char **why)
 	*why = "refused (readercanlock none)";
 	return(-1);
     }
-    if ((data = GetOverRecord(ov, artNo, &hlen, NULL, NULL, NULL)) == NULL) {
+    if ((data = GetOverRecord(ov, artNo, &hlen, NULL, NULL, NULL, NULL)) == NULL) {
 	*why = "refused, headers of the target not available";
 	return(-1);
     }

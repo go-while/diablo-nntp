@@ -185,6 +185,8 @@ NNAcceptArticleStart(Connection *conn, const char *msgid)
     conn->co_Flags |= COF_MAYNOTCLOSE;
     conn->co_ByteCounter = 0.0;
     conn->co_BytesHeader = 0;
+    conn->co_LinesHeader = -1;
+    conn->co_BodyLines = 0;
     MBFree(&conn->co_ArtBuf);
     NNAcceptArticle(conn);
 }
@@ -254,6 +256,9 @@ NNAcceptArticle(Connection *conn)
 	bareLF = ((conn->co_Flags & (COF_POST|COF_INHEADER)) == (COF_POST|COF_INHEADER) &&
 		    (len == 1 || buf[len-2] != '\r'));
 
+	if ((conn->co_Flags & COF_INHEADER) == 0)
+	    ++conn->co_BodyLines;
+
 	if (conn->co_Flags & COF_INHEADER) {
 	    char ch = tolower((unsigned char)*buf);
 	    if (strcmp(buf, "\r") == 0 || len == 1) {	/* CRLF or LF only */
@@ -261,9 +266,19 @@ NNAcceptArticle(Connection *conn)
 	    } else if (ch == 'b' && strncasecmp(buf, "Bytes:", 6) == 0) {
 		/*
 		 * save received Bytes: header (for header-only feed), but
-		 * do not write the header out.
+		 * do not write the header out.  dnewslink -H sends
+		 * "Bytes: <size> <lines>": the body line count for the
+		 * overview's :lines; an older one sends the size alone.
 		 */
-		conn->co_BytesHeader = strtol(buf + 6, NULL, 10);
+		char *e;
+		long l;
+
+		conn->co_BytesHeader = strtol(buf + 6, &e, 10);
+		while (*e == ' ' || *e == '\t')
+		    ++e;
+		if (*e >= '0' && *e <= '9' &&
+		    (l = strtol(e, NULL, 10)) >= 0 && l < 0x7FFFFFFF)
+		    conn->co_LinesHeader = (int)l;
 		len = 0;
 	    } else if (ch == 'c' && strncasecmp(buf, "Control:", 8) == 0) {
 		conn->co_Flags |= COF_WASCONTROL;
