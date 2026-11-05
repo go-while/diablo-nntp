@@ -176,7 +176,9 @@ GetSpoolPath(uint16 spool, int gmt, int opt)
 		goto path_too_long;
 	}
     } else {
-	return("");
+	/* not configured (removed from dspool.ctl): ArticleFileName() maps
+	 * NULL to /dev/null, "" would give a path relative to the cwd */
+	return(NULL);
     }
     return(path);
 
@@ -285,9 +287,11 @@ AllocateSpools(time_t t)
 
     for (ms = MetaSpools; ms; ms = ms->ms_Next) {
 	/*
-	 * Don't look for spool objects if we don't need them
+	 * Don't look for spool objects if we don't need them.  A dontstore
+	 * metaspool may have none: there is nothing to allocate (and the
+	 * strategies below would divide by zero or index -1).
 	 */
-	if (ms->ms_RejectArts)
+	if (ms->ms_RejectArts || ms->ms_NumSpoolObjects == 0)
 	    continue;
 	if (ms->ms_ReAllocInterval / 60 == 0)
 	    DirTime = gmt;
@@ -769,6 +773,7 @@ loadSpoolCtl(FILE *fi)
 	    } else {
 		logit(LOG_ERR, "%s: Unknown spool option '%s' in line %d",
 					PatLibExpand(DSpoolCtlPat), cmd, line);
+		exit(1);	/* a typo must not leave the default (D-120) */
 	    }
 	}
 	if (status == EXSTAT_META) {
@@ -845,6 +850,12 @@ loadSpoolCtl(FILE *fi)
 	    } else if (strcmp(cmd, "spool") == 0) {
 		SpoolObject *ts;
 		uint16 sn = strtol(arg, NULL, 10);
+		if (metaSpool->ms_NumSpoolObjects >= MAX_SPOOL_OBJECTS) {
+		    logit(LOG_ERR, "%s: More than %d spool lines in metaspool '%s' in line %d",
+				PatLibExpand(DSpoolCtlPat), MAX_SPOOL_OBJECTS,
+				metaSpool->ms_Name, line);
+		    exit(1);
+		}
 		for (ts = SpoolObjects; ts != NULL; ts = ts->so_Next) {
 		    if (ts->so_SpoolNum == sn) {
 			metaSpool->ms_SpoolObjects[metaSpool->ms_NumSpoolObjects++] = ts;
@@ -874,6 +885,7 @@ loadSpoolCtl(FILE *fi)
 	    } else {
 		logit(LOG_ERR, "%s: Unknown metaspool option '%s' in line %d",
 					PatLibExpand(DSpoolCtlPat), cmd, line);
+		exit(1);	/* a typo must not leave the default (D-120) */
 	    }
 	}
     }
@@ -884,6 +896,42 @@ loadSpoolCtl(FILE *fi)
  *
  * NOTE: exit program if any errors
  */
+/*
+ * spoolCtlValid() - parse fi in a child process first: loadSpoolCtl() and
+ *		     what it calls stop the program with exit(1) on any error,
+ *		     which would end a running diablo on a reload.  Returns 1
+ *		     when the child got through the whole file (or no child
+ *		     could be made: then the reload goes on as before), else 0.
+ *		     fi is back at its start.
+ */
+static int
+spoolCtlValid(FILE *fi)
+{
+    pid_t pid;
+    int status = 0;
+
+    fflush(NULL);
+    if ((pid = fork()) == 0) {
+	loadSpoolCtl(fi);
+	_exit(0);
+    }
+    if (pid < 0)
+	return(1);
+    while (waitpid(pid, &status, 0) < 0) {
+	if (errno == EINTR)
+	    continue;
+	/*
+	 * No status (for example ECHILD when diablo was started with
+	 * SIGCHLD ignored, so the child is reaped by the system): the
+	 * check proves nothing, and the reload goes on as before D-175.
+	 */
+	fseek(fi, 0L, SEEK_SET);
+	return(1);
+    }
+    fseek(fi, 0L, SEEK_SET);
+    return(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+}
+
 void
 LoadSpoolCtl(time_t gmt, int force)
 {
@@ -906,6 +954,12 @@ LoadSpoolCtl(time_t gmt, int force)
 
 	    fi = fopen(PatLibExpand(DSpoolCtlPat), "r");
 
+	    if (fi == NULL && !force && SpoolObjects != NULL) {
+		/* a reload: keep running with what we have (D-175) */
+		logit(LOG_ERR, "%s: cannot open (%s), keeping the old spool configuration",
+					PatLibExpand(DSpoolCtlPat), strerror(errno));
+		return;
+	    }
 	    if (fi == NULL) {
 		logit(LOG_EMERG, "%s file not found",
 					PatLibExpand(DSpoolCtlPat));
@@ -918,7 +972,17 @@ LoadSpoolCtl(time_t gmt, int force)
 		if (force)
 		    fstat(fileno(fi), &st);
 		SpoolMTime = st.st_mtime; /* may be 0 if file failed to open */
-		loadSpoolCtl(fi);
+		/*
+		 * A reload of a running program (diablo checks every
+		 * minute) must not stop it on a mistake in the new file:
+		 * keep the old configuration until the file is fixed
+		 * (D-175).  At start an error still stops the program.
+		 */
+		if (!force && SpoolObjects != NULL && !spoolCtlValid(fi))
+		    logit(LOG_ERR, "%s: not reloaded because of the error above, keeping the old spool configuration",
+				PatLibExpand(DSpoolCtlPat));
+		else
+		    loadSpoolCtl(fi);
 	    }
 	    if (fi)
 		fclose(fi);

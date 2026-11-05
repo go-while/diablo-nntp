@@ -2000,6 +2000,29 @@ perlWords(const char *conf, char **argv, int max)
     return n;
 }
 
+/*
+ * PERL_SYS_INIT3() once per process, before the first perl_alloc(), as
+ * perlembed requires.  Linux and FreeBSD perl worked without it; the
+ * threaded pkgsrc perl on NetBSD fails perl_parse() for every script
+ * (D-179).  It may keep the pointers, so they stay valid.
+ */
+static void
+perlSysInit(void)
+{
+    static int done = 0;
+    static int ac = 1;
+    static char *avbuf[] = { "dreaderd", NULL };
+    static char **av = avbuf;
+    static char **env;
+    extern char **environ;
+
+    if (done)
+	return;
+    done = 1;
+    env = environ;
+    PERL_SYS_INIT3(&ac, &av, &env);
+}
+
 char *PerlAuthenticate(char *user, char *pass, char *conf)
 {
     char *auth_args[] = { user, pass, NULL };
@@ -2038,6 +2061,7 @@ char *PerlAuthenticate(char *user, char *pass, char *conf)
 	    logit(LOG_ERR, "PERL: no script in \"%s\"", conf);
 	    return(NULL);
 	}
+	perlSysInit();
 	if ((my_perl = perl_alloc()) == NULL) {
 	    logit(LOG_ERR, "PERL: perl_alloc: no memory");
 	    return(NULL);
@@ -4705,8 +4729,25 @@ ClearOldAccessMap(void) {
     if (oldaccessmap.VServerList != NULL)
 	xunmap(oldaccessmap.VServerList, oldaccessmap.VServerCount * sizeof(Vserver));
     if (oldaccessmap.GroupMap != NULL) {
+	GroupDef *gp;
+
+	/*
+	 * Every node and group name of the old lists, not only the first
+	 * node: each reload leaked the rest (D-103).  gr_Name points into
+	 * the map itself.
+	 */
+	while ((gp = oldaccessmap.GroupsList) != NULL) {
+	    GroupList *gl;
+
+	    oldaccessmap.GroupsList = gp->gr_Next;
+	    while ((gl = gp->gr_Groups) != NULL) {
+		gp->gr_Groups = gl->next;
+		zfreeStr(&DnsMemPool, &gl->group);
+		zfree(&DnsMemPool, gl, sizeof(GroupList));
+	    }
+	    zfree(&DnsMemPool, gp, sizeof(GroupDef));
+	}
 	xunmap(oldaccessmap.GroupMap, oldaccessmap.GroupMapSize);
-	zfree(&DnsMemPool, oldaccessmap.GroupsList, sizeof(GroupDef));
     }
     if (oldaccessmap.AuthList != NULL)
 	xunmap(oldaccessmap.AuthList, oldaccessmap.AuthCount * sizeof(AuthDef));

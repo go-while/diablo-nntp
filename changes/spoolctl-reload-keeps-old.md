@@ -1,0 +1,1 @@
+- `diablo`: a `dspool.ctl` with an error that is saved while diablo runs no longer stops it: the reload is checked in a child process first, and on an error diablo logs it and keeps the old spool configuration until the file is fixed. A missing file on a reload is handled the same way. At start an error still stops it (D-175).

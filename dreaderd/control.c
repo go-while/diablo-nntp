@@ -440,6 +440,8 @@ ParseControl(Connection *conn, const char *cmd, const char *from, const char *ne
 {
     FILE *fi;
     char buf[256];
+    int tooLong;
+    int lineNo = 0;
     Control *ctl = NULL;
 
     if (DebugOpt) {
@@ -464,7 +466,14 @@ ParseControl(Connection *conn, const char *cmd, const char *from, const char *ne
     if ((fi = fopen(PatLibExpand(DControlCtlPat), "r")) == NULL)
 	return(NULL);
 
-    while (fgets(buf, sizeof(buf), fi) != NULL) {
+    while (ConfigGets(buf, sizeof(buf), fi, &tooLong) != NULL) {
+	++lineNo;
+	if (tooLong) {
+	    /* its tail must not be read as a line of its own (D-94) */
+	    logit(LOG_ERR, "%s: line %d too long (at most %d characters), ignored",
+		PatLibExpand(DControlCtlPat), lineNo, (int)sizeof(buf) - 2);
+	    continue;
+	}
 	char *smsg;
 	char *sfrom;
 	char *sgroups;
@@ -510,6 +519,8 @@ ParseControl(Connection *conn, const char *cmd, const char *from, const char *ne
 	    zfreeStr(&conn->co_MemPool, &ctl->ct_From);
 	    zfreeStr(&conn->co_MemPool, &ctl->ct_Groups);
 	    ctl->ct_Flags &= ~(CTF_EXECUTE|CTF_MAIL|CTF_DGPVERIFY|CTF_PGPVERIFY|CTF_DROP); /* XXX */
+	    /* the later line decides the verifier too (D-110) */
+	    zfreeStr(&conn->co_MemPool, &ctl->ct_Verify);
 	} else {
 	    ctl = zalloc(&conn->co_MemPool, sizeof(Control));
 	}
@@ -541,6 +552,7 @@ ParseControl(Connection *conn, const char *cmd, const char *from, const char *ne
 		ctl->ct_Flags |= CTF_PGPVERIFY;
 		if ((ctl->ct_Flags & CTF_DROP) == 0)
 		    ctl->ct_Flags |= CTF_EXECUTE;
+		zfreeStr(&conn->co_MemPool, &ctl->ct_Verify);
 		ctl->ct_Verify = zallocStr(&conn->co_MemPool, saction + 7);
 	    } else if (strcmp(saction, "dgpverify") == 0) {
 		/*
