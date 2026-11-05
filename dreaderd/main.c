@@ -403,10 +403,20 @@ main(int ac, char **av)
 	    DebugOpt = v;
 	    break;
 	case 'D':
-	    DOpts.ReaderDns = strtol(((*ptr) ? ptr : av[++i]), NULL, 0);
+	    if (*ptr == 0)
+		ptr = av[++i];
+	    if (ptr == NULL || !confRange(ptr, 1, READERDNS_MAX, &DOpts.ReaderDns)) {
+		fprintf(stderr, "-D: readerdns must be 1..%d\n", READERDNS_MAX);
+		exit(1);
+	    }
 	    break;
 	case 'F':
-	    DOpts.ReaderFeedForks = strtol(((*ptr) ? ptr : av[++i]), NULL, 0);
+	    if (*ptr == 0)
+		ptr = av[++i];
+	    if (ptr == NULL || !confRange(ptr, 0, READERFORKS_MAX, &DOpts.ReaderFeedForks)) {
+		fprintf(stderr, "-F: readerfeedforks must be 0..%d\n", READERFORKS_MAX);
+		exit(1);
+	    }
 	    break;
 	case 'f':
 	    FastCopyOpt = v;

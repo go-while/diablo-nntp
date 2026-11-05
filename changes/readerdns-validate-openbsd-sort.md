@@ -1,0 +1,2 @@
+- `dreaderd`: `readerdns` (1..1024) and `readerfeedforks` (0..1024) are checked, in diablo.config and as `-D`/`-F`; another value stops dreaderd at startup with an error instead of starting with no DNS worker (every client "400 Server too busy") or a negative fork count (ISSUES.md D-181).
+- `lib/kpdb.c`: on OpenBSD `KPDBSort()` stores the offsets with one `pwrite` per record, not through a writable map, which there could write back stale bytes over another process's field update (D-90, D-171).
