@@ -2000,6 +2000,29 @@ perlWords(const char *conf, char **argv, int max)
     return n;
 }
 
+/*
+ * PERL_SYS_INIT3() once per process, before the first perl_alloc(), as
+ * perlembed requires.  Linux and FreeBSD perl worked without it; the
+ * threaded pkgsrc perl on NetBSD fails perl_parse() for every script
+ * (D-179).  It may keep the pointers, so they stay valid.
+ */
+static void
+perlSysInit(void)
+{
+    static int done = 0;
+    static int ac = 1;
+    static char *avbuf[] = { "dreaderd", NULL };
+    static char **av = avbuf;
+    static char **env;
+    extern char **environ;
+
+    if (done)
+	return;
+    done = 1;
+    env = environ;
+    PERL_SYS_INIT3(&ac, &av, &env);
+}
+
 char *PerlAuthenticate(char *user, char *pass, char *conf)
 {
     char *auth_args[] = { user, pass, NULL };
@@ -2038,6 +2061,7 @@ char *PerlAuthenticate(char *user, char *pass, char *conf)
 	    logit(LOG_ERR, "PERL: no script in \"%s\"", conf);
 	    return(NULL);
 	}
+	perlSysInit();
 	if ((my_perl = perl_alloc()) == NULL) {
 	    logit(LOG_ERR, "PERL: perl_alloc: no memory");
 	    return(NULL);
