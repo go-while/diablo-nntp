@@ -344,6 +344,19 @@ Without `DIABLO_BIN` every test is skipped. `NNTP_TEST_DEADLINE` (default
 `60s`) bounds every blocking step, so a hung server fails the test instead of
 hanging it.
 
+Faster: run the suite in several processes at once, as CI does. Each process
+gets its own set of tests, balanced by `ci/durations`; the tests matched by
+`ci/serial-tests` (they measure time, or wait for a worker under load) run
+alone afterwards. N defaults to the CPU count, at most 4.
+
+```sh
+go test -c -o e2e.test . && DIABLO_BIN=$PWD/../../dbin ./ci/run-shards ./e2e.test [N] [-test.v ...]
+```
+
+A new test that fails only while other tests run beside it goes in
+`ci/serial-tests`; a slow new test can be added to `ci/durations` (`name
+seconds`; a test not listed counts 2 s).
+
 Prefer a test machine. Each test starts its own daemons in a temporary
 directory on free ports, and the tests only signal processes of their own
 sites. But they run as `news`, like a live site, and a bug there can reach the
