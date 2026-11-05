@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	testkit "github.com/go-while/nntp-testkit"
 	"strings"
 	"testing"
 	"time"
@@ -25,7 +26,7 @@ func TestAccessLongClusterNameRefused(t *testing.T) {
 		Config: map[string]string{"path_generallog": "%s/general.log"}})
 	startReaderNoWait(t, s)
 	var log string
-	waitFor(t, 5*time.Second, "the refusal in the log", func() bool {
+	testkit.WaitFor(t, 5*time.Second, "the refusal in the log", func() bool {
 		log = generalLog(s)
 		return strings.Contains(log, "value of clustername in line 2 is too long")
 	})

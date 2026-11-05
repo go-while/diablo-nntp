@@ -60,33 +60,31 @@ usage(char *progname) {
 
 void
 connectnews(char *hostname, char *port) {
-    struct hostent *hp;
-    struct servent *sp;
-    struct sockaddr_in sin;
+    struct addrinfo hints, *res, *ai;
+    int err;
     char line[512];
 
-    if ((hp = gethostbyname(hostname)) != NULL) {
-	memcpy(&sin.sin_addr, hp->h_addr, hp->h_length);
-    } else {
-	perror("gethostbyname");
-	exit(1);
-    }
-    if ((sin.sin_port = atoi(port)) == 0) {
-	if (!(sp = getservbyname(port, "tcp"))) {
-	    perror("getservbyname");
-	    exit(1);
-	}
-	sin.sin_port = sp->s_port;
-    }
-    sin.sin_port = htons(sin.sin_port);
-    sin.sin_family = AF_INET;
-    if ((s = socket(hp->h_addrtype, SOCK_STREAM, 0)) < 0) {
-	perror("socket");
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    if ((err = getaddrinfo(hostname, port, &hints, &res)) != 0) {
+	fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(err));
 	exit(1);
     }
 
+    /* try each address in the order the resolver gave them */
+    s = -1;
     gettimeofday(&connectstart, NULL);
-    if (connect(s, (struct sockaddr *)&sin, sizeof (sin)) < 0) {
+    for (ai = res; ai != NULL; ai = ai->ai_next) {
+	if ((s = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol)) < 0)
+	    continue;
+	if (connect(s, ai->ai_addr, ai->ai_addrlen) == 0)
+	    break;
+	close(s);
+	s = -1;
+    }
+    freeaddrinfo(res);
+    if (s < 0) {
 	perror("connect");
 	exit(1);
     }

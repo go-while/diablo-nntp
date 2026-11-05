@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"github.com/go-while/nntp-testkit/client"
 	"strings"
 	"testing"
 	"time"
@@ -17,10 +18,10 @@ func feedLongPath(t *testing.T, s *Site, path string) {
 	art := newArticle(id, "e2e.test", "long path", "body")
 	art[0] = "Path: " + path
 	art = append([]string{"Distribution: world"}, art...)
-	expect(t, p, 335, "IHAVE %s", id)
-	send(t, p, wire(art))
-	status(t, p, 235, "IHAVE")
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(335, "IHAVE %s", id)
+	p.MustSend(client.Stuff(art))
+	p.ExpectStatus(235, "IHAVE")
+	p.ExpectCmd(205, "QUIT")
 	s.Dicmd(t, "flush") // the master has handled the article's SOUT line when this returns
 	time.Sleep(200 * time.Millisecond)
 	select {
@@ -29,8 +30,8 @@ func feedLongPath(t *testing.T, s *Site, path string) {
 	default:
 	}
 	p2 := s.Peer(t)
-	expect(t, p2, 435, "IHAVE %s", id)
-	expect(t, p2, 205, "QUIT")
+	p2.ExpectCmd(435, "IHAVE %s", id)
+	p2.ExpectCmd(205, "QUIT")
 }
 
 // TestFeedWriteLongFirstPathElement: the master's FeedWrite() copied the first Path: element

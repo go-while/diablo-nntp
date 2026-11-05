@@ -17,7 +17,7 @@ func TestFeederModeCompressTwiceRefused(t *testing.T) {
 	skipWithoutZlib(t)
 	s := NewSite(t, SiteOptions{})
 	p := s.Peer(t)
-	expect(t, p, 207, "MODE COMPRESS")
+	p.ExpectCmd(207, "MODE COMPRESS")
 
 	// Each command is compressed into buf and sent in one write: written straight to the
 	// socket, zlib's flush can need a second write, and after QUIT diablo may already have
@@ -38,16 +38,16 @@ func TestFeederModeCompressTwiceRefused(t *testing.T) {
 		buf.Reset()
 	}
 	zsend("MODE STREAM")
-	status(t, p, 203, "MODE STREAM (compressed)")
+	p.ExpectStatus(203, "MODE STREAM (compressed)")
 	for i := 0; i < 50; i++ {
 		zsend("MODE COMPRESS")
-		status(t, p, 502, "second MODE COMPRESS (compressed)")
+		p.ExpectStatus(502, "second MODE COMPRESS (compressed)")
 	}
 	// Still the first stream: a fresh inflate state would reject these bytes.
 	zsend("MODE STREAM")
-	status(t, p, 203, "MODE STREAM after the refused MODE COMPRESS")
+	p.ExpectStatus(203, "MODE STREAM after the refused MODE COMPRESS")
 	zsend("QUIT")
-	status(t, p, 205, "QUIT (compressed)")
+	p.ExpectStatus(205, "QUIT (compressed)")
 }
 
 // TestNoZlibCompressionOff: a build with ./configure --without-zlib has no compression. MODE
@@ -59,9 +59,9 @@ func TestNoZlibCompressionOff(t *testing.T) {
 	}
 	s := NewSite(t, SiteOptions{})
 	p := s.Peer(t)
-	expect(t, p, 500, "MODE COMPRESS")
-	expect(t, p, 203, "MODE STREAM")
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(500, "MODE COMPRESS")
+	p.ExpectCmd(203, "MODE STREAM")
+	p.ExpectCmd(205, "QUIT")
 
 	out, err := s.TryRun("dexpireover", "-z")
 	if err == nil || !strings.Contains(out, "built without zlib") {

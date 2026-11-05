@@ -42,7 +42,7 @@ func TestFeederModeCompressRepeated(t *testing.T) {
 	skipWithoutZlib(t)
 	s := NewSite(t, SiteOptions{})
 	p := s.Peer(t)
-	expect(t, p, 207, "MODE COMPRESS")
+	p.ExpectCmd(207, "MODE COMPRESS")
 	before := descendantRSS(s.Proc.Pid())
 	const rounds = 600
 	sent := 0

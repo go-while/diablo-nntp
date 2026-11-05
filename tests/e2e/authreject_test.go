@@ -40,19 +40,19 @@ access 127.0.0.1 userfile
 
 	for i := 0; i < 3; i++ {
 		c := s.Reader(t)
-		expect(t, c, 381, "AUTHINFO USER banned")
+		c.ExpectCmd(381, "AUTHINFO USER banned")
 		// Change dreader.access between the greeting (whose access check remaps the cache
 		// in the master too) and the login, so only the DNS worker maps the rebuilt cache.
 		// The cache's lock file has a one-second timestamp: wait for the next second.
 		time.Sleep(1100 * time.Millisecond)
 		s.WriteFile(t, "dreader.access", access+fmt.Sprintf("# change %d\n", i))
-		expect(t, c, 500, "AUTHINFO PASS pw")
+		c.ExpectCmd(500, "AUTHINFO PASS pw")
 		c.Close()
 	}
 
 	// The master is still there and serves a good login.
 	c := s.Reader(t)
-	expect(t, c, 381, "AUTHINFO USER fred")
-	expect(t, c, 281, "AUTHINFO PASS fredspass")
-	expect(t, c, 205, "QUIT")
+	c.ExpectCmd(381, "AUTHINFO USER fred")
+	c.ExpectCmd(281, "AUTHINFO PASS fredspass")
+	c.ExpectCmd(205, "QUIT")
 }

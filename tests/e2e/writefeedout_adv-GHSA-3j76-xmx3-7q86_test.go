@@ -14,6 +14,7 @@ package e2e
 // another article afterwards.
 
 import (
+	"github.com/go-while/nntp-testkit/client"
 	"strings"
 	"testing"
 )
@@ -35,9 +36,9 @@ end
 	// Fill the master's fe_Buf (4096 bytes) with ordinary queue lines.
 	for i := 0; i < 30; i++ {
 		id := msgID(t)
-		expect(t, p, 335, "IHAVE %s", id)
-		send(t, p, wire(newArticle(id, "e2e.test", "fill", strings.Repeat("C", 200))))
-		status(t, p, 235, "IHAVE fill")
+		p.ExpectCmd(335, "IHAVE %s", id)
+		p.MustSend(client.Stuff(newArticle(id, "e2e.test", "fill", strings.Repeat("C", 200))))
+		p.ExpectStatus(235, "IHAVE fill")
 	}
 
 	// The shifted field is the Path: 2488 bytes, three TABs in Distribution.
@@ -46,8 +47,8 @@ end
 	art := newArticle(fire, "e2e.test", "fire", "body")
 	art[0] = "Path: " + path
 	art = append([]string{art[0], "Distribution: world\tE1\tE2\t000000"}, art[1:]...)
-	expect(t, p, 335, "IHAVE %s", fire)
-	send(t, p, wire(art))
+	p.ExpectCmd(335, "IHAVE %s", fire)
+	p.MustSend(client.Stuff(art))
 	code, line, err := p.ReadStatus()
 	if err != nil {
 		t.Fatalf("fire article: %v", err)
@@ -79,9 +80,9 @@ end
 
 	// The master must still be alive: it has to queue another article.
 	probe := msgID(t)
-	expect(t, p, 335, "IHAVE %s", probe)
-	send(t, p, wire(newArticle(probe, "e2e.test", "probe", "body")))
-	status(t, p, 235, "IHAVE probe after the fire article")
+	p.ExpectCmd(335, "IHAVE %s", probe)
+	p.MustSend(client.Stuff(newArticle(probe, "e2e.test", "probe", "body")))
+	p.ExpectStatus(235, "IHAVE probe after the fire article")
 	s.Dicmd(t, "flush")
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(205, "QUIT")
 }

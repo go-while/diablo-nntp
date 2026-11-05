@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"fmt"
+	"github.com/go-while/nntp-testkit/client"
 	"strings"
 	"testing"
 )
@@ -40,11 +41,11 @@ end
 		id    string
 		lines []string
 	}{{longID, long}, {shortID, short}} {
-		expect(t, p, 335, "IHAVE %s", a.id)
-		send(t, p, wire(a.lines))
-		status(t, p, 235, "IHAVE "+a.id)
+		p.ExpectCmd(335, "IHAVE %s", a.id)
+		p.MustSend(client.Stuff(a.lines))
+		p.ExpectStatus(235, "IHAVE "+a.id)
 	}
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(205, "QUIT")
 
 	q := s.waitQueue(t, "out", 2)
 	joined := strings.Join(q, "\n")

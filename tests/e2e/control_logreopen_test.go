@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	testkit "github.com/go-while/nntp-testkit"
 	"slices"
 	"strings"
 	"testing"
@@ -31,13 +32,13 @@ func TestControlLogRuleReopenFailure(t *testing.T) {
 	}
 	exists := func(g string) bool {
 		c := s.Reader(t)
-		defer expect(t, c, 205, "QUIT")
-		expect(t, c, 215, "LIST ACTIVE %s", g)
+		defer c.ExpectCmd(205, "QUIT")
+		c.ExpectCmd(215, "LIST ACTIVE %s", g)
 		return slices.ContainsFunc(c.ReadDotLines(), func(l string) bool { return strings.HasPrefix(l, g+" ") })
 	}
 
 	feedReader(t, s, st, "e2e.test", a)
-	waitFor(t, 10*time.Second, "e2e.logreopen created despite the failed second log file", func() bool { return exists("e2e.logreopen") })
+	testkit.WaitFor(t, 10*time.Second, "e2e.logreopen created despite the failed second log file", func() bool { return exists("e2e.logreopen") })
 
 	// The reader is still alive: a second control message is processed too.
 	b := newArticle(msgID(t), "e2e.test", "cmsg newgroup e2e.logreopen2", "For your newsgroups file:", "e2e.logreopen2\tAnother test group.")
@@ -48,5 +49,5 @@ func TestControlLogRuleReopenFailure(t *testing.T) {
 		}
 	}
 	feedReader(t, s, st, "e2e.test", b)
-	waitFor(t, 10*time.Second, "e2e.logreopen2 created by a second control on a healthy reader", func() bool { return exists("e2e.logreopen2") })
+	testkit.WaitFor(t, 10*time.Second, "e2e.logreopen2 created by a second control on a healthy reader", func() bool { return exists("e2e.logreopen2") })
 }

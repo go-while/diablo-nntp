@@ -1,6 +1,6 @@
 /*
  * tmrshim.c - LD_PRELOAD shim for TestReaderTooManyRefsHostLimit
- * (dnsoverload_test.go).  Linux.
+ * (dnsoverload_test.go).  Linux, FreeBSD, NetBSD.
  *
  * In the process that accept()s (the dreaderd main process), the first
  * TMR_N sendmsg() calls that pass a descriptor fail with ETOOMANYREFS, as

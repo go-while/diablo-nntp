@@ -4,6 +4,8 @@ import (
 	"crypto/md5"
 	"encoding/binary"
 	"fmt"
+	testkit "github.com/go-while/nntp-testkit"
+	"github.com/go-while/nntp-testkit/client"
 	"os"
 	"path/filepath"
 	"strings"
@@ -87,11 +89,11 @@ end
 			s := NewSite(t, SiteOptions{Newsfeeds: feeds})
 			p := s.Peer(t)
 			for _, id := range ids {
-				expect(t, p, 335, "IHAVE %s", id)
-				send(t, p, wire(newArticle(id, "e2e.test", "hashfeed", "body")))
-				status(t, p, 235, "IHAVE "+id)
+				p.ExpectCmd(335, "IHAVE %s", id)
+				p.MustSend(client.Stuff(newArticle(id, "e2e.test", "hashfeed", "body")))
+				p.ExpectStatus(235, "IHAVE "+id)
 			}
-			expect(t, p, 205, "QUIT")
+			p.ExpectCmd(205, "QUIT")
 
 			q := s.waitQueue(t, OutLabel, 1)
 			if !strings.Contains(q[0], ids[0]) {
@@ -146,15 +148,15 @@ expire * bucket2
 						},
 					})
 					p := s.Peer(t)
-					expect(t, p, 335, "IHAVE %s", id)
-					send(t, p, wire(newArticle(id, "e2e.test", "hashfeed spool", "body")))
-					status(t, p, 235, "IHAVE "+id)
-					expect(t, p, 205, "QUIT")
+					p.ExpectCmd(335, "IHAVE %s", id)
+					p.MustSend(client.Stuff(newArticle(id, "e2e.test", "hashfeed spool", "body")))
+					p.ExpectStatus(235, "IHAVE "+id)
+					p.ExpectCmd(205, "QUIT")
 
 					want := filepath.Join(s.Dir, "spool", "news", spoolNames[bucket])
 					other := filepath.Join(s.Dir, "spool", "news", spoolNames[1-bucket])
 					glob := filepath.Join(want, "D.*", "*")
-					waitFor(t, 5*time.Second, "article in hashfeed-selected spool", func() bool {
+					testkit.WaitFor(t, 5*time.Second, "article in hashfeed-selected spool", func() bool {
 						files, _ := filepath.Glob(glob)
 						return len(files) > 0
 					})

@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"fmt"
+	"github.com/go-while/nntp-testkit/client"
 	"slices"
 	"strings"
 	"testing"
@@ -165,12 +166,12 @@ end
 				if k.path != "" {
 					a[0] = "Path: " + k.path
 				}
-				expect(t, p, 335, "IHAVE %s", id)
-				send(t, p, wire(a))
-				status(t, p, 235, "IHAVE "+id)
+				p.ExpectCmd(335, "IHAVE %s", id)
+				p.MustSend(client.Stuff(a))
+				p.ExpectStatus(235, "IHAVE "+id)
 				ids[k.in] = append(ids[k.in], id)
 			}
-			expect(t, p, 205, "QUIT")
+			p.ExpectCmd(205, "QUIT")
 
 			q := s.waitQueue(t, c.label, len(ids[true]))
 			joined := strings.Join(q, "\n")

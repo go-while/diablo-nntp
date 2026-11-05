@@ -10,6 +10,7 @@ import (
 	"crypto/sha1"
 	"crypto/sha256"
 	"fmt"
+	testkit "github.com/go-while/nntp-testkit"
 	"os"
 	"path/filepath"
 	"slices"
@@ -96,8 +97,8 @@ func (g *genSite) poster(tb testing.TB) *client.Conn {
 	tb.Helper()
 	c := g.Reader(tb)
 	if g.auth {
-		expect(tb, c, 381, "AUTHINFO USER fred")
-		expect(tb, c, 281, "AUTHINFO PASS fredspass")
+		c.ExpectCmd(381, "AUTHINFO USER fred")
+		c.ExpectCmd(281, "AUTHINFO PASS fredspass")
 	}
 	return c
 }
@@ -109,14 +110,14 @@ func (g *genSite) post(tb testing.TB, c *client.Conn, hdrs ...string) []string {
 	g.mu.Lock()
 	n := len(g.arts)
 	g.mu.Unlock()
-	expect(tb, c, 340, "POST")
-	send(tb, c, wire(append(append([]string{
+	c.ExpectCmd(340, "POST")
+	c.MustSend(client.Stuff(append(append([]string{
 		"From: E2E Poster <poster@example.invalid>",
 		"Newsgroups: e2e.test",
 		"Subject: lock test",
 	}, hdrs...), "", "body")))
-	status(tb, c, 240, "POST article")
-	waitFor(tb, 15*time.Second, "the outgoing server to receive the post", func() bool {
+	c.ExpectStatus(240, "POST article")
+	testkit.WaitFor(tb, 15*time.Second, "the outgoing server to receive the post", func() bool {
 		g.mu.Lock()
 		defer g.mu.Unlock()
 		return len(g.arts) > n
@@ -344,8 +345,8 @@ func TestCanLockGenerateFolded(t *testing.T) {
 		t.Errorf("the Cancel-Lock header is not folded: %q", head)
 	}
 	r := g.Reader(t)
-	expect(t, r, 381, "AUTHINFO USER fred")
-	expect(t, r, 281, "AUTHINFO PASS fredspass")
+	r.ExpectCmd(381, "AUTHINFO USER fred")
+	r.ExpectCmd(281, "AUTHINFO PASS fredspass")
 	feedAndSettle(t, g.Site, g.st, r, fromElsewhere(g.last()))
 	cancel := cancelArticle(t, mid, "e2e.test", "Cancel-Key: sha256:"+canKey(sha256.New, "e2e-admin-3", "", mid))
 	feedAndSettle(t, g.Site, g.st, r, cancel)
@@ -432,8 +433,8 @@ func TestCanLockGenerateRoundTrip(t *testing.T) {
 	article := fromElsewhere(g.last())
 	r := g.Reader(t) // a second connection reads; the poster stays logged in
 	if g.auth {
-		expect(t, r, 381, "AUTHINFO USER fred")
-		expect(t, r, 281, "AUTHINFO PASS fredspass")
+		r.ExpectCmd(381, "AUTHINFO USER fred")
+		r.ExpectCmd(281, "AUTHINFO PASS fredspass")
 	}
 	feedAndSettle(t, g.Site, g.st, r, article)
 	if !present(t, r, 1) {
@@ -449,13 +450,13 @@ func TestCanLockGenerateRoundTrip(t *testing.T) {
 // postRefused posts hdrs and a one line body and expects the post to be refused with 441.
 func (g *genSite) postRefused(tb testing.TB, c *client.Conn, hdrs ...string) {
 	tb.Helper()
-	expect(tb, c, 340, "POST")
-	send(tb, c, wire(append(append([]string{
+	c.ExpectCmd(340, "POST")
+	c.MustSend(client.Stuff(append(append([]string{
 		"From: E2E Poster <poster@example.invalid>",
 		"Newsgroups: e2e.test",
 		"Subject: lock test",
 	}, hdrs...), "", "body")))
-	status(tb, c, 441, "POST article")
+	c.ExpectStatus(441, "POST article")
 }
 
 // TestCanLockGenerateRefusesBadHeaders: a poster's own Cancel-Lock or Cancel-Key that we cannot

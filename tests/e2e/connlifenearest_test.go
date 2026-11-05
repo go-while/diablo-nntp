@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	testkit "github.com/go-while/nntp-testkit"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -78,7 +79,7 @@ end
 	})
 	accepted := func(id string) {
 		t.Helper()
-		waitFor(t, 15*time.Second, "the peer to accept "+id, func() bool { return slices.Contains(got.list(), id) })
+		testkit.WaitFor(t, 15*time.Second, "the peer to accept "+id, func() bool { return slices.Contains(got.list(), id) })
 	}
 	// rotate: a queue rotation as cron's dspoolout does it, noticed by the realtime worker
 	// with the next article. Returns when the peer has the article.
@@ -95,7 +96,7 @@ end
 	newWorker := func(prev int, within time.Duration, what string) int {
 		t.Helper()
 		var w int
-		waitFor(t, within, what, func() bool {
+		testkit.WaitFor(t, within, what, func() bool {
 			w = realtimeWorker(s)
 			return w > 0 && w != prev
 		})

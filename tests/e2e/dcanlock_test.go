@@ -11,6 +11,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	testkit "github.com/go-while/nntp-testkit"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -230,8 +231,8 @@ func TestDcanlockWithdraw(t *testing.T) {
 	mid := msgID(t)
 	g.post(t, g.poster(t), "Message-ID: "+mid)
 	r := g.Reader(t)
-	expect(t, r, 381, "AUTHINFO USER fred")
-	expect(t, r, 281, "AUTHINFO PASS fredspass")
+	r.ExpectCmd(381, "AUTHINFO USER fred")
+	r.ExpectCmd(281, "AUTHINFO PASS fredspass")
 	feedAndSettle(t, g.Site, g.st, r, fromElsewhere(g.last()))
 	if !present(t, r, 1) {
 		t.Fatal("the posted article is not article 1 of e2e.test")
@@ -499,10 +500,10 @@ func (g *genSite) postRaw(tb testing.TB, c *client.Conn, raw string) []string {
 	g.mu.Lock()
 	n := len(g.arts)
 	g.mu.Unlock()
-	expect(tb, c, 340, "POST")
-	send(tb, c, raw+".\r\n")
-	status(tb, c, 240, "POST article")
-	waitFor(tb, 15*time.Second, "the outgoing server to receive the post", func() bool {
+	c.ExpectCmd(340, "POST")
+	c.MustSend(raw + ".\r\n")
+	c.ExpectStatus(240, "POST article")
+	testkit.WaitFor(tb, 15*time.Second, "the outgoing server to receive the post", func() bool {
 		g.mu.Lock()
 		defer g.mu.Unlock()
 		return len(g.arts) > n
@@ -522,8 +523,8 @@ func TestDcanlockCancelPost(t *testing.T) {
 	mid := msgID(t)
 	g.post(t, g.poster(t), "Message-ID: "+mid)
 	r := g.Reader(t)
-	expect(t, r, 381, "AUTHINFO USER fred")
-	expect(t, r, 281, "AUTHINFO PASS fredspass")
+	r.ExpectCmd(381, "AUTHINFO USER fred")
+	r.ExpectCmd(281, "AUTHINFO PASS fredspass")
 	feedAndSettle(t, g.Site, g.st, r, fromElsewhere(g.last()))
 	if !present(t, r, 1) {
 		t.Fatal("the posted article is not article 1 of e2e.test")
@@ -552,8 +553,8 @@ func TestDcanlockCancelWithdraw(t *testing.T) {
 	mid := msgID(t)
 	g.post(t, g.poster(t), "Message-ID: "+mid)
 	r := g.Reader(t)
-	expect(t, r, 381, "AUTHINFO USER fred")
-	expect(t, r, 281, "AUTHINFO PASS fredspass")
+	r.ExpectCmd(381, "AUTHINFO USER fred")
+	r.ExpectCmd(281, "AUTHINFO PASS fredspass")
 	feedAndSettle(t, g.Site, g.st, r, fromElsewhere(g.last()))
 	if !present(t, r, 1) {
 		t.Fatal("the posted article is not article 1 of e2e.test")

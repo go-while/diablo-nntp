@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"encoding/xml"
 	"errors"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -53,15 +52,6 @@ func skipWithoutPreflight(t *testing.T, s *Site, run func(args ...string) (strin
 	}
 }
 
-func listening(addr string) bool {
-	c, err := net.DialTimeout("tcp", addr, time.Second)
-	if err != nil {
-		return false
-	}
-	c.Close()
-	return true
-}
-
 // TestDiabloCtlChecks: every check, with check and with start.
 func TestDiabloCtlChecks(t *testing.T) {
 	t.Run("nothing to complain about", func(t *testing.T) {
@@ -87,8 +77,8 @@ func TestDiabloCtlChecks(t *testing.T) {
 		}
 		out, code = run("start")
 		wantCtl(t, out, code, 1, "start with a missing mount")
-		if !strings.Contains(out, "a check failed") || listening(s.Addr) {
-			t.Errorf("start: %q (listening %v), want a refusal", out, listening(s.Addr))
+		if !strings.Contains(out, "a check failed") || testkit.Listening(s.Addr) {
+			t.Errorf("start: %q (listening %v), want a refusal", out, testkit.Listening(s.Addr))
 		}
 		// the refusal says how to get past it
 		if !strings.Contains(out, "-F start") || !strings.Contains(out, "DIABLO_PREFLIGHT=no") {
@@ -96,7 +86,7 @@ func TestDiabloCtlChecks(t *testing.T) {
 		}
 		out, code = run("-F", "start")
 		wantCtl(t, out, code, 0, "start -F")
-		if !listening(s.Addr) {
+		if !testkit.Listening(s.Addr) {
 			t.Errorf("diablo does not listen after start -F\n%s", out)
 		}
 	})
@@ -104,7 +94,7 @@ func TestDiabloCtlChecks(t *testing.T) {
 	t.Run("preflight off", func(t *testing.T) {
 		s, run := ctlSite(t, nil, "DIABLO_PREFLIGHT=no\nDIABLO_MOUNTS='/no/such/mount'\n")
 		skipWithoutPreflight(t, s, run)
-		if out, code := run("start"); code != 0 || !listening(s.Addr) {
+		if out, code := run("start"); code != 0 || !testkit.Listening(s.Addr) {
 			t.Errorf("start with DIABLO_PREFLIGHT=no: exit %d\n%s", code, out)
 		}
 	})
@@ -127,7 +117,7 @@ func TestDiabloCtlChecks(t *testing.T) {
 		}
 		out, code = run("start")
 		wantCtl(t, out, code, 0, "start without a history file")
-		if !listening(s.Addr) {
+		if !testkit.Listening(s.Addr) {
 			t.Errorf("diablo makes its own history: not listening\n%s", out)
 		}
 	})
@@ -201,7 +191,7 @@ func TestDiabloCtlChecks(t *testing.T) {
 		}
 		out, code = run("start")
 		wantCtl(t, out, code, 1, "start after an unclean shutdown")
-		if listening(s.Addr) {
+		if testkit.Listening(s.Addr) {
 			t.Error("diablo started after an unclean shutdown")
 		}
 		os.Remove(filepath.Join(s.Dir, "log", "diablo.pid"))
@@ -377,8 +367,8 @@ func TestInitSysV(t *testing.T) {
 	if out, code := run("status"); code != 3 {
 		t.Fatalf("status before start: exit %d, want 3\n%s", code, out)
 	}
-	if out, code := run("start"); code != 0 || !listening(s.Addr) {
-		t.Fatalf("start: exit %d, listening %v\n%s", code, listening(s.Addr), out)
+	if out, code := run("start"); code != 0 || !testkit.Listening(s.Addr) {
+		t.Fatalf("start: exit %d, listening %v\n%s", code, testkit.Listening(s.Addr), out)
 	}
 	if out, code := run("status"); code != 0 {
 		t.Errorf("status: exit %d\n%s", code, out)
@@ -386,11 +376,11 @@ func TestInitSysV(t *testing.T) {
 	if out, code := run("check"); code != 0 {
 		t.Errorf("check: exit %d\n%s", code, out)
 	}
-	if out, code := run("restart"); code != 0 || !listening(s.Addr) {
-		t.Errorf("restart: exit %d, listening %v\n%s", code, listening(s.Addr), out)
+	if out, code := run("restart"); code != 0 || !testkit.Listening(s.Addr) {
+		t.Errorf("restart: exit %d, listening %v\n%s", code, testkit.Listening(s.Addr), out)
 	}
-	if out, code := run("stop"); code != 0 || listening(s.Addr) {
-		t.Errorf("stop: exit %d, listening %v\n%s", code, listening(s.Addr), out)
+	if out, code := run("stop"); code != 0 || testkit.Listening(s.Addr) {
+		t.Errorf("stop: exit %d, listening %v\n%s", code, testkit.Listening(s.Addr), out)
 	}
 	if out, code := run("bogus"); code != 2 {
 		t.Errorf("an unknown action: exit %d, want 2\n%s", code, out)
@@ -425,8 +415,8 @@ func TestInitRcdFreeBSD(t *testing.T) {
 	if out, code := run("onestatus"); code == 0 {
 		t.Fatalf("onestatus before start: exit 0\n%s", out)
 	}
-	if out, code := run("onestart"); code != 0 || !listening(s.Addr) {
-		t.Fatalf("onestart: exit %d, listening %v\n%s", code, listening(s.Addr), out)
+	if out, code := run("onestart"); code != 0 || !testkit.Listening(s.Addr) {
+		t.Fatalf("onestart: exit %d, listening %v\n%s", code, testkit.Listening(s.Addr), out)
 	}
 	if out, code := run("onestatus"); code != 0 {
 		t.Errorf("onestatus: exit %d\n%s", code, out)
@@ -434,8 +424,8 @@ func TestInitRcdFreeBSD(t *testing.T) {
 	if out, code := run("check"); code != 0 {
 		t.Errorf("check: exit %d\n%s", code, out)
 	}
-	if out, code := run("onestop"); code != 0 || listening(s.Addr) {
-		t.Errorf("onestop: exit %d, listening %v\n%s", code, listening(s.Addr), out)
+	if out, code := run("onestop"); code != 0 || testkit.Listening(s.Addr) {
+		t.Errorf("onestop: exit %d, listening %v\n%s", code, testkit.Listening(s.Addr), out)
 	}
 }
 
@@ -611,7 +601,7 @@ func TestAdmHistbackup(t *testing.T) {
 	if out, code := admScript(t, s2, "histbackup"); code != 0 {
 		t.Fatalf("histbackup with path_dumphist: exit %d\n%s", code, out)
 	}
-	waitFor(t, testkit.Deadline(), "dhistory.snp", func() bool {
+	testkit.WaitFor(t, testkit.Deadline(), "dhistory.snp", func() bool {
 		_, err := os.Stat(filepath.Join(s2.Dir, "dhistory.snp"))
 		return err == nil
 	})
@@ -656,7 +646,7 @@ func TestAdmHistbackupLongPath(t *testing.T) {
 	if out, code := admScript(t, s, "histbackup"); code != 0 {
 		t.Fatalf("histbackup with a %d-byte path_dumphist: exit %d\n%s", len(dump), code, out)
 	}
-	waitFor(t, testkit.Deadline(), "dhistory.snp", func() bool {
+	testkit.WaitFor(t, testkit.Deadline(), "dhistory.snp", func() bool {
 		_, err := os.Stat(filepath.Join(s.Dir, "dhistory.snp"))
 		return err == nil
 	})
@@ -720,8 +710,8 @@ func TestDiabloCtlConfigErrors(t *testing.T) {
 			s, run := ctlSite(t, nil, c.extra)
 			out, code := run("start")
 			wantCtl(t, out, code, 1, "start with "+c.name)
-			if !strings.Contains(out, c.want) || listening(s.Addr) {
-				t.Errorf("start: %q (listening %v), want %q and no daemon", out, listening(s.Addr), c.want)
+			if !strings.Contains(out, c.want) || testkit.Listening(s.Addr) {
+				t.Errorf("start: %q (listening %v), want %q and no daemon", out, testkit.Listening(s.Addr), c.want)
 			}
 		})
 	}
@@ -822,7 +812,7 @@ func TestDiabloCtlStopWithBadSettings(t *testing.T) {
 			s, run := ctlSite(t, nil, c.extra)
 			out, code := run("start")
 			wantCtl(t, out, code, 1, "start with "+c.name)
-			if listening(s.Addr) {
+			if testkit.Listening(s.Addr) {
 				t.Fatalf("start with a wrong %s started diablo", c.name)
 			}
 			out, code = run("status")
@@ -838,13 +828,13 @@ func TestDiabloCtlStopWithBadSettings(t *testing.T) {
 	s, run := ctlSite(t, nil, "")
 	out, code := run("start")
 	wantCtl(t, out, code, 0, "start")
-	if !listening(s.Addr) {
+	if !testkit.Listening(s.Addr) {
 		t.Fatalf("diablo does not listen after start\n%s", out)
 	}
 	s.WriteFile(t, "diablo-ctl.test.conf", mustRead(t, filepath.Join(s.Dir, "diablo-ctl.test.conf"))+"DIABLO_STOP_WAIT=forever\n")
 	out, code = run("stop")
 	wantCtl(t, out, code, 0, "stop with a wrong DIABLO_STOP_WAIT")
-	if listening(s.Addr) {
+	if testkit.Listening(s.Addr) {
 		t.Errorf("diablo still listens after stop\n%s", out)
 	}
 }
@@ -974,8 +964,8 @@ func TestDiabloCtlNumbers(t *testing.T) {
 		s, run := ctlSite(t, nil, "DIABLO_STOP_WAIT=99999999999999999999\n")
 		out, code := run("start")
 		wantCtl(t, out, code, 1, "start with a huge wait")
-		if !strings.Contains(out, "too large") || listening(s.Addr) {
-			t.Errorf("start: %q (listening %v), want \"too large\" and no daemon", out, listening(s.Addr))
+		if !strings.Contains(out, "too large") || testkit.Listening(s.Addr) {
+			t.Errorf("start: %q (listening %v), want \"too large\" and no daemon", out, testkit.Listening(s.Addr))
 		}
 		out, code = run("stop")
 		wantCtl(t, out, code, 0, "stop with a huge wait")
@@ -984,8 +974,8 @@ func TestDiabloCtlNumbers(t *testing.T) {
 		s, run := ctlSite(t, nil, "DIABLO_START_WAIT=soon\n")
 		out, code := run("restart")
 		wantCtl(t, out, code, 1, "restart with a wrong wait")
-		if !strings.Contains(out, "DIABLO_START_WAIT must be a number") || listening(s.Addr) {
-			t.Errorf("restart: %q (listening %v)", out, listening(s.Addr))
+		if !strings.Contains(out, "DIABLO_START_WAIT must be a number") || testkit.Listening(s.Addr) {
+			t.Errorf("restart: %q (listening %v)", out, testkit.Listening(s.Addr))
 		}
 	})
 	t.Run("status area zeros", func(t *testing.T) {
@@ -1013,7 +1003,7 @@ func TestDiabloCtlNoKnownDaemon(t *testing.T) {
 	s, run := ctlSite(t, nil, "")
 	out, code := run("start")
 	wantCtl(t, out, code, 0, "start")
-	if !listening(s.Addr) {
+	if !testkit.Listening(s.Addr) {
 		t.Fatalf("diablo does not listen after start\n%s", out)
 	}
 	s.WriteFile(t, "diablo-ctl.test.conf", mustRead(t, filepath.Join(s.Dir, "diablo-ctl.test.conf"))+"DIABLO_DAEMONS='all'\n")
@@ -1026,7 +1016,7 @@ func TestDiabloCtlNoKnownDaemon(t *testing.T) {
 	}
 	out, code = run("stop")
 	wantCtl(t, out, code, 0, "stop with no valid daemon in the list")
-	if listening(s.Addr) {
+	if testkit.Listening(s.Addr) {
 		t.Errorf("diablo still listens: stop did nothing\n%s", out)
 	}
 	if out, code := run("start"); code != 1 || !strings.Contains(out, "unknown daemon") {

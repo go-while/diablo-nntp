@@ -93,8 +93,8 @@ func TestAdmHourlyExpire(t *testing.T) {
 		}
 	}
 	p := s.Peer(t)
-	expect(t, p, 430, "STAT %s", id)
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(430, "STAT %s", id)
+	p.ExpectCmd(205, "QUIT")
 }
 
 // TestAdmDailyAtrim: adm/daily.atrim rotates the logs (adm/rot).
@@ -154,9 +154,9 @@ func TestAdmBiweeklyAtrim(t *testing.T) {
 	id := s.Inject(t, "e2e.test", 1)[0]
 	runAdm(t, s, "biweekly.atrim")
 	p := s.Peer(t)
-	expect(t, p, 435, "IHAVE %s", id) // still in history
-	expect(t, p, 223, "STAT %s", id)
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(435, "IHAVE %s", id) // still in history
+	p.ExpectCmd(223, "STAT %s", id)
+	p.ExpectCmd(205, "QUIT")
 }
 
 // TestAdmReaderScripts: adm/daily.reader and adm/weekly.reader run on a reader site.
