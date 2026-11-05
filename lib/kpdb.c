@@ -1516,10 +1516,17 @@ KPDBSort(KPDB *kpdb)
      * part of the offsets is stored.
      *
      * If the file cannot be mapped for writing, store them one by one.
+     * On OpenBSD always: it has no unified buffer cache (D-171), so a
+     * writable map would write back stale bytes of the page over a field
+     * another process has just replaced with pwrite().
      */
     {
+#if defined(__OpenBSD__)
+	char *wmap = NULL;
+#else
 	char *wmap = xmap(NULL, kpdb->kp_MapSize, PROT_READ | PROT_WRITE,
 			    MAP_SHARED, kpdb->kp_Fd, 0);
+#endif
 
 	for ((c = 0), (i = kpdb->kp_HeadLen); c < nc; ) {
 	    char buf[9];

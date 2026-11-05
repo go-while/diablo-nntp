@@ -447,3 +447,57 @@ func TestReaderForksInvalid(t *testing.T) {
 		})
 	}
 }
+
+// TestReaderDnsFeedForksInvalid: readerdns outside 1..1024 and readerfeedforks outside
+// 0..1024, in diablo.config or as -D and -F, stop dreaderd at startup with an error, as an
+// invalid readerforks does. Fails on main: they were read with strtol, so "bogus" or "0"
+// gave readerdns 0 (no DNS worker: every client got "400 Server too busy") and "-1" gave a
+// negative fork count, and dreaderd started.
+func TestReaderDnsFeedForksInvalid(t *testing.T) {
+	_, spool := spoolStore(t)
+	for _, c := range []struct{ key, conf, flag, want string }{
+		{key: "readerdns", conf: "bogus", want: "readerdns must be 1..1024"},
+		{key: "readerdns", conf: "0", want: "readerdns must be 1..1024"},
+		{key: "readerdns", conf: "2x", want: "readerdns must be 1..1024"},
+		{key: "readerdns", conf: "1025", want: "readerdns must be 1..1024"},
+		{key: "readerdns", conf: "1", flag: "0", want: "-D: readerdns must be 1..1024"},
+		{key: "readerfeedforks", conf: "-1", want: "readerfeedforks must be 0..1024"},
+		{key: "readerfeedforks", conf: "x", want: "readerfeedforks must be 0..1024"},
+		{key: "readerfeedforks", conf: "1", flag: "-1", want: "-F: readerfeedforks must be 0..1024"},
+	} {
+		name := c.key + " " + c.conf
+		opt := map[string]string{"readerdns": "-D", "readerfeedforks": "-F"}[c.key]
+		if c.flag != "" {
+			name = opt + " " + c.flag
+		}
+		t.Run(name, func(t *testing.T) {
+			s := NewReaderSite(t, ReaderOptions{Spool: spool, NoStart: true})
+			conf := s.ReadFile(t, "diablo.config")
+			if !strings.Contains(conf, c.key+"\t1\n") {
+				t.Fatalf("diablo.config has no %q line", c.key+"\t1")
+			}
+			s.WriteFile(t, "diablo.config",
+				strings.Replace(conf, c.key+"\t1\n", c.key+"\t"+c.conf+"\n", 1))
+			args := []string{"-d", "-p", PathHost, "-h", PathHost,
+				"-P", "[127.0.0.1]:" + strconv.Itoa(testkit.FreePort(t))}
+			if c.flag != "" {
+				args = append(args, opt, c.flag)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, filepath.Join(s.Bin, "dreaderd"), args...)
+			cmd.Dir = s.Dir
+			cmd.Env = append(os.Environ(), s.Env...)
+			out, err := cmd.CombinedOutput()
+			if ctx.Err() != nil {
+				t.Fatalf("dreaderd started with %s; output:\n%s", name, out)
+			}
+			if err == nil {
+				t.Fatalf("dreaderd exited 0 with %s; output:\n%s", name, out)
+			}
+			if !strings.Contains(string(out), c.want) {
+				t.Errorf("no %q error for %s; output:\n%s", c.want, name, out)
+			}
+		})
+	}
+}
