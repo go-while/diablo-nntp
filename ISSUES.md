@@ -1325,8 +1325,11 @@ X-Complaints-To (and NNTP-Posting-Date where built in) instead, with no Injectio
 Injection-Date. An option to keep generating Lines is possible the same way. posttrailer stays
 removed with no option: it should never have existed.
 
-Suggested order, one PR each: (1) Injection-Date and the step-2 refusals (Injection-Info, Xref,
-`.POSTED`); (2) Path `.POSTED` and Injection-Info in place of X-Trace, NNTP-Posting-Host and
-X-Complaints-To (with `cryptpw`); (3) the Date format and window; (4) syntax
+Suggested order, one PR each: (1) the step-2 refusals (Injection-Info, Xref, `.POSTED`);
+(2) Path `.POSTED`, Injection-Info and Injection-Date in place of X-Trace, NNTP-Posting-Host and
+X-Complaints-To (with `cryptpw`, and the either-or option; Injection-Date moved here from (1)
+because the legacy mode adds none); (3) the Date format and window; (4) syntax
 checks (Message-ID, Date, line length); (5) reserved group names; (6) the header-preservation
 items, Lines among them; (7) removing posttrailer.
+
+Status: (1) PR (#304). The rest open; (6)'s Lines part needs D-174 first.

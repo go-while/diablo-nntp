@@ -1,0 +1,1 @@
+- `dreaderd`: POST refuses an article that has an Injection-Info or an Xref header, or a Path with a `.POSTED` entry, as RFC 5537 section 3.5 requires of an injecting agent: these mark an article that was already injected. Before, Xref was removed silently and the others were accepted (ISSUES.md F-07).
