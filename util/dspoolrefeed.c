@@ -21,7 +21,7 @@
 #define HEADMAX	16384	/* the header part read from each article */
 
 void Usage(void);
-int ArticleHeader(const char *path, const History *h, char *buf, int bufSize);
+int ArticleHeader(const char *path, const History *h, char *buf, int bufSize, long *storeLen);
 const char *HeaderValue(const char *head, const char *name, char *out, int outSize);
 int GroupsMatch(const char *nglist);
 FILE *NextOutput(void);
@@ -158,6 +158,7 @@ main(int ac, char **av)
 	for (i = 0; i < n; ++i) {
 	    History h;
 	    char path[PATH_MAX];
+	    long storeLen = 0;
 	    char rel[PATH_MAX];
 	    char msgid[MAXMSGIDLEN + 1];
 	    char ngbuf[8192];
@@ -182,7 +183,7 @@ main(int ac, char **av)
 		continue;
 	    }
 	    ArticleFileName(path, sizeof(path), &h, ARTFILE_FILE);
-	    if (ArticleHeader(path, &h, head, HEADMAX) < 0) {
+	    if (ArticleHeader(path, &h, head, HEADMAX, &storeLen) < 0) {
 		++missing;
 		continue;
 	    }
@@ -211,7 +212,7 @@ main(int ac, char **av)
 	    }
 	    if (SpoolCompressed(H_SPOOL(h.exp)))
 		fprintf(OutFo, "%s %s %lld,%ld C%ld\n", rel, msgid,
-		    (long long)h.boffset, (long)h.bsize, (long)h.bsize);
+		    (long long)h.boffset, (long)h.bsize, storeLen);
 	    else
 		fprintf(OutFo, "%s %s %lld,%ld\n", rel, msgid,
 		    (long long)h.boffset, (long)h.bsize);
@@ -272,10 +273,13 @@ NextOutput(void)
  * ArticleHeader() - the article's header (up to bufSize bytes, NUL
  *		     terminated, CRs removed) from its spool file: plain or
  *		     compressed, with or without the spool article header.
+ *		     *storeLen is the size of the article on disk from the
+ *		     spool article header (the C<size> of a compressed
+ *		     article's queue line), or h->bsize without one.
  *		     Returns 0, or -1 when the file or the article is gone.
  */
 int
-ArticleHeader(const char *path, const History *h, char *buf, int bufSize)
+ArticleHeader(const char *path, const History *h, char *buf, int bufSize, long *storeLen)
 {
     /*
      * The history is in arrival order, so the next entry is usually in
@@ -302,9 +306,11 @@ ArticleHeader(const char *path, const History *h, char *buf, int bufSize)
     if (n != sizeof(ah) ||	/* a short old-format article at the end */
 	(uint8)ah.Magic1 != STORE_MAGIC1 || (uint8)ah.Magic2 != STORE_MAGIC2) {
 	ah.HeadLen = 0;		/* no spool article header */
+	ah.StoreLen = h->bsize;
     } else if (ah.HeadLen > sizeof(ah)) {
 	return(-1);
     }
+    *storeLen = (long)ah.StoreLen;
     if (SpoolCompressed(H_SPOOL(h->exp))) {
 #ifdef USE_ZLIB
 	gzFile gzf;
