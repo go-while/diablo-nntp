@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"fmt"
+	"github.com/go-while/nntp-testkit/client"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,17 +33,17 @@ func TestFeederFullDiskTryAgain(t *testing.T) {
 
 	ihave := msgID(t)
 	art := newArticle(ihave, "e2e.test", "full disk ihave", "body")
-	expect(t, p, 335, "IHAVE %s", ihave)
-	send(t, p, wire(art))
-	status(t, p, 436, "IHAVE on a full disk")
+	p.ExpectCmd(335, "IHAVE %s", ihave)
+	p.MustSend(client.Stuff(art))
+	p.ExpectStatus(436, "IHAVE on a full disk")
 
-	expect(t, p, 203, "MODE STREAM")
+	p.ExpectCmd(203, "MODE STREAM")
 	take := msgID(t)
-	takeArt := wire(newArticle(take, "e2e.test", "full disk takethis", "body"))
+	takeArt := client.Stuff(newArticle(take, "e2e.test", "full disk takethis", "body"))
 	if err := p.Send(fmt.Sprintf("TAKETHIS %s\r\n%s", take, takeArt)); err != nil {
 		t.Fatal(err)
 	}
-	status(t, p, 431, "TAKETHIS on a full disk")
+	p.ExpectStatus(431, "TAKETHIS on a full disk")
 
 	logged, _ := os.ReadFile(filepath.Join(s.Dir, "log", "general.log"))
 	if !strings.Contains(string(logged)+s.Proc.Stderr(), "No space left on device") {
@@ -53,16 +54,16 @@ func TestFeederFullDiskTryAgain(t *testing.T) {
 	if err := os.Remove(flag); err != nil {
 		t.Fatal(err)
 	}
-	expect(t, p, 335, "IHAVE %s", ihave)
-	send(t, p, wire(art))
-	status(t, p, 235, "IHAVE after room was made")
+	p.ExpectCmd(335, "IHAVE %s", ihave)
+	p.MustSend(client.Stuff(art))
+	p.ExpectStatus(235, "IHAVE after room was made")
 	if err := p.Send(fmt.Sprintf("TAKETHIS %s\r\n%s", take, takeArt)); err != nil {
 		t.Fatal(err)
 	}
-	status(t, p, 239, "TAKETHIS after room was made")
-	expect(t, p, 223, "STAT %s", ihave)
-	expect(t, p, 223, "STAT %s", take)
-	expect(t, p, 205, "QUIT")
+	p.ExpectStatus(239, "TAKETHIS after room was made")
+	p.ExpectCmd(223, "STAT %s", ihave)
+	p.ExpectCmd(223, "STAT %s", take)
+	p.ExpectCmd(205, "QUIT")
 }
 
 // TestFeederFullDiskBacksOff: after 10 articles in a row whose spool file could not be created
@@ -83,13 +84,13 @@ func TestFeederFullDiskBacksOff(t *testing.T) {
 	if err := os.WriteFile(flag, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	expect(t, p, 203, "MODE STREAM")
+	p.ExpectCmd(203, "MODE STREAM")
 	for i := 0; i < 10; i++ {
 		id := msgID(t)
-		if err := p.Send(fmt.Sprintf("TAKETHIS %s\r\n%s", id, wire(newArticle(id, "e2e.test", "full disk backoff", "body")))); err != nil {
+		if err := p.Send(fmt.Sprintf("TAKETHIS %s\r\n%s", id, client.Stuff(newArticle(id, "e2e.test", "full disk backoff", "body")))); err != nil {
 			t.Fatal(err)
 		}
-		status(t, p, 431, fmt.Sprintf("TAKETHIS %d on a full disk", i+1))
+		p.ExpectStatus(431, fmt.Sprintf("TAKETHIS %d on a full disk", i+1))
 	}
 	line, err := p.ReadLine()
 	if err != nil || !strings.HasPrefix(line, "400 ") {
@@ -108,10 +109,10 @@ func TestFeederFullDiskBacksOff(t *testing.T) {
 	}
 	q := s.Peer(t)
 	id := msgID(t)
-	expect(t, q, 335, "IHAVE %s", id)
-	send(t, q, wire(newArticle(id, "e2e.test", "after the back-off", "body")))
-	status(t, q, 235, "IHAVE after room was made")
-	expect(t, q, 205, "QUIT")
+	q.ExpectCmd(335, "IHAVE %s", id)
+	q.MustSend(client.Stuff(newArticle(id, "e2e.test", "after the back-off", "body")))
+	q.ExpectStatus(235, "IHAVE after room was made")
+	q.ExpectCmd(205, "QUIT")
 }
 
 const fullDiskSource = `#define _GNU_SOURCE

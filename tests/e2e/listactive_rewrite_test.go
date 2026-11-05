@@ -18,8 +18,8 @@ func TestReaderListActiveAfterRecordRewrite(t *testing.T) {
 		Files: map[string]string{"dcontrol.ctl": "newgroup:*:*:doit\n"},
 	})
 	c := s.Reader(t)
-	defer expect(t, c, 205, "QUIT")
-	expect(t, c, 215, "LIST ACTIVE")
+	defer c.ExpectCmd(205, "QUIT")
+	c.ExpectCmd(215, "LIST ACTIVE")
 	if l := strings.Join(c.ReadDotLines(), "\n"); !strings.Contains(l, "e2e.test") {
 		t.Fatalf("warm-up listing lacks e2e.test:\n%s", l)
 	}
@@ -44,7 +44,7 @@ func TestReaderListActiveAfterRecordRewrite(t *testing.T) {
 		t.Fatal("the newgroup control message was not applied within 10 s")
 	}
 
-	expect(t, c, 215, "LIST ACTIVE")
+	c.ExpectCmd(215, "LIST ACTIVE")
 	if l := strings.Join(c.ReadDotLines(), "\n"); !strings.Contains(l, "e2e.test") || !strings.Contains(l, "e2e.other") {
 		t.Errorf("the first LIST ACTIVE after the rewrite is missing a group:\n%s", l)
 	}

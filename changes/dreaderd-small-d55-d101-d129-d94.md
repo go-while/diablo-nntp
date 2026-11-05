@@ -1,0 +1,4 @@
+- `dreaderd`: OVER, XOVER, HDR, XHDR, XPAT and NEWNEWS look at no more than 10000 overview records in one pass and then give other connections a turn, instead of walking a very wide range of missing articles (possible in xref-slave mode) in one go (D-55).
+- `dreaderd`: a line from a spool server longer than 1 MiB is no longer buffered without end: the spool connection is dropped and the event is logged (D-101).
+- `dreaderd`: a `dserver.hosts` line longer than the read buffer is skipped whole and logged as `dserver.hosts: line N is longer than M bytes`; its tail is no longer read as an entry of its own (D-94).
+- `dclient`: connects with `getaddrinfo()`, so IPv6 hosts work; every address is tried in order (D-129).

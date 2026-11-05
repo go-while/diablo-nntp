@@ -1073,7 +1073,7 @@ updateHistory(void)
 	const char *filename = PatDbExpand(DExpireOverListPat);
 
 	DExpOverList = PrivateFOpen(filename, "a", 0640);
-	if (DExpOverList == NULL)
+	if (DExpOverList == NULL)	/* expire anyway, without the list */
 	    fprintf(stderr, "Error opening %s: %s\n", filename,
 						      strerror(errno));
     }
@@ -1263,7 +1263,7 @@ updateHistory(void)
 			    fprintf(stderr, "history write failed: %s\n",
 							strerror(errno));
 
-			if (WriteHashesToFileOpt == 1)
+			if (WriteHashesToFileOpt == 1 && DExpOverList != NULL)
 			    fwrite(&h->hv, sizeof(hash_t), 1, DExpOverList);
 		    }
 		    ++countExp;
@@ -1272,7 +1272,7 @@ updateHistory(void)
 	}
     }
 
-    if (WriteHashesToFileOpt == 1)
+    if (WriteHashesToFileOpt == 1 && DExpOverList != NULL)
 	fclose(DExpOverList);
 
     if (TestOpt) {

@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"github.com/go-while/nntp-testkit/client"
 	"strings"
 	"testing"
 )
@@ -33,10 +34,10 @@ func TestMessageIDHashUnchanged(t *testing.T) {
 			s := NewSite(t, SiteOptions{Config: map[string]string{"hash": method}})
 			const stored = 1
 			p := s.Peer(t)
-			expect(t, p, 335, "IHAVE %s", ids[stored])
-			send(t, p, wire(newArticle(ids[stored], "e2e.test", "hash", "body")))
-			status(t, p, 235, "IHAVE")
-			expect(t, p, 205, "QUIT")
+			p.ExpectCmd(335, "IHAVE %s", ids[stored])
+			p.MustSend(client.Stuff(newArticle(ids[stored], "e2e.test", "hash", "body")))
+			p.ExpectStatus(235, "IHAVE")
+			p.ExpectCmd(205, "QUIT")
 
 			for i, id := range ids {
 				out, err := s.TryRun("dilookup", id)

@@ -26,7 +26,7 @@ func TestReaderListWildcardLinear(t *testing.T) {
 		"*" + long:  true,
 		"**":        true,
 	} {
-		expect(t, c, 215, "LIST ACTIVE %s", pat)
+		c.ExpectCmd(215, "LIST ACTIVE %s", pat)
 		got := len(c.ReadDotLines()) > 0
 		if got != want {
 			t.Errorf("LIST ACTIVE %s: matched=%v, want %v", pat, got, want)
@@ -35,12 +35,12 @@ func TestReaderListWildcardLinear(t *testing.T) {
 
 	// a literal that is in no group name (the names contain a lowercase x)
 	pat := strings.Repeat("*?", 22) + "X"
-	send(t, c, "LIST ACTIVE "+pat+"\r\n")
+	c.MustSend("LIST ACTIVE " + pat + "\r\n")
 	time.Sleep(2 * time.Second)
 	// time the connect too: the greeting of the second client is what a stalled reader delays
 	start := time.Now()
 	c2 := s.Reader(t)
-	expect(t, c2, 111, "DATE")
+	c2.ExpectCmd(111, "DATE")
 	if d := time.Since(start); d > 2*time.Second {
 		t.Errorf("another client was blocked for %v", d)
 	}

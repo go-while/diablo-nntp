@@ -1,0 +1,6 @@
+- `dexpire -o`: when the dexpover list cannot be opened, dexpire reports it and expires anyway; before, it crashed (D-105).
+- `dhisexpire`: a history header with a record size of 0, or smaller than a record, is refused as corrupted instead of crashing (D-104).
+- `pgpverify`: out of memory or descriptors gives "could not verify" (exit status 2) instead of a crash (D-111).
+- External filter (`diab-filter`): a reply that fills the reply buffer is no longer written one byte past it, and a write that makes no progress ends instead of looping (D-97).
+- `dnewslink`: a write that returns 0 ends the connection instead of looping (D-115).
+- Removed dead code: `GetSpoolFromPath()` (it printed a debug line; D-121) and the never-compiled `create_named_socket()` in filter/socket.c and contrib/netremote/socket.c (D-112).

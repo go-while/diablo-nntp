@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"fmt"
+	"github.com/go-while/nntp-testkit/fakeserver"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -78,15 +79,17 @@ func TestDnewslinkFullDiskKeepsQueue(t *testing.T) {
 	fill.Close()
 	exec.Command("sync").Run()
 
-	port := dnlPeer(t, func(line string) (string, bool) {
+	srv := fakeserver.New(t, fakeserver.Options{Greeting: "200 fake", Handler: fakeserver.LineHandler(func(_ *fakeserver.Conn, line string) ([]string, bool) {
+		line = strings.ToLower(strings.TrimSpace(line))
 		switch {
 		case strings.HasPrefix(line, "mode stream"):
-			return "203 stream ok\r\n", false
+			return []string{"203 stream ok"}, false
 		case strings.HasPrefix(line, "check "):
-			return "400 going away\r\n", true
+			return []string{"400 going away"}, true
 		}
-		return "", false
-	})
+		return nil, false
+	})})
+	port := srv.Port()
 	out, err := s.TryRun("dnewslink", "-N", "1", "-S", "0", "-b", "out.S%05d", "-h", "127.0.0.1",
 		"-P", strconv.Itoa(port), "-t", "5")
 	t.Logf("dnewslink: err=%v\n%s", err, out)

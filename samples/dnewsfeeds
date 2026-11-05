@@ -484,6 +484,9 @@
 #	Specify the maximum number of concurrent connections to open
 #	to the host. The maximum is 32, but we suggest you never specify
 #	more than 3 to any external feed.
+#	With realtime, the realtime dnewslink counts as one of them,
+#	but dspoolout keeps at least one batch dnewslink for the backlog:
+#	maxparallel 1 with realtime can still open two connections.
 #
 #  stream		on|off
 #	Enable or disable NNTP streaming for this label (DEFAULT: on)

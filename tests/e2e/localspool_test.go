@@ -15,6 +15,7 @@ package e2e
 import (
 	"bufio"
 	"fmt"
+	"github.com/go-while/nntp-testkit/client"
 	"net"
 	"os"
 	"path/filepath"
@@ -93,16 +94,16 @@ func localSpoolSite(t *testing.T, extra int64, n int) (*Site, string, []string) 
 		t.Fatal(err)
 	}
 	p := s.dialFrom(t, PeerIP)
-	expect(t, p, 335, "IHAVE %s", id)
-	send(t, p, wire(art))
-	status(t, p, 235, "IHAVE")
+	p.ExpectCmd(335, "IHAVE %s", id)
+	p.MustSend(client.Stuff(art))
+	p.ExpectStatus(235, "IHAVE")
 	return s, id, body
 }
 
 func TestReaderLocalSpoolBody(t *testing.T) {
 	s, id, body := localSpoolSite(t, 0, 14000) // ~1 MB, many read() buffers
 	c := s.Reader(t)
-	expect(t, c, 222, "BODY %s", id)
+	c.ExpectCmd(222, "BODY %s", id)
 	got := c.ReadDotLines()
 	if len(got) != len(body) {
 		t.Fatalf("BODY via localspool: got %d lines, want %d", len(got), len(body))
@@ -112,7 +113,7 @@ func TestReaderLocalSpoolBody(t *testing.T) {
 			t.Fatalf("BODY via localspool: line %d = %q, want %q", i, got[i], body[i])
 		}
 	}
-	expect(t, c, 205, "QUIT")
+	c.ExpectCmd(205, "QUIT")
 }
 
 func TestReaderLocalSpoolShortFile(t *testing.T) {
@@ -125,5 +126,5 @@ func TestReaderLocalSpoolShortFile(t *testing.T) {
 		t.Fatalf("BODY of a short spool file: %q, want 430", line)
 	}
 	// The connection is still usable afterwards.
-	expect(t, c, 205, "QUIT")
+	c.ExpectCmd(205, "QUIT")
 }

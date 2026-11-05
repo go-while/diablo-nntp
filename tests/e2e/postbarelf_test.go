@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	testkit "github.com/go-while/nntp-testkit"
 	"slices"
 	"strings"
 	"sync"
@@ -42,8 +43,8 @@ func TestReaderPostBareLFHeaders(t *testing.T) {
 	postRaw := func(raw string) (int, string) {
 		c := s.Reader(t)
 		defer c.Close()
-		expect(t, c, 340, "POST")
-		send(t, c, raw)
+		c.ExpectCmd(340, "POST")
+		c.MustSend(raw)
 		code, line, err := c.ReadStatus()
 		if err != nil {
 			t.Fatalf("POST: %v", err)
@@ -77,7 +78,7 @@ func TestReaderPostBareLFHeaders(t *testing.T) {
 		t.Fatalf("bare-LF post: %q, want 240", line)
 	}
 	var got []string
-	waitFor(t, 15*time.Second, "the outgoing server to receive the bare-LF post", func() bool {
+	testkit.WaitFor(t, 15*time.Second, "the outgoing server to receive the bare-LF post", func() bool {
 		mu.Lock()
 		defer mu.Unlock()
 		for _, a := range arts {

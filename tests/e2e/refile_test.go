@@ -1,12 +1,11 @@
 package e2e
 
 import (
-	"net"
+	"github.com/go-while/nntp-testkit/fakeserver"
 	"os"
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 )
 
 // TestDnewslinkRefileKeepsFlags (D-63): when the peer goes away with streamed entries still
@@ -16,46 +15,19 @@ import (
 func TestDnewslinkRefileKeepsFlags(t *testing.T) {
 	s := NewSite(t, SiteOptions{NoStart: true})
 	dnlSpool(t, s)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ln.Close()
-	port := ln.Addr().(*net.TCPAddr).Port
-	go func() {
-		c, err := ln.Accept()
-		if err != nil {
-			return
+	srv := fakeserver.New(t, fakeserver.Options{Greeting: "200 fake", Handler: fakeserver.LineHandler(func(_ *fakeserver.Conn, line string) ([]string, bool) {
+		line = strings.ToLower(strings.TrimSpace(line))
+		switch {
+		case strings.HasPrefix(line, "mode headfeed"):
+			return []string{"250 ok"}, false
+		case strings.HasPrefix(line, "mode stream"):
+			return []string{"203 stream ok"}, false
+		case strings.HasPrefix(line, "check"):
+			return nil, true // go away with the CHECKs unanswered
 		}
-		defer c.Close()
-		c.Write([]byte("200 fake\r\n"))
-		buf := make([]byte, 4096)
-		var got string
-		for {
-			c.SetReadDeadline(time.Now().Add(10 * time.Second))
-			n, err := c.Read(buf)
-			if err != nil {
-				return
-			}
-			got += string(buf[:n])
-			for {
-				i := strings.Index(got, "\n")
-				if i < 0 {
-					break
-				}
-				line := strings.ToLower(strings.TrimSpace(got[:i]))
-				got = got[i+1:]
-				switch {
-				case strings.HasPrefix(line, "mode headfeed"):
-					c.Write([]byte("250 ok\r\n"))
-				case strings.HasPrefix(line, "mode stream"):
-					c.Write([]byte("203 stream ok\r\n"))
-				case strings.HasPrefix(line, "check"):
-					return // go away with the CHECKs unanswered
-				}
-			}
-		}
-	}()
+		return nil, false
+	})})
+	port := srv.Port()
 	q := "D.00000001/B.0001 <a1@e2e.test> 0,100 H C50\nD.00000001/B.0001 <a2@e2e.test> 100,100 H C50\n"
 	if err := os.WriteFile(s.Dir+"/dqueue/out.S00000", []byte(q), 0o644); err != nil {
 		t.Fatal(err)

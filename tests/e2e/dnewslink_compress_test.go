@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"bytes"
+	"github.com/go-while/nntp-testkit/fakeserver"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,20 +22,22 @@ func TestDnewslinkBadCompressLevel(t *testing.T) {
 	s := NewSite(t, SiteOptions{NoStart: true})
 	dnlSpool(t, s)
 	var checked atomic.Bool
-	port := dnlPeer(t, func(line string) (string, bool) {
+	srv := fakeserver.New(t, fakeserver.Options{Greeting: "200 fake", Handler: fakeserver.LineHandler(func(_ *fakeserver.Conn, line string) ([]string, bool) {
+		line = strings.ToLower(strings.TrimSpace(line))
 		switch {
 		case strings.HasPrefix(line, "mode stream"):
-			return "203 stream ok\r\n", false
+			return []string{"203 stream ok"}, false
 		case strings.HasPrefix(line, "mode compress"):
-			return "207 compress ok\r\n", false
+			return []string{"207 compress ok"}, false
 		case strings.HasPrefix(line, "check "):
 			if strings.HasPrefix(line, "check <z1@") {
 				checked.Store(true)
 			}
-			return "438 " + strings.Fields(line)[1] + "\r\n", false
+			return []string{"438 " + strings.Fields(line)[1]}, false
 		}
-		return "", false
-	})
+		return nil, false
+	})})
+	port := srv.Port()
 	q := "D.00000001/B.0001 <z1@e2e.test> 0,100\n"
 	if err := os.WriteFile(s.Dir+"/dqueue/out.S00000", []byte(q), 0o644); err != nil {
 		t.Fatal(err)

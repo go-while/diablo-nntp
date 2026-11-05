@@ -126,7 +126,7 @@ expire * trad
 func NewSite(tb testing.TB, o SiteOptions) *Site {
 	tb.Helper()
 	s := &Site{Dir: tb.TempDir(), Bin: bin(tb)}
-	port := freePort(tb)
+	port := testkit.FreePort(tb)
 	s.Addr = net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
 	s.Env = []string{"DIABLO_CONFIG_PATH=" + filepath.Join(s.Dir, "diablo.config")}
 
@@ -175,7 +175,7 @@ func NewSite(tb testing.TB, o SiteOptions) *Site {
 
 	// diablo rebuilds dhosts.cache in a child process after it starts listening; until the
 	// cache is there every peer is refused.
-	waitFor(tb, testkit.Deadline(), "dhosts.cache", func() bool {
+	testkit.WaitFor(tb, testkit.Deadline(), "dhosts.cache", func() bool {
 		_, err := os.Stat(filepath.Join(s.Dir, "dhosts.cache"))
 		return err == nil
 	})
@@ -296,29 +296,6 @@ func (s *Site) ReadFile(tb testing.TB, rel string) string {
 		tb.Fatal(err)
 	}
 	return string(b)
-}
-
-// freePort returns a TCP port of 127.0.0.1 that was free a moment ago.
-func freePort(tb testing.TB) int {
-	tb.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		tb.Fatal(err)
-	}
-	defer func() { _ = l.Close() }()
-	return l.Addr().(*net.TCPAddr).Port
-}
-
-// waitFor polls cond every 50ms until it holds or d passes; then it fails the test with what.
-func waitFor(tb testing.TB, d time.Duration, what string, cond func() bool) {
-	tb.Helper()
-	limit := time.Now().Add(d)
-	for !cond() {
-		if time.Now().After(limit) {
-			tb.Fatalf("timed out after %v waiting for %s", d, what)
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
 }
 
 func or(s, def string) string {

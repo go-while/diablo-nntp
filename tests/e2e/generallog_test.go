@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"github.com/go-while/nntp-testkit/client"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,10 +31,10 @@ func TestGeneralLogNotWritable(t *testing.T) {
 		t.Fatalf("peer greeting %q, want 200", p.Greeting)
 	}
 	id := msgID(t)
-	expect(t, p, 335, "IHAVE %s", id)
-	send(t, p, wire(newArticle(id, "e2e.test", "general log not writable", "body")))
-	status(t, p, 235, "IHAVE article")
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(335, "IHAVE %s", id)
+	p.MustSend(client.Stuff(newArticle(id, "e2e.test", "general log not writable", "body")))
+	p.ExpectStatus(235, "IHAVE article")
+	p.ExpectCmd(205, "QUIT")
 
 	if !strings.Contains(s.Proc.Stderr(), "Unable to open log file") {
 		t.Errorf("diablo did not report the unwritable general log; output:\n%s", s.Proc.Stderr())

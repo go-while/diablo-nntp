@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"fmt"
+	"github.com/go-while/nntp-testkit/client"
 	"strings"
 	"testing"
 	"time"
@@ -55,9 +56,9 @@ func TestControlWithoutFromNoFdLeak(t *testing.T) {
 	sendOne := func(i int) {
 		a := noFrom(i)
 		id := headerValue(a, "Message-ID")
-		expect(t, p, 335, "IHAVE %s", id)
-		send(t, p, wire(a))
-		status(t, p, 235, "IHAVE control without From")
+		p.ExpectCmd(335, "IHAVE %s", id)
+		p.MustSend(client.Stuff(a))
+		p.ExpectStatus(235, "IHAVE control without From")
 	}
 	sendOne(0) // warm-up: the feed child has opened what it keeps open
 	time.Sleep(500 * time.Millisecond)
@@ -75,5 +76,5 @@ func TestControlWithoutFromNoFdLeak(t *testing.T) {
 	if worst >= 20 {
 		t.Errorf("40 control articles without From: left the feed child with %d more open descriptors", worst)
 	}
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(205, "QUIT")
 }

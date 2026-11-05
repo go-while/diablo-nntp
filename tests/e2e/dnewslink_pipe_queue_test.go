@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"context"
+	"github.com/go-while/nntp-testkit/fakeserver"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,15 +18,17 @@ import (
 func TestDnewslinkPipePreservesPreviousQueue(t *testing.T) {
 	s := NewSite(t, SiteOptions{NoStart: true})
 	dnlSpool(t, s)
-	port := dnlPeer(t, func(line string) (string, bool) {
+	srv := fakeserver.New(t, fakeserver.Options{Greeting: "200 fake", Handler: fakeserver.LineHandler(func(_ *fakeserver.Conn, line string) ([]string, bool) {
+		line = strings.ToLower(strings.TrimSpace(line))
 		switch {
 		case strings.HasPrefix(line, "mode stream"):
-			return "203 stream ok\r\n", false
+			return []string{"203 stream ok"}, false
 		case strings.HasPrefix(line, "check "):
-			return "400 going away\r\n", true
+			return []string{"400 going away"}, true
 		}
-		return "", false
-	})
+		return nil, false
+	})})
+	port := srv.Port()
 	old := "D.00000001/B.0001 <old@e2e.test> 0,100\n"
 	newEntry := "D.00000001/B.0001 <new@e2e.test> 100,100\n"
 	path := filepath.Join(s.Dir, "dqueue", "out.S00000")
@@ -63,15 +66,17 @@ func TestDnewslinkPipePreservesPreviousQueue(t *testing.T) {
 func TestDnewslinkPipeQueueReplacedWhileWaiting(t *testing.T) {
 	s := NewSite(t, SiteOptions{NoStart: true})
 	dnlSpool(t, s)
-	port := dnlPeer(t, func(line string) (string, bool) {
+	srv := fakeserver.New(t, fakeserver.Options{Greeting: "200 fake", Handler: fakeserver.LineHandler(func(_ *fakeserver.Conn, line string) ([]string, bool) {
+		line = strings.ToLower(strings.TrimSpace(line))
 		switch {
 		case strings.HasPrefix(line, "mode stream"):
-			return "203 stream ok\r\n", false
+			return []string{"203 stream ok"}, false
 		case strings.HasPrefix(line, "check "):
-			return "400 going away\r\n", true
+			return []string{"400 going away"}, true
 		}
-		return "", false
-	})
+		return nil, false
+	})})
+	port := srv.Port()
 	path := filepath.Join(s.Dir, "dqueue", "out.S00000")
 	if err := os.WriteFile(path, []byte("old queue\n"), 0o640); err != nil {
 		t.Fatal(err)

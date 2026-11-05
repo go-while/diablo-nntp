@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	testkit "github.com/go-while/nntp-testkit"
+	"github.com/go-while/nntp-testkit/client"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -54,9 +56,9 @@ func TestFeederIdleClosesRemovedSpoolFiles(t *testing.T) {
 	spool := filepath.Join(s.Dir, "spool", "news")
 	p := s.Peer(t)
 	first := msgID(t)
-	expect(t, p, 335, "IHAVE %s", first)
-	send(t, p, wire(newArticle(first, "e2e.test", "idle close first", "body")))
-	status(t, p, 235, "IHAVE first")
+	p.ExpectCmd(335, "IHAVE %s", first)
+	p.MustSend(client.Stuff(newArticle(first, "e2e.test", "idle close first", "body")))
+	p.ExpectStatus(235, "IHAVE first")
 
 	// what dexpire does to an expired directory
 	dirs, _ := filepath.Glob(filepath.Join(spool, "D.*"))
@@ -74,15 +76,15 @@ func TestFeederIdleClosesRemovedSpoolFiles(t *testing.T) {
 
 	// the connection stays quiet: the removed files must be closed
 	var got []string
-	waitFor(t, 20*time.Second, "the removed spool files closed", func() bool {
+	testkit.WaitFor(t, 20*time.Second, "the removed spool files closed", func() bool {
 		got = deletedSpoolFds(t, s.Proc.Pid(), spool)
 		return len(got) == 0
 	})
 
 	second := msgID(t)
-	expect(t, p, 335, "IHAVE %s", second)
-	send(t, p, wire(newArticle(second, "e2e.test", "idle close second", "body")))
-	status(t, p, 235, "IHAVE after the idle close")
-	expect(t, p, 223, "STAT %s", second)
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(335, "IHAVE %s", second)
+	p.MustSend(client.Stuff(newArticle(second, "e2e.test", "idle close second", "body")))
+	p.ExpectStatus(235, "IHAVE after the idle close")
+	p.ExpectCmd(223, "STAT %s", second)
+	p.ExpectCmd(205, "QUIT")
 }

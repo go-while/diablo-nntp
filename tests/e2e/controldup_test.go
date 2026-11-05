@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	testkit "github.com/go-while/nntp-testkit"
 	"os"
 	"path/filepath"
 	"slices"
@@ -51,13 +52,13 @@ func TestControlDuplicateHeadersRefused(t *testing.T) {
 	}
 	exists := func(g string) bool {
 		c := s.Reader(t)
-		defer expect(t, c, 205, "QUIT")
-		expect(t, c, 215, "LIST ACTIVE %s", g)
+		defer c.ExpectCmd(205, "QUIT")
+		c.ExpectCmd(215, "LIST ACTIVE %s", g)
 		return slices.ContainsFunc(c.ReadDotLines(), func(l string) bool { return strings.HasPrefix(l, g+" ") })
 	}
 
 	feedReader(t, s, st, "e2e.test", control("e2e.single"))
-	waitFor(t, 10*time.Second, "e2e.single created by a normal control message", func() bool { return exists("e2e.single") })
+	testkit.WaitFor(t, 10*time.Second, "e2e.single created by a normal control message", func() bool { return exists("e2e.single") })
 
 	feedReader(t, s, st, "e2e.test", control("e2e.first", "e2e.second"))
 	time.Sleep(time.Second)
@@ -69,7 +70,7 @@ func TestControlDuplicateHeadersRefused(t *testing.T) {
 
 	feedReader(t, s, st, "e2e.test", withSenders(control("e2e.sender"), "a@example.invalid", "b@example.invalid"))
 	feedReader(t, s, st, "e2e.test", withSenders(control("e2e.onesender"), "a@example.invalid"))
-	waitFor(t, 10*time.Second, "e2e.onesender created by a control message with one Sender:", func() bool { return exists("e2e.onesender") })
+	testkit.WaitFor(t, 10*time.Second, "e2e.onesender created by a control message with one Sender:", func() bool { return exists("e2e.onesender") })
 	if exists("e2e.sender") {
 		t.Errorf("e2e.sender created by a control message with two Sender: headers")
 	}
