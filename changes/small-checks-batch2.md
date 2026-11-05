@@ -1,0 +1,5 @@
+- `diablo`: a `dontstore yes` metaspool without spool lines no longer crashes diablo at start (division by zero with allocstrat single); more than 100 `spool` lines in one metaspool are an error instead of a write past the array (D-107).
+- An unconfigured spool number in a history record (a spool removed from `dspool.ctl`) maps to `/dev/null` instead of a path relative to the current directory, for dexpire, dcancel and dreadart (D-119).
+- `MaxInboundRate`: a value that ends in `;` or right after an hour number is no longer read past its end (D-95).
+- KP databases: the key of a damaged record that has no end within the record is no longer read past it (D-93).
+- `dreaderd`: a huge article number from a client in window numbering no longer overflows; it is "no such article" (D-126).

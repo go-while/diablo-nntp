@@ -135,6 +135,27 @@ KPDBFatalIO(KPDB *kpdb, const char *operation)
 }
 
 /*
+ * The offsets and sizes in the code are ints (kp_MapSize, the append
+ * offset, the lock offsets), and the format has 8 hex digits for an
+ * offset.  A KP file is a small control database (the active file, a few
+ * hundred bytes per group), so instead of widening everything a file that
+ * would pass 2 GB (INT_MAX) is refused: log and exit, as for any other
+ * failure that leaves the database unusable.  D-122: before, the offset
+ * wrapped negative between 2 and 4 GB, and to a wrong positive one above.
+ */
+static void
+KPDBCheckSize(KPDB *kpdb, off_t size, int add)
+{
+    if (size > (off_t)INT_MAX - 1 - add) {
+	logit(LOG_ERR, "KPDB %s is too large: %lld bytes (limit %d)",
+	    kpdb->kp_FileName, (long long)size, INT_MAX);
+	fprintf(stderr, "KPDB %s is too large: %lld bytes (limit %d)\n",
+	    kpdb->kp_FileName, (long long)size, INT_MAX);
+	exit(1);
+    }
+}
+
+/*
  * KPDBLockRec() - lock a record, or the append lock at offset 4, for a
  * read-modify-write.  Without the lock a number could be handed out twice
  * or two appends mixed, and calling the record missing would make callers
@@ -301,6 +322,7 @@ KPDBReOpen(KPDB *kpdb)
 	}
 
 	if (fstat(kpdb->kp_Fd, &st) == 0) {
+	    KPDBCheckSize(kpdb, st.st_size, 0);
 	    if (hflock(kpdb->kp_Fd, 0, XLOCK_EX|XLOCK_NB) < 0) {
 		dosort = 0;
 	    } else {
@@ -454,8 +476,9 @@ KPDBGetField(const char *rec, int recLen, const char *tok, int *plen, const char
      */
 
     if (tok == NULL) {
-	i = KEY_OFF;
-	for (l = i; rec[l] != ' ' && rec[l] != '\t' && rec[l] != '\n'; ++l)
+	/* a damaged record may end inside the key: stay within recLen */
+	i = (KEY_OFF < recLen) ? KEY_OFF : recLen;
+	for (l = i; l < recLen && rec[l] != ' ' && rec[l] != '\t' && rec[l] != '\n'; ++l)
 	    ;
 	if (plen)
 	    *plen = l - i;
@@ -695,9 +718,11 @@ KPDBWriteEncode(KPDB *kpdb, const char *key, const char *tok, const char *data, 
 /*
  * KPDBWrite()- overwrite, replace, or create a KP record.  If a record
  *		was read with lockMe, it must be written with unlockMe
- *		set.  A NULL token may be specified to simply unlock a
- *		record without writing.  A NULL token will create a
- *		new record if the key does not exist.
+ *		set.  A NULL token writes nothing: with KP_UNLOCK it
+ *		only unlocks the record, with KP_LOCK it only looks the
+ *		record up and locks it, otherwise it only looks it up.
+ *		It never creates a record.  The return value is 0 if the
+ *		record exists and -1 if not (D-118).
  *
  *		KPDBWrite() may decide to do a resort/remap if necessary.
  *		This means that any data returned previously may be lost.
@@ -768,9 +793,21 @@ KPDBWrite(KPDB *kpdb, const char *key, const char *tok, const char *data, int lo
     /*
      * Best case - simple replacement of existing data, no append required
      */
-    int dataLen = strlen(data);
+    int dataLen;
     int tlock = KP_LOCK;
     int lockoff = 0;
+
+    /*
+     * No token: nothing to write (and nothing to create), see above.
+     */
+    if (tok == NULL) {
+	int r = KPDBLookup(kpdb, key, (lockMe == KP_LOCK) ? KP_LOCK : 0, 0);
+
+	if (r == 0 && lockMe == KP_UNLOCK)
+	    hflock(kpdb->kp_Fd, kpdb->kp_Cache - kpdb->kp_MapBase, XLOCK_UN);
+	return(r);
+    }
+    dataLen = strlen(data);
 
     /*
      * If record already locked, do not double-lock it
@@ -901,9 +938,14 @@ KPDBWrite(KPDB *kpdb, const char *key, const char *tok, const char *data, int lo
 	 * Lock new record
 	 */
 
-	nlockoff = lseek(kpdb->kp_Fd, 0L, 2);
-	if (nlockoff < 0)
-	    KPDBFatalIO(kpdb, "append seek");
+	{
+	    off_t endoff = lseek(kpdb->kp_Fd, 0L, 2);
+
+	    if (endoff < 0)
+		KPDBFatalIO(kpdb, "append seek");
+	    KPDBCheckSize(kpdb, endoff, 0);
+	    nlockoff = (int)endoff;
+	}
 	/*
 	 * A crash can leave a torn record or a block of NULs at the end of
 	 * the file.  A record appended right behind it would share its line
@@ -928,7 +970,10 @@ KPDBWrite(KPDB *kpdb, const char *key, const char *tok, const char *data, int lo
 	    int odataLen;
 	    const char *odata;
 	    int l = kpdb->kp_CacheLen + strlen(tok) + strlen(data) + 8;
-	    char *p = zalloc(&SysMemPool, l);
+	    char *p;
+
+	    KPDBCheckSize(kpdb, nlockoff, l);
+	    p = zalloc(&SysMemPool, l);
 
 	    /* Delete the record we merge from, as found by the lookup under
 	     * the append lock.  lockoff is from the first lookup and may be
@@ -968,7 +1013,10 @@ KPDBWrite(KPDB *kpdb, const char *key, const char *tok, const char *data, int lo
 		goto append_failed;
 	} else {
 	    int l = 20 + strlen(key) + strlen(tok) + dataLen;
-	    char *p = zalloc(&SysMemPool, l);
+	    char *p;
+
+	    KPDBCheckSize(kpdb, nlockoff, l);
+	    p = zalloc(&SysMemPool, l);
 	    snprintf(p, l, "+00000000.0000:%s %s=%s\n", key, tok, data);
 	    if (KPDBWriteAt(kpdb->kp_Fd, p, strlen(p), nlockoff) < 0) {
 		writeError = errno;
@@ -1080,6 +1128,7 @@ KPDBLookup(KPDB *kpdb, const char *key, int lockMe, int forceCheck)
 {
     int l = strlen(key);
     int found;
+    int sortWaited = 0;
 
 again:
     found = -1;
@@ -1168,6 +1217,25 @@ again:
     }
 
     /*
+     * A miss while a sort rewrites the offsets proves nothing: the sort
+     * (all callers hold the append lock, offset 4) leaves the C counter at
+     * the "needs sort" value from its first step to its last, and a table
+     * half rewritten sends the binary search the wrong way (D-117).  Wait
+     * for the append lock, which is free when the sort is over, and search
+     * again once.  A process that holds the lock itself is the sorter or
+     * the writer behind it: nothing to wait for.
+     */
+    if (found < 0 && kpdb->kp_Lock4 == 0 && sortWaited == 0 &&
+	(uint32)strtol(kpdb->kp_MapBase + C_OFF, NULL, 16) > (uint32)kpdb->kp_ResortLimit
+    ) {
+	sortWaited = 1;
+	if (hflock(kpdb->kp_Fd, 4, XLOCK_EX) == 0) {
+	    hflock(kpdb->kp_Fd, 4, XLOCK_UN);
+	    goto again;
+	}
+    }
+
+    /*
      * Did database get larger?
      */
 
@@ -1231,7 +1299,7 @@ KPDBLookupBinary(
     int doRight = 0;
     const char *p = kpdb->kp_MapBase;
 
-    c = (b + e) >> 1;	/* rounds down */
+    c = b + ((e - b) >> 1);	/* rounds down; b + e would overflow near 2 GB (D-122) */
 
     while (c >= b && p[c] != '\n')
 	--c;
@@ -1434,26 +1502,66 @@ KPDBSort(KPDB *kpdb)
     if (KPDBWriteAt(kpdb->kp_Fd, "0FFFFFFF", 8, C_OFF) < 0)
 	KPDBFatalIO(kpdb, "resort marker write");
 
-    for ((c = 0), (i = kpdb->kp_HeadLen); c < nc; ) {
-	char buf[9];
-	int ls = i;
+    /*
+     * Store the offsets through a writable mapping of the file: one
+     * 8-byte store per record in memory, no system call per record (D-90:
+     * a pwrite per record took 0.2 s each on a full ZFS dataset).  The
+     * stores touch only the offset fields.  Do not rewrite the records
+     * with one big write instead: a writer that replaces a field in place
+     * holds only the record lock, not the append lock the sort holds, and
+     * its change would be overwritten with the old bytes.
+     *
+     * An interrupted sort is safe as before: the marker written above
+     * stays until the last step, so the next open sorts again whatever
+     * part of the offsets is stored.
+     *
+     * If the file cannot be mapped for writing, store them one by one.
+     * On OpenBSD always: it has no unified buffer cache (D-171), so a
+     * writable map would write back stale bytes of the page over a field
+     * another process has just replaced with pwrite().
+     */
+    {
+#if defined(__OpenBSD__)
+	char *wmap = NULL;
+#else
+	char *wmap = xmap(NULL, kpdb->kp_MapSize, PROT_READ | PROT_WRITE,
+			    MAP_SHARED, kpdb->kp_Fd, 0);
+#endif
 
-	while (i < kpdb->kp_MapSize && p[i] != '\n')
+	for ((c = 0), (i = kpdb->kp_HeadLen); c < nc; ) {
+	    char buf[9];
+	    int ls = i;
+
+	    while (i < kpdb->kp_MapSize && p[i] != '\n')
+		++i;
+	    if (i == kpdb->kp_MapSize)
+		break;
+	    if (i - ls >= KEY_OFF) {
+		if (DebugOpt > 8) {
+		    int al = strchr(ary[c], '\n') - ary[c];
+
+		    printf("ary[%d] = %*.*s\n", c, al, al, ary[c]);
+		}
+		sprintf(buf, "%08x", (unsigned int)(ary[c] - kpdb->kp_MapBase));
+		if (wmap != NULL)
+		    memcpy(wmap + ls + 1, buf, 8);
+		else if (KPDBWriteAt(kpdb->kp_Fd, buf, 8, ls + 1) < 0)
+		    KPDBFatalIO(kpdb, "sort offset write");
+		++c;
+	    }
 	    ++i;
-	if (i == kpdb->kp_MapSize)
-	    break;
-	if (i - ls >= KEY_OFF) {
-	    int al = strchr(ary[c], '\n') - ary[c];
-
-	    if (DebugOpt > 8)
-		printf("ary[%d] = %*.*s\n", c, al, al, ary[c]);
-
-	    sprintf(buf, "%08x", (unsigned int)(ary[c] - kpdb->kp_MapBase));
-	    if (KPDBWriteAt(kpdb->kp_Fd, buf, 8, ls + 1) < 0)
-		KPDBFatalIO(kpdb, "sort offset write");
-	    ++c;
 	}
-	++i;
+	/*
+	 * Write the mapped stores back before the marker is cleared: a
+	 * write-back that fails (a full file system) must not leave a
+	 * cleared marker over offsets that never reached the file.  On
+	 * failure the marker stays set and the next open sorts again.
+	 */
+	if (wmap != NULL) {
+	    if (msync(wmap, kpdb->kp_MapSize, MS_SYNC) < 0)
+		KPDBFatalIO(kpdb, "sort offset sync");
+	    xunmap(wmap, kpdb->kp_MapSize);
+	}
     }
     {
 	char buf[10];

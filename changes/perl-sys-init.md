@@ -1,0 +1,1 @@
+- `dreaderd`: the embedded perl is set up with `PERL_SYS_INIT3()` once before the first interpreter, as perlembed requires. Without it the threaded pkgsrc perl on NetBSD failed every Perl authentication script ("perl_parse or perl_run failed"); the Perl tests no longer skip NetBSD (ISSUES.md D-179).
