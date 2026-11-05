@@ -95,6 +95,10 @@ main(int ac, char **av)
 	    if (*ptr == 0 && i + 1 >= ac)
 		Usage();
 	    GroupPats = *ptr ? ptr : av[++i];
+	    if (strlen(GroupPats) >= 4096) {	/* GroupsMatch()'s copy */
+		fprintf(stderr, "dspoolrefeed: -g: the list is longer than 4095 characters\n");
+		exit(1);
+	    }
 	    break;
 	case 'n':
 	    if (*ptr == 0 && i + 1 >= ac)
@@ -187,11 +191,17 @@ main(int ac, char **av)
 		++missing;
 		continue;
 	    }
+	    /*
+	     * The <...> part, as diablo hashed it for the history (MsgId()):
+	     * a comment or other text after it ("<a@b> (x)") is not part
+	     * of the Message-ID.
+	     */
 	    if (HeaderValue(head, "Message-ID", msgid, sizeof(msgid)) == NULL ||
-		msgid[0] != '<' || strchr(msgid, '>') == NULL) {
+		strcmp(MsgId(msgid, NULL), "<>") == 0) {
 		++noMsgId;
 		continue;
 	    }
+	    snprintf(msgid, sizeof(msgid), "%s", MsgId(msgid, NULL));
 	    /* the offset must still hold this history entry's article */
 	    hv = hhash(msgid);
 	    if (hv.h1 != h.hv.h1 || hv.h2 != h.hv.h2) {

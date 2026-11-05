@@ -81,6 +81,8 @@ excludes, and for each newsgroup the last matching pattern decides
 (for example
 .BR comp.*,!comp.binaries.* ).
 An article is written when one of its newsgroups is selected.
+A Newsgroups header longer than about 16 KB counts as not selected, and a
+list longer than 4095 characters is refused.
 .TP
 .B \-n \fIlines\fR
 With
@@ -143,6 +145,12 @@ Sorting a queue file
 .RB ( "sort -o refeed.0000 refeed.0000" )
 groups the lines by spool directory, which sends the articles roughly in
 the order they arrived and reads each spool file in one pass.
+.PP
+Whether a spool object is compressed is taken from the current
+.BR dspool.ctl ,
+as diablo itself reads its articles: run it with the
+.B compresslvl
+setting the articles were stored with.
 .PP
 On a large spool every article's header is read once; run it at a quiet
 time, or limit it with

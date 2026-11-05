@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-while/nntp-testkit/client"
 	"github.com/go-while/nntp-testkit/fakeserver"
 )
 
@@ -33,7 +34,22 @@ func TestDspoolrefeed(t *testing.T) {
 			}
 			s := NewSite(t, SiteOptions{Newsfeeds: OutNewsfeeds, SpoolCtl: tc.ctl})
 			ids := append(s.Inject(t, "e2e.test", 2), s.Inject(t, "e2e.other", 1)...)
-			want := s.waitQueue(t, OutLabel, 3)
+			// a Message-ID header with a comment after the <...>: the history hashes the
+			// <...> part, and so must dspoolrefeed
+			cid := msgID(t)
+			art := newArticle(cid, "e2e.test", "comment after the Message-ID", "body")
+			for i, l := range art {
+				if strings.HasPrefix(l, "Message-ID: ") {
+					art[i] = l + " (a comment)"
+				}
+			}
+			p := s.Peer(t)
+			p.ExpectCmd(335, "IHAVE %s", cid)
+			p.MustSend(client.Stuff(art))
+			p.ExpectStatus(235, "IHAVE with a comment")
+			p.ExpectCmd(205, "QUIT")
+			ids = append(ids, cid)
+			want := s.waitQueue(t, OutLabel, 4)
 			if tc.ctl != "" && !strings.Contains(want[0], " C") {
 				t.Fatalf("diablo's queue line on a compressed spool has no C<size>: %q", want[0])
 			}
@@ -42,18 +58,18 @@ func TestDspoolrefeed(t *testing.T) {
 			if got := refeedLines(t, s, "dqueue/refeed"); !slices.Equal(sorted(got), sorted(want)) {
 				t.Errorf("dspoolrefeed wrote\n%q\nwant diablo's queue lines\n%q\n%s", got, want, out)
 			}
-			if !strings.Contains(out, "3 written") {
+			if !strings.Contains(out, "4 written") {
 				t.Errorf("dspoolrefeed counts: %s", out)
 			}
 
 			s.Run(t, "dspoolrefeed", "-q", "-g", "e2e.*,!e2e.other", "-o", "dqueue/sel")
-			if got := refeedLines(t, s, "dqueue/sel"); len(got) != 2 || strings.Contains(strings.Join(got, "\n"), ids[2]) {
-				t.Errorf("-g e2e.*,!e2e.other: %q, want the two e2e.test articles", got)
+			if got := refeedLines(t, s, "dqueue/sel"); len(got) != 3 || strings.Contains(strings.Join(got, "\n"), ids[2]) {
+				t.Errorf("-g e2e.*,!e2e.other: %q, want the three e2e.test articles", got)
 			}
 
 			s.Run(t, "dspoolrefeed", "-q", "-n", "2", "-o", "dqueue/part")
-			if a, b := refeedLines(t, s, "dqueue/part.0000"), refeedLines(t, s, "dqueue/part.0001"); len(a) != 2 || len(b) != 1 {
-				t.Errorf("-n 2: part.0000 %q, part.0001 %q, want 2 and 1 lines", a, b)
+			if a, b := refeedLines(t, s, "dqueue/part.0000"), refeedLines(t, s, "dqueue/part.0001"); len(a) != 2 || len(b) != 2 {
+				t.Errorf("-n 2: part.0000 %q, part.0001 %q, want 2 and 2 lines", a, b)
 			}
 
 			if out, err := s.TryRun("dspoolrefeed", "-q", "-o", "dqueue/refeed"); err == nil {
