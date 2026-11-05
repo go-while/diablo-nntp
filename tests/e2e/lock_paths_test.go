@@ -9,6 +9,8 @@ package e2e
 import (
 	"bytes"
 	"errors"
+	testkit "github.com/go-while/nntp-testkit"
+	"github.com/go-while/nntp-testkit/client"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -101,9 +103,9 @@ func TestReaderOverviewLockFailure(t *testing.T) {
 			head, body := splitArticle(a)
 			st.AddArticle("e2e.test", fakeserver.Article{MessageID: ids[1], Headers: head, Body: body})
 			p := s.dialFrom(t, PeerIP)
-			expect(t, p, 335, "IHAVE %s", ids[1])
-			send(t, p, wire(a))
-			status(t, p, 400, "IHAVE with the overview "+tc.name+" lock failing")
+			p.ExpectCmd(335, "IHAVE %s", ids[1])
+			p.MustSend(client.Stuff(a))
+			p.ExpectStatus(400, "IHAVE with the overview "+tc.name+" lock failing")
 			if err := os.Remove(on); err != nil {
 				t.Fatal(err)
 			}
@@ -116,15 +118,15 @@ func TestReaderOverviewLockFailure(t *testing.T) {
 
 			feedReader(t, s, st, "e2e.test", newArticle(ids[2], "e2e.test", "after", "body three"))
 			r := s.Reader(t)
-			expect(t, r, 211, "GROUP e2e.test")
-			expect(t, r, 224, "XOVER 1-10")
+			r.ExpectCmd(211, "GROUP e2e.test")
+			r.ExpectCmd(224, "XOVER 1-10")
 			over := strings.Join(r.ReadDotLines(), "\n")
 			for i, want := range []bool{true, false, true} {
 				if strings.Contains(over, ids[i]) != want {
 					t.Errorf("XOVER: article %d (%s) listed %v, want %v:\n%s", i+1, ids[i], !want, want, over)
 				}
 			}
-			expect(t, r, 205, "QUIT")
+			r.ExpectCmd(205, "QUIT")
 			if n := feedForks(s); n != 1 {
 				t.Errorf("%d feed processes forked, want 1 (the feed process died)", n)
 			}
@@ -148,8 +150,8 @@ func TestReaderControlLogLockFailure(t *testing.T) {
 	startReaderEnv(t, s, lockFaultEnv(so), "LOCKFAULT=enolck", "LOCKFAULT_FILE=/newgroup.log")
 	exists := func(g string) bool {
 		c := s.Reader(t)
-		defer expect(t, c, 205, "QUIT")
-		expect(t, c, 215, "LIST ACTIVE %s", g)
+		defer c.ExpectCmd(205, "QUIT")
+		c.ExpectCmd(215, "LIST ACTIVE %s", g)
 		return slices.ContainsFunc(c.ReadDotLines(), func(l string) bool { return strings.HasPrefix(l, g+" ") })
 	}
 	for _, g := range []string{"e2e.lockctl1", "e2e.lockctl2"} {
@@ -157,7 +159,7 @@ func TestReaderControlLogLockFailure(t *testing.T) {
 		i := slices.Index(a, "")
 		a = slices.Insert(a, i, "Control: newgroup "+g)
 		feedReader(t, s, st, "e2e.test", a)
-		waitFor(t, 10*time.Second, g+" created with the control log lock failing", func() bool { return exists(g) })
+		testkit.WaitFor(t, 10*time.Second, g+" created with the control log lock failing", func() bool { return exists(g) })
 	}
 	if b, err := os.ReadFile(filepath.Join(s.Dir, "log", "newgroup.log")); len(b) != 0 {
 		t.Errorf("control log written without its lock (%v):\n%s", err, b)
@@ -176,11 +178,11 @@ func feedOne(t *testing.T, s *Site) {
 	t.Helper()
 	p := s.Peer(t)
 	id := msgID(t)
-	expect(t, p, 335, "IHAVE %s", id)
-	send(t, p, wire(newArticle(id, "e2e.test", "stats", "body")))
-	status(t, p, 235, "IHAVE "+id)
-	expect(t, p, 223, "STAT %s", id)
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(335, "IHAVE %s", id)
+	p.MustSend(client.Stuff(newArticle(id, "e2e.test", "stats", "body")))
+	p.ExpectStatus(235, "IHAVE "+id)
+	p.ExpectCmd(223, "STAT %s", id)
+	p.ExpectCmd(205, "QUIT")
 }
 
 // statsLockLog matches the log lines of lib/stats.c about a failed lock: the slot lock
@@ -237,9 +239,9 @@ func TestFeedStatsLockFailure(t *testing.T) {
 	t.Run("snapshot", func(t *testing.T) {
 		s := site(t)
 		c := s.Peer(t)
-		expect(t, c, 205, "QUIT")
+		c.ExpectCmd(205, "QUIT")
 		path := filepath.Join(s.Dir, "feedstats")
-		waitFor(t, 10*time.Second, "the peer's feedstats record", func() bool {
+		testkit.WaitFor(t, 10*time.Second, "the peer's feedstats record", func() bool {
 			out, _ := s.TryRun("dfeedinfo", "-i", "-r", "peer")
 			return peerLine.MatchString(out)
 		})
@@ -439,7 +441,7 @@ func TestDexpirescoringLockFailure(t *testing.T) {
 	if ok, d := readArticleOnce(t, s, "e2e.test", 1); !ok {
 		t.Fatalf("first read: %s", d)
 	}
-	waitFor(t, 10*time.Second, "a scoreboard entry", func() bool { return len(cacheHitsEntries(t, path)) > 0 })
+	testkit.WaitFor(t, 10*time.Second, "a scoreboard entry", func() bool { return len(cacheHitsEntries(t, path)) > 0 })
 	time.Sleep(1100 * time.Millisecond) // -H 1 changes the header a second later
 	before, err := os.ReadFile(path)
 	if err != nil {

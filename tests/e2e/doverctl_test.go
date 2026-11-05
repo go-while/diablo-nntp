@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	testkit "github.com/go-while/nntp-testkit"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -199,13 +200,13 @@ func TestDexpireoverCompressionFailure(t *testing.T) {
 	s := NewReaderSite(t, ReaderOptions{Spool: spool, Files: map[string]string{"dexpire.ctl": "e2e.*:x30:Z0:F0\n"}})
 	feedReader(t, s, st, "e2e.test", newArticle(msgID(t), "e2e.test", "compress", "body"))
 	c := s.Reader(t)
-	waitFor(t, 10*time.Second, "the article in GROUP e2e.test", func() bool {
+	testkit.WaitFor(t, 10*time.Second, "the article in GROUP e2e.test", func() bool {
 		_, line := c.Cmd("GROUP e2e.test")
 		return strings.HasPrefix(line, "211 1")
 	})
-	expect(t, c, 205, "QUIT")
+	c.ExpectCmd(205, "QUIT")
 	var data string
-	waitFor(t, 10*time.Second, "a data file", func() bool {
+	testkit.WaitFor(t, 10*time.Second, "a data file", func() bool {
 		m, _ := filepath.Glob(filepath.Join(s.Dir, "spool", "group", "*", "data.*"))
 		if len(m) == 0 {
 			m, _ = filepath.Glob(filepath.Join(s.Dir, "spool", "group", "data.*"))

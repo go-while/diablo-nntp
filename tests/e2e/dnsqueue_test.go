@@ -101,9 +101,9 @@ func TestReaderDNSQueueLimit(t *testing.T) {
 		}
 	}
 	c := s.Reader(t)
-	expect(t, c, 381, "AUTHINFO USER fred")
-	expect(t, c, 281, "AUTHINFO PASS fredspass")
-	expect(t, c, 205, "QUIT")
+	c.ExpectCmd(381, "AUTHINFO USER fred")
+	c.ExpectCmd(281, "AUTHINFO PASS fredspass")
+	c.ExpectCmd(205, "QUIT")
 }
 
 // TestReaderDNSQueueAuthPairing: the DNS/auth worker IPC must keep each request and reply
@@ -135,7 +135,7 @@ func TestReaderDNSQueueAuthPairing(t *testing.T) {
 		}
 	}
 	c := s.Reader(t)
-	expect(t, c, 381, "AUTHINFO USER fred")
-	expect(t, c, 281, "AUTHINFO PASS fredspass")
-	expect(t, c, 205, "QUIT")
+	c.ExpectCmd(381, "AUTHINFO USER fred")
+	c.ExpectCmd(281, "AUTHINFO PASS fredspass")
+	c.ExpectCmd(205, "QUIT")
 }

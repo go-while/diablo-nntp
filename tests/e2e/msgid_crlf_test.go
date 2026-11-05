@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"bufio"
+	"github.com/go-while/nntp-testkit/client"
 	"net"
 	"strings"
 	"testing"
@@ -60,8 +61,8 @@ func TestMsgIdControlCharacters(t *testing.T) {
 	t.Run("POST", func(t *testing.T) {
 		c := s.Reader(t)
 		post := func(id string) (int, string) {
-			expect(t, c, 340, "POST")
-			send(t, c, wire([]string{
+			c.ExpectCmd(340, "POST")
+			c.MustSend(client.Stuff([]string{
 				"From: E2E Poster <poster@example.invalid>",
 				"Newsgroups: e2e.test",
 				"Subject: control characters in an id",

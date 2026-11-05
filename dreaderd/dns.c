@@ -3531,6 +3531,7 @@ InstallAccessCache(void) {
     AccessDef accessdef;
     int copt = OPT_NONE;
     int parseError = 0;	/* bad file content, as opposed to a transient failure */
+    int skiptail = 0;	/* the rest of a line longer than buf */
     GroupListRef *glRefs = NULL;	/* the readerdefs' group list names */
     int glRefCount = 0;
     char **grNames = NULL;	/* the groupdef names */
@@ -3664,7 +3665,39 @@ InstallAccessCache(void) {
     fwrite(&readerdef, sizeof(readerdef), 1, rdf);
 
     while (fgets(buf, sizeof(buf), fp) != NULL) {
+	/*
+	 * A line that did not fit in buf is not parsed in pieces: the
+	 * tail would be read as a line of its own.
+	 */
+	int partial = 0;
+	size_t blen = strlen(buf);
+
+	if (blen > 0 && buf[blen - 1] != '\n') {
+	    int c = getc(fp);
+
+	    if (c != EOF) {
+		ungetc(c, fp);
+		partial = 1;
+	    }
+	}
+	if (skiptail) {
+	    skiptail = partial;
+	    continue;
+	}
+	skiptail = partial;
 	linecount++;
+	if (partial) {
+	    const char *q = buf;
+
+	    while (isspace((unsigned char)*q))
+		q++;
+	    if (*q != '#') {
+		logit(LOG_ERR, "dreader.access: line %d is longer than %d bytes",
+			linecount, (int)sizeof(buf) - 2);
+		parseError = 1;
+	    }
+	    continue;
+	}
 	opt = buf;
 	while (isspace((unsigned char)*opt))
 	    opt++;

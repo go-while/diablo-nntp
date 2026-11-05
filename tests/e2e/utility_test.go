@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"github.com/go-while/nntp-testkit/fakeserver"
 	"net"
 	"os"
 	"os/exec"
@@ -18,43 +19,18 @@ import (
 // replies: 200 greeting, 111 for DATE, 211 for GROUP, 205 for QUIT, 500 otherwise.
 func oneLineServer(t *testing.T) (port int) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { ln.Close() })
-	go func() {
-		for {
-			c, err := ln.Accept()
-			if err != nil {
-				return
+	return fakeserver.New(t, fakeserver.Options{Greeting: "200 fake server ready",
+		Handler: fakeserver.LineHandler(func(_ *fakeserver.Conn, line string) ([]string, bool) {
+			switch strings.ToUpper(strings.Fields(line + " x")[0]) {
+			case "DATE":
+				return []string{"111 20261026120000"}, false
+			case "GROUP":
+				return []string{"211 1 1 1 e2e.test"}, false
+			case "QUIT":
+				return []string{"205 bye"}, true
 			}
-			go func(c net.Conn) {
-				defer c.Close()
-				c.Write([]byte("200 fake server ready\r\n"))
-				r := bufio.NewReader(c)
-				for {
-					line, err := r.ReadString('\n')
-					if err != nil {
-						return
-					}
-					cmd := strings.ToUpper(strings.Fields(line + " x")[0])
-					switch cmd {
-					case "DATE":
-						c.Write([]byte("111 20261026120000\r\n"))
-					case "GROUP":
-						c.Write([]byte("211 1 1 1 e2e.test\r\n"))
-					case "QUIT":
-						c.Write([]byte("205 bye\r\n"))
-						return
-					default:
-						c.Write([]byte("500 what?\r\n"))
-					}
-				}
-			}(c)
-		}
-	}()
-	return ln.Addr().(*net.TCPAddr).Port
+			return []string{"500 what?"}, false
+		})}).Port()
 }
 
 // TestDclientOneLineReply: dclient returns after commands with a one-line reply, given on

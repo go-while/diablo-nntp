@@ -16,11 +16,11 @@ func TestPeerIHAVE(t *testing.T) {
 		t.Fatalf("peer greeting %q, want 200", p.Greeting)
 	}
 	id := msgID(t)
-	expect(t, p, 335, "IHAVE %s", id)
-	send(t, p, wire(newArticle(id, "e2e.test", "via ihave", "hello", ".dot")))
-	status(t, p, 235, "IHAVE article")
-	expect(t, p, 435, "IHAVE %s", id)
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(335, "IHAVE %s", id)
+	p.MustSend(client.Stuff(newArticle(id, "e2e.test", "via ihave", "hello", ".dot")))
+	p.ExpectStatus(235, "IHAVE article")
+	p.ExpectCmd(435, "IHAVE %s", id)
+	p.ExpectCmd(205, "QUIT")
 }
 
 // TestStrangerRefused: a host that no dnewsfeeds label lists gets a 502 permission denial.

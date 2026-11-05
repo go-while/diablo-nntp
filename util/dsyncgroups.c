@@ -405,7 +405,10 @@ main(int ac, char **av)
 	char *line;
 	char cmd[4096];
 
-	snprintf(cmd, sizeof(cmd), "authinfo user %s", username);
+	if (snprintf(cmd, sizeof(cmd), "authinfo user %s", username) >= (int)sizeof(cmd)) {
+	    printf("username is too long\n");
+	    exit(1);
+	}
 	switch(CommandResponse(cmd, &line)) {
 	    case 381:
 		printf("authinfo accepted: %s\n", line);
@@ -420,7 +423,10 @@ main(int ac, char **av)
 	char *line;
 	char cmd[4096];
 
-	snprintf(cmd, sizeof(cmd), "authinfo pass %s", password);
+	if (snprintf(cmd, sizeof(cmd), "authinfo pass %s", password) >= (int)sizeof(cmd)) {
+	    printf("password is too long\n");
+	    exit(1);
+	}
 	switch(CommandResponse(cmd, &line)) {
 	    case 281:
 		printf("authinfo accepted: %s\n", line);
