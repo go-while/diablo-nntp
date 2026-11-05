@@ -3972,6 +3972,18 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		SETREJECT("PostDuplicate");
 		responded = 1;
 		retcode = RCALREADY;
+	    } else if (rhist == RCTRYAGAIN) {
+		/*
+		 * The history could not take the record (full disk, chain
+		 * lock or index write failed): temporary, the peer offers
+		 * the article again instead of dropping it.
+		 */
+		(void)PreCommit(msgid, PC_DELCOMM);
+		DoArtStats(STATS_REJECTED, STATS_REJ_IOERROR, size);
+		DEBUGLOG(msgid, "HistoryTryAgain");
+		SETREJECT("HistoryTryAgain");
+		responded = 1;
+		retcode = RCTRYAGAIN;
 	    } else {
 		/*
 		 * XXX: This should not happen
