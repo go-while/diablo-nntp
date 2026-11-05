@@ -14,3 +14,4 @@
 ^TestDnewslinkTermStalledPeer$
 ^TestDnewsfeedsLimitsLive$
 ^TestMaxParallelCountsRealtime$
+^TestFeederExitWithoutCleanupIsQuick$

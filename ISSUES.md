@@ -199,6 +199,7 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-183](#d-183-history-add-after-a-partial-last-record-skews-every-later-index) | Medium | History add after a partial last record skews every later index | fixed (#314) |
 | [D-184](#d-184-a-failed-read-on-a-history-chain-counts-as-found) | Medium | A failed read on a history chain counts as "found" | fixed (#314) |
 | [D-185](#d-185-a-failed-history-add-is-answered-as-a-permanent-reject) | Medium | A failed history add is answered as a permanent reject | fixed (#314) |
+| [D-188](#d-188-diablo-sleeps-2-s-at-every-shutdown) | Low | diablo sleeps 2 s at every shutdown | fixed (#316) |
 
 Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315), [F-02 configure script](#f-02-configure-script-for-the-build-options), [F-03 refeed a whole spool](#f-03-refeed-a-whole-spool-to-another-server), [F-04 NoCeM notices](#f-04-nocem-notices), [F-05 init scripts](#f-05-init-scripts-and-adm-script-replacements), [F-06 Perl authentication](#f-06-perl-authentication-for-dreaderd).
 
@@ -1175,6 +1176,9 @@ Fixed (#314): an unreadable record ends the walk as a miss in all three (the exi
 ### D-185 A failed history add is answered as a permanent reject
 `util/diablo.c`, commit path: `HistoryAdd()` returns `RCTRYAGAIN` for a full history volume (ENOSPC), a chain lock failure and a failed index write, but the code after `RCALREADY` turned every other value into `RCREJECT`. The peer got 437 or 439, dropped an article that was already in the spool, and did not offer it again, while the spool-open failure a few lines earlier already answered 436/431.
 Fixed (#314): `RCTRYAGAIN` is passed on (436 to IHAVE, 431 to TAKETHIS), counted as an I/O error and logged as `HistoryTryAgain`; `RCREJECT` stays for any other value. Test: `TestFeederHistoryWriteFailureTryAgain` (a shim fails the history pwrite with ENOSPC).
+### D-188 diablo sleeps 2 s at every shutdown
+`util/diablo.c`, the end of the main loop: after the feed children are gone and the logs are flushed, diablo slept 2 s unconditionally before running `path_shutdown_cleanup`, also when none is set. Every stop and restart took 2 s longer than needed, and so did the cleanup of every feeder e2e test (about 85 tests sat at 2.0x s, roughly 170 s of a suite run). Found while measuring the e2e suite's time.
+Fixed (#316): the pause stays only before a cleanup program, which may count on it. Test: `TestFeederExitWithoutCleanupIsQuick` (2.0 s on main, 0.03 s here).
 
 ## Feature requests
 
