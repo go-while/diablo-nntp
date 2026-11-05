@@ -99,7 +99,7 @@ NNTPIHave(Connection *conn, char **pptr)
 	    return;
 	}
 
-	conn->co_Flags &= ~(COF_IHAVE|COF_POST|COF_POSTTOOBIG);
+	conn->co_Flags &= ~(COF_IHAVE|COF_POST|COF_POSTTOOBIG|COF_POSTXREF);
 	conn->co_Flags |= COF_IHAVE;
 	MBLogPrintf(conn, &conn->co_TMBuf, "335\r\n");
 	NNAcceptArticleStart(conn, msgid);
@@ -132,7 +132,7 @@ NNTPTakeThis(Connection *conn, char **pptr)
     const char *origmsgid = "<>";
     const char *msgid = MsgId(parseword(pptr, ""), NULL);
 
-    conn->co_Flags &= ~(COF_IHAVE|COF_POST|COF_POSTTOOBIG);
+    conn->co_Flags &= ~(COF_IHAVE|COF_POST|COF_POSTTOOBIG|COF_POSTXREF);
 
     if (conn->co_Flags & COF_SERVER) {
 	if (strcmp(msgid, "<>") == 0) {
@@ -153,7 +153,7 @@ NNTPPost(Connection *conn, char **pptr)
     char *rdesc;
 
     if (conn->co_Auth.dr_Flags & DF_POST) {
-	conn->co_Flags &= ~(COF_IHAVE|COF_POST|COF_POSTTOOBIG);
+	conn->co_Flags &= ~(COF_IHAVE|COF_POST|COF_POSTTOOBIG|COF_POSTXREF);
 	conn->co_Flags |= COF_POST;
 	GenerateMessageID(conn);
 #ifdef POST_FORCEMSGID
@@ -284,9 +284,13 @@ NNAcceptArticle(Connection *conn)
 		conn->co_Flags |= COF_WASCONTROL;
 	    } else if (ch == 'x' && strncasecmp(buf, "Xref:", 5) == 0) {
 		/*
-		 * strip XRef: unless it's one we want
+		 * strip XRef: unless it's one we want.  A post must not
+		 * have one at all (RFC 5537 3.5): NNPostBuffer refuses it.
 		 */
-		if (ValidXRef(buf, len) < 0)
+		if (conn->co_Flags & COF_POST) {
+		    conn->co_Flags |= COF_POSTXREF;
+		    len = 0;
+		} else if (ValidXRef(buf, len) < 0)
 		    len = 0;
 	    }
 	}

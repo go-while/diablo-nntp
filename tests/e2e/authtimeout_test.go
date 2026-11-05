@@ -391,7 +391,6 @@ func TestAuthTimeoutLDAPSlowSteps(t *testing.T) {
 func perlSite(t *testing.T, script string) *Site {
 	t.Helper()
 	builtWith(t, "PERL auth request", "Perl support (PERL_ENABLED)")
-	perlEmbedWorks(t)
 	path := filepath.Join(t.TempDir(), "auth.pl")
 	if err := os.WriteFile(path, []byte(script), 0o644); err != nil {
 		t.Fatal(err)
@@ -452,7 +451,6 @@ func backendLogin(t *testing.T, s *Site, user string) {
 // interpreter each time; after 16 every perl login was refused.
 func TestAuthTimeoutPerlManyTimeouts(t *testing.T) {
 	builtWith(t, "PERL auth request", "Perl support (PERL_ENABLED)")
-	perlEmbedWorks(t)
 	perlMultiplicity(t)
 	dir := t.TempDir()
 	sc := "sub checkuser { sleep 60 if $_[0] eq 'x'; return \"100 Success\" if $_[0] eq 'ok'; return '0'; }\n1;\n"
@@ -492,7 +490,6 @@ func TestAuthTimeoutPerlManyTimeouts(t *testing.T) {
 // time only) is cut off; the next login loads it again in the new worker.
 func TestAuthTimeoutPerlSlowLoad(t *testing.T) {
 	builtWith(t, "PERL auth request", "Perl support (PERL_ENABLED)")
-	perlEmbedWorks(t)
 	perlMultiplicity(t)
 	dir := t.TempDir()
 	a, b := filepath.Join(dir, "a.pl"), filepath.Join(dir, "b.pl")

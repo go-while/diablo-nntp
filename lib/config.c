@@ -17,6 +17,7 @@ Prototype void SetNewsAdmin(char **admin, char *host);
 Prototype void AddBindList(BindList **blist, char *interface, char *port, int append);
 Prototype int SetGroupHashMethod(const char *opt, GroupHashType *pmethod);
 Prototype int SetReaderForks(const char *opt, int *pforks);
+Prototype int confRange(const char *opt, long lo, long hi, int *out);
 Prototype int SetCommand(FILE *fo, char *cmd, char *opt, int *cmdErr);
 Prototype int CheckConfigOptions(int which);
 Prototype void DumpConfigOptions(FILE *fo, char *cmd, int which);
@@ -32,7 +33,7 @@ struct DiabloOpts DOpts;
  * Parse a whole decimal number in lo..hi into *out.  Returns 1 if valid,
  * 0 (and leaves *out alone) otherwise.
  */
-static int
+int
 confRange(const char *opt, long lo, long hi, int *out)
 {
     char *end;
@@ -327,8 +328,14 @@ LoadDiabloConfig(int ac, char **av)
 			DOpts.WireFormat = 0;
 		    }
 		} else if (strcasecmp(cmd, "readerdns") == 0) {
-		    DOpts.ReaderDns = strtol(opt, NULL, 0);
-		    optErr = 0;
+		    if (confRange(opt, 1, READERDNS_MAX, &DOpts.ReaderDns)) {
+			optErr = 0;
+		    } else {
+			fprintf(stderr, "readerdns must be 1..%d: %s\n",
+					    READERDNS_MAX, opt);
+			logit(LOG_CRIT, "readerdns must be 1..%d: %s",
+					    READERDNS_MAX, opt);
+		    }
 		} else if (strcasecmp(cmd, "readerforks") == 0) {
 		    optErr = SetReaderForks(opt, &DOpts.ReaderForks);
 		    if (optErr != 0) {
@@ -338,8 +345,14 @@ LoadDiabloConfig(int ac, char **av)
 					    READERFORKS_MAX, opt);
 		    }
 		} else if (strcasecmp(cmd, "readerfeedforks") == 0) {
-		    DOpts.ReaderFeedForks = strtol(opt, NULL, 0);
-		    optErr = 0;
+		    if (confRange(opt, 0, READERFORKS_MAX, &DOpts.ReaderFeedForks)) {
+			optErr = 0;
+		    } else {
+			fprintf(stderr, "readerfeedforks must be 0..%d: %s\n",
+					    READERFORKS_MAX, opt);
+			logit(LOG_CRIT, "readerfeedforks must be 0..%d: %s",
+					    READERFORKS_MAX, opt);
+		    }
 		} else if (strcasecmp(cmd, "readerdnscachesize") == 0) {
 		    if (confRange(opt, 0, 1048576, &DOpts.ReaderDnsCacheSize))
 			optErr = 0;

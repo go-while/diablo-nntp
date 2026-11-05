@@ -11,6 +11,7 @@
 #include "defs.h"
 
 Prototype const char *PatExpand(const char *pat);
+Prototype int AddrConfigFlag(const char *host);
 Prototype char *ConfigGets(char *buf, int size, FILE *fi, int *tooLong);
 Prototype const char *PatSubst(char *buf, size_t size, const char *pat, const char *dir);
 Prototype void diablo_strlcpy(char *d, const char *s, int ssize, int dsize);
@@ -1099,4 +1100,30 @@ ConfigGets(char *buf, int size, FILE *fi, int *tooLong)
 	}
     }
     return(buf);
+}
+
+/*
+ * AddrConfigFlag() - the AI_ADDRCONFIG getaddrinfo() hint for host, or 0
+ *		      for a numeric address.  glibc 2.39 (EL10) applies
+ *		      AI_ADDRCONFIG to numeric addresses too and refuses
+ *		      "::1" on a machine without a global IPv6 address
+ *		      (EAI_ADDRFAMILY, D-87/D-89); for a name or the
+ *		      wildcard it still keeps unusable families out.
+ */
+int
+AddrConfigFlag(const char *host)
+{
+#ifdef AI_ADDRCONFIG
+    unsigned char buf[sizeof(struct in6_addr)];
+
+    if (host != NULL && (inet_pton(AF_INET, host, buf) == 1
+#ifdef AF_INET6
+			 || inet_pton(AF_INET6, host, buf) == 1
+#endif
+	))
+	return(0);
+    return(AI_ADDRCONFIG);
+#else
+    return(0);
+#endif
 }

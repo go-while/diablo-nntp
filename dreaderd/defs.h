@@ -310,6 +310,7 @@ typedef struct DnsReq {
     double dr_ByteCountXhdr;		/* Bytes sent for xhdr fetches	*/
     double dr_ByteCountOther;		/* Bytes sent for other fetches	*/
     time_t dr_SessionLength;		/* duration of session in secs	*/
+    char dr_ReaderName[DEFNAMELEN];	/* session end: its readerdef	*/
 } DnsReq;
 
 /*
@@ -601,6 +602,7 @@ typedef struct Connection {
 #define	COF_POSTTOOBIG	0x01000000	/* posted article is too big	*/
 #define	COF_MAXAGE	0x02000000	/* maximum age allowed		*/
 #define	COF_AUTHINFO	0x04000000	/* logged in with AUTHINFO (281)	*/
+#define	COF_POSTXREF	0x08000000	/* the post had an Xref: header	*/
 
 #define	CON_RFC3977	0		/* RFC3977 numbering behaviour	*/
 #define	CON_RFC977	1		/* RFC977 numbering behaviour	*/

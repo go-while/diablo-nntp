@@ -437,6 +437,43 @@ NNTPXGTitle(Connection *conn, char **pptr)
     NNStartListActiveScan(conn, wc, NULL, COM_GROUPDESC);
 }
 
+/*
+ * ListFileLines() - send a local file as the body of a LIST reply.  A line
+ * longer than the buffer comes in pieces and goes out as one line: the
+ * dot-stuffing and the CRLF only at the real line boundaries (D-94).  With
+ * comments, lines starting with '#' and empty lines are left out.
+ */
+static void
+ListFileLines(Connection *conn, FILE *fi, int comments)
+{
+    char buf[256];
+    int bol = 1;
+    int skip = 0;
+
+    while (fgets(buf, sizeof(buf), fi) != NULL) {
+	int l = strlen(buf);
+	int eol = (l > 0 && buf[l-1] == '\n');
+
+	if (eol) {
+	    buf[--l] = 0;
+	    if (l > 0 && buf[l-1] == '\r')
+		buf[--l] = 0;
+	}
+	if (bol)
+	    skip = comments && ((l == 0 && eol) || buf[0] == '#');
+	if (!skip) {
+	    if (bol && buf[0] == '.')
+		MBWrite(&conn->co_TMBuf, ".", 1);
+	    MBWrite(&conn->co_TMBuf, buf, l);
+	    if (eol)
+		MBWrite(&conn->co_TMBuf, "\r\n", 2);
+	}
+	bol = eol;
+    }
+    if (!bol && !skip)	/* last line without a newline */
+	MBWrite(&conn->co_TMBuf, "\r\n", 2);
+}
+
 void 
 NNTPListDistributions(Connection *conn, char **pptr)
 {
@@ -444,20 +481,7 @@ NNTPListDistributions(Connection *conn, char **pptr)
     MBLogPrintf(conn, &conn->co_TMBuf, "215 Distributions in form \"area description\".\r\n");
 
     if ((fi = fopen(PatLibExpand(DistributionsPat), "r")) != NULL) {
-	char buf[256];
-
-	while (fgets(buf, sizeof(buf), fi) != NULL) {
-	    int l = strlen(buf);
-	    if (l > 0 && buf[l-1] == '\n') {
-		buf[--l] = 0;
-		if (l > 0 && buf[l-1] == '\r')
-		    buf[--l] = 0;
-	    }
-	    if (buf[0] == '.')
-		MBWrite(&conn->co_TMBuf, ".", 1);
-	    MBWrite(&conn->co_TMBuf, buf, l);
-	    MBWrite(&conn->co_TMBuf, "\r\n", 2);
-	}
+	ListFileLines(conn, fi, 0);
 	fclose(fi);
     }
     MBPrintf(&conn->co_TMBuf, ".\r\n");
@@ -472,20 +496,7 @@ NNTPListDistribPats(Connection *conn, char **pptr)
     MBLogPrintf(conn, &conn->co_TMBuf, "215 Default distributions in form \"weight:pattern:value\".\r\n");
 
     if ((fi = fopen(PatLibExpand(DistribDotPatsPat), "r")) != NULL) {
-	char buf[256];
-
-	while (fgets(buf, sizeof(buf), fi) != NULL) {
-	    int l = strlen(buf);
-	    if (l > 0 && buf[l-1] == '\n') {
-		buf[--l] = 0;
-		if (l > 0 && buf[l-1] == '\r')
-		    buf[--l] = 0;
-	    }
-	    if (buf[0] == '.')
-		MBWrite(&conn->co_TMBuf, ".", 1);
-	    MBWrite(&conn->co_TMBuf, buf, l);
-	    MBWrite(&conn->co_TMBuf, "\r\n", 2);
-	}
+	ListFileLines(conn, fi, 0);
 	fclose(fi);
     }
     MBPrintf(&conn->co_TMBuf, ".\r\n");
@@ -515,20 +526,7 @@ NNTPListModerators(Connection *conn, char **pptr)
 
     MBLogPrintf(conn, &conn->co_TMBuf, "215 Newsgroup moderators in form \"group-pattern:mail-address-pattern\".\r\n");
     if ((fi = fopen(PatLibExpand(ModeratorsPat), "r")) != NULL) {
-	char buf[256];
-	while (fgets(buf, sizeof(buf), fi) != NULL) {
-	    int l = strlen(buf);
-	    if (l == 0 || buf[0] == '#' || buf[0] == '\n')
-		continue;
-	    if (buf[l-1] == '\n')
-		buf[--l] = 0;
-	    if (l > 0 && buf[l-1] == '\r')
-		buf[--l] = 0;
-	    if (buf[0] == '.')
-		MBWrite(&conn->co_TMBuf, ".", 1);
-	    MBWrite(&conn->co_TMBuf, buf, l);
-	    MBWrite(&conn->co_TMBuf, "\r\n", 2);
-	}
+	ListFileLines(conn, fi, 1);
 	fclose(fi);
     }
     MBPrintf(&conn->co_TMBuf, ".\r\n");

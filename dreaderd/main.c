@@ -403,10 +403,20 @@ main(int ac, char **av)
 	    DebugOpt = v;
 	    break;
 	case 'D':
-	    DOpts.ReaderDns = strtol(((*ptr) ? ptr : av[++i]), NULL, 0);
+	    if (*ptr == 0)
+		ptr = av[++i];
+	    if (ptr == NULL || !confRange(ptr, 1, READERDNS_MAX, &DOpts.ReaderDns)) {
+		fprintf(stderr, "-D: readerdns must be 1..%d\n", READERDNS_MAX);
+		exit(1);
+	    }
 	    break;
 	case 'F':
-	    DOpts.ReaderFeedForks = strtol(((*ptr) ? ptr : av[++i]), NULL, 0);
+	    if (*ptr == 0)
+		ptr = av[++i];
+	    if (ptr == NULL || !confRange(ptr, 0, READERFORKS_MAX, &DOpts.ReaderFeedForks)) {
+		fprintf(stderr, "-F: readerfeedforks must be 0..%d\n", READERFORKS_MAX);
+		exit(1);
+	    }
 	    break;
 	case 'f':
 	    FastCopyOpt = v;
@@ -618,7 +628,7 @@ main(int ac, char **av)
 	     * Open a wildcard listening socket
 	     */
 	    bzero(&hints, sizeof(hints));
-	    hints.ai_flags = AI_PASSIVE | AI_ADDRCONFIG;
+	    hints.ai_flags = AI_PASSIVE | AddrConfigFlag(bl->bl_Host);
 	    hints.ai_family = PF_UNSPEC;
 	    hints.ai_socktype = SOCK_STREAM;
 	    error = getaddrinfo(bl->bl_Host, bl->bl_Port, &hints, &res);
@@ -1753,6 +1763,7 @@ TrySendDns(int fd, struct sockaddr_in *rsin, DnsRes *dres)
 	    dreq.dr_Flags = dres->dr_Flags & DF_RESREQRES;
 	    diablo_strlcpy(dreq.dr_AuthUser, dres->dr_AuthUser, sizeof(dres->dr_AuthUser), sizeof(dreq.dr_AuthUser));
 	    diablo_strlcpy(dreq.dr_AuthPass, dres->dr_AuthPass, sizeof(dres->dr_AuthPass), sizeof(dreq.dr_AuthPass));
+	    diablo_strlcpy(dreq.dr_ReaderName, dres->dr_ReaderName, sizeof(dres->dr_ReaderName), sizeof(dreq.dr_ReaderName));
 	    dreq.dr_ByteCount = dres->dr_ByteCount;
 	    dreq.dr_GrpCount = dres->dr_GrpCount;
 	    dreq.dr_ArtCount = dres->dr_ArtCount;

@@ -13,6 +13,7 @@
 Prototype FILE *iopen(const char *path, const char *mode);
 Prototype int iclose(FILE *stream);
 Prototype char *igets(char *str, int size, FILE *stream);
+Prototype int IgetsTooLong;
 Prototype int istat(int fd, struct stat *st);
 
 
@@ -144,13 +145,19 @@ iclose(FILE *stream)
  * buffer is too small.  Not an issue here.
  */
 
+/*
+ * After igets(): the line was longer than size (not counting a comment);
+ * its rest is dropped, so the caller should refuse the line (D-94).
+ */
+int IgetsTooLong = 0;
+
 char *
 igets(char *str, int size, FILE *stream)
 {
 	char *rval, *fname, *ptr;
 	FILE *fp;
 
-	rval = fgets(str, size, inc_fps[inc_nfps - 1]);
+	rval = ConfigGets(str, size, inc_fps[inc_nfps - 1], &IgetsTooLong);
 
 	if (! rval) {
 
