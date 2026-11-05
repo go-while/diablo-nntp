@@ -4,7 +4,6 @@ import (
 	testkit "github.com/go-while/nntp-testkit"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -23,11 +22,8 @@ import (
 // cron's once-a-minute rotation). dnewslink counts whole seconds; at 10 s the worker is 8 to
 // 11 s old by its count (it can start up to about 1.5 s after the rotation), so #30's rule
 // always retires it (8 + 8/2 >= 12) and the old rule never does (11 < 12). The site logs to log/general.log, shown when the test fails.
-// Linux only (reads /proc).
 func TestDnewslinkConnlifeNearest(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("reads /proc")
-	}
+	requireProcessInspection(t, true)
 	peer, got := newPeer(t, &fakeserver.PeerOptions{})
 	feeds := GlobalLabel + `label peer
     inhost ` + PeerIP + `
@@ -63,7 +59,7 @@ end
 	t.Cleanup(func() {
 		quiet := 0
 		for range 40 {
-			pids := append(sitePids(s, "dnewslink"), sitePids(s, "dspoolout")...)
+			pids := append(sitePids(t, s, "dnewslink"), sitePids(t, s, "dspoolout")...)
 			if len(pids) == 0 {
 				if quiet++; quiet == 3 {
 					return
@@ -97,7 +93,7 @@ end
 		t.Helper()
 		var w int
 		testkit.WaitFor(t, within, what, func() bool {
-			w = realtimeWorker(s)
+			w = realtimeWorker(t, s)
 			return w > 0 && w != prev
 		})
 		return w
@@ -126,7 +122,7 @@ end
 	var w3 int
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if w := realtimeWorker(s); w > 0 && w != w2 {
+		if w := realtimeWorker(t, s); w > 0 && w != w2 {
 			w3 = w
 			break
 		}
