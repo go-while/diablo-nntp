@@ -1544,8 +1544,17 @@ KPDBSort(KPDB *kpdb)
 	    }
 	    ++i;
 	}
-	if (wmap != NULL)
+	/*
+	 * Write the mapped stores back before the marker is cleared: a
+	 * write-back that fails (a full file system) must not leave a
+	 * cleared marker over offsets that never reached the file.  On
+	 * failure the marker stays set and the next open sorts again.
+	 */
+	if (wmap != NULL) {
+	    if (msync(wmap, kpdb->kp_MapSize, MS_SYNC) < 0)
+		KPDBFatalIO(kpdb, "sort offset sync");
 	    xunmap(wmap, kpdb->kp_MapSize);
+	}
     }
     {
 	char buf[10];
