@@ -129,7 +129,7 @@ func feedAndSettle(tb testing.TB, s *Site, st *fakeserver.Store, c *client.Conn,
 	tb.Helper()
 	marker := msgID(tb)
 	feedReader(tb, s, st, "e2e.test", append(arts, newArticle(marker, "e2e.test", "marker", "m"))...)
-	waitFor(tb, testkit.Deadline(), "the marker article", func() bool {
+	testkit.WaitFor(tb, testkit.Deadline(), "the marker article", func() bool {
 		code, _ := c.Cmd("STAT %s", marker)
 		if code == 223 {
 			return true
@@ -142,7 +142,7 @@ func feedAndSettle(tb testing.TB, s *Site, st *fakeserver.Store, c *client.Conn,
 // present reports whether article number n of e2e.test is still there (STAT n).
 func present(tb testing.TB, c *client.Conn, n int) bool {
 	tb.Helper()
-	expect(tb, c, 211, "GROUP e2e.test")
+	c.ExpectCmd(211, "GROUP e2e.test")
 	code, _ := c.Cmd("STAT %d", n)
 	return code == 223
 }
@@ -240,12 +240,12 @@ func TestCancelLockEarlyCancel(t *testing.T) {
 			target := msgID(t)
 			feedAndSettle(t, s, st, r, cancelArticle(t, target, "e2e.test"))
 			p := s.dialFrom(t, PeerIP)
-			expect(t, p, 335, "IHAVE %s", target)
-			send(t, p, wire(newArticle(target, "e2e.test", "late", "body")))
-			if got := status(t, p, c.want, "IHAVE of the cancelled article"); got == "" {
+			p.ExpectCmd(335, "IHAVE %s", target)
+			p.MustSend(client.Stuff(newArticle(target, "e2e.test", "late", "body")))
+			if got := p.ExpectStatus(c.want, "IHAVE of the cancelled article"); got == "" {
 				t.Fatal("no status")
 			}
-			expect(t, p, 205, "QUIT")
+			p.ExpectCmd(205, "QUIT")
 		})
 	}
 }
@@ -280,7 +280,7 @@ func TestCancelLockTrackonlyNone(t *testing.T) {
 	_, port, _ := strings.Cut(s.Addr, ":")
 	startReader(t, s, "[127.0.0.1]:"+port)
 	r := s.Reader(t)
-	expect(t, r, 205, "QUIT")
+	r.ExpectCmd(205, "QUIT")
 }
 
 // skipWithCanLock skips the test when dreaderd is built with libcanlock: the tests that use it

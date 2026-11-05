@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"fmt"
+	"github.com/go-while/nntp-testkit/client"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,9 +28,9 @@ func offerDatedReply(t *testing.T, s *Site, date string) (int, string) {
 	}
 	id := headerValue(a, "Message-ID")
 	p := s.Peer(t)
-	defer expect(t, p, 205, "QUIT")
-	expect(t, p, 335, "IHAVE %s", id)
-	send(t, p, wire(a))
+	defer p.ExpectCmd(205, "QUIT")
+	p.ExpectCmd(335, "IHAVE %s", id)
+	p.MustSend(client.Stuff(a))
 	code, line, err := p.ReadStatus()
 	if err != nil {
 		t.Fatalf("IHAVE %s: %v", date, err)

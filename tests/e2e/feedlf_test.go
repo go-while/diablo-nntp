@@ -21,16 +21,16 @@ func TestReaderFeedBareLFControlInBody(t *testing.T) {
 	art := newArticle(id, "e2e.test", "bare LF", "Control: cancel <other@e2e.test>", "body")
 
 	p := s.Peer(t)
-	expect(t, p, 335, "IHAVE %s", id)
-	send(t, p, strings.Join(art, "\n")+"\n.\n")
-	status(t, p, 235, "IHAVE "+id+" (bare LF)")
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(335, "IHAVE %s", id)
+	p.MustSend(strings.Join(art, "\n") + "\n.\n")
+	p.ExpectStatus(235, "IHAVE "+id+" (bare LF)")
+	p.ExpectCmd(205, "QUIT")
 
 	c := s.Reader(t)
-	waitFor(t, testkit.Deadline(), "the article in GROUP e2e.test", func() bool {
+	testkit.WaitFor(t, testkit.Deadline(), "the article in GROUP e2e.test", func() bool {
 		_, line := c.Cmd("GROUP e2e.test")
 		f := strings.Fields(line)
 		return len(f) > 1 && f[0] == "211" && f[1] != "0"
 	})
-	expect(t, c, 205, "QUIT")
+	c.ExpectCmd(205, "QUIT")
 }

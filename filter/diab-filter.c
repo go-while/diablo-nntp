@@ -61,9 +61,13 @@ writeAll(int fd, char *buf, ssize_t len)
     ssize_t res;
 
     while (len) {
-	if ((res = write(fd, buf+off, len)) >= 0) {
+	if ((res = write(fd, buf+off, len)) > 0) {
 	    off += res;
 	    len -= res;
+	} else if (res == 0) {
+	    /* no progress: a retry would loop forever */
+	    errno = EIO;
+	    return off;
 	} else
 	    return res;
     }
@@ -383,7 +387,8 @@ DiabFilter(char *fpath, char *loc, int wireformat)
 	/* XXX this is Pure Evil(tm) because the response isn't going to 
 	 * have to be atomic */
 	filter_abuf[0] = '\0';
-	if ((rval = read(filter_fd_stdout, filter_abuf, filter_abufsiz)) <= 0) {
+	/* one byte short of the buffer: the reply is NUL-terminated below */
+	if ((rval = read(filter_fd_stdout, filter_abuf, filter_abufsiz - 1)) <= 0) {
 		logit(LOG_ERR, "filter read failure: got %d: %m", rval);
 		filter_failed("read", fpath);
 		DiabFilterClose(1);

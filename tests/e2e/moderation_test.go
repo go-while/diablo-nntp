@@ -15,6 +15,8 @@ package e2e
 
 import (
 	"bytes"
+	testkit "github.com/go-while/nntp-testkit"
+	"github.com/go-while/nntp-testkit/client"
 	"net"
 	"os"
 	"path/filepath"
@@ -114,7 +116,7 @@ func (m *mailbox) mails() []mail {
 // ones, and returns them.
 func (m *mailbox) waitMails(tb testing.TB, n int) []mail {
 	tb.Helper()
-	waitFor(tb, 10*time.Second, strconv.Itoa(n)+" mails", func() bool { return len(m.mails()) >= n })
+	testkit.WaitFor(tb, 10*time.Second, strconv.Itoa(n)+" mails", func() bool { return len(m.mails()) >= n })
 	time.Sleep(500 * time.Millisecond)
 	return m.mails()
 }
@@ -180,7 +182,7 @@ func (m *modSite) noPost(tb testing.TB, what string) {
 // waitPost waits until the outgoing server has n articles.
 func (m *modSite) waitPost(tb testing.TB, n int, what string) [][]string {
 	tb.Helper()
-	waitFor(tb, 15*time.Second, what, func() bool { return len(m.Posted()) >= n })
+	testkit.WaitFor(tb, 15*time.Second, what, func() bool { return len(m.Posted()) >= n })
 	return m.Posted()
 }
 
@@ -221,7 +223,7 @@ func (m *modSite) postArticle(tb testing.TB, groups string, extra ...string) (st
 	tb.Helper()
 	c := m.Reader(tb)
 	id := msgID(tb)
-	expect(tb, c, 340, "POST")
+	c.ExpectCmd(340, "POST")
 	art := append([]string{
 		"From: E2E Poster <poster@example.invalid>",
 		"Newsgroups: " + groups,
@@ -230,7 +232,7 @@ func (m *modSite) postArticle(tb testing.TB, groups string, extra ...string) (st
 		"Path: not-for-mail",
 	}, extra...)
 	art = append(art, "", "body line one", ".dot line")
-	send(tb, c, wire(art))
+	c.MustSend(client.Stuff(art))
 	line, err := c.ReadLine()
 	if err != nil {
 		tb.Fatalf("reply to POST: %v", err)
@@ -318,8 +320,8 @@ func TestFeederUnapprovedModerated(t *testing.T) {
 	})
 	p := s.Peer(t)
 	unapproved := msgID(t)
-	expect(t, p, 335, "IHAVE %s", unapproved)
-	send(t, p, wire(newArticle(unapproved, ModGroup, "unapproved", "body")))
+	p.ExpectCmd(335, "IHAVE %s", unapproved)
+	p.MustSend(client.Stuff(newArticle(unapproved, ModGroup, "unapproved", "body")))
 	line, err := p.ReadLine()
 	if err != nil {
 		t.Fatal(err)
@@ -328,10 +330,10 @@ func TestFeederUnapprovedModerated(t *testing.T) {
 		t.Errorf("unapproved IHAVE to %s: %q, want 437", ModGroup, line)
 	}
 	open := msgID(t)
-	expect(t, p, 335, "IHAVE %s", open)
-	send(t, p, wire(newArticle(open, OpenGroup, "open", "body")))
-	status(t, p, 235, "IHAVE to an unmoderated group")
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(335, "IHAVE %s", open)
+	p.MustSend(client.Stuff(newArticle(open, OpenGroup, "open", "body")))
+	p.ExpectStatus(235, "IHAVE to an unmoderated group")
+	p.ExpectCmd(205, "QUIT")
 
 	// #46: the reason names the group, in the IHAVE reply and in incoming.log
 	if !strings.Contains(line, "Unapproved/"+ModGroup) {

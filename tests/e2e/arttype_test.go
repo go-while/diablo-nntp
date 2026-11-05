@@ -5,6 +5,7 @@ import (
 	"embed"
 	"encoding/base64"
 	"fmt"
+	"github.com/go-while/nntp-testkit/client"
 	"math/rand"
 	"mime/quotedprintable"
 	"os"
@@ -601,9 +602,9 @@ end
 				a[i] = "Message-ID: " + id
 			}
 		}
-		expect(t, p, 335, "IHAVE %s", id)
-		send(t, p, wire(a))
-		status(t, p, 235, "IHAVE "+name)
+		p.ExpectCmd(335, "IHAVE %s", id)
+		p.MustSend(client.Stuff(a))
+		p.ExpectStatus(235, "IHAVE "+name)
 		return id
 	}
 	text := send1("text", nil, []string{"Hello."})
@@ -611,7 +612,7 @@ end
 	sig := send1("long signature", nil, append([]string{"-----BEGIN PGP SIGNED MESSAGE-----", "Hash: SHA512", "", "Signed text."}, pgp("SIGNATURE", 12)...))
 	b64txt := send1("base64 text", hdr64("text/plain; charset=UTF-8"), b64Wrap(patchText(1500), 73))
 	b64bin := send1("base64 random data", hdr64("text/plain; charset=UTF-8"), b64Wrap(randBytes(1140, 11), 76))
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(205, "QUIT")
 
 	bin := strings.Join(s.waitQueue(t, "bin", 2), "\n")
 	txt := strings.Join(s.waitQueue(t, "txt", 3), "\n")
@@ -678,9 +679,9 @@ func offerGroupsBody(t *testing.T, s *Site, newsgroups string, body []string) st
 	t.Helper()
 	id := msgID(t)
 	p := s.Peer(t)
-	defer expect(t, p, 205, "QUIT")
-	expect(t, p, 335, "IHAVE %s", id)
-	send(t, p, wire(newArticle(id, newsgroups, "signed", body...)))
+	defer p.ExpectCmd(205, "QUIT")
+	p.ExpectCmd(335, "IHAVE %s", id)
+	p.MustSend(client.Stuff(newArticle(id, newsgroups, "signed", body...)))
 	line, err := p.ReadLine()
 	if err != nil {
 		t.Fatalf("IHAVE to %s: %v", newsgroups, err)
@@ -731,11 +732,11 @@ func offerHeaders(t *testing.T, s *Site, group string, extra, body []string) str
 	t.Helper()
 	id := msgID(t)
 	p := s.Peer(t)
-	defer expect(t, p, 205, "QUIT")
-	expect(t, p, 335, "IHAVE %s", id)
+	defer p.ExpectCmd(205, "QUIT")
+	p.ExpectCmd(335, "IHAVE %s", id)
 	a := newArticle(id, group, "mime", body...)
 	a = append(append(append([]string{}, a[:6]...), extra...), a[6:]...)
-	send(t, p, wire(a))
+	p.MustSend(client.Stuff(a))
 	line, err := p.ReadLine()
 	if err != nil {
 		t.Fatalf("IHAVE to %s: %v", group, err)
@@ -840,7 +841,7 @@ func TestArticleTypeStateNotCarriedOver(t *testing.T) {
 		Newsfeeds: DefaultNewsfeeds + "label IFILTER\n    addgroup *\n    delgroup *.bina*\n    arttypes binary\nend\n",
 	})
 	p := s.Peer(t)
-	defer expect(t, p, 205, "QUIT")
+	defer p.ExpectCmd(205, "QUIT")
 	soft := edit(atLines(12, 75, b64Alphabet, ""), func(l string) string { return l + "=" })
 	quoted := append([]string{"--XX", "Content-Type: text/plain", "Content-Transfer-Encoding: base64", ""}, b64Text(30)...)
 	for _, c := range []struct {
@@ -857,10 +858,10 @@ func TestArticleTypeStateNotCarriedOver(t *testing.T) {
 		{"base64 lines of text, no headers, after it", nil, b64Text(30), "437"},
 	} {
 		id := msgID(t)
-		expect(t, p, 335, "IHAVE %s", id)
+		p.ExpectCmd(335, "IHAVE %s", id)
 		a := newArticle(id, "talk.test", "state", c.body...)
 		a = append(append(append([]string{}, a[:6]...), c.extra...), a[6:]...)
-		send(t, p, wire(a))
+		p.MustSend(client.Stuff(a))
 		line, err := p.ReadLine()
 		if err != nil {
 			t.Fatalf("IHAVE %s: %v", c.name, err)
@@ -907,9 +908,9 @@ func TestChecksumListNotRejectedAsBinary(t *testing.T) {
 	offer := func(body []string) string {
 		id := msgID(t)
 		p := s.Peer(t)
-		defer expect(t, p, 205, "QUIT")
-		expect(t, p, 335, "IHAVE %s", id)
-		send(t, p, wire(newArticle(id, "comp.release", "release checksums", body...)))
+		defer p.ExpectCmd(205, "QUIT")
+		p.ExpectCmd(335, "IHAVE %s", id)
+		p.MustSend(client.Stuff(newArticle(id, "comp.release", "release checksums", body...)))
 		line, err := p.ReadLine()
 		if err != nil {
 			t.Fatalf("IHAVE: %v", err)

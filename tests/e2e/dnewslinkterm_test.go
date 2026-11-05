@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"bytes"
+	testkit "github.com/go-while/nntp-testkit"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -63,7 +64,7 @@ func TestDnewslinkTermStalledPeer(t *testing.T) {
 
 			peer.WaitOpen(t, 1, 10*time.Second)
 			if tc.name == "check" {
-				waitFor(t, 10*time.Second, "a CHECK or TAKETHIS", func() bool {
+				testkit.WaitFor(t, 10*time.Second, "a CHECK or TAKETHIS", func() bool {
 					return peer.Count("CHECK")+peer.Count("TAKETHIS") > 0
 				})
 			}

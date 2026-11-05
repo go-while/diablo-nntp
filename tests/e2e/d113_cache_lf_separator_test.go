@@ -95,13 +95,13 @@ func TestCachedLFSeparator(t *testing.T) {
 	feedReader(t, s, st, "e2e.test", newArticle(id, "e2e.test", "lf only", "body one", "body two"))
 
 	r := s.Reader(t)
-	expect(t, r, 220, "ARTICLE %s", id) // from the spool; fills the cache
+	r.ExpectCmd(220, "ARTICLE %s", id) // from the spool; fills the cache
 	r.ReadDotLines()
 	cacheDir := filepath.Join(s.Dir, "spool", "cache")
-	waitFor(t, 10*time.Second, "the cached article in "+cacheDir, func() bool {
+	testkit.WaitFor(t, 10*time.Second, "the cached article in "+cacheDir, func() bool {
 		return countNonEmptyFiles(cacheDir) >= 1
 	})
-	expect(t, r, 205, "QUIT")
+	r.ExpectCmd(205, "QUIT")
 
 	cached := dialRaw(t, s.Addr)
 	wantHead := cached.article("HEAD", id, "221")

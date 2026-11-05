@@ -36,9 +36,9 @@ func TestCacheFilesPrivate(t *testing.T) {
 		_, spool := spoolStore(t)
 		s = NewReaderSite(t, ReaderOptions{Spool: spool, Access: secretsAccess()})
 		c := s.Reader(t)
-		expect(t, c, 381, "AUTHINFO USER fred")
-		expect(t, c, 281, "AUTHINFO PASS fredspass")
-		expect(t, c, 205, "QUIT")
+		c.ExpectCmd(381, "AUTHINFO USER fred")
+		c.ExpectCmd(281, "AUTHINFO PASS fredspass")
+		c.ExpectCmd(205, "QUIT")
 	})
 	seen := map[string]bool{}
 	err := filepath.WalkDir(s.Dir, func(path string, d fs.DirEntry, err error) error {
@@ -85,7 +85,7 @@ func TestFeederLogsPrivate(t *testing.T) {
 	withUmask0(func() {
 		s = NewSite(t, SiteOptions{})
 		p := s.Peer(t)
-		expect(t, p, 205, "QUIT")
+		p.ExpectCmd(205, "QUIT")
 	})
 	logs, _ := filepath.Glob(filepath.Join(s.Dir, "log", "*"))
 	for _, p := range logs {

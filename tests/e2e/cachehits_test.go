@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"encoding/binary"
+	testkit "github.com/go-while/nntp-testkit"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,13 +70,13 @@ func TestReaderCacheHitsRepaired(t *testing.T) {
 	id := msgID(t)
 	feedReader(t, s, st, "e2e.test", newArticle(id, "e2e.test", "cache.hits", "body"))
 	c := s.Reader(t)
-	expect(t, c, 211, "GROUP e2e.test")
-	expect(t, c, 220, "ARTICLE %s", id)
+	c.ExpectCmd(211, "GROUP e2e.test")
+	c.ExpectCmd(220, "ARTICLE %s", id)
 	c.ReadDotLines()
-	expect(t, c, 205, "QUIT")
+	c.ExpectCmd(205, "QUIT")
 
 	var h cacheHitsHead
-	waitFor(t, 10*time.Second, "a usable cache.hits", func() bool {
+	testkit.WaitFor(t, 10*time.Second, "a usable cache.hits", func() bool {
 		h = readCacheHitsHead(t, path)
 		return h.magic == 0xD1C2B3A4 && h.end <= uint32(h.size) && h.newEntry <= h.end && h.hashSize > 0
 	})

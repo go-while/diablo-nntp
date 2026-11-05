@@ -1,6 +1,6 @@
 /*
  * dnsshim.c - LD_PRELOAD resolver shim for the dreaderd DNS cache tests
- * (dnscache_test.go).  Linux (glibc or musl).
+ * (dnscache_test.go).  Linux (glibc or musl), FreeBSD, NetBSD.
  *
  * Fakes reverse and forward lookups so the tests do not depend on the host
  * resolver, and logs every faked lookup:
@@ -57,9 +57,16 @@ static void count(const char *what, const char *arg) {
     }
 }
 
-int getnameinfo(const struct sockaddr *sa, socklen_t salen, char *host, socklen_t hostlen,
-                char *serv, socklen_t servlen, int flags) {
-    static int (*real)(const struct sockaddr *, socklen_t, char *, socklen_t, char *, socklen_t, int);
+/* the type of the length arguments of getnameinfo(): size_t on FreeBSD */
+#ifdef __FreeBSD__
+typedef size_t ni_len_t;
+#else
+typedef socklen_t ni_len_t;
+#endif
+
+int getnameinfo(const struct sockaddr *sa, socklen_t salen, char *host, ni_len_t hostlen,
+                char *serv, ni_len_t servlen, int flags) {
+    static int (*real)(const struct sockaddr *, socklen_t, char *, ni_len_t, char *, ni_len_t, int);
     if (!real) real = dlsym(RTLD_NEXT, "getnameinfo");
     if (sa && host && hostlen > 0 && !(flags & NI_NUMERICHOST) && serv == NULL) {
         if (sa->sa_family == AF_INET) {

@@ -32,6 +32,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	testkit "github.com/go-while/nntp-testkit"
 	"io"
 	"net"
 	"os"
@@ -152,7 +153,7 @@ func TestReaderCacheHitsZeroReadCount(t *testing.T) {
 		t.Fatalf("first read: %s", d)
 	}
 	var es []cacheHitsEntry
-	waitFor(t, 10*time.Second, "a scoreboard entry", func() bool {
+	testkit.WaitFor(t, 10*time.Second, "a scoreboard entry", func() bool {
 		es = cacheHitsEntries(t, path)
 		return len(es) > 0
 	})
@@ -328,7 +329,7 @@ func TestDexpirescoringLastEntry(t *testing.T) {
 		t.Fatalf("first read: %s", d)
 	}
 	var es []cacheHitsEntry
-	waitFor(t, 10*time.Second, "a scoreboard entry", func() bool {
+	testkit.WaitFor(t, 10*time.Second, "a scoreboard entry", func() bool {
 		es = cacheHitsEntries(t, path)
 		return len(es) > 0
 	})

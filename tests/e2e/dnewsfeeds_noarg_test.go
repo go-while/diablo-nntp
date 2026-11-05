@@ -42,7 +42,7 @@ end
 func TestDnewsfeedsReloadWithoutArgument(t *testing.T) {
 	s := NewSite(t, SiteOptions{})
 	p := s.Peer(t)
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(205, "QUIT")
 	time.Sleep(3 * time.Second)
 	s.WriteFile(t, "dnewsfeeds", GlobalLabel+"label peer\n    inhost "+PeerIP+"\n    addgroup *\n    maxparallel\nend\n")
 	select {
@@ -52,5 +52,5 @@ func TestDnewsfeedsReloadWithoutArgument(t *testing.T) {
 	}
 	// and it still serves
 	p = s.Peer(t)
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(205, "QUIT")
 }

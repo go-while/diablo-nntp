@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	testkit "github.com/go-while/nntp-testkit"
+	"github.com/go-while/nntp-testkit/client"
 	"io/fs"
 	"path/filepath"
 	"strings"
@@ -54,35 +56,35 @@ func TestReaderCacheHeaderRewrite(t *testing.T) {
 		}
 		heads[i] = sh
 		st.AddArticle("e2e.test", fakeserver.Article{MessageID: id, Headers: sh, Body: body})
-		expect(t, p, 335, "IHAVE %s", id)
-		send(t, p, wire(art))
-		status(t, p, 235, "IHAVE "+id)
+		p.ExpectCmd(335, "IHAVE %s", id)
+		p.MustSend(client.Stuff(art))
+		p.ExpectStatus(235, "IHAVE "+id)
 	}
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(205, "QUIT")
 
 	r := s.Reader(t)
-	waitFor(t, 10*time.Second, "the articles in GROUP e2e.test", func() bool {
+	testkit.WaitFor(t, 10*time.Second, "the articles in GROUP e2e.test", func() bool {
 		_, line := r.Cmd("GROUP e2e.test")
 		f := strings.Fields(line)
 		return len(f) > 1 && f[0] == "211" && f[1] == "3"
 	})
 	// First read: fetched from the spool, which fills the cache.
 	for _, id := range ids {
-		expect(t, r, 220, "ARTICLE %s", id)
+		r.ExpectCmd(220, "ARTICLE %s", id)
 		r.ReadDotLines()
 	}
 	cacheDir := filepath.Join(s.Dir, "spool", "cache")
-	waitFor(t, 10*time.Second, "three cached articles in "+cacheDir, func() bool {
+	testkit.WaitFor(t, 10*time.Second, "three cached articles in "+cacheDir, func() bool {
 		return countNonEmptyFiles(cacheDir) >= len(ids)
 	})
 
 	// Second read: from the cache.
 	for i, c := range cases {
-		expect(t, r, 221, "HEAD %s", ids[i])
+		r.ExpectCmd(221, "HEAD %s", ids[i])
 		got := r.ReadDotLines()
 		checkCachedHead(t, c.name, got, heads[i], c.wantXref, c.wantPath)
 
-		expect(t, r, 220, "ARTICLE %s", ids[i])
+		r.ExpectCmd(220, "ARTICLE %s", ids[i])
 		got = r.ReadDotLines()
 		h, b := splitArticle(got)
 		checkCachedHead(t, c.name+" (ARTICLE)", h, heads[i], c.wantXref, c.wantPath)
@@ -90,13 +92,13 @@ func TestReaderCacheHeaderRewrite(t *testing.T) {
 			t.Errorf("%s: ARTICLE body %q", c.name, b)
 		}
 	}
-	expect(t, r, 205, "QUIT")
+	r.ExpectCmd(205, "QUIT")
 
 	// The reader still serves.
 	r2 := s.Reader(t)
-	expect(t, r2, 221, "HEAD %s", ids[0])
+	r2.ExpectCmd(221, "HEAD %s", ids[0])
 	r2.ReadDotLines()
-	expect(t, r2, 205, "QUIT")
+	r2.ExpectCmd(205, "QUIT")
 }
 
 // checkCachedHead: got has the rewritten Xref:/Path: lines and every other header of the

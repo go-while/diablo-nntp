@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	testkit "github.com/go-while/nntp-testkit"
+	"github.com/go-while/nntp-testkit/client"
 	"io/fs"
 	"path/filepath"
 	"strings"
@@ -100,23 +102,23 @@ func TestCtypeHighByteInCacheHeader(t *testing.T) {
 	st.AddArticle("e2e.test", fakeserver.Article{MessageID: id, Headers: sh, Body: body})
 
 	p := s.dialFrom(t, PeerIP)
-	expect(t, p, 335, "IHAVE %s", id)
-	send(t, p, wire(art))
-	status(t, p, 235, "IHAVE "+id)
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(335, "IHAVE %s", id)
+	p.MustSend(client.Stuff(art))
+	p.ExpectStatus(235, "IHAVE "+id)
+	p.ExpectCmd(205, "QUIT")
 
 	r := s.Reader(t)
-	waitFor(t, 10*time.Second, "article in GROUP e2e.test", func() bool {
+	testkit.WaitFor(t, 10*time.Second, "article in GROUP e2e.test", func() bool {
 		_, line := r.Cmd("GROUP e2e.test")
 		f := strings.Fields(line)
 		return len(f) > 1 && f[0] == "211" && f[1] == "1"
 	})
 	// First read: fetched from the spool, which fills the cache.
-	expect(t, r, 220, "ARTICLE %s", id)
+	r.ExpectCmd(220, "ARTICLE %s", id)
 	r.ReadDotLines()
 
 	cacheDir := filepath.Join(s.Dir, "spool", "cache")
-	waitFor(t, 10*time.Second, "committed cache file in "+cacheDir, func() bool {
+	testkit.WaitFor(t, 10*time.Second, "committed cache file in "+cacheDir, func() bool {
 		return cacheCommitted(cacheDir)
 	})
 
@@ -141,7 +143,7 @@ func TestCtypeHighByteInCacheHeader(t *testing.T) {
 	if gotXref != wantXref {
 		t.Errorf("Xref from cache = %q, want %q (head %q)", gotXref, wantXref, gotHead)
 	}
-	expect(t, r, 205, "QUIT")
+	r.ExpectCmd(205, "QUIT")
 }
 
 // cacheCommitted reports whether dir holds a finished cache file: a non-empty regular

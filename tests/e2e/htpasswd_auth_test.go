@@ -48,6 +48,7 @@ func TestReaderHtpasswdAuth(t *testing.T) {
 	if !bytes.Contains(b, []byte("PERL auth request")) {
 		t.Skip("dreaderd is built without Perl support (PERL_ENABLED)")
 	}
+	perlEmbedWorks(t)
 	if _, err := exec.LookPath("perl"); err != nil {
 		t.Skip("no perl to check crypt(3) with")
 	}
@@ -112,7 +113,7 @@ access ` + PeerIP + ` others
 	login := func(user, pass string) bool {
 		t.Helper()
 		c := s.Reader(t)
-		expect(t, c, 381, "AUTHINFO USER %s", user)
+		c.ExpectCmd(381, "AUTHINFO USER %s", user)
 		code, _ := c.Cmd("AUTHINFO PASS %s", pass)
 		c.Close()
 		return code == 281
@@ -161,7 +162,7 @@ access ` + PeerIP + ` others
 	login2 := func(user, pass string) bool {
 		t.Helper()
 		c := s.dialFrom(t, PeerIP)
-		expect(t, c, 381, "AUTHINFO USER %s", user)
+		c.ExpectCmd(381, "AUTHINFO USER %s", user)
 		code, _ := c.Cmd("AUTHINFO PASS %s", pass)
 		c.Close()
 		return code == 281
@@ -194,6 +195,7 @@ func TestReaderHtpasswdNoFile(t *testing.T) {
 	if !bytes.Contains(b, []byte("PERL auth request")) {
 		t.Skip("dreaderd is built without Perl support (PERL_ENABLED)")
 	}
+	perlEmbedWorks(t)
 	src, err := os.ReadFile(filepath.Join(filepath.Dir(bin(t)), "contrib", "htpasswd-auth.pl"))
 	if err != nil {
 		t.Skip("no contrib/htpasswd-auth.pl next to DIABLO_BIN: " + err.Error())
@@ -222,7 +224,7 @@ access ` + PeerIP + ` feed
 	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: access})
 	for i := 0; i < 3; i++ {
 		c := s.Reader(t)
-		expect(t, c, 381, "AUTHINFO USER pat")
+		c.ExpectCmd(381, "AUTHINFO USER pat")
 		if code, line := c.Cmd("AUTHINFO PASS patspass"); code == 281 {
 			t.Errorf("logged in through a script that cannot start: %s", line)
 		}

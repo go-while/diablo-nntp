@@ -25,8 +25,8 @@ func TestFeederOutqRunning(t *testing.T) {
 	outq := func(want string) {
 		t.Helper()
 		p := s.Peer(t)
-		defer expect(t, p, 205, "QUIT")
-		line := expect(t, p, 290, "OUTQ")
+		defer p.ExpectCmd(205, "QUIT")
+		line := p.ExpectCmd(290, "OUTQ")
 		if !strings.HasSuffix(line, want) {
 			t.Errorf("OUTQ: got %q, want ...%s", line, want)
 		}
