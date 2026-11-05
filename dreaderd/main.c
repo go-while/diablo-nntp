@@ -1763,6 +1763,7 @@ TrySendDns(int fd, struct sockaddr_in *rsin, DnsRes *dres)
 	    dreq.dr_Flags = dres->dr_Flags & DF_RESREQRES;
 	    diablo_strlcpy(dreq.dr_AuthUser, dres->dr_AuthUser, sizeof(dres->dr_AuthUser), sizeof(dreq.dr_AuthUser));
 	    diablo_strlcpy(dreq.dr_AuthPass, dres->dr_AuthPass, sizeof(dres->dr_AuthPass), sizeof(dreq.dr_AuthPass));
+	    diablo_strlcpy(dreq.dr_ReaderName, dres->dr_ReaderName, sizeof(dres->dr_ReaderName), sizeof(dreq.dr_ReaderName));
 	    dreq.dr_ByteCount = dres->dr_ByteCount;
 	    dreq.dr_GrpCount = dres->dr_GrpCount;
 	    dreq.dr_ArtCount = dres->dr_ArtCount;
