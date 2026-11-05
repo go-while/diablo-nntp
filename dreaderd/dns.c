@@ -1186,7 +1186,8 @@ netRemoteConnect(const char *confhn, int port, double deadline)
 void
 netRemoteAccounting(DnsReq *dreq)
 {
-    char *conf = "Password@accounting.server:8998";
+    const char *conf;
+    DnsRes adres;
     int fd = -1, port = 8998;
     char buffer[NETREMOTE_DATASIZE], output[NETREMOTE_DATASIZE], *ptr, *optr;
     char confpw[1024], confhn[1024], *colon;
@@ -1194,6 +1195,27 @@ netRemoteAccounting(DnsReq *dreq)
     des_cblock key;
     des_key_schedule sched;
     double deadline;
+
+    /*
+     * The session goes to the netremote server of the authdef the user
+     * logged in through (via its readerdef), as the login did; without
+     * one nothing is sent.  Before, every session of a password login
+     * went to a placeholder, "Password@accounting.server:8998" (D-173).
+     */
+    bzero(&adres, sizeof(adres));
+    dreq->dr_ReaderName[sizeof(dreq->dr_ReaderName) - 1] = 0;
+    SetAuthDetails(&adres, dreq->dr_ReaderName);
+    /*
+     * SetAuthDetails() falls back to the first readerdef for a name it
+     * does not find (empty, or renamed or removed by a reload during the
+     * session): that one's netremote is not this session's.
+     */
+    if (dreq->dr_ReaderName[0] == 0 || adres.dr_ReaderDef == NULL ||
+	    strcmp(adres.dr_ReaderDef->rd_Name, dreq->dr_ReaderName) != 0)
+	return;
+    if (adres.dr_AuthDef == NULL || adres.dr_AuthDef->au_NetRemote[0] == 0)
+	return;
+    conf = adres.dr_AuthDef->au_NetRemote;
 
     snprintf(confpw, sizeof(confpw), "%s", conf);
     if ((ptr = strchr(confpw, '@'))) {
@@ -2000,6 +2022,29 @@ perlWords(const char *conf, char **argv, int max)
     return n;
 }
 
+/*
+ * PERL_SYS_INIT3() once per process, before the first perl_alloc(), as
+ * perlembed requires.  Linux and FreeBSD perl worked without it; the
+ * threaded pkgsrc perl on NetBSD fails perl_parse() for every script
+ * (D-179).  It may keep the pointers, so they stay valid.
+ */
+static void
+perlSysInit(void)
+{
+    static int done = 0;
+    static int ac = 1;
+    static char *avbuf[] = { "dreaderd", NULL };
+    static char **av = avbuf;
+    static char **env;
+    extern char **environ;
+
+    if (done)
+	return;
+    done = 1;
+    env = environ;
+    PERL_SYS_INIT3(&ac, &av, &env);
+}
+
 char *PerlAuthenticate(char *user, char *pass, char *conf)
 {
     char *auth_args[] = { user, pass, NULL };
@@ -2038,6 +2083,7 @@ char *PerlAuthenticate(char *user, char *pass, char *conf)
 	    logit(LOG_ERR, "PERL: no script in \"%s\"", conf);
 	    return(NULL);
 	}
+	perlSysInit();
 	if ((my_perl = perl_alloc()) == NULL) {
 	    logit(LOG_ERR, "PERL: perl_alloc: no memory");
 	    return(NULL);
@@ -4716,8 +4762,25 @@ ClearOldAccessMap(void) {
     if (oldaccessmap.VServerList != NULL)
 	xunmap(oldaccessmap.VServerList, oldaccessmap.VServerCount * sizeof(Vserver));
     if (oldaccessmap.GroupMap != NULL) {
+	GroupDef *gp;
+
+	/*
+	 * Every node and group name of the old lists, not only the first
+	 * node: each reload leaked the rest (D-103).  gr_Name points into
+	 * the map itself.
+	 */
+	while ((gp = oldaccessmap.GroupsList) != NULL) {
+	    GroupList *gl;
+
+	    oldaccessmap.GroupsList = gp->gr_Next;
+	    while ((gl = gp->gr_Groups) != NULL) {
+		gp->gr_Groups = gl->next;
+		zfreeStr(&DnsMemPool, &gl->group);
+		zfree(&DnsMemPool, gl, sizeof(GroupList));
+	    }
+	    zfree(&DnsMemPool, gp, sizeof(GroupDef));
+	}
 	xunmap(oldaccessmap.GroupMap, oldaccessmap.GroupMapSize);
-	zfree(&DnsMemPool, oldaccessmap.GroupsList, sizeof(GroupDef));
     }
     if (oldaccessmap.AuthList != NULL)
 	xunmap(oldaccessmap.AuthList, oldaccessmap.AuthCount * sizeof(AuthDef));

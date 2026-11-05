@@ -311,6 +311,7 @@ typedef struct DnsReq {
     double dr_ByteCountXhdr;		/* Bytes sent for xhdr fetches	*/
     double dr_ByteCountOther;		/* Bytes sent for other fetches	*/
     time_t dr_SessionLength;		/* duration of session in secs	*/
+    char dr_ReaderName[DEFNAMELEN];	/* session end: its readerdef	*/
 } DnsReq;
 
 /*

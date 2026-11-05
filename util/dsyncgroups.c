@@ -918,7 +918,7 @@ ConnectToHost(const char *host, int port)
 
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_UNSPEC;
-    hints.ai_flags = AI_ADDRCONFIG;
+    hints.ai_flags = AddrConfigFlag(host);
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_protocol = IPPROTO_TCP;
 
@@ -937,6 +937,7 @@ ConnectToHost(const char *host, int port)
     }
 
     if (BindHost != NULL || BindPort != NULL) {
+	hints.ai_flags = AddrConfigFlag(BindHost);
 	e = getaddrinfo(BindHost, BindPort, &hints, &src);
 	if (e != 0) {
 	    fprintf(stderr, "Cannot resolve bindhost/bindport %s%s%s: %s\n",

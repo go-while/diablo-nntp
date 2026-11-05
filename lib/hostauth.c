@@ -367,6 +367,11 @@ loadDnewsFeeds(FILE *fo, int t, int *count)
     while (igets(buf, sizeof(buf), fi) != NULL) {
 	char *cmd = strtok(buf, " \t\n");
 	char *p = (cmd != NULL) ? strtok(NULL, " \t\n") : NULL;
+	if (IgetsTooLong) {	/* skipped whole (D-94) */
+	    logit(LOG_ERR, "%s: a line is too long (at most %d characters), ignored",
+		PatLibExpand(DNewsfeedsPat), (int)sizeof(buf) - 2);
+	    continue;
+	}
 	if (cmd == NULL || *cmd == '#')
 	    continue;
 

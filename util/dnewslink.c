@@ -3340,7 +3340,7 @@ flushCommandBuffer(int cfd)
 		l.l_linger = 0;
 		setsockopt(cfd, SOL_SOCKET, SO_LINGER, (void*)&l, sizeof(l));
 		TimeCounter = 100000;
-		break;
+		return(-1);	/* not sent: the caller must not count it (D-116) */
 	    }
 	}
 #endif
@@ -3432,7 +3432,9 @@ writeLarge(int cfd, char *buffer, size_t size)
 
     } while (iovleft > 0 && (status >= 0 || errno == EINTR));
 
-    assert(bytes == 0);
+    /* NDEBUG is defined above, so the assert never ran: check it */
+    if (bytes > 0)
+	return(-1);
 
     return status;
 }
