@@ -454,8 +454,9 @@ KPDBGetField(const char *rec, int recLen, const char *tok, int *plen, const char
      */
 
     if (tok == NULL) {
-	i = KEY_OFF;
-	for (l = i; rec[l] != ' ' && rec[l] != '\t' && rec[l] != '\n'; ++l)
+	/* a damaged record may end inside the key: stay within recLen */
+	i = (KEY_OFF < recLen) ? KEY_OFF : recLen;
+	for (l = i; l < recLen && rec[l] != ' ' && rec[l] != '\t' && rec[l] != '\n'; ++l)
 	    ;
 	if (plen)
 	    *plen = l - i;

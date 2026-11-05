@@ -113,7 +113,15 @@ artno_input(artno_t nb, artno_t ne, artno_t in, int numberingmode) {
 		}
 	}
 
-	in += (nb - artno_nb(nb, ne, numberingmode));
+	{
+		artno_t delta = nb - artno_nb(nb, ne, numberingmode);
+
+		/* a huge client number must not overflow: no such article */
+		if ((delta > 0 && in > LLONG_MAX - delta) ||
+		    (delta < 0 && in < LLONG_MIN - delta))
+			return(-1);
+		in += delta;
+	}
 
 	return(in);
 }
