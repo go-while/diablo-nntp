@@ -66,7 +66,7 @@ func TestReaderListLongFileLines(t *testing.T) {
 	long := "e2e.long." + strings.Repeat("x", 400) + ":long@moderators.example.invalid"
 	m := newModerationReader(t, ModOptions{Moderators: "# a comment\n" + long + "\ne2e.mod:a@moderators.example.invalid\n"})
 	c := m.Reader(t)
-	expect(t, c, 215, "LIST MODERATORS")
+	c.ExpectCmd(215, "LIST MODERATORS")
 	lines := c.ReadDotLines()
 	if len(lines) != 2 || lines[0] != long {
 		t.Errorf("LIST MODERATORS: %d lines %.80q..., want the long line whole and one more", len(lines), lines)
@@ -76,10 +76,10 @@ func TestReaderListLongFileLines(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(m.Dir, "distributions"), []byte(dist+"\nworld\tEverywhere\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	expect(t, c, 215, "LIST DISTRIBUTIONS")
+	c.ExpectCmd(215, "LIST DISTRIBUTIONS")
 	lines = c.ReadDotLines()
 	if len(lines) != 2 || lines[0] != dist {
 		t.Errorf("LIST DISTRIBUTIONS: %d lines, want the long line whole and one more", len(lines))
 	}
-	expect(t, c, 205, "QUIT")
+	c.ExpectCmd(205, "QUIT")
 }
