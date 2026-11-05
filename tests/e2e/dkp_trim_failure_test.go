@@ -39,18 +39,28 @@ func TestDKPTrimReadFailure(t *testing.T) {
 #include <stdio.h>
 #include <sys/types.h>
 #include <unistd.h>
-static ssize_t rd(void *c, char *buf, size_t n) {
+static ssize_t rd(void *c, void *buf, size_t n) {
     static int calls;
     if (calls++ > 0) { errno = EIO; return -1; }
     return read((int)(long)c, buf, n < 512 ? n : 512);
 }
 static int cl(void *c) { return close((int)(long)c); }
+#if defined(__NetBSD__)
+/* NetBSD has funopen2() for fopencookie() */
+#define COOKIE_OPEN(fd, mode) funopen2((void *)(long)(fd), rd, NULL, NULL, NULL, cl)
+#else
+static ssize_t rd_c(void *c, char *buf, size_t n) { return rd(c, buf, n); }
+static FILE *cookie_open(int fd, const char *mode) {
+    cookie_io_functions_t io = { rd_c, NULL, NULL, cl };
+    return fopencookie((void *)(long)fd, mode, io);
+}
+#define COOKIE_OPEN(fd, mode) cookie_open(fd, mode)
+#endif
 FILE *fdopen(int fd, const char *mode) {
     static FILE *(*real_fdopen)(int, const char *);
     if (!real_fdopen) real_fdopen = (FILE *(*)(int, const char *))dlsym(RTLD_NEXT, "fdopen");
     if (mode[0] == 'r') {
-        cookie_io_functions_t io = { rd, NULL, NULL, cl };
-        return fopencookie((void *)(long)fd, mode, io);
+        return COOKIE_OPEN(fd, mode);
     }
     return real_fdopen(fd, mode);
 }
@@ -58,24 +68,25 @@ FILE *fdopen(int fd, const char *mode) {
 }
 
 func TestDKPTrimCloseFailure(t *testing.T) {
-	if _, err := os.Stat("/proc/self/fd"); err != nil {
-		t.Skip("the close fault injector needs /proc/self/fd")
+	if runtime.GOOS == "linux" {
+		if _, err := os.Stat("/proc/self/fd"); err != nil {
+			t.Skip("the close fault injector needs /proc/self/fd")
+		}
 	}
 	testDKPTrimFailure(t, `#define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+/*FDPATH*/
 int fclose(FILE *stream) {
     static int (*real_fclose)(FILE *);
-    char link[64], path[4096];
-    ssize_t n;
+    char path[4096];
     int fail, r;
     if (!real_fclose) real_fclose = dlsym(RTLD_NEXT, "fclose");
-    snprintf(link, sizeof(link), "/proc/self/fd/%d", fileno(stream));
-    n = readlink(link, path, sizeof(path)-1);
-    if (n >= 0) path[n] = 0; else path[0] = 0;
+    fdpath(fileno(stream), path, sizeof(path));
     fail = strstr(path, "active.kp.tmp") != NULL;
     r = real_fclose(stream);
     if (fail) { errno = EIO; return EOF; }
@@ -86,9 +97,10 @@ int fclose(FILE *stream) {
 
 func testDKPTrimFailure(t *testing.T, source string) {
 	t.Helper()
-	if runtime.GOOS != "linux" {
-		t.Skip("the local fault injector uses LD_PRELOAD on Linux")
+	if !preloadHost(false) {
+		t.Skip("the local fault injector uses LD_PRELOAD on Linux, FreeBSD and NetBSD")
 	}
+	source = withFdPath(source)
 	cc := wmCC(t)
 	dir := t.TempDir()
 	c := filepath.Join(dir, "failrename.c")
@@ -96,7 +108,7 @@ func testDKPTrimFailure(t *testing.T, source string) {
 	if err := os.WriteFile(c, []byte(source), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command(cc, "-shared", "-fPIC", "-o", so, c, "-ldl").CombinedOutput(); err != nil {
+	if out, err := exec.Command(cc, append([]string{"-shared", "-fPIC", "-o", so, c}, shimLibs()...)...).CombinedOutput(); err != nil {
 		t.Fatalf("build fault injector: %v\n%s", err, out)
 	}
 	dkp := filepath.Join(bin(t), "dkp")

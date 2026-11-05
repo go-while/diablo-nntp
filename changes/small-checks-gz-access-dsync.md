@@ -1,0 +1,3 @@
+- `dreaderd` and `dexpireover`: the header of a `.gz` overview data file is checked against the file size; a bad one is reported as an inflate error (D-176).
+- `dreader.access`: a line longer than 1022 bytes is refused with its line number instead of parsing its tail as a line (D-177).
+- `dsyncgroups`: a user name or password too long for the command is refused instead of sent cut (D-178).

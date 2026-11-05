@@ -70,7 +70,7 @@ func pipeReader(t *testing.T) (*Site, string) {
 	id := msgID(t)
 	feedReader(t, s, st, "e2e.test", newArticle(id, "e2e.test", "pipelining", "hello pipeline", ".dot line"))
 	c := s.Reader(t)
-	waitFor(t, testkit.Deadline(), "the article in GROUP e2e.test", func() bool {
+	testkit.WaitFor(t, testkit.Deadline(), "the article in GROUP e2e.test", func() bool {
 		_, line := c.Cmd("GROUP e2e.test")
 		f := strings.Fields(line)
 		return len(f) > 1 && f[0] == "211" && f[1] != "0"
@@ -213,7 +213,7 @@ func TestPipeliningFeederStreaming(t *testing.T) {
 	for i := 0; i < 50; i++ {
 		id := fmt.Sprintf("<take%d@e2e.test>", i)
 		// the article follows its TAKETHIS in the same write; the dot ends it
-		art := strings.TrimSuffix(wire(newArticle(id, "e2e.test", "take", "body")), "\r\n")
+		art := strings.TrimSuffix(client.Stuff(newArticle(id, "e2e.test", "take", "body")), "\r\n")
 		cmds = append(cmds, "TAKETHIS "+id+"\r\n"+art, fmt.Sprintf("CHECK <after%d@e2e.test>", i))
 		want = append(want, "239 "+id, fmt.Sprintf("238 <after%d@e2e.test>", i))
 	}

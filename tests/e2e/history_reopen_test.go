@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	testkit "github.com/go-while/nntp-testkit"
 	"io"
 	"os"
 	"os/exec"
@@ -84,7 +85,7 @@ func TestHistoryReopenAfterSwap(t *testing.T) {
 	hist := newHistory(t, s)
 	_, in, out, done := histCmd(t, s, nil, "diload", hist)
 	io.WriteString(in, dumpLine(0x3456789, 0xabcdef0))
-	waitFor(t, 30*time.Second, "the first add", func() bool {
+	testkit.WaitFor(t, 30*time.Second, "the first add", func() bool {
 		_, found := histExp(t, s, hist, "03456789.0abcdef0")
 		return found
 	})

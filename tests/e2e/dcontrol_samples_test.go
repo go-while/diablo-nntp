@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"fmt"
+	testkit "github.com/go-while/nntp-testkit"
 	"os"
 	"path/filepath"
 	"strings"
@@ -112,11 +113,11 @@ func TestDcontrolSamplesPolicy(t *testing.T) {
 			art := iscArticle(t, "checkgroups", "modern")
 			want := iscExpected(t, art, "comp.ai")["comp.ai"]
 			feedReader(t, s, st, "news.announce.newgroups", art)
-			waitFor(t, 20*time.Second, "the ISC description of comp.ai", func() bool {
+			testkit.WaitFor(t, 20*time.Second, "the ISC description of comp.ai", func() bool {
 				return iscDescriptions(iscList(t, s, "NEWSGROUPS"), "comp.ai")["comp.ai"] == want
 			})
-			waitFor(t, 20*time.Second, "comp.lang.go created by the signed newgroup", func() bool { return exists("comp.lang.go") })
-			waitFor(t, 20*time.Second, "alt.e2e.open created", func() bool { return exists("alt.e2e.open") })
+			testkit.WaitFor(t, 20*time.Second, "comp.lang.go created by the signed newgroup", func() bool { return exists("comp.lang.go") })
+			testkit.WaitFor(t, 20*time.Second, "alt.e2e.open created", func() bool { return exists("alt.e2e.open") })
 			time.Sleep(iscRefusedWait)
 			if exists("comp.e2e.forged") {
 				t.Error("an unsigned newgroup created comp.e2e.forged")
@@ -149,7 +150,7 @@ func TestDcontrolSamplesCheckgroupsTwoHierarchies(t *testing.T) {
 			feedReader(t, s, st, "e2e.test", checkgroups("austin", "austin.test"), checkgroups("tx", "tx.test"))
 			for _, g := range []string{"austin.test", "tx.test"} {
 				want := "Described by the " + strings.SplitN(g, ".", 2)[0] + " checkgroups."
-				waitFor(t, 20*time.Second, "the checkgroups description of "+g, func() bool {
+				testkit.WaitFor(t, 20*time.Second, "the checkgroups description of "+g, func() bool {
 					return iscDescriptions(iscList(t, s, "NEWSGROUPS"), g)[g] == want
 				})
 			}

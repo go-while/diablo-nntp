@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"errors"
+	testkit "github.com/go-while/nntp-testkit"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -156,7 +157,7 @@ func TestDjoblogRotation(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, 10*time.Second, "the first line in the log", func() bool {
+	testkit.WaitFor(t, 10*time.Second, "the first line in the log", func() bool {
 		b, _ := os.ReadFile(logf)
 		return strings.Contains(string(b), ": before")
 	})

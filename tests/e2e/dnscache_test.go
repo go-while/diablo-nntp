@@ -14,7 +14,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -45,8 +44,8 @@ type dnsShim struct {
 // buildDNSShim compiles the resolver shim, or skips (it needs glibc's LD_PRELOAD).
 func buildDNSShim(t *testing.T) *dnsShim {
 	t.Helper()
-	if runtime.GOOS != "linux" {
-		t.Skip("the resolver shim needs Linux (LD_PRELOAD of getnameinfo/getaddrinfo)")
+	if !preloadHost(false) {
+		t.Skip("the resolver shim needs LD_PRELOAD of getnameinfo/getaddrinfo (Linux, FreeBSD, NetBSD)")
 	}
 	cc := wmCC(t)
 	dir := t.TempDir()
@@ -55,7 +54,7 @@ func buildDNSShim(t *testing.T) *dnsShim {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command(cc, "-O2", "-shared", "-fPIC", "-o", so, src, "-ldl").CombinedOutput(); err != nil {
+	if out, err := exec.Command(cc, append([]string{"-O2", "-shared", "-fPIC", "-o", so, src}, shimLibs()...)...).CombinedOutput(); err != nil {
 		t.Skipf("cannot build the resolver shim: %v\n%s", err, out)
 	}
 	return &dnsShim{so: so, log: filepath.Join(dir, "lookups.log")}
@@ -178,9 +177,9 @@ access *.bench.test userfred
 			s := startDNSCacheReader(t, sh, access, tc.conf, "")
 			ip := "127.1.0.3"
 			c := s.dialFrom(t, ip)
-			expect(t, c, 381, "AUTHINFO USER fred")
-			expect(t, c, 281, "AUTHINFO PASS fredspass")
-			expect(t, c, 211, "GROUP e2e.test")
+			c.ExpectCmd(381, "AUTHINFO USER fred")
+			c.ExpectCmd(281, "AUTHINFO PASS fredspass")
+			c.ExpectCmd(211, "GROUP e2e.test")
 			c.Cmd("QUIT")
 			c.Close()
 			if n := sh.lookups(ip); n != 2 {
@@ -372,11 +371,11 @@ func TestReaderDNSAuthinfoAfterTempFail(t *testing.T) {
 	if !strings.HasPrefix(c.Greeting, "201") {
 		t.Errorf("greeting %q, want 201 (address rule, no name yet)", c.Greeting)
 	}
-	expect(t, c, 381, "AUTHINFO USER fred")
-	expect(t, c, 281, "AUTHINFO PASS fredspass")
+	c.ExpectCmd(381, "AUTHINFO USER fred")
+	c.ExpectCmd(281, "AUTHINFO PASS fredspass")
 	code, line := c.Cmd("POST")
 	if code == 340 {
-		send(t, c, ".\r\n")
+		c.MustSend(".\r\n")
 		c.ReadStatus()
 	}
 	c.TryCmd("QUIT")

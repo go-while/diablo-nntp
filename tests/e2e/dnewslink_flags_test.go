@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"github.com/go-while/nntp-testkit/fakeserver"
 	"os"
 	"strconv"
 	"strings"
@@ -13,17 +14,19 @@ import (
 func TestDnewslinkQueueFieldsPerLine(t *testing.T) {
 	s := NewSite(t, SiteOptions{NoStart: true})
 	dnlSpool(t, s)
-	port := dnlPeerN(t, func(conn int, line string) (string, bool) {
+	srv := fakeserver.New(t, fakeserver.Options{Greeting: "200 fake", Handler: fakeserver.LineHandler(func(_ *fakeserver.Conn, line string) ([]string, bool) {
+		line = strings.ToLower(strings.TrimSpace(line))
 		switch {
 		case strings.HasPrefix(line, "mode stream"):
-			return "203 stream ok\r\n", false
+			return []string{"203 stream ok"}, false
 		case strings.HasPrefix(line, "check <z0@"):
-			return "438 <z0@e2e.test>\r\n", false
+			return []string{"438 <z0@e2e.test>"}, false
 		case strings.HasPrefix(line, "check <z1@"):
-			return "", true // conn 1: go away after answering z0; conn 2: go away at once
+			return nil, true // conn 1: go away after answering z0; conn 2: go away at once
 		}
-		return "", false
-	})
+		return nil, false
+	})})
+	port := srv.Port()
 	q := "D.00000001/B.0001 <z0@e2e.test> 0,100\n" +
 		"D.00000001/B.0001 <z1@e2e.test> 100,100 C50\n" +
 		"D.00000001/B.0001 <z2@e2e.test> 200,100\n"

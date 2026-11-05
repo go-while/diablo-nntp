@@ -11,7 +11,7 @@ import (
 func TestReaderListModeratorsCRLF(t *testing.T) {
 	m := newModerationReader(t, ModOptions{Moderators: "e2e.mod:a@moderators.example.invalid\r\ne2e.mod2:b@moderators.example.invalid\r\n"})
 	c := m.Reader(t)
-	expect(t, c, 215, "LIST MODERATORS")
+	c.ExpectCmd(215, "LIST MODERATORS")
 	lines := c.ReadDotLines()
 	if len(lines) != 2 {
 		t.Fatalf("LIST MODERATORS: %q, want 2 lines", lines)

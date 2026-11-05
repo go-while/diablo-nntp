@@ -87,10 +87,11 @@ NNTPAuthInfo(Connection *conn, char **pptr)
 
     /*
      * RFC 4643: no second login after a successful one (502), and PASS
-     * only after USER (482).
+     * only after USER (482).  A login is the 281, whatever the password
+     * was (an authdef may accept an empty one); a connection allowed by
+     * its address alone has not logged in and may still use AUTHINFO.
      */
-    if (conn->co_Auth.dr_AuthPass[0] &&
-		(conn->co_Auth.dr_Flags & DF_AUTHREQUIRED) == 0) {
+    if (conn->co_Flags & COF_AUTHINFO) {
 	MBLogPrintf(conn, &conn->co_TMBuf, "502 Already authenticated\r\n");
 	NNCommand(conn);
 	return;

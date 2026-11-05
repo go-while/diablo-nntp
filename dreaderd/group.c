@@ -41,6 +41,44 @@
 #define	GZ_COMMENT	0x10
 #define	GZ_HEADCRC	0x02
 
+#ifdef USE_ZLIB
+/*
+ * gzHeaderLen() - length of the gzip header at p (n bytes in the file), or 0
+ * if it is not a deflate-compressed gzip header or runs past the end of the
+ * file with no room left for data and the trailer.
+ */
+static size_t
+gzHeaderLen(const unsigned char *p, size_t n)
+{
+    size_t o = 10;
+    int flags;
+
+    if (n < 18 || p[0] != GZ_MAGIC0 || p[1] != GZ_MAGIC1 || p[2] != Z_DEFLATED)
+	return(0);
+    flags = p[3];
+    if (flags & GZ_EXTRA) {
+	if (o + 2 > n)
+	    return(0);
+	o += 2 + (size_t)(p[o] | (p[o+1] << 8));
+    }
+    if (flags & GZ_ORIGNAME) {
+	while (o < n && p[o])
+	    ++o;
+	++o;
+    }
+    if (flags & GZ_COMMENT) {
+	while (o < n && p[o])
+	    ++o;
+	++o;
+    }
+    if (flags & GZ_HEADCRC)
+	o += 2;
+    if (o + 8 >= n)	/* data and the 8 byte trailer must follow */
+	return(0);
+    return(o);
+}
+#endif
+
 Prototype void NNFeedOverview(Connection *conn);
 Prototype void FlushOverCache(void);
 Prototype OverInfo *GetOverInfo(const char *group);
@@ -1536,8 +1574,9 @@ MakeOverHFile(OverInfo *ov, artno_t artNo, int create)
     int count = 0;
     int hfd;
 #ifdef USE_ZLIB
-    int tmpfd, zfd, gzflags;
+    int tmpfd, zfd;
     unsigned char *zmap, *tmpmap, *zpos;
+    size_t hl;
     char tmpfile[256];
     struct stat st;
     unsigned long zlen;
@@ -1583,11 +1622,12 @@ MakeOverHFile(OverInfo *ov, artno_t artNo, int create)
 		            strerror(errno)
 		        );
 		    } else {
-		        zpos = zmap + st.st_size - 4;
-		        zlen = ((unsigned)zpos[0] & 0xff) |
+		        zpos = zmap + (st.st_size >= 18 ? st.st_size - 4 : 0);
+		        zlen = st.st_size < 18 ? 0 :
+			       (((unsigned)zpos[0] & 0xff) |
 			       ((unsigned)zpos[1] & 0xff) << 8 |
 			       ((unsigned)zpos[2] & 0xff) << 16 |
-			       ((unsigned)zpos[3] & 0xff) << 24;
+			       ((unsigned)zpos[3] & 0xff) << 24);
 
 		        if (zlen < 256 || zlen > (64 * 1048576)) {
 			    logit(LOG_ERR, "Bad zlen %d for gzcat %s/%s",
@@ -1617,44 +1657,15 @@ MakeOverHFile(OverInfo *ov, artno_t artNo, int create)
 				tmpfd = -1;
 		            } else {
 				// handle gzip headers
-				zpos = zmap;
-
-				if (zpos[0] != GZ_MAGIC0 || zpos[1] != GZ_MAGIC1 || zpos[2] != Z_DEFLATED) {
-				    logit(LOG_ERR, "gzip header error (%d, %d, %d) for gzcat %s/%s: %s",
-				        zpos[0], zpos[1], zpos[2],
-			                MyGroupHome,
-		                        gfname,
-				        z.msg
-				    );
-				}
-				zpos += 3;
-
-				gzflags = *zpos;
-				zpos += 7;
-
-
-				if ((gzflags & GZ_EXTRA)) {
-				    zpos += zpos[0] + (zpos[1] << 8);
-				}
-				if ((gzflags & GZ_ORIGNAME)) {
-				    for ( ; *zpos; zpos++) {
-				    }
-				    zpos++;
-				}
-				if ((gzflags & GZ_COMMENT)) {
-				    for ( ; *zpos; zpos++) {
-				    }
-				    zpos++;
-				}
-				if ((gzflags & GZ_HEADCRC)) {
-				    zpos += 2;
-				}
-
+				hl = gzHeaderLen(zmap, st.st_size);
+				bzero(&z, sizeof(z));
+				if (hl == 0) {
+				    z.msg = "bad gzip header";
+				    code = Z_DATA_ERROR;
+				} else {
 				// begin uncompress
-			        bzero(&z, sizeof(z));
-    
-			        z.next_in = zpos;
-			        z.avail_in = st.st_size - (zpos - zmap);
+			        z.next_in = zmap + hl;
+			        z.avail_in = st.st_size - hl;
     
 			        z.next_out = tmpmap;
 			        z.avail_out = zlen;
@@ -1666,6 +1677,7 @@ MakeOverHFile(OverInfo *ov, artno_t artNo, int create)
 				inflateInit2(&z, -MAX_WBITS);
 			        code = inflate(&z, Z_FINISH);
 				inflateEnd(&z);
+				}
     
 			        if (code != Z_STREAM_END) {
 				    logit(LOG_ERR, "inflate error (%i) for gzcat %s/%s: %s",

@@ -777,6 +777,32 @@ spool_file(char *spoolFile, int pass, NewslinkInfo *li, int flags)
 	if (flags & SF_NOBATCH)
 	    tries = 0;
 
+	/*
+	 * maxparallel is the number of connections to the host, and the
+	 * realtime dnewslink is one of them: one running now (it holds
+	 * the lock on the active queue file) or one started below.  At
+	 * least one batch dnewslink is kept for the backlog, so with
+	 * maxparallel 1 a realtime label still has two connections.
+	 */
+	if (tries > 1 && li->li_RealTime) {
+	    int rt = (flags & SF_REALTIME) &&
+			(ForceRealTime || (endSeq - begSeq <= 2));
+
+	    if (!rt) {
+		int tfd;
+
+		if ((tfd = open(spoolFile, O_RDWR)) >= 0) {
+		    if (xflock(tfd, XLOCK_EX|XLOCK_NB) < 0)
+			rt = 1;
+		    else
+			xflock(tfd, XLOCK_UN);
+		    close(tfd);
+		}
+	    }
+	    if (rt)
+		--tries;
+	}
+
 	for (look = 0; look < 32 && tries &&
 			begSeq + look < endSeq - li->li_QueueSkip; ++look) {
 	    int use = begSeq + look;

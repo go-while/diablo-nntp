@@ -28,11 +28,11 @@ func TestFeedNoXrefLongXRefHost(t *testing.T) {
 	feedReader(t, s, st, "e2e.test", newArticle(id, "e2e.test", "short xref host", "body"))
 
 	r := s.Reader(t)
-	expect(t, r, 211, "GROUP e2e.test")
+	r.ExpectCmd(211, "GROUP e2e.test")
 	if over := overOne(t, r); !strings.Contains(over, "Xref: "+PathHost+" e2e.test:1") {
 		t.Errorf("OVER 1 does not carry the generated Xref: %q", over)
 	}
-	expect(t, r, 205, "QUIT")
+	r.ExpectCmd(205, "QUIT")
 
 	// The attack: a 120 KiB configured Xref host, article without Xref:.
 	const hostLen = 120 * 1024
@@ -55,17 +55,17 @@ func TestFeedNoXrefLongXRefHost(t *testing.T) {
 	feedReader(t, s2, st2, "e2e.test", newArticle(id2, "e2e.test", "long xref host", "body"))
 
 	r2 := s2.Reader(t)
-	expect(t, r2, 211, "GROUP e2e.test")
+	r2.ExpectCmd(211, "GROUP e2e.test")
 	if over := overOne(t, r2); !strings.Contains(over, "Xref: "+longHost) {
 		t.Errorf("OVER 1 does not carry the %d byte Xref host", hostLen)
 	}
-	expect(t, r2, 205, "QUIT")
+	r2.ExpectCmd(205, "QUIT")
 }
 
 // overOne asks for article 1's overview and returns the single line.
 func overOne(t *testing.T, c *client.Conn) string {
 	t.Helper()
-	expect(t, c, 224, "OVER 1")
+	c.ExpectCmd(224, "OVER 1")
 	lines := c.ReadDotLines()
 	if len(lines) != 1 {
 		t.Fatalf("OVER 1 returned %d lines, want 1", len(lines))

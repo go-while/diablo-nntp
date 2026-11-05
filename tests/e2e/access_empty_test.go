@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	testkit "github.com/go-while/nntp-testkit"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -30,14 +31,14 @@ func TestAccessMapEmptyDeniesNoCrash(t *testing.T) {
 		Config: map[string]string{"path_generallog": "%s/general.log"}})
 	startReaderNoWait(t, s)
 
-	waitFor(t, 5*time.Second, "the bad-value line in the log", func() bool {
+	testkit.WaitFor(t, 5*time.Second, "the bad-value line in the log", func() bool {
 		return strings.Contains(generalLog(s), "bad value")
 	})
 
 	// The empty map is hit the moment a client connects. dreaderd must answer - with a
 	// refusal - and keep serving; a crash leaves every connection unanswered.
 	var g string
-	waitFor(t, 10*time.Second, "dreaderd to answer a client against the empty access map", func() bool {
+	testkit.WaitFor(t, 10*time.Second, "dreaderd to answer a client against the empty access map", func() bool {
 		g = readerGreeting(s.Addr)
 		return g != ""
 	})
@@ -73,7 +74,7 @@ func TestAccessErrorLoggedOncePerChange(t *testing.T) {
 
 	startReaderNoWait(t, s)
 
-	waitFor(t, 5*time.Second, "the bad-value line in the log", func() bool {
+	testkit.WaitFor(t, 5*time.Second, "the bad-value line in the log", func() bool {
 		return strings.Contains(generalLog(s), "bad value")
 	})
 
@@ -92,7 +93,7 @@ func TestAccessErrorLoggedOncePerChange(t *testing.T) {
 	// service resumes. Each poll is itself a connection, which triggers the re-parse.
 	s.WriteFile(t, "dreader.access", DefaultReaderAccess)
 	var g string
-	waitFor(t, 20*time.Second, "service to resume after dreader.access is fixed", func() bool {
+	testkit.WaitFor(t, 20*time.Second, "service to resume after dreader.access is fixed", func() bool {
 		g = readerGreeting(s.Addr)
 		return strings.HasPrefix(g, "200") || strings.HasPrefix(g, "201")
 	})
@@ -125,7 +126,7 @@ func TestAccessErrorFixedInPlaceSameSecond(t *testing.T) {
 
 	startReaderNoWait(t, s)
 
-	waitFor(t, 5*time.Second, "the bad-value line in the log", func() bool {
+	testkit.WaitFor(t, 5*time.Second, "the bad-value line in the log", func() bool {
 		return strings.Contains(generalLog(s), "bad value")
 	})
 
@@ -156,7 +157,7 @@ func TestAccessErrorFixedInPlaceSameSecond(t *testing.T) {
 	}
 
 	var g string
-	waitFor(t, 20*time.Second, "service to resume after a same-second in-place fix", func() bool {
+	testkit.WaitFor(t, 20*time.Second, "service to resume after a same-second in-place fix", func() bool {
 		g = readerGreeting(s.Addr)
 		return strings.HasPrefix(g, "200") || strings.HasPrefix(g, "201")
 	})
@@ -167,7 +168,7 @@ func TestAccessErrorFixedInPlaceSameSecond(t *testing.T) {
 func readMainPid(t *testing.T, s *Site) int {
 	t.Helper()
 	var pid int
-	waitFor(t, 5*time.Second, "dreaderd.pid", func() bool {
+	testkit.WaitFor(t, 5*time.Second, "dreaderd.pid", func() bool {
 		b, err := os.ReadFile(filepath.Join(s.Dir, "log", "dreaderd.pid"))
 		if err != nil {
 			return false

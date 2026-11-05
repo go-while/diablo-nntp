@@ -1,6 +1,9 @@
 package e2e
 
-import "testing"
+import (
+	"github.com/go-while/nntp-testkit/client"
+	"testing"
+)
 
 // TestWeightedAllocationWithZeroWeights (D-64): `allocstrat weighted` with every spool at weight 0
 // (what a partition under 1 GiB gets by default) divides by zero. Fails on main: diablo dies with
@@ -27,10 +30,10 @@ expire * trad
 	p := s.Peer(t)
 	for i := 0; i < 3; i++ {
 		id := msgID(t)
-		expect(t, p, 335, "IHAVE %s", id)
-		send(t, p, wire(newArticle(id, "e2e.test", "weights", "body")))
-		status(t, p, 235, "IHAVE")
-		expect(t, p, 223, "STAT %s", id)
+		p.ExpectCmd(335, "IHAVE %s", id)
+		p.MustSend(client.Stuff(newArticle(id, "e2e.test", "weights", "body")))
+		p.ExpectStatus(235, "IHAVE")
+		p.ExpectCmd(223, "STAT %s", id)
 	}
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(205, "QUIT")
 }
