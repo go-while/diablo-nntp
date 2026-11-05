@@ -41,7 +41,15 @@ func TestControlMailRuleTempFile(t *testing.T) {
 	testkit.WaitFor(t, 10*time.Second, "e2e.mailrule created by a control message under a mail rule", func() bool { return exists("e2e.mailrule") })
 
 	time.Sleep(500 * time.Millisecond)
-	for _, pid := range sitePids(t, s, "dreaderd") {
+	pids, err := trySitePids(s, "dreaderd")
+	if err != nil {
+		// This extra process-scoped scan used to be absent off Linux.
+		// Do not fail an already-verified control operation just because
+		// the platform cannot provide this optional observation.
+		t.Logf("optional temporary-file process scan unavailable: %v", err)
+		return
+	}
+	for _, pid := range pids {
 		// the old fixed name and the mkstemp names of this pid ("." keeps pid 123 from
 		// matching the files of pid 1234)
 		base := "/tmp/dreaderd.ctl" + strconv.Itoa(pid)

@@ -40,12 +40,19 @@ func linkBin(tb testing.TB, s *Site) {
 // master's process tree; detached workers retain the exact site environment.
 func sitePids(t testing.TB, s *Site, name string) []int {
 	t.Helper()
+	pids, err := trySitePids(s, name)
+	if err != nil {
+		t.Fatalf("inspect site processes: %v", err)
+	}
+	return pids
+}
+
+// Some older tests use process inspection only for an optional extra check.
+// Keep those callers best-effort while the process/FD regression tests fail
+// closed through sitePids when a required observation cannot be made.
+func trySitePids(s *Site, name string) ([]int, error) {
 	if runtime.GOOS != "linux" {
-		pids, err := portableSitePids(s, name)
-		if err != nil {
-			t.Fatalf("inspect site processes: %v", err)
-		}
-		return pids
+		return portableSitePids(s, name)
 	}
 	var pids []int
 	want := []byte(s.Env[0])
@@ -66,7 +73,7 @@ func sitePids(t testing.TB, s *Site, name string) []int {
 		pids = append(pids, pid)
 	}
 	slices.Sort(pids)
-	return pids
+	return pids, nil
 }
 
 // fdCount returns the number of open descriptors of pid, or -1.
@@ -206,6 +213,7 @@ end
 		}
 		t.Errorf("dnewslink workers still running after cleanup: %v", sitePids(t, s, "dnewslink"))
 	})
+	logWorkerInspectionOnFailure(t, s)
 	accepted := func(id string) {
 		t.Helper()
 		testkit.WaitFor(t, 15*time.Second, "the peer to accept "+id, func() bool { return slices.Contains(got.list(), id) })

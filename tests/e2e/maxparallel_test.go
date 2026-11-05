@@ -50,6 +50,7 @@ end
 			time.Sleep(250 * time.Millisecond)
 		}
 	})
+	logWorkerInspectionOnFailure(t, s)
 
 	// One queued entry: dspoolout moves it to fake.S00000 for a batch worker and starts the
 	// realtime worker on a new dqueue/fake. Both connect and stay (the peer never answers).

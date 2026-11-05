@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"errors"
+	"os/exec"
 	"slices"
 	"strings"
 	"testing"
@@ -9,6 +11,28 @@ import (
 // Native command formats are exercised on every OS, including Linux CI. These
 // fixtures complement, but do not replace, running the commands on the BSD VMs.
 func TestProcessInspectionParsers(t *testing.T) {
+	t.Run("OS aliases", func(t *testing.T) {
+		for _, goos := range []string{"linux", "freebsd", "netbsd", "illumos", "solaris"} {
+			want := goos
+			if goos == "illumos" {
+				want = "solaris"
+			}
+			if got := inspectionOS(goos); got != want {
+				t.Errorf("inspectionOS(%q)=%q, want %q", goos, got, want)
+			}
+		}
+		want := []string{"-e", "-o", "pid=", "-o", "ppid=", "-o", "comm="}
+		for _, goos := range []string{"illumos", "solaris"} {
+			if got := processTableArgs(goos); !slices.Equal(got, want) {
+				t.Errorf("%s process table command: %v, want %v", goos, got, want)
+			}
+		}
+		for _, goos := range []string{"freebsd", "netbsd"} {
+			if got := processTableArgs(goos); got[0] != "-ax" || got[len(got)-1] != "ucomm=" {
+				t.Errorf("%s process table command: %v", goos, got)
+			}
+		}
+	})
 	t.Run("process tree", func(t *testing.T) {
 		ps := parseProcesses("21 4 dreaderd\n4 94 dreaderd\n94 1 /dbin/dreaderd\n7 1 dnewslink\nPID PPID COMM\n")
 		if len(ps) != 4 || ps[2].name != "dreaderd" {
@@ -19,11 +43,18 @@ func TestProcessInspectionParsers(t *testing.T) {
 			t.Errorf("descendants: %v (must not depend on PID order)", owned)
 		}
 	})
+	t.Run("illumos full command name", func(t *testing.T) {
+		ps := parseProcesses("42 1 /dbin/dnewslink\n43 1 /dbin/dspoolout\n")
+		if len(ps) != 2 || ps[0].name != "dnewslink" || ps[1].name != "dspoolout" {
+			t.Errorf("full comm parsing: %+v", ps)
+		}
+	})
 	t.Run("exact site environment", func(t *testing.T) {
 		const want = "DIABLO_CONFIG_PATH=/tmp/site/diablo.config"
 		for _, out := range []string{
 			"dnewslink -r " + want + " PATH=/bin",
 			"123: dnewslink\nenvp[0]: " + want + "\nenvp[1]: PATH=/bin\n",
+			" PID COMM ENVIRONMENT\n123 dnewslink PATH=/bin " + want + "\n",
 		} {
 			if !hasSiteEnvironment(out, want) {
 				t.Errorf("site not found in %q", out)
@@ -33,6 +64,21 @@ func TestProcessInspectionParsers(t *testing.T) {
 			if hasSiteEnvironment(out, want) {
 				t.Errorf("matched another site in %q", out)
 			}
+		}
+	})
+	t.Run("fstat identity with absent procstat path", func(t *testing.T) {
+		fds := parseDescriptors("freebsd", 42, "42 dnewslink 8 v r r------- 1 0 - -\n")
+		if len(fds) != 1 || descriptorNamesFile(fds[0], "/tmp/site/dqueue/fake") {
+			t.Fatalf("unnamed procstat descriptor: %+v", fds)
+		}
+		// fstat -p 42 /tmp/site/dqueue/fake has already selected the
+		// filesystem/inode. The NAME text is irrelevant to FD selection.
+		matches := parseFstatDescriptors(42, "USER CMD PID FD MOUNT INUM MODE SZ|DV R/W NAME\nnews dnewslink 42 8 / 123 -rw-r--r-- 0 r /tmp/site/dqueue/fake\nnews dnewslink 43 9 / 123 -rw-r--r-- 0 r /tmp/site/dqueue/fake\n")
+		if len(matches) != 1 || matches[0].number != fds[0].number {
+			t.Errorf("fstat file-identity descriptors: %+v", matches)
+		}
+		if _, err := fstatFileDescriptors(42); err == nil {
+			t.Error("missing file filter would inspect all FDs, not just the active queue")
 		}
 	})
 	t.Run("active queue not batch queue", func(t *testing.T) {
@@ -79,6 +125,7 @@ news dnewslink 43 8* internet stream tcp ffff800000056780 127.0.0.1:5678 <-> 127
     peername: AF_INET 127.0.0.1 port: 119
 `,
 	}
+	fixtures["illumos"] = fixtures["solaris"]
 	for goos, out := range fixtures {
 		t.Run(goos+" descriptors", func(t *testing.T) {
 			fds := parseDescriptors(goos, 42, out)
@@ -94,5 +141,13 @@ news dnewslink 43 8* internet stream tcp ffff800000056780 127.0.0.1:5678 <-> 127
 				t.Error("socket flags/buffer sizes changed descriptor identities")
 			}
 		})
+	}
+}
+
+func TestInspectionOutputFailure(t *testing.T) {
+	_, err := inspectionOutput("sh", "-c", "echo inspection-denied >&2; exit 7")
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 7 || !strings.Contains(err.Error(), "inspection-denied") {
+		t.Errorf("command failure lost status/stderr: %v", err)
 	}
 }
