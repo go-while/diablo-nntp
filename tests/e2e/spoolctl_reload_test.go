@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	testkit "github.com/go-while/nntp-testkit"
+	"github.com/go-while/nntp-testkit/client"
 )
 
 // TestSpoolCtlBadReloadKeepsRunning (D-175): diablo reloads dspool.ctl when it changes (at
@@ -29,7 +32,7 @@ func TestSpoolCtlBadReloadKeepsRunning(t *testing.T) {
 	future := time.Now().Add(2 * time.Second)
 	_ = os.Chtimes(ctl, future, future) // a new mtime even within the same second
 
-	waitFor(t, 75*time.Second, "diablo to refuse the bad dspool.ctl", func() bool {
+	testkit.WaitFor(t, 75*time.Second, "diablo to refuse the bad dspool.ctl", func() bool {
 		return strings.Contains(generalLog(s), "keeping the old spool configuration")
 	})
 	select {
@@ -40,9 +43,9 @@ func TestSpoolCtlBadReloadKeepsRunning(t *testing.T) {
 
 	id := msgID(t)
 	p := s.Peer(t)
-	expect(t, p, 335, "IHAVE %s", id)
-	send(t, p, wire(newArticle(id, "e2e.test", "after a bad reload", "body")))
-	status(t, p, 235, "IHAVE after a bad reload")
-	expect(t, p, 223, "STAT %s", id)
-	expect(t, p, 205, "QUIT")
+	p.ExpectCmd(335, "IHAVE %s", id)
+	p.MustSend(client.Stuff(newArticle(id, "e2e.test", "after a bad reload", "body")))
+	p.ExpectStatus(235, "IHAVE after a bad reload")
+	p.ExpectCmd(223, "STAT %s", id)
+	p.ExpectCmd(205, "QUIT")
 }
