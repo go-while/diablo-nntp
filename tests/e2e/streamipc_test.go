@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -58,8 +59,31 @@ func startStreamIPCReader(t *testing.T, conf map[string]string) *Site {
 	return s
 }
 
-// procChildren returns the child processes of pid, lowest pid first (dreaderd forks its
-// readers first, then the feed fork and the DNS workers).
+// readerPids waits until dreaderd -d has written "forked reader child process N" for n
+// readers and returns their pids in fork order. The pid order does not tell the readers
+// from the feed fork and the DNS workers: NetBSD and OpenBSD hand out random pids. A fork
+// line is flushed before the next fork, and the feed fork comes right after the readers.
+func readerPids(t *testing.T, s *Site, n int) []int {
+	t.Helper()
+	re := regexp.MustCompile(`forked reader child process (\d+)`)
+	var pids []int
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		pids = pids[:0]
+		for _, m := range re.FindAllStringSubmatch(s.Proc.Stderr(), -1) {
+			if p, err := strconv.Atoi(m[1]); err == nil {
+				pids = append(pids, p)
+			}
+		}
+		if len(pids) >= n {
+			return pids[:n]
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("dreaderd reported %d forked readers (%v), want %d", len(pids), pids, n)
+		}
+	}
+}
+
+// procChildren returns the child processes of pid, lowest pid first.
 func procChildren(t *testing.T, pid int) []int {
 	t.Helper()
 	var kids []int
@@ -180,11 +204,7 @@ func TestReaderStoppedDuringLoginBurst(t *testing.T) {
 			t.Fatalf("client %d: AUTHINFO USER: %q", i, r)
 		}
 	}
-	kids := procChildren(t, s.Proc.Pid())
-	if len(kids) < 1 {
-		t.Fatalf("no reader process found")
-	}
-	reader := kids[0]
+	reader := readerPids(t, s, 1)[0]
 	for i := range cs {
 		fmt.Fprintf(cs[i].c, "AUTHINFO PASS fredspass\r\n")
 	}
@@ -241,15 +261,12 @@ func TestReaderStoppedDuringLoginBurst(t *testing.T) {
 func TestReaderForkKeepsNoQueuedClients(t *testing.T) {
 	s := startStreamIPCReader(t, map[string]string{"readerforks": "2"})
 	main := s.Proc.Pid()
-	kids := procChildren(t, main)
-	if len(kids) < 2 {
-		t.Fatalf("children of the main process: %v, want 2 readers", kids)
-	}
+	readers := readerPids(t, s, 2)
 	initial := map[int]bool{}
-	for _, p := range kids {
+	for _, p := range procChildren(t, main) {
 		initial[p] = true
 	}
-	stopped, other := kids[0], kids[1]
+	stopped, other := readers[0], readers[1]
 	if err := syscall.Kill(stopped, syscall.SIGSTOP); err != nil {
 		t.Fatal(err)
 	}
@@ -324,11 +341,7 @@ func TestReaderForkKeepsNoQueuedClients(t *testing.T) {
 // the ones already in the reader's socket are greeted once it goes on, and nothing hangs.
 func TestReaderQueueWaitLimit(t *testing.T) {
 	s := startStreamIPCReader(t, map[string]string{"readerdnswait": "1"})
-	kids := procChildren(t, s.Proc.Pid())
-	if len(kids) < 1 {
-		t.Fatalf("no reader process found")
-	}
-	reader := kids[0]
+	reader := readerPids(t, s, 1)[0]
 	if err := syscall.Kill(reader, syscall.SIGSTOP); err != nil {
 		t.Fatal(err)
 	}
