@@ -48,7 +48,6 @@ func TestReaderHtpasswdAuth(t *testing.T) {
 	if !bytes.Contains(b, []byte("PERL auth request")) {
 		t.Skip("dreaderd is built without Perl support (PERL_ENABLED)")
 	}
-	perlEmbedWorks(t)
 	if _, err := exec.LookPath("perl"); err != nil {
 		t.Skip("no perl to check crypt(3) with")
 	}
@@ -195,7 +194,6 @@ func TestReaderHtpasswdNoFile(t *testing.T) {
 	if !bytes.Contains(b, []byte("PERL auth request")) {
 		t.Skip("dreaderd is built without Perl support (PERL_ENABLED)")
 	}
-	perlEmbedWorks(t)
 	src, err := os.ReadFile(filepath.Join(filepath.Dir(bin(t)), "contrib", "htpasswd-auth.pl"))
 	if err != nil {
 		t.Skip("no contrib/htpasswd-auth.pl next to DIABLO_BIN: " + err.Error())
