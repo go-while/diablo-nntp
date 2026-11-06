@@ -214,6 +214,20 @@ static int ReaderOutLen;	/* queued clients, all readers */
 static int ReaderOutBackoff;	/* readers waiting out an ENOBUFS */
 #define READEROUT_BACKOFF_MS	50
 static int ReaderOutSend(ForkDesc *reader, int fd, DnsRes *dres);
+
+/*
+ * A spare descriptor (/dev/null), closed just before each recvmsg() of a
+ * hand-back from a reader and opened again after it, so the descriptor in
+ * the message always has a free slot (D-170).  At the limit the kernels
+ * differ: Linux drops the descriptor and sets MSG_CTRUNC, FreeBSD fails
+ * once with EMFILE and keeps the message, illumos fails with EMFILE and
+ * throws the whole message away, so the connection it reports would stay
+ * counted.  While the spare cannot be opened, the readers are not read.
+ */
+static int HandbackSpareFd = -1;
+static int HandbackSpareOpen(void);
+static void HandbackSpareMask(ForkDesc *desc);
+static fd_set *HandbackMaskFds;
 static void ReaderOutFlush(ForkDesc *reader);
 static void ReaderOutDrop(ForkDesc *reader);
 static void ReaderOutTick(ForkDesc *reader);
@@ -1201,6 +1215,25 @@ main(int ac, char **av)
 		NumActive, MaxConnects
 	    );
 
+	    if (!HandbackSpareOpen()) {
+		static time_t lastLog;
+		time_t now = time(NULL);
+
+		if (now - lastLog >= 60) {
+		    lastLog = now;
+		    logit(LOG_ERR, "no spare descriptor (%s): reader hand-backs wait for a free descriptor",
+			strerror(errno));
+		}
+		HandbackMaskFds = &rfds;
+		ScanThreads(THREAD_READER, HandbackSpareMask);
+		ScanThreads(THREAD_FEEDER, HandbackSpareMask);
+		HandbackMaskFds = NULL;
+		if (tv.tv_sec > 1) {
+		    tv.tv_sec = 1;	/* try again soon */
+		    tv.tv_usec = 0;
+		}
+	    }
+
 	    select(MaxFds, &rfds, &wfds, NULL, &tv);
 	    gettimeofday(&CurTime, NULL);
 
@@ -1244,7 +1277,15 @@ main(int ac, char **av)
 				int n;
 				int recv_fd;
 
-				while ((n = RecvMsg(desc->d_Fd, &recv_fd, &dres)) == sizeof(dres)) {
+				for (;;) {
+				    /* free a slot for the descriptor (D-170) */
+				    if (!HandbackSpareOpen())
+					break;
+				    close(HandbackSpareFd);
+				    HandbackSpareFd = -1;
+				    n = RecvMsg(desc->d_Fd, &recv_fd, &dres);
+				    if (n != sizeof(dres))
+					break;
 				    if (dres.dr_ResultFlags == DR_SERVER_STATS) {
 					if (recv_fd >= 0)
 					    close(recv_fd);
@@ -1944,13 +1985,30 @@ MonoMs(void)
     return(time(NULL) * 1000.0);
 }
 
+static int
+HandbackSpareOpen(void)
+{
+    if (HandbackSpareFd < 0) {
+	HandbackSpareFd = open("/dev/null", O_RDONLY);
+	if (HandbackSpareFd >= 0)
+	    fcntl(HandbackSpareFd, F_SETFD, FD_CLOEXEC);
+    }
+    return(HandbackSpareFd >= 0);
+}
+
+static void
+HandbackSpareMask(ForkDesc *desc)
+{
+    FD_CLR(desc->d_Fd, HandbackMaskFds);
+}
+
 /*
  * Descriptor limits, at startup: raise the soft RLIMIT_NOFILE up to the
  * hard limit, but not past FD_SETSIZE (the readers select() on their
  * clients).  The limit used is the smaller of MAXFDS and RLIMIT_NOFILE.
  * New connections are queued only below three quarters of it; AUTHINFO
- * logins up to 32 below it (never less than new connections), so that a
- * descriptor a reader hands back can still be received.
+ * logins up to 32 below it (never less than new connections).  A
+ * descriptor a reader hands back always has a slot: see HandbackSpareFd.
  */
 static void
 DnsQInitLimits(void)
@@ -2423,6 +2481,10 @@ ForkPipe(int *pfd, void (*task)(int fd, const char *id), const char *description
 	/* note: fds[1] is a normal descriptor, not a non-blocking desc */
 	CloseQueuedFds();
 	ResetThreads();
+	if (HandbackSpareFd >= 0) {
+	    close(HandbackSpareFd);
+	    HandbackSpareFd = -1;
+	}
 	close(*pfd);
 	task(fds[1], description);
 	_exit(1);
