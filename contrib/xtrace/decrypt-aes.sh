@@ -7,30 +7,128 @@
 #
 #	echo '<base64>' | openssl enc -d -aes-256-cbc -md sha256 -a -A -pass pass:<cryptpw>
 #
-# Feed it an article, its header, or just the header lines on stdin.  Plain
-# sh, sed and openssl: works on Linux, the BSDs, macOS and illumos.
+# The article is read from stdin, or with -m from this server's spool
+# (dreadart -h).  Without a password every cryptpw in dreader.access is
+# tried, so run it as news (or root) on the server.  Plain sh, sed and
+# openssl: works on Linux, the BSDs, macOS and illumos.
 
 usage() {
 	exec >&2
-	echo "usage: decrypt-aes.sh pass:<cryptpw> < article"
-	echo "       decrypt-aes.sh env:<VAR> < article     (the cryptpw in \$VAR)"
-	echo "       decrypt-aes.sh file:<path> < article   (the cryptpw in a file)"
+	echo "usage: decrypt-aes.sh [-m '<message-id>'] [-a dreader.access] [password]"
 	echo
 	echo "Decrypts the encrypted parts of the X-Trace: and Injection-Info:"
-	echo "headers dreaderd wrote with a cryptpw.  The password is the P= part"
-	echo "of a \"G=gen,P=password\" cryptpw.  env: and file: keep it out of ps."
+	echo "headers dreaderd wrote with a cryptpw."
+	echo
+	echo "  -m '<message-id>'  read the article from the spool (dreadart -h);"
+	echo "                     without -m it is read from stdin"
+	echo "  -a file            the dreader.access to take the cryptpw from"
+	echo "                     (default: <dpath lib>/dreader.access)"
+	echo "  password           pass:<cryptpw>, env:<VAR> or file:<path>; without"
+	echo "                     it every cryptpw in dreader.access is tried."
+	echo "                     The password is the P= part of a"
+	echo "                     \"G=gen,P=password\" cryptpw.  env: and file:"
+	echo "                     keep it out of ps."
+	echo
+	echo "examples: decrypt-aes.sh -m '<abc\$1@example.com>'"
+	echo "          decrypt-aes.sh pass:secret < article"
 	exit 1
 }
 
-[ $# = 1 ] || usage
-case $1 in
-pass:*|env:*|file:*|fd:*|stdin) PASS=$1 ;;
+DBIN=$(dirname "$0")
+MSGID=
+ACCESS=
+while getopts m:a:h opt; do
+	case $opt in
+	m) MSGID=$OPTARG ;;
+	a) ACCESS=$OPTARG ;;
+	*) usage ;;
+	esac
+done
+shift $((OPTIND - 1))
+
+PASS=
+case $# in
+0) ;;
+1)
+	case $1 in
+	pass:*|env:*|file:*|fd:*|stdin) PASS=$1 ;;
+	*) usage ;;
+	esac
+	;;
 *) usage ;;
 esac
 
 command -v openssl >/dev/null 2>&1 || { echo "decrypt-aes.sh: openssl not found" >&2; exit 1; }
 
-TAB=$(printf '\t')
+# a diablo program: next to this script (in dbin), in the PATH, or /news/dbin
+dprog() {
+	if [ -x "$DBIN/$1" ]; then
+		echo "$DBIN/$1"
+	elif command -v "$1" >/dev/null 2>&1; then
+		command -v "$1"
+	elif [ -x "/news/dbin/$1" ]; then
+		echo "/news/dbin/$1"
+	else
+		return 1
+	fi
+}
+
+# without a password: every cryptpw of dreader.access, one per line
+PWLIST=
+if [ -z "$PASS" ]; then
+	if [ -z "$ACCESS" ]; then
+		lib=
+		dp=$(dprog dpath) && lib=$("$dp" lib 2>/dev/null)
+		ACCESS=${lib:-/news}/dreader.access
+	fi
+	if [ ! -r "$ACCESS" ]; then
+		echo "decrypt-aes.sh: cannot read $ACCESS (run as news, or give -a or a password)" >&2
+		exit 1
+	fi
+	for v in $(sed -n -e 's/^[[:space:]]*cryptpw[[:space:]][[:space:]]*\([^[:space:]#]*\).*/\1/p' "$ACCESS"); do
+		pw=$v
+		old_ifs=$IFS
+		IFS=,
+		for part in $v; do
+			case $part in
+			P=*) pw=${part#P=} ;;
+			esac
+		done
+		IFS=$old_ifs
+		PWLIST="$PWLIST$pw
+"
+	done
+	if [ -z "$PWLIST" ]; then
+		echo "decrypt-aes.sh: no cryptpw in $ACCESS" >&2
+		exit 1
+	fi
+fi
+
+# printable: the plain text has no control characters (a wrong password
+# can give valid padding by chance, but not readable text)
+printable() {
+	[ -z "$(printf '%s' "$1" | LC_ALL=C tr -d '[:print:]\200-\377')" ]
+}
+
+# try <base64>: the plain text on stdout, status 1 if no password fits
+try() {
+	if [ -n "$PASS" ]; then
+		d=$(printf '%s\n' "$1" | openssl enc -d -aes-256-cbc -md sha256 -a -A -pass "$PASS" 2>/dev/null) &&
+			printable "$d" && printf '%s' "$d"
+		return
+	fi
+	printf '%s' "$PWLIST" | {
+		while IFS= read -r pw; do
+			[ -n "$pw" ] || continue
+			if d=$(printf '%s\n' "$1" | DECRYPT_AES_PW=$pw openssl enc -d -aes-256-cbc -md sha256 -a -A -pass env:DECRYPT_AES_PW 2>/dev/null) &&
+			    printable "$d"; then
+				printf '%s' "$d"
+				exit 0
+			fi
+		done
+		exit 1
+	}
+}
 
 # decrypt <label> <value>: value is "C=<b64>", "G=<gen>,C=<b64>" or plain text
 decrypt() {
@@ -48,7 +146,7 @@ decrypt() {
 		echo "$1: $2 (not encrypted)"
 		return 0
 	fi
-	if d=$(printf '%s\n' "$c" | openssl enc -d -aes-256-cbc -md sha256 -a -A -pass "$PASS" 2>/dev/null); then
+	if d=$(try "$c"); then
 		if [ -n "$gen" ]; then
 			echo "$1: $d (generation $gen)"
 		else
@@ -60,8 +158,32 @@ decrypt() {
 	return 1
 }
 
+# the article: from the spool with -m, else stdin
+article() {
+	if [ -n "$MSGID" ]; then
+		da=$(dprog dreadart) || { echo "decrypt-aes.sh: dreadart not found" >&2; exit 1; }
+		"$da" -h "$MSGID" 2>/dev/null
+	else
+		cat
+	fi
+}
+
+TAB=$(printf '\t')
+TMP=$(mktemp "${TMPDIR:-/tmp}/decrypt-aes.XXXXXX") || exit 1
+trap 'rm -f "$TMP"' EXIT
+trap 'exit 1' HUP INT TERM
+if ! article > "$TMP" || [ ! -s "$TMP" ]; then
+	if [ -n "$MSGID" ]; then
+		echo "decrypt-aes.sh: $MSGID is not in this server's spool" >&2
+	else
+		echo "decrypt-aes.sh: no article on stdin" >&2
+	fi
+	exit 1
+fi
+[ -n "$MSGID" ] && echo "Message-ID: $MSGID"
+
 # the header only, CR removed, folded lines joined
-tr -d '\r' | sed -e '/^$/q' | sed -e "s/^[ $TAB][ $TAB]*/ /" |
+tr -d '\r' < "$TMP" | sed -e '/^$/q' | sed -e "s/^[ $TAB][ $TAB]*/ /" |
 	sed -e ':a' -e '$!N' -e 's/\n / /' -e 'ta' -e 'P' -e 'D' | {
 	found=0 rc=0
 	while IFS= read -r line; do

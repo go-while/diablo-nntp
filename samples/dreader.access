@@ -49,7 +49,9 @@
 #		   Injection-Info:), if set in vendor.h (POST_CRYPTXTRACE).
 #		   Each becomes "C=<base64>" ("G=gen,C=..." with a
 #		   "G=gen,P=password" cryptpw), which the admin reads back
-#		   with the password, with no log needed:
+#		   with the password, with no log needed (as news, it
+#		   takes the cryptpw from this file):
+#		     contrib/xtrace/decrypt-aes.sh -m '<message-id>'
 #		     contrib/xtrace/decrypt-aes.sh pass:<password> < article
 #		   or for one value
 #		     echo '<base64>' | openssl enc -d -aes-256-cbc -md sha256 -a -A -pass pass:<password>

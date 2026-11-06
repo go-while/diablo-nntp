@@ -6,6 +6,7 @@ import (
 	"crypto/cipher"
 	"crypto/sha256"
 	"encoding/base64"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -131,15 +132,15 @@ func cryptpwDecrypt(t *testing.T, pw, b64 string) string {
 	return string(out[:len(out)-n])
 }
 
-// decryptScript runs contrib/xtrace/decrypt-aes.sh with the cryptpw on the header and returns
-// what it printed; ok is false (and the check skipped) without openssl.
-func decryptScript(t *testing.T, pw string, head []string) (string, bool) {
+// decryptScript runs contrib/xtrace/decrypt-aes.sh with args on the header and returns what it
+// printed; ok is false (and the check skipped) without openssl.
+func decryptScript(t *testing.T, head []string, args ...string) (string, bool) {
 	t.Helper()
 	if _, err := exec.LookPath("openssl"); err != nil {
 		t.Log("no openssl: contrib/xtrace/decrypt-aes.sh not run")
 		return "", false
 	}
-	cmd := exec.Command("sh", filepath.Join(repoRoot(t), "contrib", "xtrace", "decrypt-aes.sh"), "pass:"+pw)
+	cmd := exec.Command("sh", append([]string{filepath.Join(repoRoot(t), "contrib", "xtrace", "decrypt-aes.sh")}, args...)...)
 	cmd.Stdin = strings.NewReader(strings.Join(head, "\r\n") + "\r\n\r\nbody\r\n")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -245,11 +246,18 @@ func TestReaderPostInjectionInfo(t *testing.T) {
 			} else if d := cryptpwDecrypt(t, "secret", strings.TrimPrefix(acct, c.gen+"C=")); d != "fred" {
 				t.Errorf("cryptpw %s: posting-account decrypts to %q, want fred", c.pw, d)
 			}
-			// the admin's tool reads the same back
-			if out, ok := decryptScript(t, "secret", head); ok {
-				if !strings.Contains(out, "Injection-Info posting-account: fred") ||
-					!regexp.MustCompile(`Injection-Info posting-host: ([A-Za-z0-9.-]+:)?127\.0\.0\.1`).MatchString(out) {
-					t.Errorf("cryptpw %s: contrib/xtrace/decrypt-aes.sh printed %q, want the posting-host and fred", c.pw, out)
+			// the admin's tool reads the same back, with the password or with the cryptpw
+			// lines of a dreader.access (another vserverdef's first)
+			acc := filepath.Join(t.TempDir(), "dreader.access")
+			if err := os.WriteFile(acc, []byte("vserverdef other\n    cryptpw another\nend\nvserverdef DEFAULT\n    cryptpw "+c.pw+"\nend\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			for _, args := range [][]string{{"pass:secret"}, {"-a", acc}} {
+				if out, ok := decryptScript(t, head, args...); ok {
+					if !strings.Contains(out, "Injection-Info posting-account: fred") ||
+						!regexp.MustCompile(`Injection-Info posting-host: ([A-Za-z0-9.-]+:)?127\.0\.0\.1`).MatchString(out) {
+						t.Errorf("cryptpw %s: contrib/xtrace/decrypt-aes.sh %v printed %q, want the posting-host and fred", c.pw, args, out)
+					}
 				}
 			}
 		}
@@ -275,7 +283,7 @@ func TestReaderPostInjectionInfo(t *testing.T) {
 		if d := cryptpwDecrypt(t, "secret", strings.TrimPrefix(xt, "C=")); !strings.Contains(d, " "+PathHost+" ") || !strings.Contains(d, "127.0.0.1") {
 			t.Errorf("X-Trace decrypts to %q, want the hostname %s and the address", d, PathHost)
 		}
-		if out, ok := decryptScript(t, "secret", head); ok && !regexp.MustCompile(`X-Trace: [0-9]+ `+regexp.QuoteMeta(PathHost)+` .*127\.0\.0\.1`).MatchString(out) {
+		if out, ok := decryptScript(t, head, "pass:secret"); ok && !regexp.MustCompile(`X-Trace: [0-9]+ `+regexp.QuoteMeta(PathHost)+` .*127\.0\.0\.1`).MatchString(out) {
 			t.Errorf("contrib/xtrace/decrypt-aes.sh printed %q, want the X-Trace data", out)
 		}
 	})
