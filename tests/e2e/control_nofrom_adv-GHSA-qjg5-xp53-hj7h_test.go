@@ -12,8 +12,9 @@ import (
 // ParseControl() return early. It opened dcontrol.ctl before checking From: and did not close
 // it, so every such article cost the reader feed process one descriptor until it ran out
 // (GHSA-qjg5-xp53-hj7h). After 40 of them the dreaderd processes of the site must not hold
-// (nearly) 40 more descriptors. Linux only (/proc).
+// (nearly) 40 more descriptors. Uses native descriptor inspection on each OS.
 func TestControlWithoutFromNoFdLeak(t *testing.T) {
+	requireProcessInspection(t, true)
 	_, spool := spoolStore(t)
 	s := NewReaderSite(t, ReaderOptions{
 		Spool: spool,
@@ -38,13 +39,13 @@ func TestControlWithoutFromNoFdLeak(t *testing.T) {
 	}
 	fds := func() map[int]int {
 		m := map[int]int{}
-		for _, pid := range sitePids(s, "dreaderd") {
-			if c := fdCount(pid); c >= 0 {
+		for _, pid := range sitePids(t, s, "dreaderd") {
+			if c := fdCount(t, pid); c >= 0 {
 				m[pid] = c
 			}
 		}
 		if len(m) == 0 {
-			t.Skip("no /proc or no dreaderd processes found")
+			t.Skip("no inspectable dreaderd processes found")
 		}
 		return m
 	}
@@ -69,7 +70,7 @@ func TestControlWithoutFromNoFdLeak(t *testing.T) {
 	time.Sleep(time.Second)
 	worst := 0
 	for pid, n := range before {
-		if d := fdCount(pid) - n; d > worst {
+		if d := fdCount(t, pid) - n; d > worst {
 			worst = d
 		}
 	}

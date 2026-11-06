@@ -126,7 +126,7 @@ func checkPsPad(tb testing.TB, s *Site, name, lastArg string) {
 	if runtime.GOOS != "linux" {
 		return
 	}
-	pids := sitePids(s, name)
+	pids := sitePids(tb, s, name)
 	if len(pids) == 0 {
 		tb.Fatalf("no %s process of this site", name)
 	}
@@ -223,7 +223,7 @@ func TestDiabloCtlReader(t *testing.T) {
 	c.ExpectCmd(205, "QUIT")
 	checkPsPad(t, s, "dreaderd", "[127.0.0.1]:"+port)
 	if runtime.GOOS == "linux" {
-		if pids := sitePids(s, "dreaderd"); len(pids) > 0 {
+		if pids := sitePids(t, s, "dreaderd"); len(pids) > 0 {
 			cwd, _ := os.Readlink(filepath.Join("/proc", strconv.Itoa(pids[0]), "cwd"))
 			if want, _ := filepath.EvalSymlinks(s.Dir); cwd != want && cwd != s.Dir {
 				t.Errorf("dreaderd cwd %q, want path_home %q", cwd, s.Dir)
