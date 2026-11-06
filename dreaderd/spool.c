@@ -799,3 +799,4 @@ NNSpoolResponseScrap(Connection *conn)
 	NNServerTerminate(conn);
     } /* else we are still waiting for input */
 }
+

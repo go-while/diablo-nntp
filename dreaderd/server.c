@@ -1356,3 +1356,4 @@ NNArticleRetrieveByMessageId(Connection *conn, const char *msgid, const char *ms
     NNServerRequest(conn, grouphint ? conn->co_GroupName : NULL, msgid, maxage, SREQ_RETRIEVE, TimeRcvd, grpIter, endNo);
     NNWaitThread(conn);
 }
+
