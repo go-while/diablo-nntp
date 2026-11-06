@@ -1,0 +1,1 @@
+- Logs: a message that ends in a newline of its own (the Perl auth result after each login, LDAP errors, "Invalid ... option" lines and others) no longer leaves an empty line in general.log and the other log files (ISSUES.md D-194).
