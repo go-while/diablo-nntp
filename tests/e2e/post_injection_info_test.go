@@ -1,6 +1,13 @@
 package e2e
 
 import (
+	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/sha256"
+	"encoding/base64"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -76,6 +83,71 @@ func postHeadLogin(t *testing.T, access, user, pass string, hdrs ...string) []st
 	return joined
 }
 
+// loginAccess is AuthReaderAccess with rfc5537, a postpath and these vserverdef lines.
+func loginAccess(vs string) string {
+	return strings.Replace(AuthReaderAccess, "    hostname "+PathHost+"\n",
+		"    hostname "+PathHost+"\n    rfc5537 yes\n    postpath "+PathHost+"\n"+vs, 1)
+}
+
+// injParam is the value of an Injection-Info parameter, unquoted ("" if there is none).
+func injParam(ii, name string) string {
+	m := regexp.MustCompile(`;\s*` + regexp.QuoteMeta(name) + `="((?:[^"\\]|\\.)*)"`).FindStringSubmatch(ii)
+	if m == nil {
+		return ""
+	}
+	return regexp.MustCompile(`\\(.)`).ReplaceAllString(m[1], "$1")
+}
+
+// isHostValue: posting-host's <host-value> for the test client, 127.0.0.1 or name:127.0.0.1.
+func isHostValue(v string) bool {
+	return regexp.MustCompile(`^([A-Za-z0-9.-]+:)?127\.0\.0\.1$`).MatchString(v)
+}
+
+// cryptpwDecrypt reads back a value dreaderd encrypted with a cryptpw: base64 of the
+// openssl enc format ("Salted__", 8 bytes salt, AES-256-CBC), key and IV from
+// EVP_BytesToKey with SHA-256 and one round, as "openssl enc -d -aes-256-cbc -md sha256".
+func cryptpwDecrypt(t *testing.T, pw, b64 string) string {
+	t.Helper()
+	raw, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil || len(raw) < 32 || string(raw[:8]) != "Salted__" || (len(raw)-16)%aes.BlockSize != 0 {
+		t.Errorf("%q is not a salted openssl enc value (%v)", b64, err)
+		return ""
+	}
+	salt, enc := raw[8:16], raw[16:]
+	var kiv, d []byte
+	for len(kiv) < 48 {
+		h := sha256.Sum256(append(append(append([]byte{}, d...), pw...), salt...))
+		d = h[:]
+		kiv = append(kiv, d...)
+	}
+	blk, _ := aes.NewCipher(kiv[:32])
+	out := make([]byte, len(enc))
+	cipher.NewCBCDecrypter(blk, kiv[32:48]).CryptBlocks(out, enc)
+	n := int(out[len(out)-1])
+	if n < 1 || n > aes.BlockSize || !bytes.Equal(out[len(out)-n:], bytes.Repeat([]byte{byte(n)}, n)) {
+		t.Errorf("%q does not decrypt with the cryptpw", b64)
+		return ""
+	}
+	return string(out[:len(out)-n])
+}
+
+// decryptScript runs contrib/xtrace/decrypt-aes.sh with the cryptpw on the header and returns
+// what it printed; ok is false (and the check skipped) without openssl.
+func decryptScript(t *testing.T, pw string, head []string) (string, bool) {
+	t.Helper()
+	if _, err := exec.LookPath("openssl"); err != nil {
+		t.Log("no openssl: contrib/xtrace/decrypt-aes.sh not run")
+		return "", false
+	}
+	cmd := exec.Command("sh", filepath.Join(repoRoot(t), "contrib", "xtrace", "decrypt-aes.sh"), "pass:"+pw)
+	cmd.Stdin = strings.NewReader(strings.Join(head, "\r\n") + "\r\n\r\nbody\r\n")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Errorf("contrib/xtrace/decrypt-aes.sh: %v: %s", err, out)
+	}
+	return string(out), true
+}
+
 func hasHeader(head []string, name string) bool {
 	for _, l := range head {
 		if k, _, ok := strings.Cut(l, ":"); ok && strings.EqualFold(k, name) {
@@ -89,7 +161,9 @@ var injDateRe = regexp.MustCompile(`^(Mon|Tue|Wed|Thu|Fri|Sat|Sun), [0-3][0-9] (
 
 // TestReaderPostInjectionInfo (F-07 step 2, RFC 5537 3.5 steps 9 to 11): with "rfc5537 yes" a
 // post gets a Path with the "!.POSTED" diagnostic, an Injection-Info with posting-host and
-// mail-complaints-to (no logging-data), and no NNTP-Posting-Host, X-Trace or X-Complaints-To.
+// mail-complaints-to (no logging-data), and no NNTP-Posting-Host, X-Trace or X-Complaints-To;
+// "showposthost no" leaves posting-host out, and with a cryptpw posting-host, posting-account
+// and X-Trace decrypt with it (also with contrib/xtrace/decrypt-aes.sh).
 // Injection-Date is added only where dreaderd supplied the Message-ID or Date, and a poster's
 // own is kept. Without rfc5537 (the default) and with "legacytrace yes", the old trace headers
 // are written and no Injection-* header.
@@ -151,22 +225,63 @@ func TestReaderPostInjectionInfo(t *testing.T) {
 	})
 
 	t.Run("cryptpw", func(t *testing.T) {
-		for _, pw := range []string{"secret", "G=7,P=secret"} {
-			head := postHead(t, injAccess("    postpath "+PathHost+"\n    cryptpw "+pw+"\n"), "Message-ID: "+msgID(t))
+		// posting-host and posting-account are encrypted as X-Trace is, so the admin can
+		// read them back with the cryptpw (the P= part of "G=gen,P=password")
+		for _, c := range []struct{ pw, gen string }{{"secret", ""}, {"G=7,P=secret", "G=7,"}} {
+			head := postHeadLogin(t, loginAccess("    showposter yes\n    cryptpw "+c.pw+"\n"), "fred", "fredspass", "Message-ID: "+msgID(t))
 			ii := headerValue(head, "Injection-Info")
-			// the hourly hash NNTP-Posting-Host had is the posting-host now
-			if !regexp.MustCompile(`posting-host="[0-9a-f]{8}\.`).MatchString(ii) || strings.Contains(ii, "posting-account=") ||
-				strings.Contains(ii, "logging-data=") || strings.Contains(ii, "127.0.0.1") {
-				t.Errorf("cryptpw %s: Injection-Info %q, want a hashed posting-host, no posting-account, no logging-data, no address", pw, ii)
+			if strings.Contains(ii, "127.0.0.1") || strings.Contains(ii, "fred") || strings.Contains(ii, "logging-data=") {
+				t.Errorf("cryptpw %s: Injection-Info %q shows the address or the login, or has a logging-data", c.pw, ii)
+			}
+			host := injParam(ii, "posting-host")
+			if !strings.HasPrefix(host, c.gen+"C=") {
+				t.Errorf("cryptpw %s: posting-host %q, want %sC=<base64>", c.pw, host, c.gen)
+			} else if d := cryptpwDecrypt(t, "secret", strings.TrimPrefix(host, c.gen+"C=")); !isHostValue(d) {
+				t.Errorf("cryptpw %s: posting-host decrypts to %q, want 127.0.0.1 or name:127.0.0.1", c.pw, d)
+			}
+			acct := injParam(ii, "posting-account")
+			if !strings.HasPrefix(acct, c.gen+"C=") {
+				t.Errorf("cryptpw %s: posting-account %q, want %sC=<base64>", c.pw, acct, c.gen)
+			} else if d := cryptpwDecrypt(t, "secret", strings.TrimPrefix(acct, c.gen+"C=")); d != "fred" {
+				t.Errorf("cryptpw %s: posting-account decrypts to %q, want fred", c.pw, d)
+			}
+			// the admin's tool reads the same back
+			if out, ok := decryptScript(t, "secret", head); ok {
+				if !strings.Contains(out, "Injection-Info posting-account: fred") ||
+					!regexp.MustCompile(`Injection-Info posting-host: ([A-Za-z0-9.-]+:)?127\.0\.0\.1`).MatchString(out) {
+					t.Errorf("cryptpw %s: contrib/xtrace/decrypt-aes.sh printed %q, want the posting-host and fred", c.pw, out)
+				}
 			}
 		}
 	})
 
-	t.Run("showposter", func(t *testing.T) {
-		login := func(vs string) string {
-			return strings.Replace(AuthReaderAccess, "    hostname "+PathHost+"\n",
-				"    hostname "+PathHost+"\n    rfc5537 yes\n    postpath "+PathHost+"\n"+vs, 1)
+	t.Run("showposthost", func(t *testing.T) {
+		ii := headerValue(postHead(t, injAccess("    postpath "+PathHost+"\n    showposthost no\n"), "Message-ID: "+msgID(t)), "Injection-Info")
+		if strings.Contains(ii, "posting-host=") || strings.Contains(ii, "127.0.0.1") || !strings.HasPrefix(ii, PathHost) {
+			t.Errorf("showposthost no: Injection-Info %q, want no posting-host", ii)
 		}
+		ii = headerValue(postHead(t, injAccess("    postpath "+PathHost+"\n    showposthost yes\n"), "Message-ID: "+msgID(t)), "Injection-Info")
+		if !isHostValue(injParam(ii, "posting-host")) {
+			t.Errorf("showposthost yes: Injection-Info %q, want posting-host 127.0.0.1 or name:127.0.0.1", ii)
+		}
+	})
+
+	t.Run("cryptpw without rfc5537", func(t *testing.T) {
+		head := postHead(t, plainAccess("    cryptpw secret\n"), "Message-ID: "+msgID(t))
+		xt := headerValue(head, "X-Trace")
+		if !strings.HasPrefix(xt, "C=") {
+			t.Fatalf("X-Trace %q, want C=<base64>", xt)
+		}
+		if d := cryptpwDecrypt(t, "secret", strings.TrimPrefix(xt, "C=")); !strings.Contains(d, " "+PathHost+" ") || !strings.Contains(d, "127.0.0.1") {
+			t.Errorf("X-Trace decrypts to %q, want the hostname %s and the address", d, PathHost)
+		}
+		if out, ok := decryptScript(t, "secret", head); ok && !regexp.MustCompile(`X-Trace: [0-9]+ `+regexp.QuoteMeta(PathHost)+` .*127\.0\.0\.1`).MatchString(out) {
+			t.Errorf("contrib/xtrace/decrypt-aes.sh printed %q, want the X-Trace data", out)
+		}
+	})
+
+	t.Run("showposter", func(t *testing.T) {
+		login := loginAccess
 		ii := headerValue(postHeadLogin(t, login("    showposter yes\n"), "fred", "fredspass"), "Injection-Info")
 		if !strings.Contains(ii, `posting-account="fred"`) {
 			t.Errorf("showposter yes, logged in as fred: Injection-Info %q, want posting-account=\"fred\"", ii)

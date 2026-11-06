@@ -3993,6 +3993,16 @@ InstallAccessCache(void) {
 			*val == '1' || strcasecmp(val, "on") == 0);
 		    continue;
 		}
+		/*
+		 * showposthost no: Injection-Info has no posting-host
+		 * (RFC 5536 3.2.8: all parameters are optional).  On by
+		 * default; encrypted with a cryptpw.
+		 */
+		if (*val && strcmp(opt, "showposthost") == 0) {
+		    vserver.vs_HidePostHost = !(*val == 'y' || *val == 'Y' ||
+			*val == '1' || strcasecmp(val, "on") == 0);
+		    continue;
+		}
 		if (*val && strcmp(opt, "legacytrace") == 0) {
 		    vserver.vs_Rfc5537 = !(*val == 'y' || *val == 'Y' ||
 			*val == '1' || strcasecmp(val, "on") == 0);
@@ -5084,6 +5094,7 @@ PrintAuthDetails(DnsRes *dres)
     printf(" vs_NoCanLockSha1: %d\n", dres->dr_VServerDef->vs_NoCanLockSha1);
     printf(" vs_Rfc5537: %d\n", dres->dr_VServerDef->vs_Rfc5537);
     printf(" vs_ShowPoster: %d\n", dres->dr_VServerDef->vs_ShowPoster);
+    printf(" vs_HidePostHost: %d\n", dres->dr_VServerDef->vs_HidePostHost);
     printf(" vs_Interface: %s\n", "XXX"); /* dres->dr_VServerDef->vs_Interface); */
     printf(" vs_AccessFile: %s\n", dres->dr_VServerDef->vs_AccessFile);
    printf("au_Name: %s\n", dres->dr_AuthDef->au_Name);

@@ -53,7 +53,7 @@ int BreakIfBadGroup(char *groups, Connection *conn);
 int CheckValidRestrictedGroup(const char *group);
 const char *PostRefusedGroup(char *groups, char *pstatus);
 int HeaderCmp(const char *big, const char *little, char **errMsg);
-void PostInjectionHeaders(MBufHead *mb, Connection *conn, time_t t, const char *cryptpw, int addDate);
+void PostInjectionHeaders(MBufHead *mb, Connection *conn, time_t t, const char *cryptpw, const char *cryptgen, int addDate);
 const char *PostDate(char *buf, int size, time_t t);
 const char *PostDateCheck(const char *h, int l, int nameLen, const char *name);
 
@@ -86,7 +86,7 @@ char *NNPHMangle(char *vserv, char *node, char *cryptpw)
 #ifdef	POST_CRYPTXTRACE
 char *XTRAMangle(char *xtrace, char *cryptpw)
 {
-	static char res[256];
+	static char res[512];	/* the base64 of a 255-byte xtrace, salted */
 	char *c = aes_encrypt(cryptpw, (unsigned char *)xtrace, strlen(xtrace));
 	if (c != NULL) {
 	    snprintf(res, sizeof(res), "%s", c);
@@ -198,11 +198,13 @@ injQuoted(MBufHead *mb, const char *v)
  *
  *	Injection-Info carries what NNTP-Posting-Host, X-Trace and
  *	X-Complaints-To carried, each in its own parameter (RFC 5536 3.2.8):
- *	posting-host is the client's host and address, or with a cryptpw
- *	the hourly hash NNTP-Posting-Host had (the same value for the same
- *	source, opaque to other sites); posting-account, only with
- *	"showposter yes", is the name the client logged in with (encrypted
- *	with a cryptpw); mail-complaints-to is abuseto.  No logging-data:
+ *	posting-host, unless "showposthost no", is the client's host and
+ *	address; posting-account, only with "showposter yes", is the name
+ *	the client logged in with.  With a cryptpw both are encrypted as
+ *	X-Trace is, "C=<base64>" ("G=gen,C=..." with a generation), so the
+ *	admin can read them back with the cryptpw (openssl enc -d
+ *	-aes-256-cbc -md sha256 -a -A).  mail-complaints-to is abuseto.
+ *	No logging-data:
  *	the "post ok" log line has the Message-ID, which finds the post.
  *	Folded before each parameter (3.2.8: folding only around the ";").
  */
@@ -227,8 +229,26 @@ injIdent(const Vserver *vs, char *buf, int size)
     return(buf);
 }
 
+/*
+ * injCrypted() - plain as an Injection-Info parameter value encrypted with
+ *		  cryptpw as X-Trace is: "C=<base64>", or "G=gen,C=<base64>".
+ */
+#ifdef	POST_CRYPTXTRACE
+static void
+injCrypted(MBufHead *mb, const char *plain, const char *cryptpw, const char *cryptgen)
+{
+    char enc[600];	/* "G=", the generation, ",C=" and XTRAMangle()'s 512 */
+
+    if (cryptgen)
+	snprintf(enc, sizeof(enc), "G=%.60s,C=%s", cryptgen, XTRAMangle((char *)plain, (char *)cryptpw));
+    else
+	snprintf(enc, sizeof(enc), "C=%s", XTRAMangle((char *)plain, (char *)cryptpw));
+    injQuoted(mb, enc);
+}
+#endif
+
 void
-PostInjectionHeaders(MBufHead *mb, Connection *conn, time_t t, const char *cryptpw, int addDate)
+PostInjectionHeaders(MBufHead *mb, Connection *conn, time_t t, const char *cryptpw, const char *cryptgen, int addDate)
 {
     const Vserver *vs = conn->co_Auth.dr_VServerDef;
     char ident[64];
@@ -251,32 +271,34 @@ PostInjectionHeaders(MBufHead *mb, Connection *conn, time_t t, const char *crypt
 	return;
     MBPrintf(mb, "Injection-Info: %s", ident);
 
-    if (! conn->co_Auth.dr_ReaderDef->rd_TurnOffNNPH) {
-	if (cryptpw) {
-	    MBPrintf(mb, ";\r\n\tposting-host=");
+    if (! conn->co_Auth.dr_ReaderDef->rd_TurnOffNNPH && ! vs->vs_HidePostHost) {
+	char hv[sizeof(conn->co_Auth.dr_Host) + sizeof(addr) + 2];
+
+	if (addr[0] == 0 || strcmp(conn->co_Auth.dr_Host, addr) == 0)
+	    snprintf(hv, sizeof(hv), "%s", conn->co_Auth.dr_Host);
+	else
+	    snprintf(hv, sizeof(hv), "%s:%s", conn->co_Auth.dr_Host, addr);
+	MBPrintf(mb, ";\r\n\tposting-host=");
+#ifdef	POST_CRYPTXTRACE
+	if (cryptpw)
+	    injCrypted(mb, hv, cryptpw, cryptgen);
+	else
+#else
+	/* without the encryption built in, the hourly hash */
+	if (cryptpw)
 	    injQuoted(mb, NNPHMangle((char *)vs->vs_ClusterName,
 		    conn->co_Auth.dr_Host, (char *)cryptpw));
-	} else {
-	    char hv[sizeof(conn->co_Auth.dr_Host) + sizeof(addr) + 2];
-
-	    if (addr[0] == 0 || strcmp(conn->co_Auth.dr_Host, addr) == 0)
-		snprintf(hv, sizeof(hv), "%s", conn->co_Auth.dr_Host);
-	    else
-		snprintf(hv, sizeof(hv), "%s:%s", conn->co_Auth.dr_Host, addr);
-	    MBPrintf(mb, ";\r\n\tposting-host=");
+	else
+#endif
 	    injQuoted(mb, hv);
-	}
     }
 
     if (vs->vs_ShowPoster && *conn->co_Auth.dr_AuthUser) {
 	MBPrintf(mb, ";\r\n\tposting-account=");
 #ifdef	POST_CRYPTXTRACE
-	if (cryptpw) {
-	    char enc[2 + 256];	/* "C=" and XTRAMangle()'s 256 */
-
-	    snprintf(enc, sizeof(enc), "C=%s", XTRAMangle(conn->co_Auth.dr_AuthUser, (char *)cryptpw));
-	    injQuoted(mb, enc);
-	} else
+	if (cryptpw)
+	    injCrypted(mb, conn->co_Auth.dr_AuthUser, cryptpw, cryptgen);
+	else
 #endif
 	    injQuoted(mb, conn->co_Auth.dr_AuthUser);
     }
@@ -1137,7 +1159,7 @@ NNPostBuffer(Connection *conn)
 	     * of NNTP-Posting-Host, X-Trace and X-Complaints-To, with the
 	     * same data, and Injection-Date where the standard wants one.
 	     */
-	    PostInjectionHeaders(&tmbuf, conn, t, cryptpw,
+	    PostInjectionHeaders(&tmbuf, conn, t, cryptpw, cryptgen,
 		haveInjDate == 0 && (haveMsgId == 0 || haveDate == 0));
 	}
     }
