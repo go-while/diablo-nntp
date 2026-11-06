@@ -464,6 +464,23 @@ HistoryOpen(const char *fileName, int hflags)
 	);
 	exit(1);
     }
+    /*
+     * Version 2 records are walked at a fixed sizeof(History) stride, so an
+     * entry size that does not match this build (a different ABI, or a
+     * damaged header) must not be read at the wrong stride.  The hash table
+     * is mapped at HHead.headSize, which the format lets grow: only a header
+     * smaller than this build's is refused.  Version 1 has no such fields.
+     */
+    if (HHead.version > 1 &&
+	(HHead.henSize != sizeof(History) || HHead.headSize < sizeof(HHead))) {
+	logit(LOG_ERR, "DHistory entry size %d or header size %d does not match this build (%d, %d); use the biweekly adm script to regenerate the history file",
+	    (int)HHead.henSize, (int)HHead.headSize,
+	    (int)sizeof(History), (int)sizeof(HHead));
+	fprintf(stderr, "DHistory entry size %d or header size %d does not match this build (%d, %d); use the biweekly adm script to regenerate the history file\n",
+	    (int)HHead.henSize, (int)HHead.headSize,
+	    (int)sizeof(History), (int)sizeof(HHead));
+	exit(1);
+    }
     if (HHead.hmagic != HMAGIC) {
 	logit(LOG_NOTICE, "DHistory magic mismatch");
 	fprintf(stderr, "DHistory magic mismatch\n");
