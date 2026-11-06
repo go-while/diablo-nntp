@@ -138,7 +138,7 @@ func NewReaderSite(tb testing.TB, o ReaderOptions) *Site {
 // for its greeting on s.Addr.
 func startReader(tb testing.TB, s *Site, bind string) {
 	tb.Helper()
-	s.Proc = proc.StartTCP(tb, proc.Options{
+	s.Proc = startSiteTCP(tb, proc.Options{
 		Path: filepath.Join(s.Bin, "dreaderd"),
 		Args: []string{"-d", "-p", PathHost, "-h", PathHost, "-P", bind},
 		Env:  s.Env,

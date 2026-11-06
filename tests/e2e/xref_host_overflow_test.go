@@ -43,7 +43,7 @@ func TestFeedNoXrefLongXRefHost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s2.Proc = proc.StartTCP(t, proc.Options{
+	s2.Proc = startSiteTCP(t, proc.Options{
 		Path: filepath.Join(s2.Bin, "dreaderd"),
 		Args: []string{"-d", "-p", PathHost, "-h", PathHost,
 			"-P", "[127.0.0.1]:" + port, "-X", longHost},
