@@ -280,8 +280,9 @@
 #		  client is permitted to access. Default is all groups.
 #		  Note that there can be severe performance implications
 #		  with the group options and they should be used sparingly.
-#		  This option doesn't limit articles retrieved with
-#		  the ARTICLE command.
+#		  It also limits ARTICLE, HEAD, BODY, STAT and HDR/XHDR by
+#		  message-id: an article in none of these groups (from its
+#		  Xref, else Newsgroups) is answered 502 (D-195).
 # listgroups	: name of a groupdef which restricts which groups are
 #		  listed for the client with the LIST commands. Defaults
 #		  to the groups option above.

@@ -21,6 +21,38 @@ void NNGetLocal1(Connection *conn);
 /* Bound a fallback HEAD as a whole, not just each backend response line. */
 #define HDR_MSGID_MAX_BYTES (1024 * 1024)
 
+/* D-195: room for an article's Xref and Newsgroups lines; the header read
+ * of a local spool article for the groups check */
+#define ACC_HDR_MAX	(16 * 1024)
+#define ACC_LOCAL_MAX	(256 * 1024)
+
+/*
+ * accHeaderLine() - D-195: keep a header line (buf, len bytes without the
+ *		     line end) for the groups check, if it is an Xref or
+ *		     Newsgroups line or a continuation of one.  A line that
+ *		     does not fit is left out whole, never cut.
+ */
+static void
+accHeaderLine(ServReq *sreq, const char *buf, int len)
+{
+    if (*buf == ' ' || *buf == '\t') {
+	if (!sreq->sr_AccIn)
+	    return;
+    } else {
+	sreq->sr_AccIn = (len >= 5 && strncasecmp(buf, "Xref:", 5) == 0) ||
+	    (len >= 11 && strncasecmp(buf, "Newsgroups:", 11) == 0);
+	if (!sreq->sr_AccIn)
+	    return;
+    }
+    if (sreq->sr_AccHdr == NULL && (sreq->sr_AccHdr = malloc(ACC_HDR_MAX)) == NULL)
+	return;
+    if (sreq->sr_AccLen + len + 2 > ACC_HDR_MAX)
+	return;
+    memcpy(sreq->sr_AccHdr + sreq->sr_AccLen, buf, len);
+    sreq->sr_AccLen += len;
+    sreq->sr_AccHdr[sreq->sr_AccLen++] = '\n';
+}
+
 void
 NNSpoolCommand1(Connection *conn)
 {
@@ -222,6 +254,31 @@ NNGetLocal1(Connection *conn)
 		} else {
 		    lf = open(filepath, O_RDONLY);
 		}
+		/*
+		 * D-195: read the header first for the groups check.  If the
+		 * reader may not read the article, answer that and send
+		 * nothing of it (only co_ArtBuf holds its status line yet).
+		 */
+		if (lf >= 0 && sreq->sr_CConn && ArtAccessCheckNeeded(sreq->sr_CConn)) {
+		    int want = (size < ACC_LOCAL_MAX) ? (int)size : ACC_LOCAL_MAX;
+		    char *hb = malloc(want + 1);
+		    const char *denied = NULL;
+		    ssize_t got = -1;
+
+		    if (hb != NULL)
+			got = pread(lf, hb, want, offset);
+		    if (got < 0)
+			denied = ArtDeniedReply;
+		    else
+			denied = ArtAccessDenied(sreq->sr_CConn, hb, (int)got, got == (ssize_t)size);
+		    free(hb);
+		    if (denied != NULL) {
+			close(lf);
+			MBFree(&sreq->sr_CConn->co_ArtBuf);
+			NNFinishSReq(conn, denied, 0);
+			return;
+		    }
+		}
 		if (lf >= 0 && NewDFA(conn, lf, offset, size)) {
 		    NNSendLocalArticle(conn);
 		} else {
@@ -285,6 +342,9 @@ NNSpoolResponse1(Connection *conn)
 	    return;
 	}
 	if (!sreq->sr_HeadOnly && strtol(buf, NULL, 10) == 220) {
+	    sreq->sr_AccLen = 0;
+	    sreq->sr_AccIn = 0;
+	    sreq->sr_Denied = 0;
 	    /* We have a positive answer, we may cache article */
 	    if (conn->co_Desc->d_Cache) {
 		CreateCache(conn);
@@ -399,9 +459,16 @@ NNSpoolHdrResponse(Connection *conn)
 	    } else {
 		int size = client->co_ArtBuf.mh_Bytes;
 		char *headers = zalloc(&client->co_MemPool, size + 1);
+		const char *denied;
 
 		MBRead(&client->co_ArtBuf, headers, size);
 		headers[size] = 0;
+		if ((denied = ArtAccessDenied(client, headers, size, 1)) != NULL) {
+		    /* D-195: not in a group this reader may read */
+		    zfree(&client->co_MemPool, headers, size + 1);
+		    NNFinishSReq(conn, denied, 0);
+		    return;
+		}
 		if (client->co_ListStrict)
 		    MBLogPrintf(client, &client->co_TMBuf, "225 Headers follow\r\n");
 		else
@@ -476,7 +543,17 @@ NNSpoolResponse2(Connection *conn)
 	    if (sreq->sr_Cache)
 		fwrite("\r\n", 1, 2, sreq->sr_Cache);
 
-	    if (sreq->sr_CConn) {
+	    /*
+	     * D-195: the whole header is in; an article in no group this
+	     * reader may read is not answered (the status line and header
+	     * lines so far are only in co_ArtBuf), its body is drained.
+	     */
+	    if (sreq->sr_CConn &&
+		    ArtAccessDenied(sreq->sr_CConn, sreq->sr_AccHdr ? sreq->sr_AccHdr : "", sreq->sr_AccLen, 1) != NULL) {
+		sreq->sr_Denied = 1;
+		MBFree(&sreq->sr_CConn->co_ArtBuf);
+	    }
+	    if (sreq->sr_CConn && !sreq->sr_Denied) {
 		switch(sreq->sr_CConn->co_ArtMode) {
 		case COM_ARTICLE:
 		    MBPrintf(&sreq->sr_CConn->co_ArtBuf, "\r\n");
@@ -497,6 +574,9 @@ NNSpoolResponse2(Connection *conn)
 		NNFinishSReq(conn, "430 No such article\r\n", 1);
 	    return;
 	}
+
+	if (sreq->sr_CConn && ArtAccessCheckNeeded(sreq->sr_CConn) && len > 1)
+	    accHeaderLine(sreq, buf, (len >= 2 && buf[len - 2] == '\r') ? len - 2 : len - 1);
 
 	/*
 	 * Only munge Xref: header if we asked for it, the wrong Xref:
@@ -701,6 +781,8 @@ NNSpoolResponse3(Connection *conn)
 	    }
 	    if (sreq->sr_CConn == NULL) {
 		NNFinishSReq(conn, NULL, 0);
+	    } else if (sreq->sr_Denied) {
+		NNFinishSReq(conn, ArtDeniedReply, 0);
 	    } else {
 		switch(sreq->sr_CConn->co_ArtMode) {
 		case COM_ARTICLE:
@@ -734,7 +816,7 @@ NNSpoolResponse3(Connection *conn)
 	if (len > 0)
 	    buf[len-1] = '\n';
 
-	if (sreq->sr_CConn) {
+	if (sreq->sr_CConn && !sreq->sr_Denied) {
 	    switch(sreq->sr_CConn->co_ArtMode) {
 	    case COM_ARTICLE:
 	    case COM_BODY:

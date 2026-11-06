@@ -668,6 +668,10 @@ typedef struct ServReq {
     int		sr_NoPass;	/* see server.c		*/
     int		sr_MaxAge;	/* Maximum age allowed	*/
     int		sr_HeadOnly;	/* HDR/XHDR fallback: HEAD, not ARTICLE */
+    char	*sr_AccHdr;	/* D-195: its Xref and Newsgroups lines, for the groups check */
+    int		sr_AccLen;	/* its length */
+    int		sr_AccIn;	/* 1: in an Xref or Newsgroups line, for continuations */
+    int		sr_Denied;	/* D-195: the reader may not read this article */
 } ServReq;
 
 #define SREQ_RETRIEVE	1

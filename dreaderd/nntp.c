@@ -23,6 +23,9 @@ Prototype void NNTPLast(Connection *conn, char **pptr);
 Prototype void NNTPNext(Connection *conn, char **pptr);
 Prototype void NNTPStat(Connection *conn, char **pptr);
 Prototype int SelectGroup(Connection *conn, const char *group);
+Prototype const char ArtDeniedReply[];
+Prototype int ArtAccessCheckNeeded(const Connection *conn);
+Prototype const char *ArtAccessDenied(const Connection *conn, const char *hdr, int len, int complete);
 Prototype int NoCurrentArticle(Connection *conn);
 Prototype int IsArticleNumber(const char *s);
 Prototype void NNExecuteOnRange(Connection *conn, const char *artid, int mode);
@@ -201,6 +204,149 @@ NNTPGroup(Connection *conn, char **pptr)
 	dispArtEnd - dispArtBeg + 1, dispArtBeg, dispArtEnd, group
     );
     NNCommand(conn);
+}
+
+/*
+ * ArtDeniedReply - D-195: the answer for an article in no group the reader
+ *		    may read, as INN's for a client that cannot authenticate
+ *		    again (dreaderd's access is fixed once the connection is
+ *		    set up).
+ */
+const char ArtDeniedReply[] = "502 Read access denied for this article\r\n";
+
+/*
+ * ArtAccessCheckNeeded() - D-195: does a request by message-id from this
+ *		   reader need the groups check of ArtAccessDenied()?  Only
+ *		   when its readerdef has a "groups" list (no list: all
+ *		   groups) and the request was by message-id (by number the
+ *		   group was already checked by SelectGroup()).
+ */
+int
+ArtAccessCheckNeeded(const Connection *conn)
+{
+    return(conn != NULL && conn->co_RequestFlags == ARTFETCH_MSGID &&
+	conn->co_Auth.dr_GroupDef != NULL &&
+	conn->co_Auth.dr_GroupDef->gr_Groups != NULL);
+}
+
+/*
+ * artGroupReadable() - is the group name at g (l bytes) in the reader's
+ *			groups list?
+ */
+static int
+artGroupReadable(const Connection *conn, const char *g, int l)
+{
+    char name[512];
+
+    if (l <= 0 || l >= (int)sizeof(name))
+	return(0);
+    memcpy(name, g, l);
+    name[l] = 0;
+    return(GroupFindWild(name, conn->co_Auth.dr_GroupDef->gr_Groups));
+}
+
+/*
+ * ArtAccessDenied() - D-195: the reply for an article this reader may not
+ *		   read, or NULL if it may.  hdr (len bytes) is the article's
+ *		   header (CRLF or LF lines; it stops at the empty line), or
+ *		   only its Xref and Newsgroups lines; complete says it holds
+ *		   the whole header even without the empty line.  As
+ *		   INN's PERMartok(): the groups are taken from Xref (the
+ *		   first word, the server, and each ":number" dropped), else
+ *		   from Newsgroups; the article is readable if any of them is
+ *		   in the reader's groups list, and also if it has neither
+ *		   header (but not when the header was cut short before the
+ *		   end: then it is refused).  The reply is ArtDeniedReply.
+ */
+const char *
+ArtAccessDenied(const Connection *conn, const char *hdr, int len, int complete)
+{
+    const char *p = hdr;
+    const char *e = hdr + len;
+    const char *xb = NULL, *xe = NULL;	/* Xref value, folded lines too */
+    const char *nb = NULL, *ne = NULL;	/* Newsgroups value */
+    int in = 0;				/* 1: in Xref, 2: in Newsgroups */
+    int found;
+
+    if (!ArtAccessCheckNeeded(conn))
+	return(NULL);
+
+    while (p < e) {
+	const char *nl = memchr(p, '\n', e - p);
+	const char *le = nl ? nl : e;
+	int ll = le - p;
+
+	if (ll > 0 && p[ll - 1] == '\r')
+	    --ll;
+	if (ll == 0) {
+	    complete = 1;		/* end of the header */
+	    break;
+	}
+	if (*p == ' ' || *p == '\t') {
+	    if (in == 1)
+		xe = p + ll;
+	    else if (in == 2)
+		ne = p + ll;
+	} else if (xb == NULL && ll >= 5 && strncasecmp(p, "Xref:", 5) == 0) {
+	    xb = p + 5;
+	    xe = p + ll;
+	    in = 1;
+	} else if (nb == NULL && ll >= 11 && strncasecmp(p, "Newsgroups:", 11) == 0) {
+	    nb = p + 11;
+	    ne = p + ll;
+	    in = 2;
+	} else {
+	    in = 0;
+	}
+	p = nl ? nl + 1 : e;
+    }
+
+    found = 0;
+    if (xb != NULL) {
+	/* "Xref: server group:number ...": skip the server, cut each ":number" */
+	const char *q = xb;
+	int word = 0;
+
+	while (q < xe) {
+	    const char *w;
+
+	    while (q < xe && (*q == ' ' || *q == '\t' || *q == '\r' || *q == '\n'))
+		++q;
+	    w = q;
+	    while (q < xe && *q != ' ' && *q != '\t' && *q != '\r' && *q != '\n')
+		++q;
+	    if (q == w)
+		break;
+	    if (word++ > 0) {
+		const char *c = memchr(w, ':', q - w);
+
+		if (c != NULL) {
+		    found = 1;
+		    if (artGroupReadable(conn, w, c - w))
+			return(NULL);
+		}
+	    }
+	}
+    }
+    if (!found && nb != NULL) {
+	const char *q = nb;
+
+	while (q < ne) {
+	    const char *w;
+
+	    while (q < ne && (*q == ',' || *q == ' ' || *q == '\t' || *q == '\r' || *q == '\n'))
+		++q;
+	    w = q;
+	    while (q < ne && *q != ',' && *q != ' ' && *q != '\t' && *q != '\r' && *q != '\n')
+		++q;
+	    if (q == w)
+		break;
+	    found = 1;
+	    if (artGroupReadable(conn, w, q - w))
+		return(NULL);
+	}
+    }
+    return((found || !complete) ? ArtDeniedReply : NULL);
 }
 
 /*

@@ -788,6 +788,8 @@ FreeSReq(ServReq *sreq)
 
     zfreeStr(&SysMemPool, &sreq->sr_Group);
     zfreeStr(&SysMemPool, &sreq->sr_MsgId);
+    free(sreq->sr_AccHdr);
+    sreq->sr_AccHdr = NULL;
 
     zfree(&SysMemPool, sreq, sizeof(ServReq));
 }
@@ -1299,7 +1301,17 @@ NNArticleRetrieveByMessageId(Connection *conn, const char *msgid, const char *ms
 	    if (DebugOpt)
 		printf("good cache\n");
 	    if ((map = xmap(NULL, size, PROT_READ, MAP_SHARED, cfd, 0)) != NULL) {
+		const char *denied;
+
 		xadvise(map, size, XADV_WILLNEED);
+		if ((denied = ArtAccessDenied(conn, map, size, 1)) != NULL) {
+		    /* D-195: not in a group this reader may read */
+		    MBLogPrintf(conn, &conn->co_TMBuf, "%s", denied);
+		    xunmap((void *)map, size);
+		    close(cfd);
+		    NNCommand(conn);
+		    return;
+		}
 		if (conn->co_ArtMode != COM_BODYNOSTAT) {
 		    MBLogPrintf(conn, &conn->co_TMBuf, "%03d %lld %s %s\r\n", 
 			GoodRC(conn),
