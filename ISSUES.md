@@ -202,6 +202,10 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-186](#d-186-a-refused-dspoolctl-reload-is-not-tried-again) | Low | A refused dspool.ctl reload is not tried again | fixed (#318) |
 | [D-187](#d-187-list-file-lines-get-rrn-at-the-read-buffer-edge) | Low | LIST file lines get "\r\r\n" at the read buffer edge | fixed (#318) |
 | [D-188](#d-188-diablo-sleeps-2-s-at-every-shutdown) | Low | diablo sleeps 2 s at every shutdown | fixed (#316) |
+| [D-189](#d-189-dexpire-writes-expiry-flags-into-a-swapped-history) | Low | dexpire writes expiry flags into a swapped history | fixed (#NNN) |
+| [D-190](#d-190-hiscachesize-is-not-checked-to-be-a-power-of-two) | Low | hiscachesize is not checked to be a power of two | fixed (#NNN) |
+| [D-191](#d-191-historyopen-does-not-check-the-headers-entry-and-header-sizes) | Low | HistoryOpen does not check the header's entry and header sizes | fixed (#NNN) |
+| [D-192](#d-192-precommit-delcomm-evicts-another-message-ids-entry) | Low | precommit PC_DELCOMM evicts another message-id's entry | fixed (#NNN) |
 
 Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315), [F-02 configure script](#f-02-configure-script-for-the-build-options), [F-03 refeed a whole spool](#f-03-refeed-a-whole-spool-to-another-server), [F-04 NoCeM notices](#f-04-nocem-notices), [F-05 init scripts](#f-05-init-scripts-and-adm-script-replacements), [F-06 Perl authentication](#f-06-perl-authentication-for-dreaderd).
 
@@ -1182,6 +1186,18 @@ Fixed (#314): `RCTRYAGAIN` is passed on (436 to IHAVE, 431 to TAKETHIS), counted
 ### D-188 diablo sleeps 2 s at every shutdown
 `util/diablo.c`, the end of the main loop: after the feed children are gone and the logs are flushed, diablo slept 2 s unconditionally before running `path_shutdown_cleanup`, also when none is set. Every stop and restart took 2 s longer than needed, and so did the cleanup of every feeder e2e test (about 85 tests sat at 2.0x s, roughly 170 s of a suite run). Found while measuring the e2e suite's time.
 Fixed (#316): the pause stays only before a cleanup program, which may count on it. Test: `TestFeederExitWithoutCleanupIsQuick` (2.0 s on main, 0.03 s here).
+### D-189 dexpire writes expiry flags into a swapped history
+`util/dexpire.c`, `setExpired()`: dexpire opens the history once at the start of a run and later writes the expired flag of each removed article under its hash chain lock, but it never checked that its open descriptor is still the live history. A dhisexpire that installed a new history mid-run left the descriptor on the old (dead) file, so the flags went to the `.bak` and the new history kept the removed articles live until the next dexpire run. Found in the history review (F4).
+Fixed (#NNN): before each scan batch dexpire compares `fstat()` of the open descriptor with `stat()` of the history path and, when they differ, stops with a clear message to run dexpire again, so no flag goes to the dead file. Test: `TestDexpireHistorySwappedMidScan`.
+### D-190 hiscachesize is not checked to be a power of two
+`lib/config.c`: `hiscachesize` was passed straight to `SetPCommitExpire()`, which used `hsize - 1` as the precommit cache mask (`lib/precommit.c`). A value that is not a power of two left the table only partly reachable (e.g. 100000 used about 1024 of its 100000 slots). Found in the history review (F6).
+Fixed (#NNN): a non-power-of-two is refused at config load with a message naming the setting, as an out-of-range `readerdns` is. Test: `TestHiscachesizePowerOfTwo`.
+### D-191 HistoryOpen does not check the header's entry and header sizes
+`lib/history.c`, `HistoryOpen()`: it validated the version and the hash size but not `henSize` or `headSize` from the header, so a history written by a different ABI (or a damaged header) was walked at the wrong record stride and with the hash table at the wrong offset. `dhisexpire` already refused a bad record size (D-104). Found in the history review (F9b).
+Fixed (#NNN): a version 2 header whose `henSize` is not `sizeof(History)` or whose `headSize` is not `sizeof(HistHead)` is refused with a message to regenerate the file. Test: `TestHistoryOpenBadHeaderSizes`.
+### D-192 precommit PC_DELCOMM evicts another message-id's entry
+`lib/precommit.c`, `PreCommit()`: a `PC_DELCOMM` for a message-id whose hash slot held a different message-id (a collision) wrote a cleared entry into the slot, evicting the other article's still-live precommit/postcommit cache entry. Found in the history review (F7).
+Fixed (#NNN): a `PC_DELCOMM` that does not find its own message-id in the slot leaves the slot alone. Test: `TestPrecommitDelcommLeavesOtherSlot`. (The precommit entries are still read and written without a lock or a seqlock — a reader can see a new hash with the previous time/pid for a moment; only the cache window is lost, the history check still stops committed duplicates, so it is documented rather than fixed.)
 
 ### D-186 A refused dspool.ctl reload is not tried again
 `lib/spool.c`, `LoadSpoolCtl()`: the D-175 fix (#308) set `SpoolMTime` before the reload was checked, so a file refused for a reason that passes without a change to it (a spool partition not mounted yet: "Missing spool partition") was not looked at again until its mtime changed; diablo kept the old spool set without saying so again. Found in go-while's review pass of the code merged since #296.

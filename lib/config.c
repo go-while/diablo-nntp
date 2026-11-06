@@ -317,8 +317,17 @@ LoadDiabloConfig(int ac, char **av)
 		} else if (strcasecmp(cmd, "maxspool") == 0) {
 		    /* No longer used */
 		} else if (strcasecmp(cmd, "hiscachesize") == 0) {
-		    SetPCommitExpire(-1, -1, atoi(opt));
-		    optErr = 0;
+		    int hsize = atoi(opt);
+
+		    if (hsize > 0 && (hsize & (hsize - 1)) == 0) {
+			SetPCommitExpire(-1, -1, hsize);
+			optErr = 0;
+		    } else {
+			fprintf(stderr, "hiscachesize must be a power of two: %s\n",
+			    opt);
+			logit(LOG_CRIT, "hiscachesize must be a power of two: %s",
+			    opt);
+		    }
 		} else if (strcasecmp(cmd, "wireformat") == 0) {
 		    if (strcasecmp(opt, "on") == 0) {
 			optErr = 0;

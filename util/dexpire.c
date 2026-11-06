@@ -1009,6 +1009,23 @@ findSize(char *pathname, char *dirname)
 }
 
 /*
+ * A running dhisexpire marks the history dead and renames a new file over
+ * HistoryFile.  HistoryFd then names the old inode (the .bak), so a
+ * setExpired write would land there, not in the live history.  Detect that
+ * the path no longer names the open inode.
+ */
+static int
+historySwapped(void)
+{
+    struct stat a;
+    struct stat b;
+
+    if (fstat(HistoryFd, &a) != 0 || stat(HistoryFile, &b) != 0)
+	return(1);	/* cannot tell: do not write to a possibly-stale file */
+    return(a.st_dev != b.st_dev || a.st_ino != b.st_ino);
+}
+
+/*
  * Set or clear the expired flag of the record at pos from the flags on
  * disk now, under its hash chain lock as lib/history.c updates records.
  * h is the copy read before the spool scan.
@@ -1175,6 +1192,18 @@ updateHistory(void)
 	npos = lseek(HistoryFd, 0L, 1);
 	while ((n = read(HistoryFd, hist, sizeof(hist))) > 0) {
 	    int i;
+
+	    /*
+	     * Stop as soon as the open history is no longer the live file:
+	     * every setExpired write below would go to the dead .bak.  The
+	     * next dexpire run opens the new file and repairs the flags.
+	     */
+	    if (historySwapped()) {
+		fprintf(stderr,
+		    "history %s was replaced (by dhisexpire) during the scan; run dexpire again to expire the removed articles in the new history\n",
+		    HistoryFile);
+		exit(1);
+	    }
 
 	    bpos = npos;
 	    npos += n;

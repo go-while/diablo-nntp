@@ -1,0 +1,4 @@
+- `dexpire`: a running `dhisexpire` that installs a new history mid-run no longer gets the expired flags written into the old (dead) file: dexpire notices that the path no longer names its open descriptor and stops, asking to be run again.
+- `diablo`: `hiscachesize` must be a power of two; a value that is not stops at config load instead of leaving the precommit cache only partly reachable.
+- `diablo`: `HistoryOpen` refuses a history whose header entry size or header size does not match this build, instead of walking the records at the wrong stride.
+- `diablo`: a `PC_DELCOMM` for a message-id whose hash slot holds a different message-id leaves that entry alone, so the other article's precommit/postcommit cache entry is not evicted.
