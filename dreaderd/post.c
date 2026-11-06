@@ -53,7 +53,7 @@ int BreakIfBadGroup(char *groups, Connection *conn);
 int CheckValidRestrictedGroup(const char *group);
 const char *PostRefusedGroup(char *groups, char *pstatus);
 int HeaderCmp(const char *big, const char *little, char **errMsg);
-void PostInjectionHeaders(MBufHead *mb, Connection *conn, time_t t, const char *cryptpw, const char *cryptgen, int addDate);
+void PostInjectionHeaders(MBufHead *mb, Connection *conn, time_t t, const char *cryptpw, int addDate);
 const char *PostDate(char *buf, int size, time_t t);
 const char *PostDateCheck(const char *h, int l, int nameLen, const char *name);
 
@@ -201,10 +201,9 @@ injQuoted(MBufHead *mb, const char *v)
  *	posting-host is the client's host and address, or with a cryptpw
  *	the hourly hash NNTP-Posting-Host had (the same value for the same
  *	source, opaque to other sites); posting-account, only with
- *	"postingaccount yes", is the name the client logged in with
- *	(encrypted with a cryptpw); logging-data identifies the post in the
- *	logs, "<time> <pid>", or with a cryptpw the whole X-Trace data,
- *	encrypted as X-Trace was; mail-complaints-to is abuseto.
+ *	"showposter yes", is the name the client logged in with (encrypted
+ *	with a cryptpw); logging-data identifies the post in the logs,
+ *	"<time> <pid>"; mail-complaints-to is abuseto.
  *	Folded before each parameter (3.2.8: folding only around the ";").
  */
 /*
@@ -229,20 +228,17 @@ injIdent(const Vserver *vs, char *buf, int size)
 }
 
 void
-PostInjectionHeaders(MBufHead *mb, Connection *conn, time_t t, const char *cryptpw, const char *cryptgen, int addDate)
+PostInjectionHeaders(MBufHead *mb, Connection *conn, time_t t, const char *cryptpw, int addDate)
 {
     const Vserver *vs = conn->co_Auth.dr_VServerDef;
     char ident[64];
-    char trace[NI_MAXHOST + 512];
+    char trace[64];
     char addr[NI_MAXHOST + 8];		/* the client's address, for posting-host */
-    char addrPort[NI_MAXHOST + 16];	/* with the port, as X-Trace had it */
     const char *a;
 
     /* NetAddrToSt() returns a static buffer: copy each form */
     a = NetAddrToSt(0, (struct sockaddr *)&conn->co_Auth.dr_Addr, 1, 0, 0);
     snprintf(addr, sizeof(addr), "%s", a ? a : "");
-    a = NetAddrToSt(0, (struct sockaddr *)&conn->co_Auth.dr_Addr, 1, 1, 1);
-    snprintf(addrPort, sizeof(addrPort), "%s", a ? a : "");
 
     if (addDate) {
 	char db[40];
@@ -273,7 +269,7 @@ PostInjectionHeaders(MBufHead *mb, Connection *conn, time_t t, const char *crypt
 	}
     }
 
-    if (vs->vs_PostingAccount && *conn->co_Auth.dr_AuthUser) {
+    if (vs->vs_ShowPoster && *conn->co_Auth.dr_AuthUser) {
 	MBPrintf(mb, ";\r\n\tposting-account=");
 #ifdef	POST_CRYPTXTRACE
 	if (cryptpw) {
@@ -286,33 +282,8 @@ PostInjectionHeaders(MBufHead *mb, Connection *conn, time_t t, const char *crypt
 	    injQuoted(mb, conn->co_Auth.dr_AuthUser);
     }
 
-    /*
-     * logging-data: what finds the post in the logs.  The whole X-Trace
-     * data only encrypted, where no other site can read the host and
-     * account in it.
-     */
+    /* logging-data: what finds the post in the logs, the same with a cryptpw */
     snprintf(trace, sizeof(trace), "%lu %d", (unsigned long)t, (int)getpid());
-#ifdef	POST_CRYPTXTRACE
-    if (cryptpw) {
-	char full[sizeof(trace)];
-
-	snprintf(full, sizeof(full), "%lu %s %d %s%s%s%s%s%s",
-	    (unsigned long)t,
-	    vs->vs_HostName,
-	    (int)getpid(),		/* should probably be slot id */
-	    (conn->co_Auth.dr_Flags & DF_IGNORED_AUTH_LONG ? "!" : ""),
-	    *conn->co_Auth.dr_AuthUser ? conn->co_Auth.dr_AuthUser : "",
-	    *conn->co_Auth.dr_AuthUser ? "/" : "",
-	    *conn->co_Auth.dr_IdentUser ? conn->co_Auth.dr_IdentUser : "",
-	    *conn->co_Auth.dr_IdentUser ? "@" : "",
-	    addrPort
-	);
-	if (cryptgen)
-	    snprintf(trace, sizeof(trace), "G=%s,C=%s", cryptgen, XTRAMangle(full, (char *)cryptpw));
-	else
-	    snprintf(trace, sizeof(trace), "C=%s", XTRAMangle(full, (char *)cryptpw));
-    }
-#endif
     MBPrintf(mb, ";\r\n\tlogging-data=");
     injQuoted(mb, trace);
 
@@ -1172,7 +1143,7 @@ NNPostBuffer(Connection *conn)
 	     * of NNTP-Posting-Host, X-Trace and X-Complaints-To, with the
 	     * same data, and Injection-Date where the standard wants one.
 	     */
-	    PostInjectionHeaders(&tmbuf, conn, t, cryptpw, cryptgen,
+	    PostInjectionHeaders(&tmbuf, conn, t, cryptpw,
 		haveInjDate == 0 && (haveMsgId == 0 || haveDate == 0));
 	}
     }

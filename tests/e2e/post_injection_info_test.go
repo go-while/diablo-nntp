@@ -121,7 +121,7 @@ func TestReaderPostInjectionInfo(t *testing.T) {
 			t.Errorf("Injection-Info %q: logging-data is not \"<time> <pid>\"", ii)
 		}
 		if strings.Contains(ii, "posting-account=") {
-			t.Errorf("Injection-Info %q has a posting-account without postingaccount yes", ii)
+			t.Errorf("Injection-Info %q has a posting-account without showposter yes", ii)
 		}
 		for _, h := range []string{"NNTP-Posting-Host", "X-Trace", "X-Complaints-To", "Injection-Date"} {
 			if hasHeader(head, h) {
@@ -155,34 +155,31 @@ func TestReaderPostInjectionInfo(t *testing.T) {
 		for _, pw := range []string{"secret", "G=7,P=secret"} {
 			head := postHead(t, injAccess("    postpath "+PathHost+"\n    cryptpw "+pw+"\n"), "Message-ID: "+msgID(t))
 			ii := headerValue(head, "Injection-Info")
-			want := `logging-data="C=`
-			if strings.HasPrefix(pw, "G=") {
-				want = `logging-data="G=7,C=`
-			}
-			// the hourly hash NNTP-Posting-Host had is the posting-host now
+			// the hourly hash NNTP-Posting-Host had is the posting-host now; logging-data
+			// stays "<time> <pid>", in clear
 			if !regexp.MustCompile(`posting-host="[0-9a-f]{8}\.`).MatchString(ii) || strings.Contains(ii, "posting-account=") ||
-				!strings.Contains(ii, want) || strings.Contains(ii, "127.0.0.1") {
-				t.Errorf("cryptpw %s: Injection-Info %q, want a hashed posting-host, no posting-account, %s..., no address", pw, ii, want)
+				!regexp.MustCompile(`logging-data="[0-9]+ [0-9]+"`).MatchString(ii) || strings.Contains(ii, "127.0.0.1") {
+				t.Errorf("cryptpw %s: Injection-Info %q, want a hashed posting-host, no posting-account, logging-data \"<time> <pid>\", no address", pw, ii)
 			}
 		}
 	})
 
-	t.Run("postingaccount", func(t *testing.T) {
+	t.Run("showposter", func(t *testing.T) {
 		login := func(vs string) string {
 			return strings.Replace(AuthReaderAccess, "    hostname "+PathHost+"\n",
 				"    hostname "+PathHost+"\n    rfc5537 yes\n    postpath "+PathHost+"\n"+vs, 1)
 		}
-		ii := headerValue(postHeadLogin(t, login("    postingaccount yes\n"), "fred", "fredspass"), "Injection-Info")
+		ii := headerValue(postHeadLogin(t, login("    showposter yes\n"), "fred", "fredspass"), "Injection-Info")
 		if !strings.Contains(ii, `posting-account="fred"`) {
-			t.Errorf("postingaccount yes, logged in as fred: Injection-Info %q, want posting-account=\"fred\"", ii)
+			t.Errorf("showposter yes, logged in as fred: Injection-Info %q, want posting-account=\"fred\"", ii)
 		}
 		ii = headerValue(postHeadLogin(t, login(""), "fred", "fredspass"), "Injection-Info")
 		if strings.Contains(ii, "posting-account=") {
-			t.Errorf("without postingaccount: Injection-Info %q has a posting-account", ii)
+			t.Errorf("without showposter: Injection-Info %q has a posting-account", ii)
 		}
-		ii = headerValue(postHeadLogin(t, login("    postingaccount yes\n    cryptpw secret\n"), "fred", "fredspass"), "Injection-Info")
+		ii = headerValue(postHeadLogin(t, login("    showposter yes\n    cryptpw secret\n"), "fred", "fredspass"), "Injection-Info")
 		if !strings.Contains(ii, `posting-account="C=`) || strings.Contains(ii, "fred") {
-			t.Errorf("postingaccount yes with a cryptpw: Injection-Info %q, want an encrypted posting-account", ii)
+			t.Errorf("showposter yes with a cryptpw: Injection-Info %q, want an encrypted posting-account", ii)
 		}
 	})
 

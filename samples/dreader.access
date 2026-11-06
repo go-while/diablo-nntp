@@ -45,15 +45,13 @@
 #		   mail-complaints-to of Injection-Info:). (Default: None)
 #
 # cryptpw	 : The password used to encrypt the X-Trace: line (with
-#		   rfc5537 the logging-data and posting-account of
-#		   Injection-Info:), if set in vendor.h (POST_CRYPTXTRACE).
-#		   With it the posting host is given as an hourly hash (in
-#		   NNTP-Posting-Host:, or posting-host with rfc5537), and
-#		   logging-data carries the whole X-Trace data encrypted
-#		   instead of "<time> <pid>". "G=gen,P=password" adds the
-#		   generation. Default: No crypting.
+#		   rfc5537 the posting-account of Injection-Info:), if set
+#		   in vendor.h (POST_CRYPTXTRACE). With it the posting host
+#		   is given as an hourly hash (in NNTP-Posting-Host:, or
+#		   posting-host with rfc5537). "G=gen,P=password" adds the
+#		   generation to X-Trace:. Default: No crypting.
 #
-# postingaccount : 'yes' adds posting-account="<user>" to Injection-Info:
+# showposter	 : 'yes' adds posting-account="<user>" to Injection-Info:
 #		   (rfc5537) for a post by a logged-in user, encrypted with
 #		   a cryptpw. Off by default, as the name is then public.
 #		   Default: no.
@@ -64,7 +62,7 @@
 #		     NNTP-Posting-Host:, X-Trace: and X-Complaints-To: (and
 #		     NNTP-Posting-Date: where built in): posting-host,
 #		     logging-data "<time> <pid>", mail-complaints-to, and
-#		     posting-account with postingaccount yes; and
+#		     posting-account with showposter yes; and
 #		     Injection-Date: when dreaderd supplied the Message-ID or
 #		     Date;
 #		   - ".POSTED" in the Path (see postpath);
