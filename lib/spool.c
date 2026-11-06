@@ -571,6 +571,9 @@ findLabel(LabelList *ll, char *label)
 
 uint32 SpoolGmtMin = (uint32)-1;
 time_t SpoolMTime = 0;
+static time_t SpoolBadMTime = 0;	/* a dspool.ctl a reload refused */
+static time_t SpoolBadNext = 0;		/* minute of its next try */
+static int SpoolBadWait = 0;		/* minutes between its tries */
 
 #define	EXSTAT_NONE	0x00
 #define	EXSTAT_SPOOL	0x01
@@ -967,22 +970,35 @@ LoadSpoolCtl(time_t gmt, int force)
 	    }
 
 	    if (force || fi == NULL || 
-		(fstat(fileno(fi), &st) == 0 && st.st_mtime != SpoolMTime)
+		(fstat(fileno(fi), &st) == 0 && st.st_mtime != SpoolMTime &&
+		 (st.st_mtime != SpoolBadMTime || gmt >= SpoolBadNext))
 	    ) {
 		if (force)
 		    fstat(fileno(fi), &st);
-		SpoolMTime = st.st_mtime; /* may be 0 if file failed to open */
 		/*
 		 * A reload of a running program (diablo checks every
 		 * minute) must not stop it on a mistake in the new file:
 		 * keep the old configuration until the file is fixed
 		 * (D-175).  At start an error still stops the program.
+		 * The same file is tried again, after 1, 2, 4 ... and
+		 * then every 60 minutes: an error can pass without a
+		 * change to the file (a spool partition not mounted yet).
 		 */
-		if (!force && SpoolObjects != NULL && !spoolCtlValid(fi))
-		    logit(LOG_ERR, "%s: not reloaded because of the error above, keeping the old spool configuration",
-				PatLibExpand(DSpoolCtlPat));
-		else
+		if (!force && SpoolObjects != NULL && !spoolCtlValid(fi)) {
+		    if (st.st_mtime != SpoolBadMTime) {
+			SpoolBadMTime = st.st_mtime;
+			SpoolBadWait = 1;
+		    } else if (SpoolBadWait < 60) {
+			SpoolBadWait = (SpoolBadWait * 2 < 60) ? SpoolBadWait * 2 : 60;
+		    }
+		    SpoolBadNext = gmt + SpoolBadWait;
+		    logit(LOG_ERR, "%s: not reloaded because of the error above, keeping the old spool configuration (next try in %d min)",
+				PatLibExpand(DSpoolCtlPat), SpoolBadWait);
+		} else {
+		    SpoolMTime = st.st_mtime; /* may be 0 if file failed to open */
+		    SpoolBadMTime = 0;
 		    loadSpoolCtl(fi);
+		}
 	    }
 	    if (fi)
 		fclose(fi);

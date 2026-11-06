@@ -199,6 +199,8 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-183](#d-183-history-add-after-a-partial-last-record-skews-every-later-index) | Medium | History add after a partial last record skews every later index | fixed (#314) |
 | [D-184](#d-184-a-failed-read-on-a-history-chain-counts-as-found) | Medium | A failed read on a history chain counts as "found" | fixed (#314) |
 | [D-185](#d-185-a-failed-history-add-is-answered-as-a-permanent-reject) | Medium | A failed history add is answered as a permanent reject | fixed (#314) |
+| [D-186](#d-186-a-refused-dspoolctl-reload-is-not-tried-again) | Low | A refused dspool.ctl reload is not tried again | fixed (#318) |
+| [D-187](#d-187-list-file-lines-get-rrn-at-the-read-buffer-edge) | Low | LIST file lines get "\r\r\n" at the read buffer edge | fixed (#318) |
 | [D-188](#d-188-diablo-sleeps-2-s-at-every-shutdown) | Low | diablo sleeps 2 s at every shutdown | fixed (#316) |
 
 Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315), [F-02 configure script](#f-02-configure-script-for-the-build-options), [F-03 refeed a whole spool](#f-03-refeed-a-whole-spool-to-another-server), [F-04 NoCeM notices](#f-04-nocem-notices), [F-05 init scripts](#f-05-init-scripts-and-adm-script-replacements), [F-06 Perl authentication](#f-06-perl-authentication-for-dreaderd).
@@ -1180,6 +1182,14 @@ Fixed (#314): `RCTRYAGAIN` is passed on (436 to IHAVE, 431 to TAKETHIS), counted
 ### D-188 diablo sleeps 2 s at every shutdown
 `util/diablo.c`, the end of the main loop: after the feed children are gone and the logs are flushed, diablo slept 2 s unconditionally before running `path_shutdown_cleanup`, also when none is set. Every stop and restart took 2 s longer than needed, and so did the cleanup of every feeder e2e test (about 85 tests sat at 2.0x s, roughly 170 s of a suite run). Found while measuring the e2e suite's time.
 Fixed (#316): the pause stays only before a cleanup program, which may count on it. Test: `TestFeederExitWithoutCleanupIsQuick` (2.0 s on main, 0.03 s here).
+
+### D-186 A refused dspool.ctl reload is not tried again
+`lib/spool.c`, `LoadSpoolCtl()`: the D-175 fix (#308) set `SpoolMTime` before the reload was checked, so a file refused for a reason that passes without a change to it (a spool partition not mounted yet: "Missing spool partition") was not looked at again until its mtime changed; diablo kept the old spool set without saying so again. Found in go-while's review pass of the code merged since #296.
+Fixed (#318): a refused file is tried again after 1, 2, 4 ... minutes, then every 60 minutes, and each refusal logs the time of the next try; a changed file is tried at the next minute check as before. Test: `TestSpoolCtlBadReloadRetried`.
+
+### D-187 LIST file lines get "\r\r\n" at the read buffer edge
+`dreaderd/list.c`, `ListFileLines()` (#306): a local file with CRLF line ends is read in 255-byte chunks; when a chunk ended between the "\r" and the "\n", the "\r" went out as part of the line, and the line ended "\r\r\n". Only lines of 254 bytes or more. Found in go-while's review pass of the code merged since #296.
+Fixed (#318): a "\r" at the end of a chunk is held back and dropped when the next chunk is the "\n". Test: `TestReaderListLongFileLines` (a 254-byte CRLF line).
 
 ## Feature requests
 
