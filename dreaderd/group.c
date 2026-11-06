@@ -85,6 +85,7 @@ Prototype OverInfo *GetOverInfo(const char *group);
 Prototype void PutOverInfo(OverInfo *ov);
 Prototype const char *GetOverRecord(OverInfo *ov, artno_t artno, int *plen, int *aleno, int *plines, TimeRestrict *tr, int *TimeRcvd);
 Prototype OverInfo *FindCanceledMsg(const char *group, const char *msgid, artno_t *partNo, int *pvalidGroups);
+Prototype OverInfo *FindMsgInGroup(const char *group, const char *msgid, artno_t *partNo, artno_t maxScan);
 Prototype int CancelOverArt(OverInfo *ov, artno_t artNo);
 Prototype void OutputOverRange(OverInfo *ov, Connection *conn);
 
@@ -1541,6 +1542,59 @@ FindCanceledMsg(const char *group, const char *msgid, artno_t *partNo, int *pval
 	} /* if */
     }
     return(ov);
+}
+
+/*
+ * FindMsgInGroup() - the article number of msgid in group, for a reader
+ *		      command by message-id (XHDR/XOVER/HDR/OVER, D-193), or
+ *		      NULL (*partNo -1).  Unlike FindCanceledMsg() it reads NB
+ *		      and NE under the record lock and walks the overview index
+ *		      after unlocking (an article added meanwhile is simply not
+ *		      found), and it looks at no more than maxScan articles,
+ *		      newest first, so a reader cannot make a reader process walk
+ *		      a whole big group, or hold the record the feed side needs,
+ *		      with an unknown message-id.
+ */
+OverInfo *
+FindMsgInGroup(const char *group, const char *msgid, artno_t *partNo, artno_t maxScan)
+{
+    const char *rec;
+    int recLen;
+    OverInfo *ov;
+    artno_t artBeg;
+    artno_t artEnd;
+    hash_t hv;
+
+    *partNo = -1;
+    if (KPDBReadRecord(KDBActive, group, 0, &recLen) == NULL)
+	return(NULL);
+    if ((ov = GetOverInfo(group)) == NULL)
+	return(NULL);
+    if ((rec = KPDBReadRecord(KDBActive, group, KP_LOCK_RO, &recLen)) == NULL) {
+	PutOverInfo(ov);
+	return(NULL);
+    }
+    artBeg = strtoll(KPDBGetField(rec, recLen, "NB", NULL, "-1"), NULL, 10);
+    artEnd = strtoll(KPDBGetField(rec, recLen, "NE", NULL, "-1"), NULL, 10);
+    KPDBUnlock(KDBActive, rec);
+
+    if (artEnd - artBeg > ov->ov_MaxArts)
+	artBeg = artEnd - ov->ov_MaxArts;
+    if (maxScan > 0 && artEnd - artBeg >= maxScan)
+	artBeg = artEnd - maxScan + 1;
+    hv = hhash(msgid);
+    for (; artEnd >= artBeg; --artEnd) {
+	off_t ovpos = 0;
+	const OverArt *oa = GetOverArt(ov, artEnd, &ovpos);
+
+	if (OA_ARTNOEQ(artEnd, oa->oa_ArtNo) &&
+	    bcmp(&oa->oa_MsgHash, &hv, sizeof(hv)) == 0) {
+	    *partNo = artEnd;
+	    return(ov);
+	}
+    }
+    PutOverInfo(ov);
+    return(NULL);
 }
 
 /*

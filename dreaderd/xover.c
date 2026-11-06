@@ -11,6 +11,9 @@
 
 #include "defs.h"
 
+/* articles a reader command by message-id looks at, newest first (D-193) */
+#define READER_MSGID_SCAN	100000
+
 Prototype void NNTPNewNews(Connection *conn, char **pptr);
 Prototype void NNTPXHdr(Connection *conn, char **pptr);
 Prototype void NNTPXOver(Connection *conn, char **pptr);
@@ -232,6 +235,7 @@ NNStartListOverview(Connection *conn, const char *hdr, const char *ran, const ch
 {
     zfreeStr(&conn->co_MemPool, &conn->co_ListPat);
     zfreeStr(&conn->co_MemPool, &conn->co_ListHdrs);
+    zfreeStr(&conn->co_MemPool, &conn->co_ListMsgId);
     conn->co_ListPat = (pat) ? zallocStr(&conn->co_MemPool, pat) : NULL;
     conn->co_ListHdrs = zallocStr(&conn->co_MemPool, hdr);
 
@@ -246,7 +250,7 @@ NNStartListOverview(Connection *conn, const char *hdr, const char *ran, const ch
     /*
      * HDR and OVER answer an error instead of an empty list: 420 without a
      * current article, 423 when the range holds no article, 501 for a range
-     * that isn't one.  The message-id form isn't implemented: 503.
+     * that isn't one.  The message-id form is handled below.
      */
     if (conn->co_ListStrict) {
 	if (ran == NULL) {
@@ -255,12 +259,7 @@ NNStartListOverview(Connection *conn, const char *hdr, const char *ran, const ch
 		NNCommand(conn);
 		return;
 	    }
-	} else if (ran[0] == '<') {
-	    MBLogPrintf(conn, &conn->co_TMBuf, "503 %s by message-id is not supported\r\n",
-		(mode == COM_XHDR) ? "HDR" : "OVER");
-	    NNCommand(conn);
-	    return;
-	} else {
+	} else if (ran[0] != '<') {
 	    char *p;
 	    char *q;
 	    artno_t lo = strtoll(ran, &p, 10);
@@ -314,6 +313,36 @@ NNStartListOverview(Connection *conn, const char *hdr, const char *ran, const ch
     }
 
     conn->co_ArtMode = mode;
+
+    /*
+     * A message-id is resolved before the "follows" response, so an unknown
+     * one answers 430 instead of an empty 221/224 list.  The found article
+     * number and message-id are kept for NNStartListOverviewMsgId below.
+     */
+    if (ran != NULL && ran[0] == '<') {
+	const char *mid = MsgId(ran, NULL);
+	artno_t artNo = -1;
+	OverInfo *ov = NULL;
+
+	/*
+	 * In the current group only, and at most the newest
+	 * READER_MSGID_SCAN articles: past that the answer is 430.
+	 */
+	if (mid != NULL && strcmp(mid, "<>") != 0 && conn->co_GroupName != NULL)
+	    ov = FindMsgInGroup(conn->co_GroupName, mid, &artNo, READER_MSGID_SCAN);
+	if (ov == NULL || artNo < 0) {
+	    if (ov != NULL)
+		PutOverInfo(ov);
+	    MBLogPrintf(conn, &conn->co_TMBuf, "430 No such article\r\n");
+	    NNCommand(conn);
+	    return;
+	}
+	PutOverInfo(ov);
+	conn->co_ListBegNo = artNo;
+	conn->co_ListEndNo = artNo;
+	conn->co_ListMsgId = zallocStr(&conn->co_MemPool, mid);
+	ran = mid;
+    }
 
     switch(mode) {
     case COM_XPAT:
@@ -511,9 +540,64 @@ NNListOverviewRange(Connection *conn)
 void
 NNStartListOverviewMsgId(Connection *conn, const char *msgid)
 {
-    /* XXX StartListOverviewMsgId */
+    OverInfo *ov;
+    const char *res;
+    int resLen = 0;
+    int artSize = 0;
+    int lines = -1;
+
+    /*
+     * The message-id was already resolved in NNStartListOverview, which set
+     * co_ListBegNo to the article and co_ListMsgId to the message-id (the
+     * first field of the output).  Fetch the record and output it.
+     */
+    if ((ov = GetOverInfo(conn->co_GroupName)) == NULL) {
+	MBLogPrintf(conn, &conn->co_TMBuf, "430 No such article\r\n");
+	zfreeStr(&conn->co_MemPool, &conn->co_ListMsgId);
+	NNCommand(conn);
+	return;
+    }
+    res = GetOverRecord(ov, conn->co_ListBegNo, &resLen, &artSize, &lines, NULL, NULL);
+    if (res == NULL) {
+	PutOverInfo(ov);
+	MBLogPrintf(conn, &conn->co_TMBuf, "430 No such article\r\n");
+	zfreeStr(&conn->co_MemPool, &conn->co_ListMsgId);
+	NNCommand(conn);
+	return;
+    }
+    OutputOverview(conn, res, resLen, artSize, lines);
+    PutOverInfo(ov);
+    /* only this list uses it: no later list may print it as its index */
+    zfreeStr(&conn->co_MemPool, &conn->co_ListMsgId);
     FinishOverviewDotNewline(conn);
     NNCommand(conn);
+}
+
+/*
+ * The first field of an overview line.  For a message-id lookup: the
+ * message-id for XHDR (RFC 2980 2.6), and 0 for HDR and OVER (RFC 3977 8.3.2
+ * and 8.5.2: the article number is replaced by 0) and for XOVER, which RFC
+ * 2980 gives no message-id form (INN answers it like OVER).  Else the article
+ * number.
+ */
+static void
+OutputListIndex(Connection *conn)
+{
+    if (conn->co_ListMsgId != NULL) {
+	const char *f = (conn->co_ArtMode == COM_XHDR && !conn->co_ListStrict) ?
+	    conn->co_ListMsgId : "0";
+
+	if (conn->co_ArtMode == COM_XZVER)
+	    MZWrite(conn, f, strlen(f));
+	else
+	    MBWrite(&conn->co_TMBuf, f, strlen(f));
+    } else if (conn->co_ArtMode == COM_XZVER) {
+	MZPrintf(conn, "%lld",
+	    artno_art(conn->co_ArtBeg, conn->co_ArtEnd, conn->co_ListBegNo, conn->co_Numbering));
+    } else {
+	MBPrintf(&conn->co_TMBuf, "%lld",
+	    artno_art(conn->co_ArtBeg, conn->co_ArtEnd, conn->co_ListBegNo, conn->co_Numbering));
+    }
 }
 
 int
@@ -575,17 +659,13 @@ OutputOverview(Connection *conn, const char *res, int resLen, int artSize, int l
 	     (hhlen == 0 && hlen >= 6 && strncasecmp(hdr, ":lines", 6) == 0))
 	) {
 	    char sep = (conn->co_ArtMode == COM_XHDR) ? ' ' : '\t';
-	    artno_t an = artno_art(conn->co_ArtBeg, conn->co_ArtEnd, conn->co_ListBegNo, conn->co_Numbering);
 
-	    if (conn->co_ArtMode == COM_XZVER) {
-		if (didIndex == 0)
-		    MZPrintf(conn, "%lld", an);
+	    if (didIndex == 0)
+		OutputListIndex(conn);
+	    if (conn->co_ArtMode == COM_XZVER)
 		MZPrintf(conn, "%c%d", sep, lines);
-	    } else {
-		if (didIndex == 0)
-		    MBPrintf(&conn->co_TMBuf, "%lld", an);
+	    else
 		MBPrintf(&conn->co_TMBuf, "%c%d", sep, lines);
-	    }
 	    didIndex = 1;
 	    hdr += hlen;
 	    continue;
@@ -680,13 +760,7 @@ OutputOverview(Connection *conn, const char *res, int resLen, int artSize, int l
 		    int doSpace = 0;
 
 		    if (didIndex == 0) {
-			if (conn->co_ArtMode == COM_XZVER) {
-			    MZPrintf(conn, "%lld", 
-				artno_art(conn->co_ArtBeg, conn->co_ArtEnd, conn->co_ListBegNo, conn->co_Numbering));
-			} else {
-			    MBPrintf(&conn->co_TMBuf, "%lld",
-				artno_art(conn->co_ArtBeg, conn->co_ArtEnd, conn->co_ListBegNo, conn->co_Numbering));
-			}
+			OutputListIndex(conn);
 			didIndex = 1;
 		    }
 		    if (conn->co_ArtMode != COM_NEWNEWS) {
@@ -780,13 +854,7 @@ OutputOverview(Connection *conn, const char *res, int resLen, int artSize, int l
 	if (printHdr == 0 && (conn->co_ArtMode == COM_XOVER ||
 			      conn->co_ArtMode == COM_XZVER)) {
 	    if (didIndex == 0) {
-		if (conn->co_ArtMode == COM_XZVER) {
-		    MZPrintf(conn, "%lld",
-			artno_art(conn->co_ArtBeg, conn->co_ArtEnd, conn->co_ListBegNo, conn->co_Numbering));
-		} else {
-		    MBPrintf(&conn->co_TMBuf, "%lld",
-			artno_art(conn->co_ArtBeg, conn->co_ArtEnd, conn->co_ListBegNo, conn->co_Numbering));
-		}
+		OutputListIndex(conn);
 		didIndex = 1;
 	    }
 	    if (hhlen == 5 && hch == 'b' && strncasecmp(hdr, "Bytes", 5) == 0) {
@@ -809,20 +877,18 @@ OutputOverview(Connection *conn, const char *res, int resLen, int artSize, int l
     }
     if (didIndex == 0 && conn->co_ArtMode == COM_XHDR && conn->co_ListStrict) {
 	/* HDR: a missing header has the empty string as its value */
-	MBPrintf(&conn->co_TMBuf, "%lld ",
-	    artno_art(conn->co_ArtBeg, conn->co_ArtEnd, conn->co_ListBegNo, conn->co_Numbering));
+	OutputListIndex(conn);
+	MBPrintf(&conn->co_TMBuf, " ");
 	didIndex = 1;
     }
     if (didIndex == 0 && 
 	(/* conn->co_ArtMode == COM_XPAT || */ conn->co_ArtMode == COM_XHDR)
     ) {
-	if (conn->co_ArtMode == COM_XZVER) {
-	    MZPrintf(conn, "%lld (none)",
-		artno_art(conn->co_ArtBeg, conn->co_ArtEnd, conn->co_ListBegNo, conn->co_Numbering));
-	} else {
-	    MBPrintf(&conn->co_TMBuf, "%lld (none)",
-		artno_art(conn->co_ArtBeg, conn->co_ArtEnd, conn->co_ListBegNo, conn->co_Numbering));
-	}
+	OutputListIndex(conn);
+	if (conn->co_ArtMode == COM_XZVER)
+	    MZPrintf(conn, " (none)");
+	else
+	    MBPrintf(&conn->co_TMBuf, " (none)");
 	didIndex = 1;
     }
     if (didIndex) {
