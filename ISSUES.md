@@ -207,7 +207,7 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-191](#d-191-historyopen-does-not-check-the-headers-entry-and-header-sizes) | Low | HistoryOpen does not check the header's entry and header sizes | fixed (#321) |
 | [D-192](#d-192-precommit-delcomm-evicts-another-message-ids-entry) | Low | precommit PC_DELCOMM evicts another message-id's entry | fixed (#321) |
 | [D-193](#d-193-xhdr-and-xover-by-message-id-answer-an-empty-list) | Low | XHDR and XOVER by message-id answer an empty list | fixed (#323) |
-| [D-194](#d-194-log-messages-ending-in-a-newline-leave-a-blank-line) | Low | Log messages ending in a newline leave a blank line | fixed (PR) |
+| [D-194](#d-194-log-messages-ending-in-a-newline-leave-a-blank-line) | Low | Log messages ending in a newline leave a blank line | fixed (#325) |
 
 Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315), [F-02 configure script](#f-02-configure-script-for-the-build-options), [F-03 refeed a whole spool](#f-03-refeed-a-whole-spool-to-another-server), [F-04 NoCeM notices](#f-04-nocem-notices), [F-05 init scripts](#f-05-init-scripts-and-adm-script-replacements), [F-06 Perl authentication](#f-06-perl-authentication-for-dreaderd).
 
@@ -1215,7 +1215,7 @@ Fixed (#323): the message-id is resolved against the current group's overview in
 
 ### D-194 Log messages ending in a newline leave a blank line
 `lib/log.c`, `VLog()`: the log writer adds a newline to each message, and 64 `logit()` formats end in a newline of their own (LDAP errors, "Invalid vserverdef option ...", "PERL auth request for <user>: <result>", and more), so general.log got an empty line after each of them. Reported by Jesse from the SmartOS reader (after every Perl login).
-Fixed (PR): `VLog()` strips newlines at the end of the message before it adds its own, which covers every caller and a Perl result that ends in a newline. Syslog is unchanged. Test: `TestLogNoBlankLines`.
+Fixed (#325): `VLog()` strips newlines at the end of the message before it adds its own, which covers every caller and a Perl result that ends in a newline. Syslog is unchanged. Test: `TestLogNoBlankLines`.
 
 ## Feature requests
 
