@@ -45,12 +45,17 @@ in the form that
 writes to its queue files:
 .PP
 .RS
-D.xxxxxxxx/B.xxxx <message-id> offset,size
+D.xxxxxxxx/B.xxxx <message-id> offset,size L\fIlines\fR
 .RE
 .PP
-with
+with the number of body lines in
+.B L\fIlines\fR
+(which
+.B dnewslink \-H
+passes to a reader for its overview), and
 .B C\fIsize\fR
 at the end for an article on a compressed spool object.
+Every article is read whole to count its lines.
 .BR dnewslink (8)
 then offers the articles to another server
 (\fBCHECK\fR/\fBTAKETHIS\fR, or \fBIHAVE\fR),

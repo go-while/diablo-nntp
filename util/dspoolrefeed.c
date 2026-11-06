@@ -10,7 +10,7 @@
  * spool, compressed spool objects included.  Each line is what diablo writes
  * to a queue file:
  *
- *	D.xxxxxxxx/B.xxxx <message-id> offset,size[ C<stored size>]
+ *	D.xxxxxxxx/B.xxxx <message-id> offset,size L<body lines>[ C<stored size>]
  *
  * Expired entries, header-only entries and articles whose file is gone are
  * left out.  dnewslink -b sends the files; see dspoolrefeed(8).
@@ -21,7 +21,7 @@
 #define HEADMAX	16384	/* the header part read from each article */
 
 void Usage(void);
-int ArticleHeader(const char *path, const History *h, char *buf, int bufSize, long *storeLen);
+int ArticleHeader(const char *path, const History *h, char *buf, int bufSize, long *storeLen, long *lines);
 const char *HeaderValue(const char *head, const char *name, char *out, int outSize);
 int GroupsMatch(const char *nglist);
 FILE *NextOutput(void);
@@ -163,6 +163,7 @@ main(int ac, char **av)
 	    History h;
 	    char path[PATH_MAX];
 	    long storeLen = 0;
+	    long lines = 0;
 	    char rel[PATH_MAX];
 	    char msgid[MAXMSGIDLEN + 1];
 	    char ngbuf[8192];
@@ -187,7 +188,7 @@ main(int ac, char **av)
 		continue;
 	    }
 	    ArticleFileName(path, sizeof(path), &h, ARTFILE_FILE);
-	    if (ArticleHeader(path, &h, head, HEADMAX, &storeLen) < 0) {
+	    if (ArticleHeader(path, &h, head, HEADMAX, &storeLen, &lines) < 0) {
 		++missing;
 		continue;
 	    }
@@ -221,11 +222,11 @@ main(int ac, char **av)
 		OutLines = 0;
 	    }
 	    if (SpoolCompressed(H_SPOOL(h.exp)))
-		fprintf(OutFo, "%s %s %lld,%ld C%ld\n", rel, msgid,
-		    (long long)h.boffset, (long)h.bsize, storeLen);
+		fprintf(OutFo, "%s %s %lld,%ld L%ld C%ld\n", rel, msgid,
+		    (long long)h.boffset, (long)h.bsize, lines, storeLen);
 	    else
-		fprintf(OutFo, "%s %s %lld,%ld\n", rel, msgid,
-		    (long long)h.boffset, (long)h.bsize);
+		fprintf(OutFo, "%s %s %lld,%ld L%ld\n", rel, msgid,
+		    (long long)h.boffset, (long)h.bsize, lines);
 	    ++OutLines;
 	    ++written;
 	}
@@ -286,10 +287,47 @@ NextOutput(void)
  *		     *storeLen is the size of the article on disk from the
  *		     spool article header (the C<size> of a compressed
  *		     article's queue line), or h->bsize without one.
+ *		     *lines is the number of body lines, counted as diablo
+ *		     counts them for its queue line's L<lines> (D-174): the
+ *		     final "." of a wire format article is not one.
  *		     Returns 0, or -1 when the file or the article is gone.
  */
+typedef struct LineCount {
+    int lc_InHead;	/* still in the header */
+    int lc_AtBol;	/* the last character was a newline */
+    int lc_Len;		/* characters of the current line, CRs left out */
+    int lc_Dot;		/* the line just ended was "." */
+    int lc_Cur;		/* the current line so far is "." */
+    long lc_Lines;	/* body lines */
+} LineCount;
+
+static void
+countLines(LineCount *lc, const char *p, int n)
+{
+    int i;
+
+    for (i = 0; i < n; ++i) {
+	if (p[i] == '\r')
+	    continue;
+	if (lc->lc_InHead) {
+	    if (p[i] == '\n' && lc->lc_AtBol)
+		lc->lc_InHead = 0;	/* the blank line ends the header */
+	    lc->lc_AtBol = (p[i] == '\n');
+	    continue;
+	}
+	if (p[i] == '\n') {
+	    ++lc->lc_Lines;
+	    lc->lc_Dot = (lc->lc_Len == 1 && lc->lc_Cur);
+	    lc->lc_Len = 0;
+	} else {
+	    lc->lc_Cur = (lc->lc_Len == 0 && p[i] == '.');
+	    ++lc->lc_Len;
+	}
+    }
+}
+
 int
-ArticleHeader(const char *path, const History *h, char *buf, int bufSize, long *storeLen)
+ArticleHeader(const char *path, const History *h, char *buf, int bufSize, long *storeLen, long *lines)
 {
     /*
      * The history is in arrival order, so the next entry is usually in
@@ -301,6 +339,9 @@ ArticleHeader(const char *path, const History *h, char *buf, int bufSize, long *
     int n = 0;
     SpoolArtHdr ah;
     char *s, *d;
+    static char more[65536];
+    LineCount lc = { 1, 1, 0, 0, 0, 0 };
+    int wire = 0;
 
     if (lastFd < 0 || strcmp(path, lastPath) != 0) {
 	if (lastFd >= 0)
@@ -319,6 +360,8 @@ ArticleHeader(const char *path, const History *h, char *buf, int bufSize, long *
 	ah.StoreLen = h->bsize;
     } else if (ah.HeadLen > sizeof(ah)) {
 	return(-1);
+    } else {
+	wire = (ah.StoreType & STORETYPE_WIRE) != 0;
     }
     *storeLen = (long)ah.StoreLen;
     if (SpoolCompressed(H_SPOOL(h->exp))) {
@@ -334,19 +377,39 @@ ArticleHeader(const char *path, const History *h, char *buf, int bufSize, long *
 	    return(-1);
 	}
 	n = gzread(gzf, buf, bufSize);
+	if (n > 0) {
+	    int m;
+
+	    countLines(&lc, buf, n);
+	    while ((m = gzread(gzf, more, sizeof(more))) > 0)
+		countLines(&lc, more, m);
+	}
 	gzclose(gzf);
 #else
 	return(-1);
 #endif
     } else {
-	int want = h->bsize - ah.HeadLen;
+	long left = (long)h->bsize - ah.HeadLen;
+	off_t off = h->boffset + ah.HeadLen;
+	int want = (left > bufSize) ? bufSize : (int)left;
+	int m;
 
-	if (want > bufSize)
-	    want = bufSize;
-	n = (want > 0) ? pread(fd, buf, want, h->boffset + ah.HeadLen) : 0;
+	n = (want > 0) ? pread(fd, buf, want, off) : 0;
+	if (n > 0) {
+	    countLines(&lc, buf, n);
+	    left -= n;
+	    off += n;
+	    while (left > 0 && (m = pread(fd, more,
+		    (left > (long)sizeof(more)) ? sizeof(more) : (size_t)left, off)) > 0) {
+		countLines(&lc, more, m);
+		left -= m;
+		off += m;
+	    }
+	}
     }
     if (n <= 0)
 	return(-1);
+    *lines = lc.lc_Lines - ((wire && lc.lc_Dot && lc.lc_Lines > 0) ? 1 : 0);
     buf[n] = 0;
     /* drop CRs (wire format); stop at the end of the header */
     for (s = d = buf; *s; ++s) {
