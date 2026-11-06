@@ -40,6 +40,7 @@ unsigned char *sha256hash(char *);
 
 Prototype void NNPostBuffer(Connection *conn);
 Prototype void NNPostCommand1(Connection *conn);
+Prototype void PostLogRefused(Connection *conn, const char *msgid, const char *reply);
 
 void NNPostResponse1(Connection *conn);
 void NNPostArticle1(Connection *conn);
@@ -56,6 +57,38 @@ int HeaderCmp(const char *big, const char *little, char **errMsg);
 void PostInjectionHeaders(MBufHead *mb, Connection *conn, time_t t, const char *cryptpw, int addDate);
 const char *PostDate(char *buf, int size, time_t t);
 const char *PostDateCheck(const char *h, int l, int nameLen, const char *name);
+
+/*
+ * PostLogRefused() - the post log line for a post dreaderd refused, or that
+ *		      the moderator mail or the server it went to refused:
+ *		      who (as on the "post ok" line), the Message-ID ("-"
+ *		      when there is none yet) and the reply the client got.
+ */
+void
+PostLogRefused(Connection *conn, const char *msgid, const char *reply)
+{
+    char r[256];
+    int n;
+
+    if (conn == NULL)
+	return;
+    snprintf(r, sizeof(r), "%s", reply ? reply : "");
+    n = strlen(r);
+    while (n > 0 && (r[n - 1] == '\n' || r[n - 1] == '\r'))
+	r[--n] = 0;
+    LogPost(
+	LOG_NOTICE,
+	"%s%s%s%s%s (%s) post refused %s %s",
+	*conn->co_Auth.dr_AuthUser ? conn->co_Auth.dr_AuthUser : "",
+	*conn->co_Auth.dr_AuthUser ? "/" : "",
+	(conn->co_Auth.dr_IdentUser[0] ? conn->co_Auth.dr_IdentUser : ""),
+	(conn->co_Auth.dr_IdentUser[0] ? "@" : ""),
+	conn->co_Auth.dr_Host,
+	NetAddrToSt(0, (struct sockaddr *)&conn->co_Auth.dr_Addr, 1, 1, 1),
+	(msgid && *msgid) ? msgid : "-",
+	r
+    );
+}
 
 /* JG19990908 don't publicize NNPH's, but still present a NNPH field that
    can be used to identify posts from the same node (i.e. for things like
@@ -1186,9 +1219,14 @@ NNPostBuffer(Connection *conn)
 	MBCopy(&tmbuf, &conn->co_ArtBuf);
 	MBFree(&tmbuf);
 
-	logit(
+	/*
+	 * The post log (path_postlog, else the general log): "post ok" when
+	 * dreaderd's checks pass; a "post refused" line follows when the
+	 * moderator mail or the server refuses it after all.
+	 */
+	LogPost(
 	    LOG_NOTICE,
-	    "%s%s%s%s%s (%s) post ok %s %d", 
+	    "%s%s%s%s%s (%s) post ok %s %d",
 	    *conn->co_Auth.dr_AuthUser ? conn->co_Auth.dr_AuthUser : "",
 	    *conn->co_Auth.dr_AuthUser ? "/" : "",
 	    (conn->co_Auth.dr_IdentUser[0] ? conn->co_Auth.dr_IdentUser : ""),
@@ -1210,6 +1248,8 @@ NNPostBuffer(Connection *conn)
 	     * Moderated and unapproved: never posted.  Either it was
 	     * mailed to the moderator, or the poster is told why not.
 	     */
+	    if (mod != 0)
+		PostLogRefused(conn, conn->co_IHaveMsgId, modErr);
 	    if (conn && conn->co_IHaveMsgId)
 		zfreeStr(&conn->co_MemPool, &conn->co_IHaveMsgId);
 	    MBFree(&conn->co_ArtBuf);
@@ -1224,6 +1264,7 @@ NNPostBuffer(Connection *conn)
 	    NNServerRequest(conn, NULL, conn->co_IHaveMsgId, 0, SREQ_POST, 0, -1, 0);
 	}
     } else {
+	PostLogRefused(conn, conn->co_IHaveMsgId, errMsg);
 	MBLogPrintf(conn, &conn->co_TMBuf, "%s", errMsg);
 	MBFree(&tmbuf);
 	conn->co_Auth.dr_PostFailCount++;
@@ -1282,6 +1323,9 @@ NNPostResponse1(Connection *conn)
 	    errMsg[4+len] = '\r';
 	    errMsg[5+len] = '\n';
 	    errMsg[6+len] = 0;
+	    /* the server refused the IHAVE */
+	    if (conn->co_SReq != NULL)
+		PostLogRefused(conn->co_SReq->sr_CConn, conn->co_SReq->sr_MsgId, errMsg);
 	    NNFinishSReq(conn, errMsg, 0);
 	}
     } else if (len < 0) {
@@ -1361,6 +1405,8 @@ NNPostResponse2(Connection *conn)
 	    errMsg[4+len] = '\r';
 	    errMsg[5+len] = '\n';
 	    errMsg[6+len] = 0;
+	    /* the server refused the article */
+	    PostLogRefused(conn->co_SReq->sr_CConn, conn->co_SReq->sr_CConn->co_IHaveMsgId, errMsg);
 	    NNFinishSReq(conn, errMsg, 0);
 	}
 	if (conn->co_SReq != NULL && conn->co_SReq->sr_CConn != NULL &&

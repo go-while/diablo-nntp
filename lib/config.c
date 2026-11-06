@@ -450,6 +450,8 @@ LoadDiabloConfig(int ac, char **av)
 			pptr = &IncomingLogPat;
 		    else if (strcasecmp(cmd + 5, "drincominglog") == 0) 
 			pptr = &DRIncomingLogPat;
+		    else if (strcasecmp(cmd + 5, "postlog") == 0)
+			pptr = &PostLogPat;
 		    else if (strcasecmp(cmd + 5, "feedstats") == 0) 
 			pptr = &DFeedStatsPat;
 		    else if (strcasecmp(cmd + 5, "pathlog") == 0) 
