@@ -201,13 +201,18 @@ MAKE=gmake; MAKEARGS=
 # the original is kept as sendmail.real.
 fake_sendmail_bsd() {
     [ "${E2E_FAKE_SENDMAIL:-}" = 1 ] || return 0
-    sm=/usr/sbin/sendmail
-    if [ -e "$sm" ] && ! grep -q diablo-e2e-fake-sendmail "$sm" 2>/dev/null; then
-        mv "$sm" "$sm.real" || { echo "build-on-host: could not move $sm away" >&2; return 0; }
-    fi
-    install -m 755 "$(dirname "$0")/fake-sendmail" "$sm" &&
-        echo "fake sendmail: installed as $sm" ||
-        echo "build-on-host: could not install fake sendmail at $sm" >&2
+    # lib/config.h: SENDMAIL_PATH is /usr/lib/sendmail on Solaris/illumos
+    sms=/usr/sbin/sendmail
+    [ "$(uname -s)" = SunOS ] && sms="$sms /usr/lib/sendmail"
+    for sm in $sms; do
+        if [ -e "$sm" ] && ! grep -q diablo-e2e-fake-sendmail "$sm" 2>/dev/null; then
+            mv "$sm" "$sm.real" || { echo "build-on-host: could not move $sm away" >&2; continue; }
+        fi
+        # cp and chmod, not install: Solaris install(1M) takes other options
+        cp "$(dirname "$0")/fake-sendmail" "$sm" && chmod 755 "$sm" &&
+            echo "fake sendmail: installed as $sm" ||
+            echo "build-on-host: could not install fake sendmail at $sm" >&2
+    done
 }
 
 case "$os" in
@@ -221,7 +226,8 @@ FreeBSD)
     # feature, and the tests of it, out): libcanlock (Cancel-Lock, dcanlock), perl5
     # (Perl authentication), gnupg (gpgv, for pgpverify) and tinycdb (CDB
     # authentication). ./configure finds them under /usr/local.
-    pk="perl5 gnupg tinycdb"
+    # openldap26-client: LDAP authentication (NetBSD gets it from pkgsrc already).
+    pk="perl5 gnupg tinycdb openldap26-client"
     [ "${E2E_NO_CANLOCK:-}" = 1 ] || pk="libcanlock $pk"
     for p in $pk; do
         pkg install -y "$p" >/dev/null 2>&1 || echo "build-on-host: package $p not installed"
@@ -236,6 +242,11 @@ SunOS)
     # OmniOS: gcc and GNU make from pkg; the base has OpenSSL and zlib.
     pkg install -q developer/gcc13 developer/build/gnu-make || \
         pkg install developer/gcc13 developer/build/gnu-make || true
+    # Optional, best effort: gnupg from the OmniOS extra repository (gpgv for
+    # pgpverify; the tests look in /opt/ooce/bin).
+    pkg install -q ooce/security/gnupg >/dev/null 2>&1 || echo "build-on-host: package ooce/security/gnupg not installed"
+    ls /opt/ooce/bin/gpgv* 2>&1 | sed 's/^/build-on-host: /'
+    fake_sendmail_bsd
     groupadd news 2>/dev/null || true
     useradd -g news -d /var/tmp -s /bin/sh news 2>/dev/null || true
     ;;
@@ -291,6 +302,13 @@ fi
 cfgargs=
 [ "${E2E_NO_CANLOCK:-}" != 1 ] || cfgargs="--without-canlock"
 sh ./configure $cfgargs
+# E2E_NETREMOTE=1: build NetRemote in (off in lib/vendor.h by default, and
+# ./configure has no switch for it), so its tests run in one CI job.
+if [ "${E2E_NETREMOTE:-}" = 1 ]; then
+    sed 's/^#undef[[:space:]]*NETREMOTE_ENABLED.*/#define NETREMOTE_ENABLED 1/' lib/vendor.h > lib/vendor.h.new &&
+        mv lib/vendor.h.new lib/vendor.h
+    grep -n 'NETREMOTE_ENABLED' lib/vendor.h | sed 's/^/build-on-host: /'
+fi
 if [ "${E2E_NO_CANLOCK:-}" != 1 ] && grep -q '^#undef[[:space:]]*CANLOCK_ENABLED' lib/vendor.h; then
     echo "build-on-host: WARNING: libcanlock is missing: CANLOCK_ENABLED is off, so the Cancel-Lock tests skip and, with the default readercanlock require-auth, this build refuses every cancel (install libcanlock-dev to test the feature)"
 fi

@@ -47,7 +47,7 @@ jobs:
       matrix:
         include:
           - { name: ubuntu-24.04,            os: ubuntu-24.04,     no_canlock: "0" }
-          - { name: ubuntu-22.04,            os: ubuntu-22.04,     no_canlock: "0" }
+          - { name: ubuntu-22.04,            os: ubuntu-22.04,     no_canlock: "0", netremote: "1" }
           - { name: ubuntu-24.04-arm,        os: ubuntu-24.04-arm, no_canlock: "0" }
           - { name: ubuntu-24.04-no-canlock, os: ubuntu-24.04,     no_canlock: "1" }
     runs-on: ${{ matrix.os }}
@@ -76,7 +76,7 @@ jobs:
       # Installs build packages, creates the news user, builds with RADIUS off
       # (Linux has no BSD libradius). E2E_NO_CANLOCK=1 builds Cancel-Lock out.
       - name: Build
-        run: sudo E2E_FAKE_SENDMAIL=1 E2E_NO_CANLOCK=${{ matrix.no_canlock }} tests/e2e/ci/build-on-host
+        run: sudo E2E_FAKE_SENDMAIL=1 E2E_NO_CANLOCK=${{ matrix.no_canlock }} E2E_NETREMOTE=${{ matrix.netremote || '0' }} tests/e2e/ci/build-on-host
 
       - name: Build log
         if: always()
@@ -288,7 +288,7 @@ jobs:
             chmod 755 tests/e2e/e2e.test
             # build-on-host installs gcc13 + gnu-make, creates the news user,
             # builds the optional features out and builds dbin with gmake CC=gcc.
-            tests/e2e/ci/build-on-host
+            E2E_FAKE_SENDMAIL=1 tests/e2e/ci/build-on-host
             echo "=== build.log (last 20 lines) ==="; tail -20 build.log
             ls dbin
             chmod -R a+rX .
@@ -380,4 +380,5 @@ jobs:
             chmod -R a+rX .
             cd tests/e2e
             # dbin is at the repo root ($root/dbin), two levels up from here.
-            su -m news -c "env DIABLO_BIN=$root/dbin NNTP_TEST_DEADLINE=30s ./ci/run-shards ./e2e.test -test.v -test.count=1 -test.timeout=1200s"
+            # /tmp is a small tmpfs here; TestKPDBTooLarge needs 2 GB for its sparse file
+            su -m news -c "env TMPDIR=/var/tmp DIABLO_BIN=$root/dbin NNTP_TEST_DEADLINE=30s ./ci/run-shards ./e2e.test -test.v -test.count=1 -test.timeout=1200s"
