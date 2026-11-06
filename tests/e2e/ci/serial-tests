@@ -15,3 +15,6 @@
 ^TestDnewsfeedsLimitsLive$
 ^TestMaxParallelCountsRealtime$
 ^TestFeederExitWithoutCleanupIsQuick$
+^TestReaderListWildcardTime$
+^TestReaderListWildcardLinear$
+^TestOverWideRangeDoesNotBlock$
