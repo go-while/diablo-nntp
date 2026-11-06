@@ -1400,7 +1400,8 @@ NNPostResponse2(Connection *conn)
 	    errMsg[5+len] = '\n';
 	    errMsg[6+len] = 0;
 	    /* the server refused the article */
-	    PostLogRefused(conn->co_SReq->sr_CConn, conn->co_SReq->sr_CConn->co_IHaveMsgId, errMsg);
+	    if (conn->co_SReq != NULL && conn->co_SReq->sr_CConn != NULL)
+		PostLogRefused(conn->co_SReq->sr_CConn, conn->co_SReq->sr_MsgId, errMsg);
 	    NNFinishSReq(conn, errMsg, 0);
 	}
 	if (conn->co_SReq != NULL && conn->co_SReq->sr_CConn != NULL &&
