@@ -176,12 +176,14 @@ PreCommit(const char *msgid, int flags)
 		pc->pc_Pid = (pid_t)-1;
 	    }
 #endif
-	} else if (flags & PC_DELCOMM) {
+	} else if ((flags & PC_DELCOMM) &&
+		   (pc->pc_Hash.h1 != hv.h1 || pc->pc_Hash.h2 != hv.h2)) {
 	    /*
-	     * The slot holds another message-id (or an expired entry of
-	     * ours): there is nothing of ours to remove, and writing a
-	     * cleared entry here would evict a live precommit/postcommit
-	     * of another message-id.  Leave it alone.
+	     * The slot holds another message-id: there is nothing of ours
+	     * to remove, and writing a cleared entry here would evict a live
+	     * precommit/postcommit of that other message-id.  Leave it
+	     * alone.  Our own entry (pc_Pid == PCPid, which the branch above
+	     * does not take) falls through and is cleared as before.
 	     */
 	    r = 0;
 	} else {
@@ -195,6 +197,11 @@ PreCommit(const char *msgid, int flags)
 	    npc.pc_Hash = hv;
 	    npc.pc_Time = t - 1;
 	    npc.pc_Pid = (flags & PC_POSTCOMM) ? (pid_t)-1 : PCPid;
+	    if (flags & PC_DELCOMM) {	/* our own entry: clear it */
+		npc.pc_Time = 0;
+		npc.pc_Pid = 0;
+		r = 0;
+	    }
 #if USE_PCOMMIT_RW_MAP
 	    PCHAry[i] = npc;
 #else

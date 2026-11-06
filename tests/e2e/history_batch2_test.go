@@ -173,6 +173,8 @@ func TestHistoryOpenBadHeaderSizes(t *testing.T) {
 // lands on the slot of another.
 const pcDriver = `#include "defs.h"
 
+extern int PCPid;
+
 int
 main(void)
 {
@@ -188,6 +190,18 @@ main(void)
     /* B is still there iff the DELCOMM left the slot alone. */
     r = PreCommit("<b@x>", PC_PRECOMM);
     printf("delcomm preserves another message-id: %s\n", r == -1 ? "yes" : "no");
+
+    /*
+     * Our own entry: a precommit, then a DELCOMM from the same process (a
+     * reject) must clear it, so another process's CHECK is not refused.
+     * PCPid is the precommitting process; a different value is another
+     * feed child.
+     */
+    (void)PreCommit("<c@x>", PC_PRECOMM);
+    (void)PreCommit("<c@x>", PC_DELCOMM);
+    PCPid = (int)getpid() + 1;
+    r = PreCommit("<c@x>", PC_PRECOMM);
+    printf("delcomm clears our own entry: %s\n", r == 0 ? "yes" : "no");
     return 0;
 }
 `
@@ -232,5 +246,8 @@ func TestPrecommitDelcommLeavesOtherSlot(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "delcomm preserves another message-id: yes") {
 		t.Errorf("the DELCOMM evicted the other message-id's entry:\n%s", out)
+	}
+	if !strings.Contains(string(out), "delcomm clears our own entry: yes") {
+		t.Errorf("the DELCOMM left our own precommit entry, so another process's CHECK is refused:\n%s", out)
 	}
 }
