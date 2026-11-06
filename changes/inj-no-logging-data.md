@@ -1,0 +1,1 @@
+- `dreaderd`: Injection-Info (with `rfc5537 yes`) no longer has a `logging-data` parameter. Its `<time> <pid>` value did not lead to the post's log entry: the pid is not in the log, and the time was in another format. RFC 5536 3.2.8 makes the parameter optional, and the "post ok" log line already names the Message-ID, which finds the post.
