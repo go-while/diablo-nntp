@@ -84,7 +84,7 @@ func rfcDate(d time.Duration) string {
 // step 3). Before, dreaderd wrote "05 Nov 2026 12:00:00 GMT" and took any Date.
 func TestReaderPostDate(t *testing.T) {
 	d := newDatePoster(t, injAccess(""), nil) // feedermaxacceptage: the default of 14 days
-	re := regexp.MustCompile(`^(Mon|Tue|Wed|Thu|Fri|Sat|Sun), [0-3][0-9] (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]{4} [0-2][0-9]:[0-5][0-9]:[0-6][0-9] \+0000$`)
+	re := regexp.MustCompile(`^(Mon|Tue|Wed|Thu|Fri|Sat|Sun), [0-3][0-9] (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]{4} [0-2][0-9]:[0-5][0-9]:[0-6][0-9] \+0000 \(UTC\)$`)
 	if code, line, head := d.post(t); code != 240 {
 		t.Fatalf("POST without a Date: %q", line)
 	} else if v := headerValue(head, "Date"); !re.MatchString(v) {
@@ -96,6 +96,7 @@ func TestReaderPostDate(t *testing.T) {
 		want int
 	}{
 		{"Date: " + rfcDate(0), 240},
+		{"Date: " + rfcDate(0) + " (UTC)", 240}, // the comment dreaderd and INN write
 		{"Date: " + rfcDate(23*time.Hour), 240},
 		{"Date: " + rfcDate(26*time.Hour), 441},
 		{"Date: " + rfcDate(-10*24*time.Hour), 240},

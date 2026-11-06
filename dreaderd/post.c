@@ -101,7 +101,7 @@ char *XTRAMangle(char *xtrace, char *cryptpw)
 
 /*
  * PostDate() - t as an RFC 5322 3.3 <date-time> in UTC, the form RFC 5536
- *		3.1.1 wants generated: "Thu, 05 Nov 2026 12:00:00 +0000"
+ *		3.1.1 wants generated: "Thu, 05 Nov 2026 12:00:00 +0000 (UTC)"
  *		(not the obsolete "GMT" zone; the names are fixed, not the
  *		locale's).  Returns buf.
  */
@@ -117,7 +117,7 @@ PostDate(char *buf, int size, time_t t)
 	t = 0;
 	gmtime_r(&t, &tm);
     }
-    snprintf(buf, size, "%s, %02d %s %04d %02d:%02d:%02d +0000",
+    snprintf(buf, size, "%s, %02d %s %04d %02d:%02d:%02d +0000 (UTC)",
 	wd[tm.tm_wday], tm.tm_mday, mo[tm.tm_mon], tm.tm_year + 1900,
 	tm.tm_hour, tm.tm_min, tm.tm_sec);
     return(buf);
@@ -197,11 +197,14 @@ injQuoted(MBufHead *mb, const char *v)
  *		addDate, Injection-Date (3.2.7) for a post (F-07).
  *
  *	Injection-Info carries what NNTP-Posting-Host, X-Trace and
- *	X-Complaints-To carried: posting-host is the client's host and
- *	address; with a cryptpw the hourly hash NNTP-Posting-Host had goes
- *	in posting-account instead (the same value for the same source,
- *	opaque to other sites); logging-data is the X-Trace data, encrypted
- *	with the cryptpw as X-Trace was; mail-complaints-to is abuseto.
+ *	X-Complaints-To carried, each in its own parameter (RFC 5536 3.2.8):
+ *	posting-host is the client's host and address, or with a cryptpw
+ *	the hourly hash NNTP-Posting-Host had (the same value for the same
+ *	source, opaque to other sites); posting-account, only with
+ *	"postingaccount yes", is the name the client logged in with
+ *	(encrypted with a cryptpw); logging-data identifies the post in the
+ *	logs, "<time> <pid>", or with a cryptpw the whole X-Trace data,
+ *	encrypted as X-Trace was; mail-complaints-to is abuseto.
  *	Folded before each parameter (3.2.8: folding only around the ";").
  */
 /*
@@ -255,7 +258,7 @@ PostInjectionHeaders(MBufHead *mb, Connection *conn, time_t t, const char *crypt
 
     if (! conn->co_Auth.dr_ReaderDef->rd_TurnOffNNPH) {
 	if (cryptpw) {
-	    MBPrintf(mb, ";\r\n\tposting-account=");
+	    MBPrintf(mb, ";\r\n\tposting-host=");
 	    injQuoted(mb, NNPHMangle((char *)vs->vs_ClusterName,
 		    conn->co_Auth.dr_Host, (char *)cryptpw));
 	} else {
@@ -270,26 +273,44 @@ PostInjectionHeaders(MBufHead *mb, Connection *conn, time_t t, const char *crypt
 	}
     }
 
-    snprintf(trace, sizeof(trace), "%lu %s %d %s%s%s%s%s%s",
-	(unsigned long)t,
-	vs->vs_HostName,
-	(int)getpid(),		/* should probably be slot id */
-	(conn->co_Auth.dr_Flags & DF_IGNORED_AUTH_LONG ? "!" : ""),
-	*conn->co_Auth.dr_AuthUser ? conn->co_Auth.dr_AuthUser : "",
-	*conn->co_Auth.dr_AuthUser ? "/" : "",
-	*conn->co_Auth.dr_IdentUser ? conn->co_Auth.dr_IdentUser : "",
-	*conn->co_Auth.dr_IdentUser ? "@" : "",
-	addrPort
-    );
+    if (vs->vs_PostingAccount && *conn->co_Auth.dr_AuthUser) {
+	MBPrintf(mb, ";\r\n\tposting-account=");
+#ifdef	POST_CRYPTXTRACE
+	if (cryptpw) {
+	    char enc[2 + 256];	/* "C=" and XTRAMangle()'s 256 */
+
+	    snprintf(enc, sizeof(enc), "C=%s", XTRAMangle(conn->co_Auth.dr_AuthUser, (char *)cryptpw));
+	    injQuoted(mb, enc);
+	} else
+#endif
+	    injQuoted(mb, conn->co_Auth.dr_AuthUser);
+    }
+
+    /*
+     * logging-data: what finds the post in the logs.  The whole X-Trace
+     * data only encrypted, where no other site can read the host and
+     * account in it.
+     */
+    snprintf(trace, sizeof(trace), "%lu %d", (unsigned long)t, (int)getpid());
 #ifdef	POST_CRYPTXTRACE
     if (cryptpw) {
-	char enc[sizeof(trace)];
+	char full[sizeof(trace)];
 
+	snprintf(full, sizeof(full), "%lu %s %d %s%s%s%s%s%s",
+	    (unsigned long)t,
+	    vs->vs_HostName,
+	    (int)getpid(),		/* should probably be slot id */
+	    (conn->co_Auth.dr_Flags & DF_IGNORED_AUTH_LONG ? "!" : ""),
+	    *conn->co_Auth.dr_AuthUser ? conn->co_Auth.dr_AuthUser : "",
+	    *conn->co_Auth.dr_AuthUser ? "/" : "",
+	    *conn->co_Auth.dr_IdentUser ? conn->co_Auth.dr_IdentUser : "",
+	    *conn->co_Auth.dr_IdentUser ? "@" : "",
+	    addrPort
+	);
 	if (cryptgen)
-	    snprintf(enc, sizeof(enc), "G=%s,C=%s", cryptgen, XTRAMangle(trace, (char *)cryptpw));
+	    snprintf(trace, sizeof(trace), "G=%s,C=%s", cryptgen, XTRAMangle(full, (char *)cryptpw));
 	else
-	    snprintf(enc, sizeof(enc), "C=%s", XTRAMangle(trace, (char *)cryptpw));
-	snprintf(trace, sizeof(trace), "%s", enc);
+	    snprintf(trace, sizeof(trace), "C=%s", XTRAMangle(full, (char *)cryptpw));
     }
 #endif
     MBPrintf(mb, ";\r\n\tlogging-data=");

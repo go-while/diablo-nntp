@@ -3983,6 +3983,16 @@ InstallAccessCache(void) {
 			*val == '1' || strcasecmp(val, "on") == 0);
 		    continue;
 		}
+		/*
+		 * postingaccount yes: Injection-Info's posting-account names
+		 * the user a post was made as (off by default, as the name
+		 * is then public; encrypted with a cryptpw).
+		 */
+		if (*val && strcmp(opt, "postingaccount") == 0) {
+		    vserver.vs_PostingAccount = (*val == 'y' || *val == 'Y' ||
+			*val == '1' || strcasecmp(val, "on") == 0);
+		    continue;
+		}
 		if (*val && strcmp(opt, "legacytrace") == 0) {
 		    vserver.vs_Rfc5537 = !(*val == 'y' || *val == 'Y' ||
 			*val == '1' || strcasecmp(val, "on") == 0);
@@ -5073,6 +5083,7 @@ PrintAuthDetails(DnsRes *dres)
     printf(" vs_CanLockUser: %s\n", dres->dr_VServerDef->vs_CanLockUser[0][0] ? "set" : "none");
     printf(" vs_NoCanLockSha1: %d\n", dres->dr_VServerDef->vs_NoCanLockSha1);
     printf(" vs_Rfc5537: %d\n", dres->dr_VServerDef->vs_Rfc5537);
+    printf(" vs_PostingAccount: %d\n", dres->dr_VServerDef->vs_PostingAccount);
     printf(" vs_Interface: %s\n", "XXX"); /* dres->dr_VServerDef->vs_Interface); */
     printf(" vs_AccessFile: %s\n", dres->dr_VServerDef->vs_AccessFile);
    printf("au_Name: %s\n", dres->dr_AuthDef->au_Name);

@@ -28,6 +28,12 @@ func plainAccess(vs string) string {
 // returns the header the outgoing server got, with folded lines joined.
 func postHead(t *testing.T, access string, hdrs ...string) []string {
 	t.Helper()
+	return postHeadLogin(t, access, "", "", hdrs...)
+}
+
+// postHeadLogin is postHead after AUTHINFO USER/PASS (none when user is "").
+func postHeadLogin(t *testing.T, access, user, pass string, hdrs ...string) []string {
+	t.Helper()
 	_, spool := spoolStore(t)
 	var mu sync.Mutex
 	var arts [][]string
@@ -40,6 +46,10 @@ func postHead(t *testing.T, access string, hdrs ...string) []string {
 	})})
 	s := NewReaderSite(t, ReaderOptions{Spool: spool, Post: post, Access: access})
 	c := s.Reader(t)
+	if user != "" {
+		c.ExpectCmd(381, "AUTHINFO USER %s", user)
+		c.ExpectCmd(281, "AUTHINFO PASS %s", pass)
+	}
 	c.ExpectCmd(340, "POST")
 	c.MustSend(client.Stuff(append(append([]string{
 		"From: E2E Poster <poster@example.invalid>",
@@ -75,7 +85,7 @@ func hasHeader(head []string, name string) bool {
 	return false
 }
 
-var injDateRe = regexp.MustCompile(`^(Mon|Tue|Wed|Thu|Fri|Sat|Sun), [0-3][0-9] (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]{4} [0-2][0-9]:[0-5][0-9]:[0-6][0-9] \+0000$`)
+var injDateRe = regexp.MustCompile(`^(Mon|Tue|Wed|Thu|Fri|Sat|Sun), [0-3][0-9] (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]{4} [0-2][0-9]:[0-5][0-9]:[0-6][0-9] \+0000 \(UTC\)$`)
 
 // TestReaderPostInjectionInfo (F-07 step 2, RFC 5537 3.5 steps 9 to 11): with "rfc5537 yes" a
 // post gets a Path with the "!.POSTED" diagnostic, an Injection-Info with posting-host,
@@ -104,6 +114,14 @@ func TestReaderPostInjectionInfo(t *testing.T) {
 		if m := regexp.MustCompile(`posting-host="([^"]*)"`).FindStringSubmatch(ii); m == nil ||
 			!(m[1] == "127.0.0.1" || regexp.MustCompile(`^[A-Za-z0-9.-]+:127\.0\.0\.1$`).MatchString(m[1])) {
 			t.Errorf("Injection-Info %q: posting-host is not 127.0.0.1 or name:127.0.0.1", ii)
+		}
+		// each datum in its own parameter: logging-data only finds the post in the logs
+		if m := regexp.MustCompile(`logging-data="([^"]*)"`).FindStringSubmatch(ii); m == nil ||
+			!regexp.MustCompile(`^[0-9]+ [0-9]+$`).MatchString(m[1]) {
+			t.Errorf("Injection-Info %q: logging-data is not \"<time> <pid>\"", ii)
+		}
+		if strings.Contains(ii, "posting-account=") {
+			t.Errorf("Injection-Info %q has a posting-account without postingaccount yes", ii)
 		}
 		for _, h := range []string{"NNTP-Posting-Host", "X-Trace", "X-Complaints-To", "Injection-Date"} {
 			if hasHeader(head, h) {
@@ -141,10 +159,30 @@ func TestReaderPostInjectionInfo(t *testing.T) {
 			if strings.HasPrefix(pw, "G=") {
 				want = `logging-data="G=7,C=`
 			}
-			if !strings.Contains(ii, `posting-account="`) || strings.Contains(ii, "posting-host=") ||
+			// the hourly hash NNTP-Posting-Host had is the posting-host now
+			if !regexp.MustCompile(`posting-host="[0-9a-f]{8}\.`).MatchString(ii) || strings.Contains(ii, "posting-account=") ||
 				!strings.Contains(ii, want) || strings.Contains(ii, "127.0.0.1") {
-				t.Errorf("cryptpw %s: Injection-Info %q, want posting-account, no posting-host, %s..., no address", pw, ii, want)
+				t.Errorf("cryptpw %s: Injection-Info %q, want a hashed posting-host, no posting-account, %s..., no address", pw, ii, want)
 			}
+		}
+	})
+
+	t.Run("postingaccount", func(t *testing.T) {
+		login := func(vs string) string {
+			return strings.Replace(AuthReaderAccess, "    hostname "+PathHost+"\n",
+				"    hostname "+PathHost+"\n    rfc5537 yes\n    postpath "+PathHost+"\n"+vs, 1)
+		}
+		ii := headerValue(postHeadLogin(t, login("    postingaccount yes\n"), "fred", "fredspass"), "Injection-Info")
+		if !strings.Contains(ii, `posting-account="fred"`) {
+			t.Errorf("postingaccount yes, logged in as fred: Injection-Info %q, want posting-account=\"fred\"", ii)
+		}
+		ii = headerValue(postHeadLogin(t, login(""), "fred", "fredspass"), "Injection-Info")
+		if strings.Contains(ii, "posting-account=") {
+			t.Errorf("without postingaccount: Injection-Info %q has a posting-account", ii)
+		}
+		ii = headerValue(postHeadLogin(t, login("    postingaccount yes\n    cryptpw secret\n"), "fred", "fredspass"), "Injection-Info")
+		if !strings.Contains(ii, `posting-account="C=`) || strings.Contains(ii, "fred") {
+			t.Errorf("postingaccount yes with a cryptpw: Injection-Info %q, want an encrypted posting-account", ii)
 		}
 	})
 

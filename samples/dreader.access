@@ -45,18 +45,28 @@
 #		   mail-complaints-to of Injection-Info:). (Default: None)
 #
 # cryptpw	 : The password used to encrypt the X-Trace: line (with
-#		   rfc5537 the logging-data of Injection-Info:), if set in
-#		   vendor.h (POST_CRYPTXTRACE). With it the posting host is
-#		   given as an hourly hash in posting-account instead of
-#		   posting-host. "G=gen,P=password" adds the generation.
-#		   Default: No crypting.
+#		   rfc5537 the logging-data and posting-account of
+#		   Injection-Info:), if set in vendor.h (POST_CRYPTXTRACE).
+#		   With it the posting host is given as an hourly hash (in
+#		   NNTP-Posting-Host:, or posting-host with rfc5537), and
+#		   logging-data carries the whole X-Trace data encrypted
+#		   instead of "<time> <pid>". "G=gen,P=password" adds the
+#		   generation. Default: No crypting.
+#
+# postingaccount : 'yes' adds posting-account="<user>" to Injection-Info:
+#		   (rfc5537) for a post by a logged-in user, encrypted with
+#		   a cryptpw. Off by default, as the name is then public.
+#		   Default: no.
 #
 # rfc5537	 : 'yes' makes dreaderd post as an injecting agent of RFC
 #		   5537 3.5, with the article format of RFC 5536:
 #		   - Injection-Info: (RFC 5536 3.2.8) in place of
 #		     NNTP-Posting-Host:, X-Trace: and X-Complaints-To: (and
-#		     NNTP-Posting-Date: where built in), and Injection-Date:
-#		     when dreaderd supplied the Message-ID or Date;
+#		     NNTP-Posting-Date: where built in): posting-host,
+#		     logging-data "<time> <pid>", mail-complaints-to, and
+#		     posting-account with postingaccount yes; and
+#		     Injection-Date: when dreaderd supplied the Message-ID or
+#		     Date;
 #		   - ".POSTED" in the Path (see postpath);
 #		   - a Date: or Injection-Date: that cannot be read, is more
 #		     than 24 hours ahead or older than feedermaxacceptage
@@ -68,7 +78,8 @@
 #		     comment are taken.
 #		   'no', the default, posts as dreaderd always did. Either
 #		   way a post with Injection-Info:, Xref: or ".POSTED" in its
-#		   Path is refused, and a Date: dreaderd adds ends in +0000.
+#		   Path is refused, and a Date: dreaderd adds ends in
+#		   "+0000 (UTC)".
 #		   "legacytrace yes" is an older spelling of "rfc5537 no".
 #		   Default: no.
 #
