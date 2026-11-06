@@ -54,6 +54,8 @@ int CheckValidRestrictedGroup(const char *group);
 const char *PostRefusedGroup(char *groups, char *pstatus);
 int HeaderCmp(const char *big, const char *little, char **errMsg);
 void PostInjectionHeaders(MBufHead *mb, Connection *conn, time_t t, const char *cryptpw, const char *cryptgen, int addDate);
+const char *PostDate(char *buf, int size, time_t t);
+const char *PostDateCheck(const char *h, int l, int nameLen, const char *name);
 
 /* JG19990908 don't publicize NNPH's, but still present a NNPH field that
    can be used to identify posts from the same node (i.e. for things like
@@ -98,6 +100,74 @@ char *XTRAMangle(char *xtrace, char *cryptpw)
 
 
 /*
+ * PostDate() - t as an RFC 5322 3.3 <date-time> in UTC, the form RFC 5536
+ *		3.1.1 wants generated: "Thu, 05 Nov 2026 12:00:00 +0000"
+ *		(not the obsolete "GMT" zone; the names are fixed, not the
+ *		locale's).  Returns buf.
+ */
+const char *
+PostDate(char *buf, int size, time_t t)
+{
+    static const char *wd[] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+    static const char *mo[] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+				"Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+    struct tm tm;
+
+    if (gmtime_r(&t, &tm) == NULL) {
+	t = 0;
+	gmtime_r(&t, &tm);
+    }
+    snprintf(buf, size, "%s, %02d %s %04d %02d:%02d:%02d +0000",
+	wd[tm.tm_wday], tm.tm_mday, mo[tm.tm_mon], tm.tm_year + 1900,
+	tm.tm_hour, tm.tm_min, tm.tm_sec);
+    return(buf);
+}
+
+/*
+ * PostDateCheck() - RFC 5537 3.5 step 3 for a poster's Date or
+ *		Injection-Date header (h, l bytes, the name nameLen long):
+ *		refused if it cannot be read, if it is more than 24 hours
+ *		in the future, or if it is older than the feeder accepts
+ *		(feedermaxacceptage, never less than 72 hours; no limit when
+ *		that is 0).  Returns the 441 reply, or NULL.
+ */
+const char *
+PostDateCheck(const char *h, int l, int nameLen, const char *name)
+{
+    static char msg[96];
+    char v[256];
+    int n = l - nameLen - 1;	/* after "Name:" */
+    time_t now = time(NULL);
+    time_t d;
+
+    if (n < 0)
+	n = 0;
+    if (n >= (int)sizeof(v))
+	n = sizeof(v) - 1;
+    memcpy(v, h + nameLen + 1, n);
+    v[n] = 0;
+    if ((d = parsedate(v)) == (time_t)-1) {
+	snprintf(msg, sizeof(msg), "441 Bad %s header\r\n", name);
+	return(msg);
+    }
+    if ((long long)d - (long long)now > 24 * 60 * 60) {
+	snprintf(msg, sizeof(msg), "441 %s is in the future\r\n", name);
+	return(msg);
+    }
+    if (DOpts.FeederMaxAcceptAge > 0) {
+	long long maxAge = DOpts.FeederMaxAcceptAge;
+
+	if (maxAge < 72 * 60 * 60)
+	    maxAge = 72 * 60 * 60;
+	if ((long long)now - (long long)d > maxAge) {
+	    snprintf(msg, sizeof(msg), "441 %s is too old\r\n", name);
+	    return(msg);
+	}
+    }
+    return(NULL);
+}
+
+/*
  * injQuoted() - a <quoted-string> (RFC 5322 3.2.4) for an Injection-Info
  *		 parameter value: '"' and '\\' escaped, control characters
  *		 left out.
@@ -134,6 +204,27 @@ injQuoted(MBufHead *mb, const char *v)
  *	with the cryptpw as X-Trace was; mail-complaints-to is abuseto.
  *	Folded before each parameter (3.2.8: folding only around the ";").
  */
+/*
+ * injIdent() - the injecting agent's <path-identity> for Injection-Info:
+ *		the postpath element that comes right before "!.POSTED" in
+ *		the Path (the last one of a postpath "a!b"), else hostname.
+ *		Empty when neither is set.
+ */
+static const char *
+injIdent(const Vserver *vs, char *buf, int size)
+{
+    const char *p = vs->vs_PostPath;
+
+    if (*p) {
+	const char *q = strrchr(p, '!');
+
+	snprintf(buf, size, "%s", q ? q + 1 : p);
+    } else {
+	snprintf(buf, size, "%s", vs->vs_HostName);
+    }
+    return(buf);
+}
+
 void
 PostInjectionHeaders(MBufHead *mb, Connection *conn, time_t t, const char *cryptpw, const char *cryptgen, int addDate)
 {
@@ -143,7 +234,6 @@ PostInjectionHeaders(MBufHead *mb, Connection *conn, time_t t, const char *crypt
     char addr[NI_MAXHOST + 8];		/* the client's address, for posting-host */
     char addrPort[NI_MAXHOST + 16];	/* with the port, as X-Trace had it */
     const char *a;
-    char *p;
 
     /* NetAddrToSt() returns a static buffer: copy each form */
     a = NetAddrToSt(0, (struct sockaddr *)&conn->co_Auth.dr_Addr, 1, 0, 0);
@@ -152,22 +242,14 @@ PostInjectionHeaders(MBufHead *mb, Connection *conn, time_t t, const char *crypt
     snprintf(addrPort, sizeof(addrPort), "%s", a ? a : "");
 
     if (addDate) {
-	static const char *wd[] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
-	static const char *mo[] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-				    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
-	struct tm *tp = gmtime(&t);
+	char db[40];
 
-	MBPrintf(mb, "Injection-Date: %s, %02d %s %04d %02d:%02d:%02d +0000\r\n",
-	    wd[tp->tm_wday], tp->tm_mday, mo[tp->tm_mon], tp->tm_year + 1900,
-	    tp->tm_hour, tp->tm_min, tp->tm_sec);
+	MBPrintf(mb, "Injection-Date: %s\r\n", PostDate(db, sizeof(db), t));
 	conn->co_Flags |= COF_POSTINJDATE;
     }
 
-    /* the <path-identity>: the first element of postpath, else hostname */
-    snprintf(ident, sizeof(ident), "%s", *vs->vs_PostPath ? vs->vs_PostPath : vs->vs_HostName);
-    if ((p = strchr(ident, '!')) != NULL)
-	*p = 0;
-    if (ident[0] == 0)
+    /* the caller writes the old trace headers when there is no ident */
+    if (injIdent(vs, ident, sizeof(ident))[0] == 0)
 	return;
     MBPrintf(mb, "Injection-Info: %s", ident);
 
@@ -475,14 +557,15 @@ canLockEmit(MBufHead *mb, const char *name, const char *list)
  *	
  * Internally generated headers:
  *	Path:			(removed, generated; refused with a POSTED entry)
- *	Date:			(removed, generated)
+ *	Date:			(kept; checked against the RFC 5537 3.5 step 3
+ *				 window; generated if missing, RFC 5322 form)
  *	Lines:			(removed, generated)
  *	Message-ID:		(checked, generated)
  *	NNTP-Posting-Date:	(refused; generated with legacytrace, optionally)
  *	NNTP-Posting-Host:	(refused; generated with legacytrace)
  *	X-Trace:		(refused; generated with legacytrace)
  *	X-Complaints-To:	(refused; generated with legacytrace)
- *	Injection-Date:		(kept; generated when we supplied the
+ *	Injection-Date:		(kept, window checked as Date; generated when we supplied the
  *				 Message-ID or Date, not with legacytrace)
  *	Xref:			(refused, RFC 5537 3.5)
  *	Injection-Info:		(refused, RFC 5537 3.5; generated, not with
@@ -563,7 +646,10 @@ NNPostBuffer(Connection *conn)
     /*
      * RFC 5537 3.2.1 step 2 (F-07): the injecting agent's path-identity
      * followed by the "!.POSTED" diagnostic.  Without a postpath diablo
-     * adds the first path-identity, and a diagnostic cannot come first.
+     * adds the first path-identity, and a diagnostic cannot come first,
+     * so a post gets ".POSTED" only with a postpath.  The Path grows to
+     * the left: in a postpath "a!b" the injecting agent is "b", the one
+     * before ".POSTED", and Injection-Info names it too (injIdent()).
      */
     if (*vs->vs_PostPath && !vs->vs_LegacyTrace)
 	MBPrintf(&tmbuf, "Path: %s!.POSTED!not-for-mail\r\n", vs->vs_PostPath);
@@ -640,8 +726,12 @@ NNPostBuffer(Connection *conn)
 	    haveOrganization = 1;
 	} else if (HeaderCmp(base, "Injection-Date", &errMsg) == 0) {
 	    haveInjDate = 1;	/* kept as it is (RFC 5537 3.5 step 11) */
+	    if (errMsg == NULL)
+		errMsg = (char *)PostDateCheck(base, l, 14, "Injection-Date");
 	} else if (HeaderCmp(base, "Date", &errMsg) == 0) {
 	    haveDate = 1;
+	    if (errMsg == NULL)
+		errMsg = (char *)PostDateCheck(base, l, 4, "Date");
 	} else if (HeaderCmp(base, "Distribution", &errMsg) == 0) {
 	    /*
 	     * Only keep the header and set haveDist if it has something in 
@@ -861,11 +951,9 @@ NNPostBuffer(Connection *conn)
 	 * Add Date:
 	 */
 	if (haveDate == 0) {
-	    struct tm *tp = gmtime(&t);
-	    char buf[64];
+	    char buf[40];
 
-	    strftime(buf, sizeof(buf), "%d %b %Y %H:%M:%S GMT", tp);
-	    MBPrintf(&tmbuf, "Date: %s\r\n", buf);
+	    MBPrintf(&tmbuf, "Date: %s\r\n", PostDate(buf, sizeof(buf), t));
 	}
 	/*
 	 * Add Lines:
@@ -974,10 +1062,14 @@ NNPostBuffer(Connection *conn)
 			cryptpw = conn->co_Auth.dr_VServerDef->vs_CryptPw;
 	}
 
-	if (vs->vs_LegacyTrace) {
+	char identBuf[64];
+
+	if (vs->vs_LegacyTrace || injIdent(vs, identBuf, sizeof(identBuf))[0] == 0) {
 	/*
 	 * legacytrace yes (F-07): the trace headers dreaderd always wrote,
-	 * and no Injection-Info or Injection-Date.
+	 * and no Injection-Info or Injection-Date.  Also without a postpath
+	 * and a hostname: Injection-Info needs a path-identity, and the
+	 * trace data must not be lost.
 	 */
 #if defined  POST_NNTP_POSTING_DATE_GMT || defined POST_NNTP_POSTING_DATE_LOCALTIME
 		/*
