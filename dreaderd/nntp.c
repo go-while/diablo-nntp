@@ -577,10 +577,14 @@ NNArticleRetrieve(Connection *conn, const char *artid, const char *artopts, int 
 	     * XXX this isn't clean.  We have to turn off verify mode
 	     * when retrieving articles by message-id.  It works anyway.
 	     * We also use WVF to ensure we don't use headers for
-	     * retrieval by artno and not msgid
+	     * retrieval by artno and not msgid.  BODY too (D-196): with
+	     * COM_BODYWVF the spool path wrote the current article's
+	     * number in "222 n <id>", where RFC 3977 6.2.3 wants 0.
 	     */
 	    if (mode == COM_ARTICLEWVF)
 		conn->co_ArtMode = COM_ARTICLE;
+	    else if (mode == COM_BODYWVF)
+		conn->co_ArtMode = COM_BODY;
 	    NNArticleRetrieveByMessageId(conn, artid, artopts, 0, 0, -1, 0);
 	}
     }

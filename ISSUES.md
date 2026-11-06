@@ -209,7 +209,7 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-193](#d-193-xhdr-and-xover-by-message-id-answer-an-empty-list) | Low | XHDR and XOVER by message-id answer an empty list | fixed (#323) |
 | [D-194](#d-194-log-messages-ending-in-a-newline-leave-a-blank-line) | Low | Log messages ending in a newline leave a blank line | fixed (#325) |
 | [D-195](#d-195-readerdef-groups-does-not-limit-access-by-message-id) | Medium | readerdef `groups` does not limit access by message-id | fixed (#333) |
-| [D-196](#d-196-body-by-message-id-answers-the-current-article-number) | Low | BODY by message-id answers the current article number | open |
+| [D-196](#d-196-body-by-message-id-answers-the-current-article-number) | Low | BODY by message-id answers the current article number | fixed (#333) |
 
 Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315), [F-02 configure script](#f-02-configure-script-for-the-build-options), [F-03 refeed a whole spool](#f-03-refeed-a-whole-spool-to-another-server), [F-04 NoCeM notices](#f-04-nocem-notices), [F-05 init scripts](#f-05-init-scripts-and-adm-script-replacements), [F-06 Perl authentication](#f-06-perl-authentication-for-dreaderd).
 
@@ -1231,7 +1231,7 @@ Fixed (#333): a request by message-id from a reader with a `groups` list is chec
 
 ### D-196 BODY by message-id answers the current article number
 `dreaderd/nntp.c`, `NNArticleRetrieve()`: for a request by message-id it turns `COM_ARTICLEWVF` into `COM_ARTICLE`, but leaves BODY's `COM_BODYWVF` as it is. When the body comes from the spool server, `NNSpoolResponse1()` and `NNGetLocal1()` (`dreaderd/spool.c`) then write the `COM_BODYWVF` status line with `artno_art(... co_ArtNo ...)`, the number of the current article of the selected group, not 0: after `GROUP e2e.test` (current article 1), `BODY <id>` of another article answered `222 1 <id>` (seen on main 523b814 while testing D-195; ARTICLE, HEAD and STAT by message-id answer 0). RFC 3977 6.2.3 (and 6.2.1): for a request by message-id the article number in the response is 0. From the reader cache the line already has 0 (`NNArticleRetrieveByMessageId()` writes the number only for `COM_ARTICLEWVF`). A client that takes the number as the current article, or checks it, is misled.
-Not fixed yet: the fix would be to turn `COM_BODYWVF` into `COM_BODY` for a message-id, next to `COM_ARTICLEWVF`.
+Fixed (#333): `NNArticleRetrieve()` turns `COM_BODYWVF` into `COM_BODY` for a message-id, next to `COM_ARTICLEWVF`, so every path answers `222 0 <id>`; BODY by number is unchanged. Test: `TestReaderBodyByMessageIdNumber`.
 
 ## Feature requests
 
