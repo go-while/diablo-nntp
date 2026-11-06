@@ -111,11 +111,15 @@ PostDate(char *buf, int size, time_t t)
     static const char *wd[] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
     static const char *mo[] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun",
 				"Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
-    struct tm *tp = gmtime(&t);
+    struct tm tm;
 
+    if (gmtime_r(&t, &tm) == NULL) {
+	t = 0;
+	gmtime_r(&t, &tm);
+    }
     snprintf(buf, size, "%s, %02d %s %04d %02d:%02d:%02d +0000",
-	wd[tp->tm_wday], tp->tm_mday, mo[tp->tm_mon], tp->tm_year + 1900,
-	tp->tm_hour, tp->tm_min, tp->tm_sec);
+	wd[tm.tm_wday], tm.tm_mday, mo[tm.tm_mon], tm.tm_year + 1900,
+	tm.tm_hour, tm.tm_min, tm.tm_sec);
     return(buf);
 }
 
