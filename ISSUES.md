@@ -499,6 +499,10 @@ which RFC 3977 section 8.6 requires with HDR, gives `501 Bad command use`
 Fixed in #67: HDR answers 225 (XHDR keeps 221) and LIST HEADERS answers 215. Left out on
 purpose: the message-id form of HDR and OVER (they answer 503), so HDR and LIST HEADERS stay
 unadvertised in CAPABILITIES, as RFC 3977 requires that form.
+Since #323 (D-193) the message-id form answers (from the current group), and since #329
+CAPABILITIES lists HDR and LIST HEADERS, as INN does; OVER stays without MSGID, as INN's
+(jesse's pick, 2026-11-06). A follow-up takes HDR/XHDR by message-id through the spool's
+HEAD, so it covers any article as INN's does.
 
 ### D-46 AUTHINFO reply codes
 RFC 4643 section 2.3.2: a wrong password should get 481 and let the client retry; dreaderd

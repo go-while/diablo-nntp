@@ -12,8 +12,8 @@ import (
 
 // TestReaderCapabilities: dreaderd answers CAPABILITIES (RFC 3977 §5.2) with what the
 // connection can use, and everything it lists works. A reader connection (read and post):
-// READER, OVER, LIST with ACTIVE ACTIVE.TIMES NEWSGROUPS OVERVIEW.FMT DISTRIB.PATS, POST; no
-// MODE-READER, IHAVE, STREAMING or HDR (only OVER is advertised). A feed-only connection (transit
+// READER, HDR, OVER (without MSGID, as INN), LIST with ACTIVE ACTIVE.TIMES NEWSGROUPS
+// OVERVIEW.FMT DISTRIB.PATS HEADERS, POST; no MODE-READER, IHAVE or STREAMING. A feed-only connection (transit
 // mode): IHAVE and STREAMING, no READER and no MODE-READER; MODE STREAM gets 203 there and
 // 501 on the reader connection. Then nntp-testkit's conformance
 // checks run against the reader, and none may fail (before the reply-code fixes for D-44 to
@@ -31,12 +31,12 @@ func TestReaderCapabilities(t *testing.T) {
 	if len(lines) == 0 || lines[0] != "VERSION 2" {
 		t.Fatalf("first capability line %q, want \"VERSION 2\" (all: %q)", lines, lines)
 	}
-	for _, want := range []string{"READER", "OVER", "LIST", "POST", "IMPLEMENTATION"} {
+	for _, want := range []string{"READER", "HDR", "OVER", "LIST", "POST", "IMPLEMENTATION"} {
 		if _, ok := caps[want]; !ok {
 			t.Errorf("reader connection: %s not advertised: %q", want, lines)
 		}
 	}
-	for _, not := range []string{"MODE-READER", "IHAVE", "STREAMING", "HDR"} {
+	for _, not := range []string{"MODE-READER", "IHAVE", "STREAMING"} {
 		if _, ok := caps[not]; ok {
 			t.Errorf("reader connection: %s advertised: %q", not, lines)
 		}
@@ -59,6 +59,18 @@ func TestReaderCapabilities(t *testing.T) {
 	c.ExpectCmd(224, "OVER 1")
 	if over := c.ReadDotLines(); len(over) != 1 || !strings.Contains(over[0], id) {
 		t.Errorf("OVER 1: %q, want the article", over)
+	}
+	if over := caps["OVER"]; len(over) != 0 {
+		t.Errorf("OVER advertised with %q, want no MSGID (as INN)", over)
+	}
+	// HDR (range and message-id form) and LIST HEADERS
+	c.ExpectCmd(225, "HDR Subject 1")
+	if hdr := c.ReadDotLines(); len(hdr) != 1 || hdr[0] != "1 capabilities" {
+		t.Errorf("HDR Subject 1: %q, want [\"1 capabilities\"]", hdr)
+	}
+	c.ExpectCmd(225, "HDR Subject %s", id)
+	if hdr := c.ReadDotLines(); len(hdr) != 1 || hdr[0] != "0 capabilities" {
+		t.Errorf("HDR Subject %s: %q, want [\"0 capabilities\"]", id, hdr)
 	}
 	// POST
 	c.ExpectCmd(340, "POST")
