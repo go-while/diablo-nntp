@@ -376,13 +376,28 @@ ArticleHeader(const char *path, const History *h, char *buf, int bufSize, long *
 	    close(dfd);
 	    return(-1);
 	}
-	n = gzread(gzf, buf, bufSize);
-	if (n > 0) {
+	/*
+	 * Read only this article: gzread() does not stop at the end of
+	 * its gzip stream but goes on into the next article's in the
+	 * same file.  ArtLen is the uncompressed length (dnewslink reads
+	 * the same amount).
+	 */
+	{
+	    long left = (long)ah.ArtLen;
 	    int m;
 
-	    countLines(&lc, buf, n);
-	    while ((m = gzread(gzf, more, sizeof(more))) > 0)
-		countLines(&lc, more, m);
+	    if (ah.HeadLen == 0)	/* no spool article header */
+		left = (long)h->bsize;
+	    n = (left > 0) ? gzread(gzf, buf, (left > bufSize) ? bufSize : (unsigned)left) : 0;
+	    if (n > 0) {
+		countLines(&lc, buf, n);
+		left -= n;
+		while (left > 0 && (m = gzread(gzf, more,
+			(left > (long)sizeof(more)) ? sizeof(more) : (unsigned)left)) > 0) {
+		    countLines(&lc, more, m);
+		    left -= m;
+		}
+	    }
 	}
 	gzclose(gzf);
 #else
