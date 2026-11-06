@@ -607,11 +607,7 @@ DiabloServer(int lfd)
 	    }
 	}
 #endif
-#if USE_SYSV_SETPGRP
-	setpgrp();
-#else
-	setpgrp(0, 0);
-#endif
+	setpgid(0, 0);
     }
 
     /*
@@ -3935,7 +3931,7 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 	if (retcode == RCOK) {
 	    int rhist;
 
-#if defined(__linux__)
+#if USE_POSIX_SIGMASK
 	    sigset_t blocked, savedMask;
 	    int maskSaved;
 
@@ -4026,7 +4022,7 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		responded = 1;
 		retcode = RCREJECT;
 	    }
-#if defined(__linux__)
+#if USE_POSIX_SIGMASK
 	    if (maskSaved && sigprocmask(SIG_SETMASK, &savedMask, NULL) < 0)
 		logit(LOG_ERR, "Unable to restore article commit signals: %s", strerror(errno));
 #elif USE_SYSV_SIGNALS
@@ -4037,7 +4033,7 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 #endif
 	} else if (addRejectToHistory) {
 
-#if defined(__linux__)
+#if USE_POSIX_SIGMASK
 	    sigset_t blocked, savedMask;
 	    int maskSaved;
 
@@ -4062,7 +4058,7 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 	    (void)HistoryAdd(msgid, &h);
 	    (void)PreCommit(msgid, PC_POSTCOMM);
 
-#if defined(__linux__)
+#if USE_POSIX_SIGMASK
 	    if (maskSaved && sigprocmask(SIG_SETMASK, &savedMask, NULL) < 0)
 		logit(LOG_ERR, "Unable to restore article commit signals: %s", strerror(errno));
 #elif USE_SYSV_SIGNALS

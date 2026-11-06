@@ -794,11 +794,7 @@ main(int ac, char **av)
 	    close(fd);
 	}
 #endif
-#if USE_SYSV_SETPGRP
-        setpgrp();
-#else
-	setpgrp(0, 0);
-#endif
+	setpgid(0, 0);
     }
 
     /*

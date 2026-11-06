@@ -126,7 +126,7 @@ probe_db() {
 int main(void) { DB *db = dbopen("/nonexistent/diablo-db-test", O_RDONLY, 0, DB_BTREE, NULL); if (db) db->close(db); return 0; }
 EOT
 	$CC -o "$tmp/t" "$tmp/db.c" >/dev/null 2>&1 || return 1
-	db_cpp=""; db_ld=""; db_libs=""
+	db_cpp="-DHAVE_DB_185_H=0"; db_ld=""; db_libs=""
 	return 0
     fi
     cat > "$tmp/db.c" <<'EOT'
@@ -143,7 +143,7 @@ EOT
 		[ -d "$lib" ] || continue
 		for l in db5 db4 db; do
 		    if $CC -I"$inc" -o "$tmp/t" "$tmp/db.c" -L"$lib" -Wl,-rpath,"$lib" -l$l >/dev/null 2>&1; then
-			db_cpp="-I$inc"; db_ld="-L$lib -Wl,-rpath,$lib"; db_libs="-l$l"
+			db_cpp="-I$inc -DHAVE_DB_185_H=1"; db_ld="-L$lib -Wl,-rpath,$lib"; db_libs="-l$l"
 			return 0
 		    fi
 		done
@@ -152,7 +152,7 @@ EOT
     done
     # the default directories, which have no prefix to look in
     if $CC -o "$tmp/t" "$tmp/db.c" -ldb >/dev/null 2>&1; then
-	db_cpp=""; db_ld=""; db_libs="-ldb"
+	db_cpp="-DHAVE_DB_185_H=1"; db_ld=""; db_libs="-ldb"
 	return 0
     fi
     return 1

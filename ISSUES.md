@@ -36,7 +36,7 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-15](#d-15-dreaderd-has-no-capabilities) | Medium | dreaderd has no `CAPABILITIES` (RFC 3977) | fixed (#41) |
 | [D-16](#d-16-linux-build-fails-with-the-default-libvendorh) | Medium | Linux build fails with the default `lib/vendor.h` (RADIUS) | fixed (#127) |
 | [D-17](#d-17-unchecked-results-under-_fortify_source) | Low | 80 `-Wunused-result` warnings under `_FORTIFY_SOURCE` | fixed (#71) |
-| [D-18](#d-18-debian-gnuhurd-build) | Low | Debian GNU/Hurd build: `PATH_MAX`, `setpgrp`, `db_185.h` | open |
+| [D-18](#d-18-debian-gnuhurd-build) | Low | Debian GNU/Hurd build: path bounds, process groups, DB/statfs headers | fixed (#NNN) |
 | [D-19](#d-19-changelog-links-a-missing-document) | Low | CHANGELOG links the missing `BUILD-PORTABLE-MAKE.md` | fixed (#61) |
 | [D-20](#d-20-strncpy-truncation-warning-in-dreaderddnsc) | Low | `strncpy` truncation warning in `dreaderd/dns.c` (GCC 16) | fixed (#65) |
 | [D-21](#d-21-dactivekp-write-errors-now-exit-the-process) | — | dactive.kp write errors now exit the process (#7) | won't fix (kept on purpose) |
@@ -306,7 +306,8 @@ on 6-CUR-20261024-BWH, 80 after #5 to #9 (mostly `write()` in `util/` and
 ### D-18 Debian GNU/Hurd build
 `PATH_MAX` is undefined on Hurd (`lib/defs.h:580`); `dreaderd/main.c` uses `setpgrp(0, 0)`
 because `USE_SYSV_SETPGRP` isn't set for Hurd; `dreaderd/dns.c:19` picks `db_185.h` only for
-`__linux__`/`__sun`. Low priority for the maintainer.
+`__linux__`/`__sun`. The filesystem-space code also includes `sys/mount.h`, which Hurd does not provide. Low priority for the maintainer.
+Fixed (#NNN): a guarded application path bound preserves native `PATH_MAX` values and supplies 4096 where no system bound exists, with checked recursive path copies/joins; the daemons use POSIX `setpgid(0, 0)`; configure records the DB header that its `dbopen()` probe linked; and statfs code uses the configured `sys/vfs.h` path without requiring an unrelated `sys/mount.h`. A small GNU/Hurd configuration block avoids Linux-only headers/APIs and enables the GNU libc interfaces used by the full build. GNU make enables 64-bit file offsets on Hurd too. Full C build verified on Debian GNU/Hurd amd64; native FreeBSD/NetBSD builds and Linux reader/feeder e2e guard against regressions. Standalone C checks: `tests/portability/d18.sh` (missing/preserved PATH_MAX, path-field sizing, overlong-directory refusal and ordinary directory creation). Go has no Hurd target, so no native Hurd Go-e2e claim is made.
 
 ### D-19 CHANGELOG links a missing document
 `CHANGELOG.md` links `BUILD-PORTABLE-MAKE.md`, which isn't in the repository. The maintainer

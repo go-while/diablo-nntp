@@ -24,7 +24,17 @@
 #include <radcli/radcli.h>
 #endif
 #if defined(DB_ENABLED) || defined(REJECT_DB)
-#  if defined(__linux__) || defined(__sun)
+/* configure records the header its dbopen() probe actually linked. Retain the
+ * historical choice for builds that set vendor.h without configure.
+ */
+#  if !defined(HAVE_DB_185_H)
+#    if defined(__linux__) || defined(__sun)
+#      define HAVE_DB_185_H 1
+#    else
+#      define HAVE_DB_185_H 0
+#    endif
+#  endif
+#  if HAVE_DB_185_H
 #    include <db_185.h>
 #  else
 #    include <db.h>

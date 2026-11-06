@@ -18,14 +18,14 @@
 #include "config.h"
 
 /*
- * Cannot increase FD_SETSIZE on Linux, but we can increase __FD_SETSIZE
+ * Cannot increase FD_SETSIZE with glibc (Linux or GNU/Hurd), but we can increase __FD_SETSIZE
  * with glibc 2.2 and 2.3 at least. We do this by including
  * bits/types.h which defines __FD_SETSIZE first (before any other include),
  * then we redefine __FD_SETSIZE. Ofcourse a user program may NEVER
  * include bits/whatever.h directly, so this is a dirty hack!
  */
 #if LARGE_FD_SETSIZE > 1024
-#  ifdef __linux__
+#  if defined(__linux__) || defined(__GNU__)
 #    include <features.h>
 #    if (__GLIBC__ > 2) || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 2)
 #      include <bits/types.h>
@@ -70,7 +70,7 @@ typedef struct direct den_t;
 #include <netinet/in.h>		/* internet sockets	*/
 #include <netinet/tcp.h>	/* TCP_NODELAY sockopt  */
 #include <errno.h>
-#include <limits.h>
+#include "compat/pathmax.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>

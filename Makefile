@@ -1,8 +1,9 @@
 
 # Diablo 6 portable GNU Make build system
-# Platforms: Linux, FreeBSD, illumos (SmartOS, OmniOS, etc.)
+# Platforms: Linux, GNU/Hurd, FreeBSD, illumos (SmartOS, OmniOS, etc.)
 #
 # Linux:   make -j4
+# Hurd:    make -j4
 # FreeBSD: gmake -j4
 # illumos: gmake -j4
 #
@@ -52,7 +53,7 @@ ifeq ($(UNAME_S),FreeBSD)
 LDLIBS += -lmd
 endif
 
-ifeq ($(UNAME_S),Linux)
+ifneq ($(filter Linux GNU,$(UNAME_S)),)
 CPPFLAGS += -D_FILE_OFFSET_BITS=64
 endif
 

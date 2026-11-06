@@ -18,7 +18,7 @@
 
 #include "defs.h"
 #include <sys/param.h>
-#ifndef _AIX
+#if !defined(_AIX) && !USE_SYS_VFS
 #include <sys/mount.h>
 #endif
 #ifdef _AIX
@@ -987,20 +987,26 @@ findSize(char *pathname, char *dirname)
     den_t *den;
     double size = 0;
     struct stat sb;
+    int n;
 
-    strcpy(p, pathname);
-    strcat(p, dirname);
+    n = snprintf(p, sizeof(p), "%s%s", pathname, dirname);
+    if (n < 0 || (size_t)n >= sizeof(p)) {
+	fprintf(stderr, "Skipping overlong directory pathname: %s%s\n", pathname, dirname);
+	return(0);
+    }
     if ((dir = opendir(p)) == NULL) {
 	fprintf(stderr, "Unable to find size of directory: %s (%s)\n",
 					p, strerror(errno));
 	return(0);
     }
-    strcat(p, "/");
     while ((den = readdir(dir)) != NULL) {
 	if (strcmp(den->d_name, "..") == 0)
 	    continue;
-	strcpy(f, p);
-	strcat(f, den->d_name);
+	n = snprintf(f, sizeof(f), "%s/%s", p, den->d_name);
+	if (n < 0 || (size_t)n >= sizeof(f)) {
+	    fprintf(stderr, "Skipping overlong file pathname: %s/%s\n", p, den->d_name);
+	    continue;
+	}
 	if (stat(f, &sb) == 0)
 	    size += sb.st_size;
     }

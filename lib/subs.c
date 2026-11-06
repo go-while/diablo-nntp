@@ -825,6 +825,10 @@ MakeGroupDirectory(char *path)
     char *p;
     struct stat st;
 
+    if (strlen(path) >= sizeof(dir)) {
+	errno = ENAMETOOLONG;
+	return(-1);
+    }
     strcpy(dir, path);
     if (strchr(dir, '/') == NULL)
 	return(0);
