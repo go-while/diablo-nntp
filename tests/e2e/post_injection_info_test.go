@@ -152,6 +152,18 @@ func TestReaderPostInjectionInfo(t *testing.T) {
 		}
 	})
 
+	t.Run("postpath with two elements", func(t *testing.T) {
+		// the Path grows to the left: the injecting agent is the element right before
+		// ".POSTED", and Injection-Info names that one
+		head := postHead(t, injAccess("    postpath outer.example!"+PathHost+"\n"), "Message-ID: "+msgID(t))
+		if p := headerValue(head, "Path"); p != "outer.example!"+PathHost+"!.POSTED!not-for-mail" {
+			t.Errorf("Path %q, want outer.example!%s!.POSTED!not-for-mail", p, PathHost)
+		}
+		if ii := headerValue(head, "Injection-Info"); !strings.HasPrefix(ii, PathHost+";") {
+			t.Errorf("Injection-Info %q, want the element before .POSTED (%s) as path-identity", ii, PathHost)
+		}
+	})
+
 	t.Run("legacytrace", func(t *testing.T) {
 		head := postHead(t, injAccess("    postpath "+PathHost+"\n    abuseto abuse@example.invalid\n    legacytrace yes\n"))
 		if p := headerValue(head, "Path"); p != PathHost+"!not-for-mail" {

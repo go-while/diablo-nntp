@@ -200,6 +200,27 @@ injQuoted(MBufHead *mb, const char *v)
  *	with the cryptpw as X-Trace was; mail-complaints-to is abuseto.
  *	Folded before each parameter (3.2.8: folding only around the ";").
  */
+/*
+ * injIdent() - the injecting agent's <path-identity> for Injection-Info:
+ *		the postpath element that comes right before "!.POSTED" in
+ *		the Path (the last one of a postpath "a!b"), else hostname.
+ *		Empty when neither is set.
+ */
+static const char *
+injIdent(const Vserver *vs, char *buf, int size)
+{
+    const char *p = vs->vs_PostPath;
+
+    if (*p) {
+	const char *q = strrchr(p, '!');
+
+	snprintf(buf, size, "%s", q ? q + 1 : p);
+    } else {
+	snprintf(buf, size, "%s", vs->vs_HostName);
+    }
+    return(buf);
+}
+
 void
 PostInjectionHeaders(MBufHead *mb, Connection *conn, time_t t, const char *cryptpw, const char *cryptgen, int addDate)
 {
@@ -209,7 +230,6 @@ PostInjectionHeaders(MBufHead *mb, Connection *conn, time_t t, const char *crypt
     char addr[NI_MAXHOST + 8];		/* the client's address, for posting-host */
     char addrPort[NI_MAXHOST + 16];	/* with the port, as X-Trace had it */
     const char *a;
-    char *p;
 
     /* NetAddrToSt() returns a static buffer: copy each form */
     a = NetAddrToSt(0, (struct sockaddr *)&conn->co_Auth.dr_Addr, 1, 0, 0);
@@ -224,11 +244,8 @@ PostInjectionHeaders(MBufHead *mb, Connection *conn, time_t t, const char *crypt
 	conn->co_Flags |= COF_POSTINJDATE;
     }
 
-    /* the <path-identity>: the first element of postpath, else hostname */
-    snprintf(ident, sizeof(ident), "%s", *vs->vs_PostPath ? vs->vs_PostPath : vs->vs_HostName);
-    if ((p = strchr(ident, '!')) != NULL)
-	*p = 0;
-    if (ident[0] == 0)
+    /* the caller writes the old trace headers when there is no ident */
+    if (injIdent(vs, ident, sizeof(ident))[0] == 0)
 	return;
     MBPrintf(mb, "Injection-Info: %s", ident);
 
@@ -625,7 +642,10 @@ NNPostBuffer(Connection *conn)
     /*
      * RFC 5537 3.2.1 step 2 (F-07): the injecting agent's path-identity
      * followed by the "!.POSTED" diagnostic.  Without a postpath diablo
-     * adds the first path-identity, and a diagnostic cannot come first.
+     * adds the first path-identity, and a diagnostic cannot come first,
+     * so a post gets ".POSTED" only with a postpath.  The Path grows to
+     * the left: in a postpath "a!b" the injecting agent is "b", the one
+     * before ".POSTED", and Injection-Info names it too (injIdent()).
      */
     if (*vs->vs_PostPath && !vs->vs_LegacyTrace)
 	MBPrintf(&tmbuf, "Path: %s!.POSTED!not-for-mail\r\n", vs->vs_PostPath);
@@ -1038,10 +1058,14 @@ NNPostBuffer(Connection *conn)
 			cryptpw = conn->co_Auth.dr_VServerDef->vs_CryptPw;
 	}
 
-	if (vs->vs_LegacyTrace) {
+	char identBuf[64];
+
+	if (vs->vs_LegacyTrace || injIdent(vs, identBuf, sizeof(identBuf))[0] == 0) {
 	/*
 	 * legacytrace yes (F-07): the trace headers dreaderd always wrote,
-	 * and no Injection-Info or Injection-Date.
+	 * and no Injection-Info or Injection-Date.  Also without a postpath
+	 * and a hostname: Injection-Info needs a path-identity, and the
+	 * trace data must not be lost.
 	 */
 #if defined  POST_NNTP_POSTING_DATE_GMT || defined POST_NNTP_POSTING_DATE_LOCALTIME
 		/*

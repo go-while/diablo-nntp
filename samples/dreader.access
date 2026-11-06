@@ -31,7 +31,11 @@
 #
 # postpath	 : The Path: entry to add to posts, followed by the ".POSTED"
 #		   diagnostic (RFC 5537 3.2.1), for example
-#		   "Path: path.host!.POSTED!not-for-mail". (Default: None)
+#		   "Path: path.host!.POSTED!not-for-mail". With several
+#		   elements ("a!b") the last one is the injecting agent that
+#		   Injection-Info names. Without a postpath there is no
+#		   ".POSTED", and Injection-Info names the hostname.
+#		   (Default: None)
 #
 # newsadmin	 : News Admin contact address added to connect banners
 #		   Defaults to news@hostname.
