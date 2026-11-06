@@ -501,8 +501,8 @@ purpose: the message-id form of HDR and OVER (they answer 503), so HDR and LIST 
 unadvertised in CAPABILITIES, as RFC 3977 requires that form.
 Since #323 (D-193) the message-id form answers (from the current group), and since #329
 CAPABILITIES lists HDR and LIST HEADERS, as INN does; OVER stays without MSGID, as INN's
-(jesse's pick, 2026-11-06). A follow-up takes HDR/XHDR by message-id through the spool's
-HEAD, so it covers any article as INN's does.
+(jesse's pick, 2026-11-06). The D-193 follow-up below takes HDR/XHDR by message-id through
+the spool's HEAD, so it covers any article as INN's does.
 
 ### D-46 AUTHINFO reply codes
 RFC 4643 section 2.3.2: a wrong password should get 481 and let the client retry; dreaderd
@@ -1216,6 +1216,7 @@ Fixed (#318): a "\r" at the end of a chunk is held back and dropped when the nex
 ### D-193 XHDR and XOVER by message-id answer an empty list
 `dreaderd/xover.c`, `NNStartListOverviewMsgId()`: it was a stub, so `XHDR <header> <message-id>` and `XOVER <message-id>` answered "221/224 ... follows" and an empty list, and the RFC 3977 `HDR`/`OVER` forms answered 503. The reader does not index overview by message-id, but the article's overview is in the current group. Found by a pynntp run (test_xhdr_by_message_id_and_number).
 Fixed (#323): the message-id is resolved against the current group's overview index before the "follows" response (an unknown id is 430 No such article, not an empty list), and the line is output with the message-id as the first field for `XHDR` (RFC 2980 2.6) and 0 for `HDR`, `OVER` and `XOVER` (RFC 3977 8.3.2 and 8.5.2: the article number is replaced by 0; INN does the same). `HDR`/`OVER` by message-id use the same path. The lookup (`FindMsgInGroup()`) reads NB/NE under the record lock and walks the overview index after unlocking, newest first, over at most 100000 articles (`READER_MSGID_SCAN`); an older article, or one in another group, answers 430 (jesse/cc-1's review: an unbounded walk under the lock let any reader stall its process and hold the record the feed side needs). Tests: `TestXhdrXoverByMessageId`, and `TestReaderReplyCodes`/`TestReaderCapabilities` updated (the 503 case is gone).
+Fixed (#NNN) further: `HDR`/`XHDR <header> <message-id>` keep the current-group overview fast path, then fetch `HEAD <message-id>` asynchronously from the spool when that lookup misses. They cover an article in another group, with no group selected, or without local overview, as INN does. The existing header formatter handles case-insensitive names, folded values and absent headers; an unknown article is 430. Metadata (`:bytes`/`:lines`) unavailable outside the overview path is 503. `OVER`/`XOVER` stay current-group-only, and neither HDR lookup changes the selected group or current article. The HEAD path does not populate the full-article cache or perform synchronous localspool reads; it buffers at most 1 MiB of headers, draining an oversized response before returning 503 so the backend remains aligned. Tests: `TestHdrMessageIdSpool`, `TestHdrMessageIdSpoolAsync`, `TestHdrMessageIdSpoolBound`.
 
 ### D-194 Log messages ending in a newline leave a blank line
 `lib/log.c`, `VLog()`: the log writer adds a newline to each message, and 64 `logit()` formats end in a newline of their own (LDAP errors, "Invalid vserverdef option ...", "PERL auth request for <user>: <result>", and more), so general.log got an empty line after each of them. Reported by Jesse from the SmartOS reader (after every Perl login).

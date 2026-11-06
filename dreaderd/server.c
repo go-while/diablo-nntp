@@ -812,6 +812,7 @@ NNServerRequest(Connection *conn, const char *grp, const char *msgid, const int 
     sreq->sr_Group = grp ? zallocStr(&SysMemPool, grp) : NULL;
     sreq->sr_MsgId = msgid ? zallocStr(&SysMemPool, msgid) : NULL;
     sreq->sr_MaxAge = maxage;
+    sreq->sr_HeadOnly = (req == SREQ_HDR);
     sreq->sr_Cache = NULL;
     sreq->sr_TimeRcvd = TimeRcvd;
     sreq->sr_GrpIter = grpIter;
@@ -821,7 +822,7 @@ NNServerRequest(Connection *conn, const char *grp, const char *msgid, const int 
 
     FD_CLR(conn->co_Desc->d_Fd, &RFds);
 
-    if (req == SREQ_RETRIEVE) {
+    if (req == SREQ_RETRIEVE || req == SREQ_HDR) {
 	*PSRead = sreq;
 	PSRead = &sreq->sr_Next;
     } else if (req == SREQ_POST) {
@@ -891,6 +892,8 @@ NNFinishSReq(Connection *conn, const char *ctl, int requeue)
 	     * can be NULL if client was terminated
 	     */
 	    if (sreq->sr_CConn) {
+		if (sreq->sr_HeadOnly)
+		    MBFree(&sreq->sr_CConn->co_ArtBuf);
 		if (ctl) {
 		    if (ctl[0] == '4' || (ctl[0] != 0 && ctl[1] == '4')) {
 			/*
@@ -1353,4 +1356,3 @@ NNArticleRetrieveByMessageId(Connection *conn, const char *msgid, const char *ms
     NNServerRequest(conn, grouphint ? conn->co_GroupName : NULL, msgid, maxage, SREQ_RETRIEVE, TimeRcvd, grpIter, endNo);
     NNWaitThread(conn);
 }
-

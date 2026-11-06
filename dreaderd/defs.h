@@ -667,10 +667,12 @@ typedef struct ServReq {
     int		sr_Rolodex;	/* see server.c		*/
     int		sr_NoPass;	/* see server.c		*/
     int		sr_MaxAge;	/* Maximum age allowed	*/
+    int		sr_HeadOnly;	/* HDR/XHDR fallback: HEAD, not ARTICLE */
 } ServReq;
 
 #define SREQ_RETRIEVE	1
 #define SREQ_POST	2
+#define SREQ_HDR		3
 
 
 /*
@@ -806,4 +808,3 @@ struct SharedInfo {
 #include <obj/dreaderd-protos.h>
 
 #include <lib/debug-mbuf.h>
-

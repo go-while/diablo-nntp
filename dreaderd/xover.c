@@ -324,15 +324,30 @@ NNStartListOverview(Connection *conn, const char *hdr, const char *ran, const ch
 	artno_t artNo = -1;
 	OverInfo *ov = NULL;
 
-	/*
-	 * In the current group only, and at most the newest
-	 * READER_MSGID_SCAN articles: past that the answer is 430.
-	 */
+	/* Try the bounded current-group overview lookup first. */
 	if (mid != NULL && strcmp(mid, "<>") != 0 && conn->co_GroupName != NULL)
 	    ov = FindMsgInGroup(conn->co_GroupName, mid, &artNo, READER_MSGID_SCAN);
 	if (ov == NULL || artNo < 0) {
 	    if (ov != NULL)
 		PutOverInfo(ov);
+	    if (mode == COM_XHDR && mid != NULL && strcmp(mid, "<>") != 0) {
+		/* HEAD is queued on the existing nonblocking spool machinery.
+		 * Do not select a group or alter the current article for it.
+		 * Overview metadata is unavailable on this fallback path.
+		 */
+		if (hdr[0] == ':') {
+		    MBLogPrintf(conn, &conn->co_TMBuf, "503 Metadata unavailable by message-id outside this group\r\n");
+		    NNCommand(conn);
+		} else {
+		    conn->co_ListMsgId = zallocStr(&conn->co_MemPool, mid);
+		    conn->co_RequestFlags = ARTFETCH_MSGID;
+		    NNServerRequest(conn, NULL, mid,
+			conn->co_Auth.dr_ReaderDef->rd_MaxAgePolicy,
+			SREQ_HDR, 0, -1, 0);
+		    NNWaitThread(conn);
+		}
+		return;
+	    }
 	    MBLogPrintf(conn, &conn->co_TMBuf, "430 No such article\r\n");
 	    NNCommand(conn);
 	    return;
@@ -901,4 +916,3 @@ OutputOverview(Connection *conn, const char *res, int resLen, int artSize, int l
     }
     return(-1);
 }
-
