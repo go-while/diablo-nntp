@@ -45,6 +45,8 @@ NNTPNewNews(Connection *conn, char **pptr)
     const char *hhmmss = NULL;
     const char *gmt = NULL;
     const char *distributions = NULL;
+    const char *extra = NULL;
+    const char *opt = NULL;
  
     if (!conn->co_Auth.dr_ReaderDef->rd_AllowNewnews) {
 	MBLogPrintf(conn, &conn->co_TMBuf, "500 \"newnews\" not implemented\r\n");
@@ -56,11 +58,20 @@ NNTPNewNews(Connection *conn, char **pptr)
 	newsgroups = parseword(pptr, " \t");
 	yymmdd = parseword(pptr, " \t");
 	hhmmss = parseword(pptr, " \t");
-	gmt = parseword(pptr, " \t");
-	distributions = parseword(pptr, " \t");
+	opt = parseword(pptr, " \t");
+	if (opt && strcasecmp(opt, "GMT") == 0) {
+	    gmt = opt;
+	    distributions = parseword(pptr, " \t");
+	} else {
+	    distributions = opt;
+	}
+	extra = parseword(pptr, " \t");
     }
-    if (SetTimeRestrict(&conn->co_TimeRestrict, yymmdd, hhmmss, gmt) < 0) {
-	MBLogPrintf(conn, &conn->co_TMBuf, "501 newsgroups yymmdd hhmmss [\"GMT\"] [<distributions>]\r\n");
+    if (newsgroups == NULL || extra != NULL ||
+	(distributions && (strlen(distributions) < 3 || distributions[0] != '<' ||
+	 distributions[strlen(distributions) - 1] != '>')) ||
+	SetTimeRestrict(&conn->co_TimeRestrict, yymmdd, hhmmss, gmt) < 0) {
+	MBLogPrintf(conn, &conn->co_TMBuf, "501 newsgroups yymmdd hhmmss [GMT] [<distributions> (ignored)]\r\n");
 	NNCommand(conn);
     } else {
 	if (conn->co_Auth.dr_Flags & DF_GROUPLOG)
@@ -79,7 +90,7 @@ NNTPNewNews(Connection *conn, char **pptr)
 	MBLogPrintf(conn, &conn->co_TMBuf, "230 New news follows.\r\n");
 	zfreeStr(&conn->co_MemPool, &conn->co_ListPat);
 	zfreeStr(&conn->co_MemPool, &conn->co_ListHdrs);
-	conn->co_ListPat = (distributions) ? zallocStr(&conn->co_MemPool, distributions) : NULL;
+	/* RFC 977 distributions are accepted for compatibility, not filtered. */
 	conn->co_ListHdrs = zallocStr(&conn->co_MemPool, "Message-ID");
 	conn->co_ArtMode = COM_NEWNEWS;
 	conn->co_ListCacheGroups = NULL;

@@ -716,15 +716,29 @@ NNTPNewgroups(Connection *conn, char **pptr)
     const char *yymmdd = NULL;
     const char *hhmmss = NULL;
     const char *gmt = NULL;
+    const char *distributions = NULL;
+    const char *extra = NULL;
+    const char *opt = NULL;
     TimeRestrict tr;
 
     if (pptr) {
 	yymmdd = parseword(pptr, " \t");
 	hhmmss = parseword(pptr, " \t");
-	gmt = parseword(pptr, " \t");
+	opt = parseword(pptr, " \t");
+	if (opt && strcasecmp(opt, "GMT") == 0) {
+	    gmt = opt;
+	    distributions = parseword(pptr, " \t");
+	} else {
+	    distributions = opt;
+	}
+	extra = parseword(pptr, " \t");
     }
-    if (SetTimeRestrict(&tr, yymmdd, hhmmss, gmt) < 0) {
-	MBLogPrintf(conn, &conn->co_TMBuf, "501 yymmdd hhmmss [\"GMT\"] [<distributions>]\r\n");
+    /* RFC 977 distributions are accepted for compatibility, not filtered. */
+    if (extra != NULL ||
+	(distributions && (strlen(distributions) < 3 || distributions[0] != '<' ||
+	 distributions[strlen(distributions) - 1] != '>')) ||
+	SetTimeRestrict(&tr, yymmdd, hhmmss, gmt) < 0) {
+	MBLogPrintf(conn, &conn->co_TMBuf, "501 yymmdd hhmmss [GMT] [<distributions> (ignored)]\r\n");
 	NNCommand(conn);
     } else {
 	MBLogPrintf(conn, &conn->co_TMBuf, "231 New newsgroups follow.\r\n");

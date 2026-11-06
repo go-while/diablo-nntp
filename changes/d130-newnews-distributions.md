@@ -1,0 +1,1 @@
+- dreaderd: NEWNEWS and NEWGROUPS accept legacy `<distributions>` with or without GMT but do not filter by it; usage text documents this, and malformed or excess arguments are rejected (D-130).

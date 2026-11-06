@@ -143,7 +143,7 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-127](#d-127-dicmd-splits-lines-longer-than-255-bytes) | Low | dicmd splits lines longer than 255 bytes | fixed (#306) |
 | [D-128](#d-128-dkp-parses-the-second-piece-of-a-long-input-line-as-a-new-record) | Low | dkp parses the second piece of a long input line as a new record | fixed (#288) |
 | [D-129](#d-129-dclient-is-ipv4-only-gethostbyname) | Low | dclient is IPv4-only (gethostbyname) | fixed (#298) |
-| [D-130](#d-130-newnews-and-newgroups-ignore-the-distributions-argument) | Low | NEWNEWS and NEWGROUPS ignore the distributions argument | open |
+| [D-130](#d-130-newnews-and-newgroups-ignore-the-distributions-argument) | Low | NEWNEWS and NEWGROUPS ignore the distributions argument | fixed |
 | [D-131](#d-131-dclient-does-not-know-the-202-reply-of-list-extensions) | Low | dclient does not know the 202 reply of LIST EXTENSIONS | fixed (#149) |
 | [D-132](#d-132-config-dump-prints-the-bare-cr-option-under-the-nul-name) | Low | Config dump prints the bare-CR option under the NUL name | fixed (#149) |
 | [D-133](#d-133-list-moderators-adds-an-extra-cr-to-a-crlf-line) | Low | LIST MODERATORS adds an extra CR to a CRLF line | fixed (#149) |
@@ -188,7 +188,7 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-172](#d-172-feed-children-and-programs-diablo-runs-inherit-retained-control-connections) | Low | Feed children and programs diablo runs inherit retained control connections | fixed (#294) |
 | [D-173](#d-173-netremote-session-accounting-goes-to-a-placeholder-host) | Low | NETREMOTE session accounting goes to a placeholder host | fixed (#309) |
 | [D-174](#d-174-the-reader-overview-lines-column-is-empty-for-articles-without-a-lines-header) | Low | The reader overview Lines column is empty for articles without a Lines header | fixed (#312) |
-| [D-175](#d-175-a-bad-dspoolctl-on-reload-stops-a-running-diablo) | Medium | A bad dspool.ctl on reload stops a running diablo | PR |
+| [D-175](#d-175-a-bad-dspoolctl-on-reload-stops-a-running-diablo) | Medium | A bad dspool.ctl on reload stops a running diablo | fixed (#308) |
 | [D-176](#d-176-gz-header-parse-of-an-overview-data-file-is-not-bounded-by-the-file-size) | Low | .gz header parse of an overview data file is not bounded by the file size | fixed (#296) |
 | [D-177](#d-177-dreaderaccess-line-longer-than-the-read-buffer-is-parsed-in-pieces) | Low | dreader.access line longer than the read buffer is parsed in pieces | fixed (#296) |
 | [D-178](#d-178-dsyncgroups-cuts-a-long-authinfo-user-name-or-password) | Low | dsyncgroups cuts a long AUTHINFO user name or password | fixed (#296) |
@@ -997,7 +997,9 @@ Fixed in #288: `dkp` reads a stdin line of any length as one record (a growing b
 Fixed in #298: `connectnews()` uses `getaddrinfo()` and tries each address in order.
 
 ### D-130 NEWNEWS and NEWGROUPS ignore the distributions argument
-`dreaderd/xover.c:53-54` and `:76` store the distribution pattern in `co_ListPat`, but the NEWNEWS output path (`xover.c:445-449`, `:591-595`) and `dreaderd/list.c:663-674` (NEWGROUPS) never apply it; `co_ListPat` is read in the output path only at `xover.c:583` (the XPAT case). Without the `GMT` token the fourth argument is taken as the GMT field (`xover.c:53`, `list.c:666`). The 501 text advertises `[<distributions>]`. RFC 3977 lets the server ignore it; the behaviour does not match the usage text. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
+`dreaderd/xover.c:53-54` and `:76` store the distribution pattern in `co_ListPat`, but the NEWNEWS output path (`xover.c:445-449`, `:591-595`) and `dreaderd/list.c:663-674` (NEWGROUPS) never apply it; `co_ListPat` is read in the output path only at `xover.c:583` (the XPAT case). Without the `GMT` token the fourth argument is taken as the GMT field (`xover.c:53`, `list.c:666`), although the date parser only treats the exact GMT keyword as UTC. The 501 text advertises `[<distributions>]` without saying it is ignored. RFC 3977 removed this parameter. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
+
+Fixed: both commands recognize GMT case-insensitively and accept an optional RFC 977 `<distributions>` list without filtering results; the usage text and README.READER now say it is ignored. RFC 3977 removed the parameter. Unbracketed or excess arguments get 501. Tests: `TestNewgroupsLegacyDistributions`, `TestNewnewsLegacyDistributions`.
 
 ### D-131 dclient does not know the 202 reply of LIST EXTENSIONS
 `util/dclient.c:117-124` (`MultiLineReply`) lists no 202, while `dreaderd/list.c:138-141` answers 202 followed by HDR, OVER and the dot. dclient prints "Unexpected response from server" and exits 2. A fix with a test is ready on go-while's side (one-line `case 202`, test `TestDclientListExtensions`). Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
