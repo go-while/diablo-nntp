@@ -1392,4 +1392,4 @@ because the legacy mode adds none); (3) the Date format and window; (4) syntax
 checks (Message-ID, Date, line length); (5) reserved group names; (6) the header-preservation
 items, Lines among them; (7) removing posttrailer.
 
-Status: (1) PR (#304). The rest open; (6)'s Lines part needs D-174 first.
+Status: (1) PR (#304). (2) PR. The rest open; (6)'s Lines part needs D-174 first.
