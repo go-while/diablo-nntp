@@ -539,7 +539,9 @@
 #	Specify that this label requires or doesn't require the Lines:
 #	header to be generated. DEFAULT: off
 #	This currently only works on header-only feeds and is not
-#	necessary for dreaderd.
+#	necessary for dreaderd, which gets the line count from the
+#	header feed's Bytes: line. The Lines: header is obsolete
+#	(RFC 5536 3.3.1).
 #
 #  check		on|off|nortcheck
 #	Enabled or disabled the use of the NNTP "check" command when

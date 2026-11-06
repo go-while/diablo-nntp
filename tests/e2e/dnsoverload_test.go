@@ -10,10 +10,8 @@ import (
 	"fmt"
 	testkit "github.com/go-while/nntp-testkit"
 	"net"
-	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -494,16 +492,13 @@ func TestReaderDNSOverloadWarm(t *testing.T) {
 // is how TestReaderDNSOverloadWarm saw 16 of 150 refusals take a second on Alpine. Fails on main
 // with musl, whose SOMAXCONN is 128 (glibc has 4096): only 129 connections complete.
 func TestReaderListenBacklog(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("reads the kernel limit from /proc (Linux)")
-	}
 	const want = 300
-	b, err := os.ReadFile("/proc/sys/net/core/somaxconn")
+	lim, key, err := listenBacklogLimit()
 	if err != nil {
 		t.Skipf("kernel listen limit: %v", err)
 	}
-	if lim, err := strconv.Atoi(strings.TrimSpace(string(b))); err != nil || lim < want {
-		t.Skipf("net.core.somaxconn is %q, below the %d this test needs", strings.TrimSpace(string(b)), want)
+	if lim < want {
+		t.Skipf("%s is %q, below the %d this test needs", key, strconv.Itoa(lim), want)
 	}
 	_, spool := spoolStore(t)
 	s := NewReaderSite(t, ReaderOptions{Spool: spool})

@@ -6,7 +6,6 @@ import (
 	"github.com/go-while/nntp-testkit/fakeserver"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"syscall"
 	"testing"
@@ -27,9 +26,7 @@ func newHoldPeer(tb testing.TB) *fakeserver.Server {
 // the realtime worker came on top of maxparallel: four hashfeed labels with maxparallel 2 opened
 // up to 12 connections to a peer that allows 10.
 func TestMaxParallelCountsRealtime(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("stops the workers through /proc")
-	}
+	requireProcessInspection(t, true)
 	peer := newHoldPeer(t)
 	feeds := GlobalLabel + `label ` + OutLabel + `
     hostname 127.0.0.1
@@ -43,7 +40,7 @@ end
 	s := NewSite(t, SiteOptions{Newsfeeds: feeds, Setup: linkBin})
 	t.Cleanup(func() {
 		for range 20 {
-			pids := append(sitePids(s, "dnewslink"), sitePids(s, "dspoolout")...)
+			pids := append(sitePids(t, s, "dnewslink"), sitePids(t, s, "dspoolout")...)
 			if len(pids) == 0 {
 				return
 			}
@@ -53,6 +50,7 @@ end
 			time.Sleep(250 * time.Millisecond)
 		}
 	})
+	logWorkerInspectionOnFailure(t, s)
 
 	// One queued entry: dspoolout moves it to fake.S00000 for a batch worker and starts the
 	// realtime worker on a new dqueue/fake. Both connect and stay (the peer never answers).
@@ -66,7 +64,7 @@ end
 	s.Run(t, "dspoolout")
 	testkit.WaitFor(t, 10*time.Second, "the realtime and the first batch worker connected", func() bool {
 		open := peer.Open()
-		return open == 2 && realtimeWorker(s) > 0
+		return open == 2 && realtimeWorker(t, s) > 0
 	})
 
 	// Five more queue files behind it; the sequence file's time is old, so dspoolout runs

@@ -10,7 +10,7 @@ import (
 
 // TestDnewslinkRefileKeepsFlags (D-63): when the peer goes away with streamed entries still
 // pending, dnewslink writes them back to the queue file. Each entry must come back once, with
-// its ' H' (header only) and ' C<size>' (compressed spool) flags. Fails on main: the pending
+// its ' H' (header only), ' L<lines>' (body lines, D-174) and ' C<size>' (compressed spool) flags. Fails on main: the pending
 // entries lost both flags, and the one being sent was written a second time with them.
 func TestDnewslinkRefileKeepsFlags(t *testing.T) {
 	s := NewSite(t, SiteOptions{NoStart: true})
@@ -28,7 +28,7 @@ func TestDnewslinkRefileKeepsFlags(t *testing.T) {
 		return nil, false
 	})})
 	port := srv.Port()
-	q := "D.00000001/B.0001 <a1@e2e.test> 0,100 H C50\nD.00000001/B.0001 <a2@e2e.test> 100,100 H C50\n"
+	q := "D.00000001/B.0001 <a1@e2e.test> 0,100 H L7 C50\nD.00000001/B.0001 <a2@e2e.test> 100,100 H L7 C50\n"
 	if err := os.WriteFile(s.Dir+"/dqueue/out.S00000", []byte(q), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -51,8 +51,8 @@ func TestDnewslinkRefileKeepsFlags(t *testing.T) {
 	}
 	for i, id := range []string{"<a1@e2e.test>", "<a2@e2e.test>"} {
 		f := strings.Fields(lines[i])
-		if len(f) < 3 || f[1] != id || !strings.Contains(lines[i], " H") || !strings.Contains(lines[i], "C50") {
-			t.Errorf("entry %d is %q, want %s with its H and C50 flags", i+1, lines[i], id)
+		if len(f) < 3 || f[1] != id || !strings.Contains(lines[i], " H") || !strings.Contains(lines[i], "C50") || !strings.Contains(lines[i], " L7") {
+			t.Errorf("entry %d is %q, want %s with its H, L7 and C50 flags", i+1, lines[i], id)
 		}
 	}
 }

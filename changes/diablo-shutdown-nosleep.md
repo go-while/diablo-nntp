@@ -1,0 +1,1 @@
+- `diablo`: no fixed 2 s pause at shutdown unless `path_shutdown_cleanup` is set (the pause stays before the cleanup program); a stop or restart is 2 s faster, and so is the cleanup of every feeder e2e test (ISSUES.md D-188).

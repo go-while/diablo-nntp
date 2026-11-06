@@ -187,7 +187,7 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-171](#d-171-on-openbsd-readers-do-not-see-writes-through-their-shared-maps) | Medium (OpenBSD only) | On OpenBSD readers do not see writes through their shared maps | won't fix (design) |
 | [D-172](#d-172-feed-children-and-programs-diablo-runs-inherit-retained-control-connections) | Low | Feed children and programs diablo runs inherit retained control connections | fixed (#294) |
 | [D-173](#d-173-netremote-session-accounting-goes-to-a-placeholder-host) | Low | NETREMOTE session accounting goes to a placeholder host | fixed (#309) |
-| [D-174](#d-174-the-reader-overview-lines-column-is-empty-for-articles-without-a-lines-header) | Low | The reader overview Lines column is empty for articles without a Lines header | open |
+| [D-174](#d-174-the-reader-overview-lines-column-is-empty-for-articles-without-a-lines-header) | Low | The reader overview Lines column is empty for articles without a Lines header | fixed (#312) |
 | [D-175](#d-175-a-bad-dspoolctl-on-reload-stops-a-running-diablo) | Medium | A bad dspool.ctl on reload stops a running diablo | PR |
 | [D-176](#d-176-gz-header-parse-of-an-overview-data-file-is-not-bounded-by-the-file-size) | Low | .gz header parse of an overview data file is not bounded by the file size | fixed (#296) |
 | [D-177](#d-177-dreaderaccess-line-longer-than-the-read-buffer-is-parsed-in-pieces) | Low | dreader.access line longer than the read buffer is parsed in pieces | fixed (#296) |
@@ -201,6 +201,7 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-185](#d-185-a-failed-history-add-is-answered-as-a-permanent-reject) | Medium | A failed history add is answered as a permanent reject | fixed (#314) |
 | [D-186](#d-186-a-refused-dspoolctl-reload-is-not-tried-again) | Low | A refused dspool.ctl reload is not tried again | fixed (#318) |
 | [D-187](#d-187-list-file-lines-get-rrn-at-the-read-buffer-edge) | Low | LIST file lines get "\r\r\n" at the read buffer edge | fixed (#318) |
+| [D-188](#d-188-diablo-sleeps-2-s-at-every-shutdown) | Low | diablo sleeps 2 s at every shutdown | fixed (#316) |
 
 Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315), [F-02 configure script](#f-02-configure-script-for-the-build-options), [F-03 refeed a whole spool](#f-03-refeed-a-whole-spool-to-another-server), [F-04 NoCeM notices](#f-04-nocem-notices), [F-05 init scripts](#f-05-init-scripts-and-adm-script-replacements), [F-06 Perl authentication](#f-06-perl-authentication-for-dreaderd).
 
@@ -1133,6 +1134,7 @@ Plan (maintainer, 2026-11-04: "dreaderd gets :lines from the feeder"):
 - diablo counts the body lines while it receives an article and writes them to the queue entry as ` L<lines>`, next to ` H` and ` C<size>` (2026-11-05, Jesse and go-while: counting in dnewslink would read every body, which a header feed otherwise does not touch on an uncompressed spool). Every queue writer keeps the field (dnewslink's requeue and refile writes, drequeue); an older dnewslink ignores it.
 - `dnewslink -H` passes the count to dreaderd with the size it already sends, as feed-only data, not as an article header: `Bytes: <size> <lines>`, which an older dreaderd's `strtol()` reads as the size alone. A queue entry without ` L` gives `Bytes: <size>` as before. With `-HB` a stored Bytes line passes through unchanged.
 - On a full feed dreaderd counts the body lines itself.
+Fixed (#312) as planned; dreaderd keeps the count in the overview record's spare field (`oa_Lines`, the file format is unchanged), and records written before, queue entries without ` L` and header feeds from an older dnewslink keep the `Lines:` header. `dspoolrefeed` writes ` L<lines>` too. Tests: `TestReaderOverviewLinesFullFeed`, `TestReaderOverviewLinesHeaderFeed`, `TestReaderOverviewLinesOldQueue`, `TestReaderOverviewLinesOldHeaderFeed`, and the extended refile and requeue tests.
 - dreaderd takes the count out as it does `Bytes:` today, and stores it in the overview record. `OverArt` has an unused field (`oa_UnusedX`, always written as 0), so the files keep their format.
 - OVER/XOVER/XZVER and HDR `:lines` use the stored count. Records written before the change (count 0, or the field never set) fall back to the `Lines:` header. LIST OVERVIEW.FMT may then say `:lines` (RFC 3977 8.4.3 prefers it to `Lines:`).
 - No `Lines:` header is added to any article (RFC 5536 3.3.1, F-07). `genlines` (`-L`) stays for feeds to other servers that want it, with the sample text corrected: it is not what dreaderd needs.
@@ -1177,6 +1179,9 @@ Fixed (#314): an unreadable record ends the walk as a miss in all three (the exi
 ### D-185 A failed history add is answered as a permanent reject
 `util/diablo.c`, commit path: `HistoryAdd()` returns `RCTRYAGAIN` for a full history volume (ENOSPC), a chain lock failure and a failed index write, but the code after `RCALREADY` turned every other value into `RCREJECT`. The peer got 437 or 439, dropped an article that was already in the spool, and did not offer it again, while the spool-open failure a few lines earlier already answered 436/431.
 Fixed (#314): `RCTRYAGAIN` is passed on (436 to IHAVE, 431 to TAKETHIS), counted as an I/O error and logged as `HistoryTryAgain`; `RCREJECT` stays for any other value. Test: `TestFeederHistoryWriteFailureTryAgain` (a shim fails the history pwrite with ENOSPC).
+### D-188 diablo sleeps 2 s at every shutdown
+`util/diablo.c`, the end of the main loop: after the feed children are gone and the logs are flushed, diablo slept 2 s unconditionally before running `path_shutdown_cleanup`, also when none is set. Every stop and restart took 2 s longer than needed, and so did the cleanup of every feeder e2e test (about 85 tests sat at 2.0x s, roughly 170 s of a suite run). Found while measuring the e2e suite's time.
+Fixed (#316): the pause stays only before a cleanup program, which may count on it. Test: `TestFeederExitWithoutCleanupIsQuick` (2.0 s on main, 0.03 s here).
 
 ### D-186 A refused dspool.ctl reload is not tried again
 `lib/spool.c`, `LoadSpoolCtl()`: the D-175 fix (#308) set `SpoolMTime` before the reload was checked, so a file refused for a reason that passes without a change to it (a spool partition not mounted yet: "Missing spool partition") was not looked at again until its mtime changed; diablo kept the old spool set without saying so again. Found in go-while's review pass of the code merged since #296.

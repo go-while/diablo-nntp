@@ -1,0 +1,1 @@
+- `tests/e2e`: the tests that look at processes and open files (`TestDnewslinkConnlife`, `TestDnewslinkConnlifeNearest`, `TestControlWithoutFromNoFdLeak`, `TestMaxParallelCountsRealtime`, `TestFeederChildSighupAfterQuit`) run on FreeBSD, NetBSD and illumos too (`ps`/`procstat`, `ps`/`fstat`, `ps`/`pargs`/`pfiles`); before they read `/proc` and were skipped off Linux.

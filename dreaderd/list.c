@@ -694,7 +694,7 @@ NNListGroup(Connection *conn)
 	int resLen;
         int artSize;
 
-        if (GetOverRecord(ov, conn->co_ListBegNo, &resLen, &artSize, NULL, NULL) != NULL) {
+        if (GetOverRecord(ov, conn->co_ListBegNo, &resLen, &artSize, NULL, NULL, NULL) != NULL) {
 	    MBPrintf(&conn->co_TMBuf, "%lld\r\n",
 		artno_art(conn->co_ArtBeg, conn->co_ArtEnd, conn->co_ListBegNo, conn->co_Numbering));
 	}
