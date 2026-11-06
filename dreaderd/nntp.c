@@ -23,7 +23,7 @@ Prototype void NNTPLast(Connection *conn, char **pptr);
 Prototype void NNTPNext(Connection *conn, char **pptr);
 Prototype void NNTPStat(Connection *conn, char **pptr);
 Prototype int SelectGroup(Connection *conn, const char *group);
-Prototype const char ArtDeniedReply[];
+Prototype const char *ArtDeniedReply(const Connection *conn);
 Prototype int ArtAccessCheckNeeded(const Connection *conn);
 Prototype const char *ArtAccessDenied(const Connection *conn, const char *hdr, int len, int complete);
 Prototype int NoCurrentArticle(Connection *conn);
@@ -207,12 +207,19 @@ NNTPGroup(Connection *conn, char **pptr)
 }
 
 /*
- * ArtDeniedReply - D-195: the answer for an article in no group the reader
- *		    may read, as INN's for a client that cannot authenticate
- *		    again (dreaderd's access is fixed once the connection is
- *		    set up).
+ * ArtDeniedReply() - D-195: the answer for an article in no group the
+ *		      reader may read, as INN's: 480 while the client may
+ *		      still log in (a connection allowed by its address may
+ *		      use AUTHINFO, and the login can select another readerdef
+ *		      with other groups), 502 after a login.
  */
-const char ArtDeniedReply[] = "502 Read access denied for this article\r\n";
+const char *
+ArtDeniedReply(const Connection *conn)
+{
+    if (conn->co_Flags & COF_AUTHINFO)
+	return("502 Read access denied for this article\r\n");
+    return("480 Read access denied for this article\r\n");
+}
 
 /*
  * ArtAccessCheckNeeded() - D-195: does a request by message-id from this
@@ -256,7 +263,7 @@ artGroupReadable(const Connection *conn, const char *g, int l)
  *		   from Newsgroups; the article is readable if any of them is
  *		   in the reader's groups list, and also if it has neither
  *		   header (but not when the header was cut short before the
- *		   end: then it is refused).  The reply is ArtDeniedReply.
+ *		   end: then it is refused).  The reply is ArtDeniedReply().
  */
 const char *
 ArtAccessDenied(const Connection *conn, const char *hdr, int len, int complete)
@@ -346,7 +353,7 @@ ArtAccessDenied(const Connection *conn, const char *hdr, int len, int complete)
 		return(NULL);
 	}
     }
-    return((found || !complete) ? ArtDeniedReply : NULL);
+    return((found || !complete) ? ArtDeniedReply(conn) : NULL);
 }
 
 /*

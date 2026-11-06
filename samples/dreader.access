@@ -282,7 +282,8 @@
 #		  with the group options and they should be used sparingly.
 #		  It also limits ARTICLE, HEAD, BODY, STAT and HDR/XHDR by
 #		  message-id: an article in none of these groups (from its
-#		  Xref, else Newsgroups) is answered 502 (D-195).
+#		  Xref, else Newsgroups) is answered 480, or 502 after
+#		  a login (D-195).
 # listgroups	: name of a groupdef which restricts which groups are
 #		  listed for the client with the LIST commands. Defaults
 #		  to the groups option above.

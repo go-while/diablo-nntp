@@ -671,6 +671,7 @@ typedef struct ServReq {
     char	*sr_AccHdr;	/* D-195: its Xref and Newsgroups lines, for the groups check */
     int		sr_AccLen;	/* its length */
     int		sr_AccIn;	/* 1: in an Xref or Newsgroups line, for continuations */
+    int		sr_AccCut;	/* 1: such a line was left out: the check fails closed */
     int		sr_Denied;	/* D-195: the reader may not read this article */
 } ServReq;
 

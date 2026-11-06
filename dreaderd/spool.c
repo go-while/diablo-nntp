@@ -30,7 +30,10 @@ void NNGetLocal1(Connection *conn);
  * accHeaderLine() - D-195: keep a header line (buf, len bytes without the
  *		     line end) for the groups check, if it is an Xref or
  *		     Newsgroups line or a continuation of one.  A line that
- *		     does not fit is left out whole, never cut.
+ *		     does not fit is left out whole, never cut, and
+ *		     sr_AccCut set (also when there is no memory): the check
+ *		     then treats the header as incomplete and refuses the
+ *		     article unless an allowed group was kept.
  */
 static void
 accHeaderLine(ServReq *sreq, const char *buf, int len)
@@ -44,10 +47,14 @@ accHeaderLine(ServReq *sreq, const char *buf, int len)
 	if (!sreq->sr_AccIn)
 	    return;
     }
-    if (sreq->sr_AccHdr == NULL && (sreq->sr_AccHdr = malloc(ACC_HDR_MAX)) == NULL)
+    if (sreq->sr_AccHdr == NULL && (sreq->sr_AccHdr = malloc(ACC_HDR_MAX)) == NULL) {
+	sreq->sr_AccCut = 1;
 	return;
-    if (sreq->sr_AccLen + len + 2 > ACC_HDR_MAX)
+    }
+    if (sreq->sr_AccLen + len + 2 > ACC_HDR_MAX) {
+	sreq->sr_AccCut = 1;
 	return;
+    }
     memcpy(sreq->sr_AccHdr + sreq->sr_AccLen, buf, len);
     sreq->sr_AccLen += len;
     sreq->sr_AccHdr[sreq->sr_AccLen++] = '\n';
@@ -268,7 +275,7 @@ NNGetLocal1(Connection *conn)
 		    if (hb != NULL)
 			got = pread(lf, hb, want, offset);
 		    if (got < 0)
-			denied = ArtDeniedReply;
+			denied = ArtDeniedReply(sreq->sr_CConn);
 		    else
 			denied = ArtAccessDenied(sreq->sr_CConn, hb, (int)got, got == (ssize_t)size);
 		    free(hb);
@@ -344,6 +351,7 @@ NNSpoolResponse1(Connection *conn)
 	if (!sreq->sr_HeadOnly && strtol(buf, NULL, 10) == 220) {
 	    sreq->sr_AccLen = 0;
 	    sreq->sr_AccIn = 0;
+	    sreq->sr_AccCut = 0;
 	    sreq->sr_Denied = 0;
 	    /* We have a positive answer, we may cache article */
 	    if (conn->co_Desc->d_Cache) {
@@ -549,7 +557,8 @@ NNSpoolResponse2(Connection *conn)
 	     * lines so far are only in co_ArtBuf), its body is drained.
 	     */
 	    if (sreq->sr_CConn &&
-		    ArtAccessDenied(sreq->sr_CConn, sreq->sr_AccHdr ? sreq->sr_AccHdr : "", sreq->sr_AccLen, 1) != NULL) {
+		    ArtAccessDenied(sreq->sr_CConn, sreq->sr_AccHdr ? sreq->sr_AccHdr : "",
+			sreq->sr_AccLen, !sreq->sr_AccCut) != NULL) {
 		sreq->sr_Denied = 1;
 		MBFree(&sreq->sr_CConn->co_ArtBuf);
 	    }
@@ -782,7 +791,7 @@ NNSpoolResponse3(Connection *conn)
 	    if (sreq->sr_CConn == NULL) {
 		NNFinishSReq(conn, NULL, 0);
 	    } else if (sreq->sr_Denied) {
-		NNFinishSReq(conn, ArtDeniedReply, 0);
+		NNFinishSReq(conn, ArtDeniedReply(sreq->sr_CConn), 0);
 	    } else {
 		switch(sreq->sr_CConn->co_ArtMode) {
 		case COM_ARTICLE:
