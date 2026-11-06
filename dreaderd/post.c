@@ -202,8 +202,8 @@ injQuoted(MBufHead *mb, const char *v)
  *	the hourly hash NNTP-Posting-Host had (the same value for the same
  *	source, opaque to other sites); posting-account, only with
  *	"showposter yes", is the name the client logged in with (encrypted
- *	with a cryptpw); logging-data identifies the post in the logs,
- *	"<time> <pid>"; mail-complaints-to is abuseto.
+ *	with a cryptpw); mail-complaints-to is abuseto.  No logging-data:
+ *	the "post ok" log line has the Message-ID, which finds the post.
  *	Folded before each parameter (3.2.8: folding only around the ";").
  */
 /*
@@ -232,7 +232,6 @@ PostInjectionHeaders(MBufHead *mb, Connection *conn, time_t t, const char *crypt
 {
     const Vserver *vs = conn->co_Auth.dr_VServerDef;
     char ident[64];
-    char trace[64];
     char addr[NI_MAXHOST + 8];		/* the client's address, for posting-host */
     const char *a;
 
@@ -281,11 +280,6 @@ PostInjectionHeaders(MBufHead *mb, Connection *conn, time_t t, const char *crypt
 #endif
 	    injQuoted(mb, conn->co_Auth.dr_AuthUser);
     }
-
-    /* logging-data: what finds the post in the logs, the same with a cryptpw */
-    snprintf(trace, sizeof(trace), "%lu %d", (unsigned long)t, (int)getpid());
-    MBPrintf(mb, ";\r\n\tlogging-data=");
-    injQuoted(mb, trace);
 
     if (*vs->vs_AbuseTo) {
 	MBPrintf(mb, ";\r\n\tmail-complaints-to=");
