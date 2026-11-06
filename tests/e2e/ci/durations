@@ -474,6 +474,7 @@ TestSoutOverlongLine 2.03
 TestSpamfilterClearNullHashAry 0.00
 TestSpamFilterLockFailure 2.14
 TestSpoolCtlBadReloadKeepsRunning 80.16
+TestSpoolCtlBadReloadRetried 125.00
 TestSpoolCtlDontstoreWithoutSpools 2.03
 TestSpoolCtlTooManySpoolLines 0.00
 TestSpoolCtlUnknownOption 0.00

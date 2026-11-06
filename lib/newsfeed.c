@@ -11,8 +11,8 @@
 
 #include "defs.h"
 
-Prototype int FeedAdd(const char *msgid, time_t t, History *h, const char *nglist, const char *npath, const char *dist, int headerOnly, const char *artType, const char *cSize);
-Prototype int FeedWrite(int logIt, int (*callback)(const char *hlabel, const char *msgid, const char *path, const char *offsize, int plfo, int headOnly, const char *artType, const char *cSize), const char *msgid, const char *path, const char *offsize, const char *nglist, const char *npath, const char *dist, const char *headOnly, const char *artType, int spamArt, const char *cSize);
+Prototype int FeedAdd(const char *msgid, time_t t, History *h, const char *nglist, const char *npath, const char *dist, int headerOnly, const char *artType, int lines, const char *cSize);
+Prototype int FeedWrite(int logIt, int (*callback)(const char *hlabel, const char *msgid, const char *path, const char *offsize, int plfo, int headOnly, const char *artType, int lines, const char *cSize), const char *msgid, const char *path, const char *offsize, const char *nglist, const char *npath, const char *dist, const char *headOnly, const char *artType, int spamArt, int lines, const char *cSize);
 Prototype void FeedFlush(void);
 Prototype void LoadNewsFeed(time_t t, int force, const char *hlabel);
 Prototype void TouchNewsFeed(void);
@@ -160,7 +160,7 @@ int recursiveScan(NewsFeed *feed, int off, const void *data, int (*callback)(Nod
  */
 
 int 
-FeedAdd(const char *msgid, time_t t, History *h, const char *nglist, const char *npath, const char *dist, int headerOnly, const char *artType, const char *cSize)
+FeedAdd(const char *msgid, time_t t, History *h, const char *nglist, const char *npath, const char *dist, int headerOnly, const char *artType, int lines, const char *cSize)
 {
     int r = 0;
 
@@ -171,9 +171,13 @@ FeedAdd(const char *msgid, time_t t, History *h, const char *nglist, const char 
 
 	ArticleFileName(path, sizeof(path), h, ARTFILE_FILE_REL);
 
-	fprintf(FeedFo, "SOUT\t%s\t%lld,%ld\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
+	/*
+	 * L<lines> (the body lines, D-174) comes before cSize: cSize may be
+	 * empty, and strtok() would then take the next field for it.
+	 */
+	fprintf(FeedFo, "SOUT\t%s\t%lld,%ld\t%s\t%s\t%s\t%s\t%d\t%s\tL%d\t%s\n",
 	    path, (long long)h->boffset, (long)h->bsize, msgid, nglist, dist, npath,
-	    headerOnly, artType, cSize
+	    headerOnly, artType, lines, cSize
 	);
 	fflush(FeedFo);	/* simplify the parent reader on the pipe */
 	if (ferror(FeedFo)) {
@@ -191,7 +195,7 @@ FeedAdd(const char *msgid, time_t t, History *h, const char *nglist, const char 
  */
 int
 FeedWrite(int logIt,
-    int (*callback)(const char *hlabel, const char *msgid, const char *path, const char *offsize, int plfo, int headOnly, const char *artType, const char *cSize), 
+    int (*callback)(const char *hlabel, const char *msgid, const char *path, const char *offsize, int plfo, int headOnly, const char *artType, int lines, const char *cSize), 
     const char *msgid, 
     const char *path, 
     const char *offsize,
@@ -201,6 +205,7 @@ FeedWrite(int logIt,
     const char *headOnly,
     const char *artType,
     int spamArt,
+    int lines,
     const char *cSize
 ) {
     NewsFeed *nf;
@@ -281,7 +286,7 @@ FeedWrite(int logIt,
 		linesiz += siz;
 	    }
 
-	    r += callback(nf->nf_Label, msgid, path, offsize, nf->nf_PerLineFlushOpt, strtol(headOnly, NULL, 10), artType, cSize);
+	    r += callback(nf->nf_Label, msgid, path, offsize, nf->nf_PerLineFlushOpt, strtol(headOnly, NULL, 10), artType, lines, cSize);
 
 	}
     }

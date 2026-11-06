@@ -1,0 +1,2 @@
+- `lib/spool.c`: a dspool.ctl that a reload refused is tried again after 1, 2, 4 ... minutes and then every 60 minutes, even when the file did not change, so a spool partition that was not mounted yet at the reload is taken once it is there; each refusal logs when the next try is. Before, the file was not looked at again until it changed (ISSUES.md D-186).
+- `dreaderd`: LIST MODERATORS and LIST DISTRIBUTIONS no longer send "\r\r\n" for a CRLF line whose "\r" was the last byte of a 255-byte read (ISSUES.md D-187).

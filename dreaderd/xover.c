@@ -19,7 +19,7 @@ Prototype void NNTPOver(Connection *conn, char **pptr);
 Prototype void NNTPXZver(Connection *conn, char **pptr);
 Prototype void NNTPXPat(Connection *conn, char **pptr);
 Prototype void NNTPXPath(Connection *conn, char **pptr);
-Prototype int OutputOverview(Connection *conn, const char *res, int resLen, int artSize);
+Prototype int OutputOverview(Connection *conn, const char *res, int resLen, int artSize, int lines);
 
 void NNListNewNews(Connection *conn);
 void NNStartListOverview(Connection *conn, const char *hdr, const char *ran, const char *pat, int mode);
@@ -468,6 +468,7 @@ NNListOverviewRange(Connection *conn)
 #ifndef USE_OVER_MADVISE
 	int resLen;
 	int artSize;
+	int lines;
 	const char *res;
 	TimeRestrict *tr = NULL;
 #endif
@@ -490,8 +491,8 @@ NNListOverviewRange(Connection *conn)
 #else
 	if (conn->co_ArtMode == COM_NEWNEWS)
 	    tr = &conn->co_TimeRestrict;
-	if ((res = GetOverRecord(ov, conn->co_ListBegNo, &resLen, &artSize, tr, NULL)) != NULL) {
-	    OutputOverview(conn, res, resLen, artSize);
+	if ((res = GetOverRecord(ov, conn->co_ListBegNo, &resLen, &artSize, &lines, tr, NULL)) != NULL) {
+	    OutputOverview(conn, res, resLen, artSize, lines);
 	}
 	++conn->co_ListBegNo;
 #endif	/* USE_OVER_MADVISE */
@@ -516,7 +517,7 @@ NNStartListOverviewMsgId(Connection *conn, const char *msgid)
 }
 
 int
-OutputOverview(Connection *conn, const char *res, int resLen, int artSize)
+OutputOverview(Connection *conn, const char *res, int resLen, int artSize, int lines)
 {
     const char *hdr = conn->co_ListHdrs;
     int didIndex = 0;
@@ -561,6 +562,34 @@ OutputOverview(Connection *conn, const char *res, int resLen, int artSize)
 	rleft = resLen;
 
 	hch = tolower((unsigned char)*hdr);
+
+	/*
+	 * D-174: Lines (the 8th OVER field) and HDR :lines are the :lines
+	 * metadata, the body line count (RFC 3977 8.1.2, 8.4.2), when the feed
+	 * gave one; otherwise the stored Lines: header as before.
+	 */
+	if (lines >= 0 &&
+	    (conn->co_ArtMode == COM_XOVER || conn->co_ArtMode == COM_XZVER ||
+	     conn->co_ArtMode == COM_XHDR) &&
+	    ((hhlen == 5 && strncasecmp(hdr, "Lines", 5) == 0) ||
+	     (hhlen == 0 && hlen >= 6 && strncasecmp(hdr, ":lines", 6) == 0))
+	) {
+	    char sep = (conn->co_ArtMode == COM_XHDR) ? ' ' : '\t';
+	    artno_t an = artno_art(conn->co_ArtBeg, conn->co_ArtEnd, conn->co_ListBegNo, conn->co_Numbering);
+
+	    if (conn->co_ArtMode == COM_XZVER) {
+		if (didIndex == 0)
+		    MZPrintf(conn, "%lld", an);
+		MZPrintf(conn, "%c%d", sep, lines);
+	    } else {
+		if (didIndex == 0)
+		    MBPrintf(&conn->co_TMBuf, "%lld", an);
+		MBPrintf(&conn->co_TMBuf, "%c%d", sep, lines);
+	    }
+	    didIndex = 1;
+	    hdr += hlen;
+	    continue;
+	}
 
 	while (rleft) {
 	    int rlen;
