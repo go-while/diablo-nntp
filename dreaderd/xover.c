@@ -11,6 +11,9 @@
 
 #include "defs.h"
 
+/* articles a reader command by message-id looks at, newest first (D-193) */
+#define READER_MSGID_SCAN	100000
+
 Prototype void NNTPNewNews(Connection *conn, char **pptr);
 Prototype void NNTPXHdr(Connection *conn, char **pptr);
 Prototype void NNTPXOver(Connection *conn, char **pptr);
@@ -20,7 +23,6 @@ Prototype void NNTPXZver(Connection *conn, char **pptr);
 Prototype void NNTPXPat(Connection *conn, char **pptr);
 Prototype void NNTPXPath(Connection *conn, char **pptr);
 Prototype int OutputOverview(Connection *conn, const char *res, int resLen, int artSize, int lines);
-Prototype OverInfo *FindCanceledMsg(const char *group, const char *msgid, artno_t *partNo, int *pvalidGroups);
 
 void NNListNewNews(Connection *conn);
 void NNStartListOverview(Connection *conn, const char *hdr, const char *ran, const char *pat, int mode);
@@ -320,11 +322,14 @@ NNStartListOverview(Connection *conn, const char *hdr, const char *ran, const ch
     if (ran != NULL && ran[0] == '<') {
 	const char *mid = MsgId(ran, NULL);
 	artno_t artNo = -1;
-	int validGroups = 0;
 	OverInfo *ov = NULL;
 
+	/*
+	 * In the current group only, and at most the newest
+	 * READER_MSGID_SCAN articles: past that the answer is 430.
+	 */
 	if (mid != NULL && strcmp(mid, "<>") != 0 && conn->co_GroupName != NULL)
-	    ov = FindCanceledMsg(conn->co_GroupName, mid, &artNo, &validGroups);
+	    ov = FindMsgInGroup(conn->co_GroupName, mid, &artNo, READER_MSGID_SCAN);
 	if (ov == NULL || artNo < 0) {
 	    if (ov != NULL)
 		PutOverInfo(ov);
