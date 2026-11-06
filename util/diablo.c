@@ -1050,9 +1050,15 @@ DiabloServer(int lfd)
     DiabFilterClose(1);
     if (DOpts.SpamFilterOpt != NULL)
 	TermSpamFilter();
-    sleep(2);
 
     if (ShutdownCleanup && (strcmp(ShutdownCleanup, "NONE") != 0)) {
+	/*
+	 * The children are gone and the logs flushed.  The pause before
+	 * the cleanup program is old behaviour it may count on; without a
+	 * cleanup program there is nothing to wait for, so a stop (and a
+	 * restart) no longer takes 2 s longer than it needs.
+	 */
+	sleep(2);
 	if (system(ShutdownCleanup) != 0)
 	    logit(LOG_ERR, "shutdown cleanup %s failed", ShutdownCleanup);
     }
