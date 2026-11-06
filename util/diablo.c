@@ -3788,14 +3788,15 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		DoArtStats(STATS_REJECTED, STATS_REJ_ARTNUL, size);
 		DEBUGLOG(msgid, "ArtHasNul");
 		SETREJECT("artHasNul");
-	    } else if (artError & LAERR_NOBYTES) {
-		(void)PreCommit(msgid, PC_DELCOMM);
 	    } else if (artError & LAERR_ARTHASBARECR) {
 		DoArtStats(STATS_REJECTED, STATS_REJ_BARECR, size);
 		DEBUGLOG(msgid, "ArtHasBareCR");
 		SETREJECT("artHasBareCR");
 		(void)PreCommit(msgid, PC_DELCOMM);
 	    } else if (artError & LAERR_NOBYTES) {
+		/* header-only feed without Bytes:; an earlier branch for it
+		 * made this one unreachable, so it was logged UnknownReject */
+		(void)PreCommit(msgid, PC_DELCOMM);
 		DoArtStats(STATS_REJECTED, STATS_REJ_NOBYTES, size);
 		DEBUGLOG(msgid, "HdrOnlyNoBytes");
 		SETREJECT("HdrOnlyNoBytes");
@@ -3971,6 +3972,18 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		SETREJECT("PostDuplicate");
 		responded = 1;
 		retcode = RCALREADY;
+	    } else if (rhist == RCTRYAGAIN) {
+		/*
+		 * The history could not take the record (full disk, chain
+		 * lock or index write failed): temporary, the peer offers
+		 * the article again instead of dropping it.
+		 */
+		(void)PreCommit(msgid, PC_DELCOMM);
+		DoArtStats(STATS_REJECTED, STATS_REJ_IOERROR, size);
+		DEBUGLOG(msgid, "HistoryTryAgain");
+		SETREJECT("HistoryTryAgain");
+		responded = 1;
+		retcode = RCTRYAGAIN;
 	    } else {
 		/*
 		 * XXX: This should not happen

@@ -108,7 +108,7 @@ UTIL_PROGS = \
     dexpireover dreadover dpath dprimehostcache dstart \
     dclient dfeedinfo dlockhistory dfeedtest doverctl \
     drequeue dhisbench dhisexpire dhisctl dexpirecache \
-    dcancel dexpirescoring diablo dnewslink dgrpctl djoblog \
+    dcancel dexpirescoring diablo dnewslink dgrpctl djoblog dspoolrefeed \
     $(OPTIONAL_PROGS)
 
 SUP_PROGS = plock showlocks

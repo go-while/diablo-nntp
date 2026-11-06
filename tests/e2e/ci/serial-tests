@@ -1,0 +1,16 @@
+# Tests that run alone, after the shards: they measure time, wait for a worker
+# under load, or stop processes for a while, so other tests running beside them
+# would change their result. One extended regular expression per line (matched
+# against the top-level test name); blank lines and # comments are ignored.
+^TestAuthTimeout
+^TestReaderDNS
+^TestReaderLoginsQueueForDNSWorker
+^TestReaderQueueWaitLimit$
+^TestReaderStoppedDuringLoginBurst$
+^TestReaderForkKeepsNoQueuedClients$
+^TestReaderTooManyRefsHostLimit$
+^TestReaderAccessCacheRenameWaitsForReaders$
+^TestDnewslinkConnlife
+^TestDnewslinkTermStalledPeer$
+^TestDnewsfeedsLimitsLive$
+^TestMaxParallelCountsRealtime$

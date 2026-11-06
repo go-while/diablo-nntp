@@ -103,12 +103,12 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-86](#d-86-spool-number-off-by-one) | Low | Off-by-one in the spool number checks reads `SpoolObjectMap[100]` | fixed (#120) |
 | [D-87](#d-87-numeric-ipv6-host-in-diablohosts-dropped-on-a-machine-without-ipv6) | Low | `getaddrinfo()` with NULL hints in `lib/hostauth.c` drops a numeric IPv6 `diablo.hosts` entry on glibc 2.39 without a global IPv6 address | fixed (#115) |
 | [D-88](#d-88-dnewslink--p-overwrites-leftover-lines-of-an-earlier-run) | Low | `dnewslink -p`: a later pipe run overwrites the leftover lines an earlier run wrote to the batch file | fixed (#256) |
-| [D-89](#d-89-ai_addrconfig-still-passed-for-listen-bind-and-connect-addresses) | Low | `dreaderd` listen, bind and connect and `dsyncgroups` still pass `AI_ADDRCONFIG` | open |
+| [D-89](#d-89-ai_addrconfig-still-passed-for-listen-bind-and-connect-addresses) | Low | `dreaderd` listen, bind and connect and `dsyncgroups` still pass `AI_ADDRCONFIG` | fixed (#306) |
 | [D-90](#d-90-kpdb-sort-writes-the-offsets-one-record-at-a-time) | Low | `KPDBSort()` does one 8-byte write per record; on a full ZFS dataset a sort of 259 records took about 51 s | fixed (#301) |
 | [D-91](#d-91-takethis-without-an-argument-answers-439-instead-of-501) | Low | TAKETHIS without an argument answers 439 instead of 501 | fixed (#146) |
-| [D-92](#d-92-header-only-feed-reports-unknownreject-for-laerr_nobytes) | Low | Header-only feed reports UnknownReject for LAERR_NOBYTES | open |
+| [D-92](#d-92-header-only-feed-reports-unknownreject-for-laerr_nobytes) | Low | Header-only feed reports UnknownReject for LAERR_NOBYTES | fixed (#306) |
 | [D-93](#d-93-kpdbgetfield-key-scan-is-not-bounded-by-the-record-length) | Low | KPDBGetField key scan is not bounded by the record length | fixed (#300) |
-| [D-94](#d-94-dcontrolctl-dnewsfeeds-and-dserverhosts-split-long-lines) | Low | dcontrol.ctl, dnewsfeeds and dserver.hosts split long lines | open |
+| [D-94](#d-94-dcontrolctl-dnewsfeeds-and-dserverhosts-split-long-lines) | Low | dcontrol.ctl, dnewsfeeds and dserver.hosts split long lines | fixed (#306) |
 | [D-95](#d-95-maxinboundrate-value-is-read-past-its-end) | Low | MaxInboundRate value ending in ';' or in an hour number is read past its end | fixed (#300) |
 | [D-96](#d-96-spamfilter-s0-turns-the-filter-off-and-use_spam_rw_map-0-does-not-compile) | Low | spamfilter: s0 turns the filter off, and USE_SPAM_RW_MAP 0 does not compile | fixed (#147) |
 | [D-97](#d-97-diab-filter-writes-one-byte-past-its-reply-buffer-writeall-loops-on-a-zero-write) | Low | diab-filter writes one byte past its reply buffer; writeAll loops on a zero write | fixed (#291) |
@@ -116,31 +116,31 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-100](#d-100-cachefile-builds-the-path-without-bounds) | Low | cacheFile builds the path without bounds | fixed (#230) |
 | [D-101](#d-101-spool-server-replies-have-no-line-cap-other-small-items-in-dreaderdserverc) | Low | Spool server replies have no line cap; other small items in dreaderd/server.c | fixed (#298) |
 | [D-102](#d-102-readaccesscache-leaks-descriptors-when-a-cache-open-fails) | Low | ReadAccessCache leaks descriptors when a cache open fails | fixed (#160) |
-| [D-103](#d-103-access-cache-reload-leaks-the-old-groupdef-and-grouplist-nodes) | Low | Access cache reload leaks the old GroupDef and GroupList nodes | open |
+| [D-103](#d-103-access-cache-reload-leaks-the-old-groupdef-and-grouplist-nodes) | Low | Access cache reload leaks the old GroupDef and GroupList nodes | fixed (#306) |
 | [D-104](#d-104-dhisexpire-uses-the-history-record-size-without-a-check) | Low | dhisexpire uses the history record size without a check | fixed (#291) |
 | [D-105](#d-105-dexpire--o-uses-a-null-file-after-a-failed-fopen) | Low | dexpire -o uses a NULL FILE after a failed fopen | fixed (#291) |
 | [D-106](#d-106-dexpireover-getfirstartage-trusts-the-over-file-header) | Low | dexpireover getFirstArtAge trusts the over file header | fixed (#162) |
 | [D-107](#d-107-metaspool-with-more-than-100-spool-lines-or-dontstore-with-no-spools) | Low | metaspool with more than 100 spool lines, or dontstore with no spools | fixed (#300) |
 | [D-108](#d-108-dcancel-stores-the-history-offsets-before-the-rewritten-spool-file-is-in-place) | Medium | dcancel stores the history offsets before the rewritten spool file is in place | fixed (#170) |
 | [D-109](#d-109-dsyncgroups-use-after-free-of-the-address-lists-unchecked-strtok-results) | Medium | dsyncgroups: use after free of the address lists, unchecked strtok results | fixed (#171) |
-| [D-110](#d-110-dcontrolctl-ct_verify-leaks-or-keeps-a-stale-value-when-two-rules-match) | Low | dcontrol.ctl: ct_Verify leaks or keeps a stale value when two rules match | open |
+| [D-110](#d-110-dcontrolctl-ct_verify-leaks-or-keeps-a-stale-value-when-two-rules-match) | Low | dcontrol.ctl: ct_Verify leaks or keeps a stale value when two rules match | fixed (#306) |
 | [D-111](#d-111-pgpverify-does-not-check-fdopen-and-realloc-results) | Low | pgpverify does not check fdopen() and realloc() results | fixed (#291) |
 | [D-112](#d-112-strcpy-into-sun_path-in-the-filter-socket-code) | Low | strcpy() into sun_path in the filter socket code | fixed (#291) |
 | [D-113](#d-113-cached-head-and-body-of-an-article-with-an-lf-only-headerbody-separator) | Medium | Cached HEAD and BODY of an article with an LF-only header/body separator | fixed (#173) |
 | [D-114](#d-114-egets-loses-the-prefix-of-an-overlong-line) | Medium | egets() loses the prefix of an overlong line | fixed (#166) |
 | [D-115](#d-115-dnewslink-flushcommandbuffer-can-spin-on-a-zero-write) | Low | dnewslink flushCommandBuffer() can spin on a zero write | fixed (#291) |
-| [D-116](#d-116-dnewslink-writelarge-reports-a-write-timeout-as-success) | Low | dnewslink writeLarge() reports a write timeout as success | open |
+| [D-116](#d-116-dnewslink-writelarge-reports-a-write-timeout-as-success) | Low | dnewslink writeLarge() reports a write timeout as success | fixed (#306) |
 | [D-117](#d-117-kpdbsort-is-not-synchronized-with-readers) | Medium | KPDBSort() is not synchronized with readers | fixed (#301) |
 | [D-118](#d-118-kpdbwrite-with-a-null-token-the-documented-behaviour-does-not-exist) | Low | KPDBWrite() with a NULL token: the documented behaviour does not exist | fixed (#301) |
 | [D-119](#d-119-articlefilename-builds-a-relative-path-for-an-unconfigured-spool) | Low | ArticleFileName builds a relative path for an unconfigured spool | fixed (#300) |
-| [D-120](#d-120-unknown-options-inside-spool-and-metaspool-blocks-are-only-logged) | Low | Unknown options inside spool and metaspool blocks are only logged | open |
+| [D-120](#d-120-unknown-options-inside-spool-and-metaspool-blocks-are-only-logged) | Low | Unknown options inside spool and metaspool blocks are only logged | fixed (#306) |
 | [D-121](#d-121-getspoolfrompath-is-dead-code-with-a-stray-printf-and-a-prefix-match) | Low | GetSpoolFromPath is dead code with a stray printf and a prefix match | fixed (#291) |
 | [D-122](#d-122-kp-files-above-2-gb-wrap-the-int-offsets) | Low | KP files above 2 GB wrap the int offsets | fixed (#301) |
 | [D-123](#d-123-authinfo-user-accepted-again-after-a-passwordless-authentication) | Low | AUTHINFO USER accepted again after a passwordless authentication | fixed (#297) |
 | [D-124](#d-124-capabilities-with-an-argument-answers-101) | Low | CAPABILITIES with an argument answers 101 | fixed (#297) |
 | [D-125](#d-125-reader-only-command-on-a-transit-connection-answers-500-not-502) | Low | Reader-only command on a transit connection answers 500, not 502 | fixed (#297) |
 | [D-126](#d-126-strtoll-overflow-into-artno_input) | Low | strtoll() overflow into artno_input() | fixed (#300) |
-| [D-127](#d-127-dicmd-splits-lines-longer-than-255-bytes) | Low | dicmd splits lines longer than 255 bytes | open |
+| [D-127](#d-127-dicmd-splits-lines-longer-than-255-bytes) | Low | dicmd splits lines longer than 255 bytes | fixed (#306) |
 | [D-128](#d-128-dkp-parses-the-second-piece-of-a-long-input-line-as-a-new-record) | Low | dkp parses the second piece of a long input line as a new record | fixed (#288) |
 | [D-129](#d-129-dclient-is-ipv4-only-gethostbyname) | Low | dclient is IPv4-only (gethostbyname) | fixed (#298) |
 | [D-130](#d-130-newnews-and-newgroups-ignore-the-distributions-argument) | Low | NEWNEWS and NEWGROUPS ignore the distributions argument | open |
@@ -186,13 +186,19 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-170](#d-170-on-illumos-a-hand-back-lost-at-the-descriptor-limit-stays-counted) | Low | On illumos a hand-back lost at the descriptor limit stays counted (Act) | open |
 | [D-171](#d-171-on-openbsd-readers-do-not-see-writes-through-their-shared-maps) | Medium (OpenBSD only) | On OpenBSD readers do not see writes through their shared maps | won't fix (design) |
 | [D-172](#d-172-feed-children-and-programs-diablo-runs-inherit-retained-control-connections) | Low | Feed children and programs diablo runs inherit retained control connections | fixed (#294) |
-| [D-173](#d-173-netremote-session-accounting-goes-to-a-placeholder-host) | Low | NETREMOTE session accounting goes to a placeholder host | open |
+| [D-173](#d-173-netremote-session-accounting-goes-to-a-placeholder-host) | Low | NETREMOTE session accounting goes to a placeholder host | fixed (#309) |
 | [D-174](#d-174-the-reader-overview-lines-column-is-empty-for-articles-without-a-lines-header) | Low | The reader overview Lines column is empty for articles without a Lines header | open |
+| [D-175](#d-175-a-bad-dspoolctl-on-reload-stops-a-running-diablo) | Medium | A bad dspool.ctl on reload stops a running diablo | PR |
 | [D-176](#d-176-gz-header-parse-of-an-overview-data-file-is-not-bounded-by-the-file-size) | Low | .gz header parse of an overview data file is not bounded by the file size | fixed (#296) |
 | [D-177](#d-177-dreaderaccess-line-longer-than-the-read-buffer-is-parsed-in-pieces) | Low | dreader.access line longer than the read buffer is parsed in pieces | fixed (#296) |
 | [D-178](#d-178-dsyncgroups-cuts-a-long-authinfo-user-name-or-password) | Low | dsyncgroups cuts a long AUTHINFO user name or password | fixed (#296) |
-| [D-179](#d-179-netbsd-embedded-perl-loads-no-script) | Low | NetBSD: embedded Perl loads no script | open |
-| [D-180](#d-180-netbsd-reader-fork-and-queue-wait-tests-are-intermittent) | Low | NetBSD: reader fork and queue-wait tests are intermittent | fixed |
+| [D-179](#d-179-netbsd-embedded-perl-loads-no-script) | Low | NetBSD: embedded Perl loads no script | fixed (#307) |
+| [D-180](#d-180-netbsd-reader-fork-and-queue-wait-tests-are-intermittent) | Low | NetBSD: reader fork and queue-wait tests are intermittent | fixed (#303) |
+| [D-181](#d-181-readerdns-and-readerfeedforks-take-any-value) | Low | readerdns and readerfeedforks take any value | fixed (#305) |
+| [D-182](#d-182-kpdb-lookup-misses-wait-for-the-append-lock-after-the-resort-limit) | Low | KPDB lookup misses wait for the append lock after the resort limit | fixed (#311) |
+| [D-183](#d-183-history-add-after-a-partial-last-record-skews-every-later-index) | Medium | History add after a partial last record skews every later index | fixed (#314) |
+| [D-184](#d-184-a-failed-read-on-a-history-chain-counts-as-found) | Medium | A failed read on a history chain counts as "found" | fixed (#314) |
+| [D-185](#d-185-a-failed-history-add-is-answered-as-a-permanent-reject) | Medium | A failed history add is answered as a permanent reject | fixed (#314) |
 
 Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315), [F-02 configure script](#f-02-configure-script-for-the-build-options), [F-03 refeed a whole spool](#f-03-refeed-a-whole-spool-to-another-server), [F-04 NoCeM notices](#f-04-nocem-notices), [F-05 init scripts](#f-05-init-scripts-and-adm-script-replacements), [F-06 Perl authentication](#f-06-perl-authentication-for-dreaderd).
 
@@ -793,6 +799,8 @@ bindhost) and `util/dsyncgroups.c:915` still pass `AI_ADDRCONFIG`. On a glibc 2.
 global IPv6 address a numeric IPv6 listen, bind or connect address (for example `::1`) fails with
 `EAI_ADDRFAMILY`. Same cause as D-87. From reading (found in the reviews of D-87).
 
+Fixed (#306).
+
 ### D-90 KPDB sort writes the offsets one record at a time
 `KPDBSort()` (`lib/kpdb.c`) writes the sorted offset of every record with its own 8-byte `pwrite`.
 On a ZFS dataset at its quota each such write took about 0.2 s: `dkp -r` and `dgrpctl newgroup` on a
@@ -803,12 +811,15 @@ starts over each time. Found while testing a full file system on the scratch ins
 build the offsets in memory and write them in one or a few large writes.
 
 Fixed (#301): `KPDBSort()` stores the offsets through a writable mapping of the file, one 8-byte store per record in memory and no system call per record (a sort of 600 records uses 3 `pwrite` calls instead of 603); the old per-record `pwrite` stays as the fallback when the mapping fails. One big `write()` of the records was not used: a field replaced in place holds only the record lock, not the append lock the sort holds, and would be overwritten with the old bytes. The "needs sort" marker is still written first and cleared last, so an interrupted sort is resorted by the next open. Not measured on a full ZFS dataset (none here): a mapped store on a COW file system at its quota may still be slow or fail at write-back. Test: `TestKPDBSortFewWrites`, `TestKPDBInterruptedSortResorts`.
+On OpenBSD the sort keeps one `pwrite` per record: without a unified buffer cache (D-171) a writable map would write back stale page bytes over a field another process has just replaced with `pwrite()` (jesse/cc-1, review of #301).
 
 ### D-91 TAKETHIS without an argument answers 439 instead of 501
 `util/diablo.c:2076`: `TAKETHIS` with no message-id answers 439 (MsgIdMismatch); the other commands answer 501. From reading, not run (deep review of main 76578ae by go-while's reviewers).
 
 ### D-92 Header-only feed reports UnknownReject for LAERR_NOBYTES
 `util/diablo.c:3629-3639`: `LAERR_NOBYTES` on a header-only feed is reported as `UnknownReject`; the `HdrOnlyNoBytes` branch cannot be reached. Cosmetic. From reading, not run (deep review of main 76578ae by go-while's reviewers).
+
+Fixed (#306).
 
 ### D-93 KPDBGetField key scan is not bounded by the record length
 `lib/kpdb.c:403-409`: the scan for a key (`tok == NULL`) does not stop at `recLen`. Needs a damaged file. From reading, not run (deep review of main 76578ae by go-while's reviewers).
@@ -817,6 +828,8 @@ Fixed (#301): `KPDBSort()` stores the offsets through a writable mapping of the 
 `dreaderd/control.c:354`, `:373`: `dcontrol.ctl` is read with `fgets(buf[256])`; the same class (see D-82) in `dnewsfeeds` through `lib/include.c` `igets` (no long-line signal) and in `dserver.hosts` (`dreaderd/server.c:109`, `:116`). From reading, not run (deep review of main 76578ae by go-while's reviewers). The same long-line splitting occurs when serving LIST DISTRIBUTIONS, LIST DISTRIB.PATS and LIST MODERATORS (`dreaderd/list.c:446-459`, `:474-488`, `:517-529`): each 255-byte `fgets` chunk becomes a separate protocol entry instead of preserving or rejecting a complete source line (malformed list output for long local lines; independent of D-133). Added from go-while's third batch, not run.
 
 Partly fixed in #298: `dserver.hosts` skips a line longer than the read buffer whole and logs `dserver.hosts: line N is longer than M bytes` (as D-177 does for `dreader.access`). `dcontrol.ctl`, `dnewsfeeds` and the LIST output are still open.
+
+Fixed (#306).
 
 ### D-95 MaxInboundRate value is read past its end
 `lib/newsfeed.c:2502-2513`: a `MaxInboundRate` value ending in `;` is parsed past its NUL. The same happens for a value whose last hour number ends the string (for example `100:1`): `lib/newsfeed.c:2525-2532` steps past the NUL when the last hour ends the string. Config. From reading, not run (deep review of main 76578ae by go-while's reviewers).
@@ -848,6 +861,8 @@ Fixed in #160: when one cache file cannot be opened, ReadAccessCache closes the 
 ### D-103 Access cache reload leaks the old GroupDef and GroupList nodes
 `dreaderd/dns.c:3420-3444`, `:3477-3480`: each reload leaks the old nodes and names in `DnsMemPool`. From reading, not run (deep review of main 76578ae by go-while's reviewers).
 
+Fixed (#306).
+
 ### D-104 dhisexpire uses the history record size without a check
 `util/dhisexpire.c:196-198`: `hh.henSize` is used as the record size with no zero or minimum check (SIGFPE, or a read past the buffer). Needs a damaged history. From reading, not run (deep review of main 76578ae by go-while's reviewers).
 
@@ -875,6 +890,8 @@ Fixed in #171: the address list is freed after its last use, and an unset reply 
 ### D-110 dcontrol.ctl: ct_Verify leaks or keeps a stale value when two rules match
 `dreaderd/control.c:420-424` clears the flags of a reused `Control` but not `ct_Verify`; `:456` assigns a new `zallocStr()` over it. With two matching lines that both say `verify-`, the first string leaks (connection mempool, so bounded) and only the last line's flags and verifier are used. Cosmetic: free before assigning and clear it in the reuse branch. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
 
+Fixed (#306).
+
 ### D-111 pgpverify does not check fdopen() and realloc() results
 `util/pgpverify.c:218` (`Body = realloc(...)` then `memcpy`), `:391`, `:405`, `:533`, `:572` (`fdopen()` then `fprintf`/`fgets` on the result). On out-of-memory or descriptor exhaustion pgpverify dereferences NULL and crashes (dreaderd treats that as a failed verification, so it fails closed). One-line guards. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
 
@@ -897,6 +914,8 @@ Fixed in #166: egets() keeps the prefix of an overlong line. Test: tests/e2e/sou
 ### D-116 dnewslink writeLarge() reports a write timeout as success
 `util/dnewslink.c:3067-3104`. `NDEBUG` is defined at `:50` (before `<assert.h>` at `:51`), so `assert(bytes == 0)` at `:3102` is compiled out. On a poll timeout the code sets `WritesLosing` and breaks at `:3084` with bytes left, then returns the last `writev()` status, which is 0 after an EAGAIN (`:3061`) or the last partial count. The caller at `:2260` (`if (writeLarge(...) < 0)`) treats any non-negative value as success, so the article's result is wrong for that record. The connection is marked losing, so the next command fails. What the code does after success (whether the record is refiled) was not checked. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
 
+Fixed (#306).
+
 ### D-117 KPDBSort() is not synchronized with readers
 `lib/kpdb.c:1286-1361`. `KPDBSort` takes no lock of its own and rewrites each record's offset field with one 8-byte write per record (`:1341-1361`). `KPDBLookup` locks only on a miss with `KP_LOCK` (`:1120-1122`), and the offset check at `:1163` accepts stale offsets that are in range. A reader that looks up a key during a resort can take a wrong branch and report not found for an existing key until the sort ends (a false hit is not possible, the final key compare is exact). The sort runs from `KPDBWrite` (every 128 appends), and D-90 measured it at about 51 s on a slow disk. Transient "no such group" style errors, no corruption. The caller's append lock (`kpdb.c:804-805`) and the read lock (`:261`) were not re-traced. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
 
@@ -913,6 +932,8 @@ Fixed (#301): a NULL token writes nothing and creates nothing: `KP_UNLOCK` unloc
 ### D-120 Unknown options inside spool and metaspool blocks are only logged
 `lib/spool.c:764-767` (spool block) and `:869-872` (metaspool block) log "Unknown ... option" and go on; an unknown top-level definition exits (`spool.c:707-710`). A typo in `minfree`, `maxsize`, `keeptime`, `spooldirs` and so on is ignored and the spool runs with the default (for example no free-space floor). Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
 
+Fixed (#306).
+
 ### D-121 GetSpoolFromPath is dead code with a stray printf and a prefix match
 `lib/spool.c:198` prints `XX:%s:%s:` to stdout on every iteration; `:199` compares `strlen(so_Path)` bytes, so "P.01" also matches "P.011". No caller in the tree (only the prototype at `spool.c:43`). Remove it or fix it. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
 
@@ -926,21 +947,29 @@ Fixed (#301), as a limit and not a widening: a file at or past 2 GB (`INT_MAX`) 
 
 Checked against RFC 4643 section 2.2: a connection allowed by its address has not authenticated, so AUTHINFO is right there (INN does the same). The real gap is a login without a password: the only one is an authdef's ident + user match, which leaves `dr_AuthPass` empty, so such a connection could log in again. Fix: a connection flag set with the 281 decides "already logged in" (502).
 
+Fixed (#297).
+
 ### D-124 CAPABILITIES with an argument answers 101
 `dreaderd/reader.c:1393-1398` (`NNTPCapabilities`) never uses `pptr`, so `CAPABILITIES foo` gets the capability list; RFC 3977 section 5.2 wants 501. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
 
 Checked against RFC 3977 section 5.2.2: an argument that is a keyword the server does not know must get the normal 101 list, so `CAPABILITIES foo` was right; only an argument that is not a keyword (or more than one) must get 501. Fix: that check.
+
+Fixed (#297).
 
 ### D-125 Reader-only command on a transit connection answers 500, not 502
 `dreaderd/reader.c:1289-1316`: the dispatch loop skips entries whose flags do not match the connection type and falls through to `NNUnknownCommand` (500 "What?"). RFC 3977 section 5.3 wants 502 for a command that is known but not available. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
 
 Checked against RFC 3977 section 3.2.1: 502 means a new connection with other access is needed, and must not be used for "available after MODE READER". Fix: 502 for a transit command on a reader connection and for a reader command on a feed-only connection; a feed connection that may still use MODE READER keeps 500.
 
+Fixed (#297).
+
 ### D-126 strtoll() overflow into artno_input()
 `dreaderd/nntp.c:422` passes `strtoll(artid, NULL, 10)` to `artno_input` (`dreaderd/subs.c:103-119`) with no `errno` check. `subs.c` rejects values above 0x7FFFFFFF only for RFC 3977 numbering; for window numbering it adds a non-zero delta, so `LLONG_MAX + delta` is signed overflow (undefined behaviour). The delta is non-zero only with window numbering and a group whose high article number is at least 1.5e9 (`subs.c:27-49`); in smaller groups it is 0 and the client simply gets 423. Theoretical. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
 
 ### D-127 dicmd splits lines longer than 255 bytes
 `util/dicmd.c:19` (`char buf[256]`), `:51-64` and `:84-91`: `fgets` splits a longer line, and each piece is sent to the server or printed as its own line. Not a hang: the `".\n"` terminator test cannot match a split piece. Cosmetic for very long lines. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
+
+Fixed (#306).
 
 ### D-128 dkp parses the second piece of a long input line as a new record
 `util/dkp.c:148-149`: `fgets` into a 1023-byte buffer and `strtok` on it. A longer line is split and the second piece is parsed as a new record, so a long key or value is written as truncated records. Data-quality issue for admin input. The trim mode has a related problem, see D-134. Found by go-while's reviewers from reading, checked in the code at main 6a4b97d, not run.
@@ -1093,6 +1122,8 @@ History, the KPDB files (`dactive.kp`) and overview are read through `MAP_SHARED
 ### D-173 NETREMOTE session accounting goes to a placeholder host
 `dreaderd/dns.c`, `netRemoteAccounting()` (only with `NETREMOTE_ENABLED`, off in `lib/vendor.h`): at every session end of a user who logged in with a password, the DNS worker sends the session's accounting to the hard-coded `Password@accounting.server:8998`, not to the `netremote` server of the authdef the user logged in through. Found by go-while from reading. Before #292 NETREMOTE did not compile with OpenSSL 1.1 or later (the old `des_*` names), and the lookup, connect and read had no timeouts; #292 maps the names to the `DES_` calls and bounds the exchange with `readerauthtimeout`. The maintainer keeps NETREMOTE now that it builds (2026-11-03). Left: the accounting destination (use the authdef's `netremote` setting, or send nothing without one).
 
+Fixed (#309): the session end goes to the `netremote` server of the authdef the user logged in through (the main process passes the readerdef name with the report, and the DNS worker looks up its authdef); without one nothing is sent. Test: `TestNetRemoteAccountingToAuthdef` (needs dreaderd built with `NETREMOTE_ENABLED`, skipped otherwise; run here with it on: fails on main, passes with the fix).
+
 ### D-174 The reader overview Lines column is empty for articles without a Lines header
 `dreaderd/xover.c` builds each OVER/XOVER line from the stored header block: the `:bytes` field comes from the overview record (`oa_ArtSize`, filled from the `Bytes:` line the header feed adds), but the `:lines` field is the stored `Lines:` header and stays empty without one. RFC 3977 8.4.2 says the 8th field MUST be the `:lines` metadata, which 8.1.2 defines as the number of lines in the body, whatever the headers say. Verified on the SmartOS test reader (2026-11-04): 97 of 353 XOVER lines of alt.test have an empty Lines column (articles without a Lines header, for example from a remailer); in a sample of overview data files 160 of 7510 stored headers had none. Readers then show no size for those articles. dreaderd gets headers only, so it cannot count the lines itself.
 
@@ -1105,6 +1136,11 @@ Plan (maintainer, 2026-11-04: "dreaderd gets :lines from the feeder"):
 - No `Lines:` header is added to any article (RFC 5536 3.3.1, F-07). `genlines` (`-L`) stays for feeds to other servers that want it, with the sample text corrected: it is not what dreaderd needs.
 - Needed before F-07 stops generating Lines in POST, so local posts keep a correct Lines column.
 
+### D-175 A bad dspool.ctl on reload stops a running diablo
+`lib/spool.c`, `loadSpoolCtl()`: the master reloads `dspool.ctl` when its mtime changes (`LoadSpoolCtl(t, 0)` in the main loop of `util/diablo.c`), and every error in it calls `exit(1)`: an unknown definition, an unknown spool, a missing group, and since D-120 also an unknown spool or metaspool option. So a typo saved while diablo runs stops the feeder at the next check, with no error shown to the admin who edited the file. At start an error should still stop it. Fix (maintainer, 2026-11-04: queued as the follow-up to D-120): parse a reload into a new set of spool and metaspool objects, install it only when the whole file is valid, and otherwise log the error and keep the old set, as #283 does for `dreader.access`. The other programs that read the file once (dexpire, dcancel, dreadart and others) keep stopping on an error.
+
+Fixed (PR #308): the reload is parsed in a forked child first; on an error the master logs it and keeps the old configuration until the file changes again. At start an error still stops the program.
+
 ### D-176 .gz header parse of an overview data file is not bounded by the file size
 `dreaderd/group.c` (`MakeOverHFile()`) and `util/dexpireover.c` (`RewriteData()`): the gzip header of a `.gz` data file was walked with no check against the file size (extra field length, file name and comment strings, header CRC), so a damaged or hostile `.gz` made `inflate` read past the mapping. A wrong magic was logged and parsed anyway, and the extra-field length skipped two bytes too few. The files are written by `dexpireover -z`; needs a damaged file. Found in our own audit. Fixed by one bounded header length function in both files; a bad header is reported as an inflate error.
 ### D-177 dreader.access line longer than the read buffer is parsed in pieces
@@ -1113,10 +1149,32 @@ Plan (maintainer, 2026-11-04: "dreaderd gets :lines from the feeder"):
 `util/dsyncgroups.c`: `authinfo user` / `authinfo pass` were built with `snprintf()` in a 4096-byte buffer and sent cut. A cut password is another password. Now dsyncgroups says the name or password is too long and exits 1 before sending it. Our own audit.
 ### D-179 NetBSD: embedded Perl loads no script
 With pkgsrc perl on NetBSD 11, dreaderd logs `PERL: cannot load <script> (perl_parse or perl_run failed)` for every script, even a one-line auth script. The 6 Perl e2e tests (TestReaderPerlAuth, TestReaderHtpasswdAuth, TestReaderHtpasswdNoFile, TestAuthTimeoutPerl*) fail there and are skipped on NetBSD with that reason; they pass on Linux and FreeBSD. Not diagnosed: Diablo's embedding or a pkgsrc perl build option. Found by the BSD e2e coverage work (fork CI), not run on a local NetBSD host.
+
+**Status: fixed.** dreaderd never called `PERL_SYS_INIT3()`, which perlembed requires once before the first `perl_alloc()`. Linux and FreeBSD perl work without it; pkgsrc's perl 5.44 on NetBSD (built with `useithreads` and `usemultiplicity`) does not. A probe on fork CI: a minimal embedding program got `perl_parse` = 9 without the call and 0 (and `perl_run` 0) with it. dreaderd now calls it once per process before the first interpreter (`perlSysInit()` in `dreaderd/dns.c`), and the 6 Perl tests run on NetBSD again.
 ### D-180 NetBSD: reader fork and queue-wait tests are intermittent
 In fork CI on NetBSD 11, TestReaderForkKeepsNoQueuedClients failed in 3 of 4 runs (once "only 3 of 60 clients greeted") and TestReaderQueueWaitLimit once ("40 greeted, 0 refused" in 3.5 s). Both pass on Linux, FreeBSD and illumos. Not skipped and no timeout raised; the NetBSD job is continue-on-error. Possible causes: NetBSD timing, the 8 KiB AF_UNIX buffer the shim asks for being ignored, or a bug in the stream-IPC fork path. Needs a NetBSD host to reproduce.
 
 **Status: fixed** (test bug, not dreaderd). TestReaderStoppedDuringLoginBurst failed the same way (#302's CI). The three tests took the lowest child pid as the reader, but NetBSD hands out random pids: in #302's run the children were 4575 (DNS worker), 8030 and 18839 (readers) and 27944 (feed fork), so the test stopped the DNS worker and killed a reader. Every refusal and every "0 refused" follows from stopping the wrong process. The tests now take the reader pids from dreaderd's "forked reader child process N" lines (`readerPids` in `tests/e2e/streamipc_test.go`).
+
+### D-181 readerdns and readerfeedforks take any value
+`lib/config.c` and the `-D`/`-F` options of `dreaderd/main.c` read `readerdns` and `readerfeedforks` with `strtol()` and no check. `readerdns 0`, a typo such as `readerdns five`, or `-D bogus` gave no DNS worker at all: dreaderd started, and every client got `400 Server too busy` ("No DNS thread running"). A negative `readerfeedforks` was taken as well. Found while checking what was left of the DNS-queue burst work (mc-report F1-b: its sizing note and the queue that absorbs bursts are on main already).
+Fixed: `readerdns` must be 1..1024 and `readerfeedforks` 0..1024, in diablo.config and as `-D`/`-F`; anything else stops dreaderd at startup with an error, as an invalid `readerforks` does. Test: `TestReaderDnsFeedForksInvalid`.
+
+### D-182 KPDB lookup misses wait for the append lock after the resort limit
+`lib/kpdb.c`, `KPDBLookup()`: the D-117 fix (#301) waited once on the append lock (offset 4) after a miss whenever the C counter was above `kp_ResortLimit`. But the sort runs only at the start of the next write, so after the write that passes the limit the counter stays above it until then, and every miss in every process (a GROUP or a newgroup check for a group that is not there) took that lock, waited for any writer holding it, and searched again. Not wrong, only slow under writes. Found in our review pass of the code merged since #296.
+Fixed (#311): only the marker the sort writes first and clears last (`0FFFFFFF`) means a sort is running; a counter just past the limit leaves an unsorted tail that the search scans anyway. Test: `TestKPDBMissNoWaitPastLimit` (another process holds the append lock; the miss must come back at once). `TestKPDBLookupDuringSort` still passes.
+
+### D-183 History add after a partial last record skews every later index
+`lib/history.c`, `HistoryAdd()`: the record index is `(writePos - HEntryOff) / sizeof(History)` with `writePos` from `lseek(SEEK_END)` and no alignment check. A history file that ends inside a record (a crash or power loss during an append) skewed every later record by the same amount: the chain index pointed up to 27 bytes before the real record, lookups read garbage, and a second add of the same Message-ID was accepted, until dhisexpire rewrote the file. Same class as D-80 (KPDB), which was fixed for KPDB only. Found by a review of the feeder history path.
+Fixed (#314): under the append lock a tail that is not a whole record is skipped: the new record goes to the next record boundary, the stray bytes are zeroed and become a record no chain points to (gmt 0: dhisexpire drops it as too old, and dexpire, which steps by record size, finds no article for it), and one LOG_ERR line says how many bytes. Rounding up, not truncating, so no complete record can be lost. Test: `TestHistoryAddAfterPartialRecord`.
+
+### D-184 A failed read on a history chain counts as "found"
+`lib/history.c`, `HistoryLookup()`, `HistoryLookupByHash()` and `HistoryPosLookupByHash()`: a failed or short `pread()` while following a chain left the loop with a non-zero index, which the functions took as a hit. A chain index past the end of the file (a torn append, index pages that reached the disk before the record pages) made every new article of that bucket be refused as a duplicate for good, and `HistoryExpire`/`HistoryStoreExp` wrote the exp field at the bad offset. `HistoryAdd()` treated the same condition as "not found", so the two disagreed.
+Fixed (#314): an unreadable record ends the walk as a miss in all three (the existing LOG_ERR line is kept). Valid chains behave as before. Test: `TestHistoryLookupBadChainIsMiss`.
+
+### D-185 A failed history add is answered as a permanent reject
+`util/diablo.c`, commit path: `HistoryAdd()` returns `RCTRYAGAIN` for a full history volume (ENOSPC), a chain lock failure and a failed index write, but the code after `RCALREADY` turned every other value into `RCREJECT`. The peer got 437 or 439, dropped an article that was already in the spool, and did not offer it again, while the spool-open failure a few lines earlier already answered 436/431.
+Fixed (#314): `RCTRYAGAIN` is passed on (436 to IHAVE, 431 to TAKETHIS), counted as an I/O error and logged as `HistoryTryAgain`; `RCREJECT` stays for any other value. Test: `TestFeederHistoryWriteFailureTryAgain` (a shim fails the history pwrite with ENOSPC).
 
 ## Feature requests
 
@@ -1197,6 +1255,8 @@ run because the spool there was full): `didump -x` does **not** leave out expire
 all 4775 records, 1843 of them still on the spool), so entries whose file is gone have to be
 skipped, and `file=` is an absolute path, so the spool directory has to be stripped to get the
 `D.xxxxxxxx/B.xxxx` form. Raised by the maintainer.
+
+**Status: PR (#310)** (maintainer, 2026-11-04: "Take F-03"): a new tool, `dspoolrefeed`, writes the queue files the recipe above builds by hand. It walks the history, reads each Message-ID from the article on the spool (compressed spool objects too) and checks it against the history hash, and leaves out expired, header-only and vanished entries. `-a days` and `-g groups` select; `-n` splits the output for parallel dnewslinks. The man page dspoolrefeed(8) covers the receiving side.
 
 ### F-04 NoCeM notices
 INN can act on NoCeM notices (signed notices from third parties that list the Message-IDs of

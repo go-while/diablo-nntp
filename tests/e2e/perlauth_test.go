@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 )
 
@@ -12,18 +11,6 @@ import (
 // checkuser(user, pass) in an embedded perl; a result starting with 1 logs the user in and
 // anything else is refused. Skipped when dreaderd is built without Perl support
 // (./configure turns it on where perl can be embedded).
-// perlEmbedWorks skips on NetBSD, where the dreaderd built against pkgsrc's perl 5 logs
-// "PERL: cannot load <script> (perl_parse or perl_run failed)" for every script, even the
-// one-line auth.pl of TestReaderPerlAuth, so no login can succeed (CI run 41850520364, NetBSD
-// 11.0). Not diagnosed: it may be the embedding (perl_parse arguments, DynaLoader) or the
-// pkgsrc perl; Linux and FreeBSD perl pass the same tests.
-func perlEmbedWorks(t *testing.T) {
-	t.Helper()
-	if runtime.GOOS == "netbsd" {
-		t.Skip("NetBSD: dreaderd's embedded pkgsrc perl fails perl_parse/perl_run for every script (undiagnosed)")
-	}
-}
-
 func TestReaderPerlAuth(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join(bin(t), "dreaderd"))
 	if err != nil {
@@ -32,7 +19,6 @@ func TestReaderPerlAuth(t *testing.T) {
 	if !bytes.Contains(b, []byte("PERL auth request")) {
 		t.Skip("dreaderd is built without Perl support (PERL_ENABLED)")
 	}
-	perlEmbedWorks(t)
 	script := filepath.Join(t.TempDir(), "auth.pl")
 	if err := os.WriteFile(script, []byte(`sub checkuser {
     my ($user, $pass) = @_;

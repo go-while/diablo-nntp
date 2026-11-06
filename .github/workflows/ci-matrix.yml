@@ -89,7 +89,8 @@ jobs:
         env:
           DIABLO_BIN: ${{ github.workspace }}/dbin
           NNTP_TEST_DEADLINE: 30s
-        run: go test -v -count=1 -timeout 20m ./...
+        # several test processes at once, then the timing-sensitive tests alone
+        run: go test -c -o e2e.test . && ./ci/run-shards ./e2e.test -test.v -test.count=1 -test.timeout=1200s
 
   # Compile the e2e test binary once, with CGO disabled so it is portable (runs
   # on glibc and musl alike), for every OS the VM/container jobs need. The test
@@ -249,7 +250,7 @@ jobs:
             chmod -R a+rX .
             cd tests/e2e
             # dbin is at the repo root ($root/dbin), two levels up from here.
-            su -m news -c "env DIABLO_BIN=$root/dbin NNTP_TEST_DEADLINE=30s ./e2e.test -test.v -test.count=1 -test.timeout=1200s"
+            su -m news -c "env DIABLO_BIN=$root/dbin NNTP_TEST_DEADLINE=30s ./ci/run-shards ./e2e.test -test.v -test.count=1 -test.timeout=1200s"
 
   # illumos (OmniOS): best effort, same shape as FreeBSD via build-on-host
   # (pkg install gcc13 + gnu-make, create the news user, build with gmake and
@@ -293,7 +294,7 @@ jobs:
             chmod -R a+rX .
             cd tests/e2e
             # dbin is at the repo root ($root/dbin), two levels up from here.
-            su news -c "DIABLO_BIN=$root/dbin NNTP_TEST_DEADLINE=30s ./e2e.test -test.v -test.count=1 -test.timeout=1200s"
+            su news -c "DIABLO_BIN=$root/dbin NNTP_TEST_DEADLINE=30s ./ci/run-shards ./e2e.test -test.v -test.count=1 -test.timeout=1200s"
 
   # OpenBSD: build only, via build-on-host (pkg_add gmake, create the news
   # user, build with gmake and clang from base); it fails on a build error like
@@ -379,4 +380,4 @@ jobs:
             chmod -R a+rX .
             cd tests/e2e
             # dbin is at the repo root ($root/dbin), two levels up from here.
-            su -m news -c "env DIABLO_BIN=$root/dbin NNTP_TEST_DEADLINE=30s ./e2e.test -test.v -test.count=1 -test.timeout=1200s"
+            su -m news -c "env DIABLO_BIN=$root/dbin NNTP_TEST_DEADLINE=30s ./ci/run-shards ./e2e.test -test.v -test.count=1 -test.timeout=1200s"
