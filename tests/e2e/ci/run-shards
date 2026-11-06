@@ -1,0 +1,87 @@
+#!/bin/sh
+# run-shards TESTBIN [N] [extra test flags...]
+#
+# Run the e2e suite in N processes at once (default: the CPU count, at most
+# 4), then the tests of ci/serial-tests alone. Each process gets a disjoint
+# set of top-level tests, balanced by the run times in ci/durations (a test
+# not listed counts 2 s). Prints each part's output after it ends, so the
+# lines of one process stay together. Exits non-zero if any part failed.
+#
+# The tests stay what they are; they only share the machine with other tests,
+# like on a busy host. A test that cannot (it measures time, or waits for a
+# worker under load) goes in ci/serial-tests.
+set -u
+bin=$1; shift
+here=$(cd "$(dirname "$0")" && pwd)
+n=${1:-}
+case $n in
+''|*[!0-9]*) n=$( (getconf _NPROCESSORS_ONLN || sysctl -n hw.ncpu || echo 2) 2>/dev/null | head -1)
+	     [ "$n" -gt 4 ] 2>/dev/null && n=4 ;;
+*) shift ;;
+esac
+[ "$n" -ge 1 ] 2>/dev/null || n=2
+# the old awk of illumos lacks what is used below; prefer nawk
+AWK=$(command -v nawk || command -v gawk || command -v awk)
+out=${TMPDIR:-/tmp}/e2e-shards.$$
+mkdir -p "$out" || exit 1
+
+"$bin" -test.list '^Test' > "$out/all" || { echo "run-shards: cannot list tests" >&2; exit 1; }
+grep -v '^ok ' "$out/all" | grep '^Test' > "$out/names"
+grep -Ev '^[[:space:]]*(#|$)' "$here/serial-tests" > "$out/serial-pats"
+grep -Ef "$out/serial-pats" "$out/names" > "$out/serial" || true
+grep -vEf "$out/serial-pats" "$out/names" > "$out/parallel" || true
+
+# longest first, each to the part with the least time so far
+"$AWK" -v n="$n" -v out="$out" '
+    FNR == NR { d[$1] = $2; next }
+    { t = ($1 in d) ? d[$1] : 2; name[++k] = $1; dur[k] = t }
+    END {
+	for (i = 1; i <= k; i++)		# insertion sort, longest first
+	    for (j = i; j > 1 && dur[j] > dur[j-1]; j--) {
+		x = dur[j]; dur[j] = dur[j-1]; dur[j-1] = x
+		x = name[j]; name[j] = name[j-1]; name[j-1] = x
+	    }
+	for (i = 1; i <= k; i++) {
+	    b = 1
+	    for (s = 2; s <= n; s++) if (load[s] < load[b]) b = s
+	    load[b] += dur[i]
+	    print name[i] > (out "/part." b)
+	}
+	for (s = 1; s <= n; s++) printf "run-shards: part %d: about %d s\n", s, load[s] > "/dev/stderr"
+    }' "$here/durations" "$out/parallel"
+
+runpart() {	# runpart listfile logfile [test flags...]
+    list=$1 log=$2
+    shift 2
+    if [ ! -s "$list" ]; then
+	: > "$log"
+	echo 0 > "$log.rc"
+	return
+    fi
+    re="^($(paste -sd'|' "$list"))\$"
+    "$bin" -test.run "$re" "$@" > "$log" 2>&1
+    echo $? > "$log.rc"
+}
+
+shift_args=$*
+i=1
+while [ $i -le "$n" ]; do
+    runpart "$out/part.$i" "$out/log.$i" $shift_args &
+    i=$((i + 1))
+done
+wait
+rc=0
+i=1
+while [ $i -le "$n" ]; do
+    echo "=== run-shards: part $i of $n ==="
+    [ -f "$out/log.$i" ] && cat "$out/log.$i"
+    [ "$(cat "$out/log.$i.rc" 2>/dev/null)" = 0 ] || rc=1
+    i=$((i + 1))
+done
+echo "=== run-shards: serial part ($(wc -l < "$out/serial" | tr -d ' ') tests) ==="
+runpart "$out/serial" "$out/log.serial" $shift_args
+cat "$out/log.serial"
+[ "$(cat "$out/log.serial.rc")" = 0 ] || rc=1
+[ $rc = 0 ] && echo "run-shards: all parts passed" || echo "run-shards: FAILED (see the parts above)"
+rm -rf "$out"
+exit $rc
