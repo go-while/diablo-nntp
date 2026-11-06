@@ -548,6 +548,7 @@ NNStartListOverviewMsgId(Connection *conn, const char *msgid)
      */
     if ((ov = GetOverInfo(conn->co_GroupName)) == NULL) {
 	MBLogPrintf(conn, &conn->co_TMBuf, "430 No such article\r\n");
+	zfreeStr(&conn->co_MemPool, &conn->co_ListMsgId);
 	NNCommand(conn);
 	return;
     }
@@ -555,27 +556,36 @@ NNStartListOverviewMsgId(Connection *conn, const char *msgid)
     if (res == NULL) {
 	PutOverInfo(ov);
 	MBLogPrintf(conn, &conn->co_TMBuf, "430 No such article\r\n");
+	zfreeStr(&conn->co_MemPool, &conn->co_ListMsgId);
 	NNCommand(conn);
 	return;
     }
     OutputOverview(conn, res, resLen, artSize, lines);
     PutOverInfo(ov);
+    /* only this list uses it: no later list may print it as its index */
+    zfreeStr(&conn->co_MemPool, &conn->co_ListMsgId);
     FinishOverviewDotNewline(conn);
     NNCommand(conn);
 }
 
 /*
- * The first field of an overview line: the message-id for a message-id
- * lookup (RFC 2980), else the article number.
+ * The first field of an overview line.  For a message-id lookup: the
+ * message-id for XHDR (RFC 2980 2.6), and 0 for HDR and OVER (RFC 3977 8.3.2
+ * and 8.5.2: the article number is replaced by 0) and for XOVER, which RFC
+ * 2980 gives no message-id form (INN answers it like OVER).  Else the article
+ * number.
  */
 static void
 OutputListIndex(Connection *conn)
 {
     if (conn->co_ListMsgId != NULL) {
+	const char *f = (conn->co_ArtMode == COM_XHDR && !conn->co_ListStrict) ?
+	    conn->co_ListMsgId : "0";
+
 	if (conn->co_ArtMode == COM_XZVER)
-	    MZWrite(conn, conn->co_ListMsgId, strlen(conn->co_ListMsgId));
+	    MZWrite(conn, f, strlen(f));
 	else
-	    MBWrite(&conn->co_TMBuf, conn->co_ListMsgId, strlen(conn->co_ListMsgId));
+	    MBWrite(&conn->co_TMBuf, f, strlen(f));
     } else if (conn->co_ArtMode == COM_XZVER) {
 	MZPrintf(conn, "%lld",
 	    artno_art(conn->co_ArtBeg, conn->co_ArtEnd, conn->co_ListBegNo, conn->co_Numbering));

@@ -35,18 +35,29 @@ func TestXhdrXoverByMessageId(t *testing.T) {
 
 	// XOVER by message-id: the message-id is the first field.
 	c.ExpectCmd(224, "XOVER %s", id)
-	if got := c.ReadDotLines(); len(got) != 1 || !strings.HasPrefix(got[0], id+"\t") {
-		t.Errorf("XOVER %s: %q, want one line starting with %q", id, got, id+"\t")
+	if got := c.ReadDotLines(); len(got) != 1 || !strings.HasPrefix(got[0], "0\t") {
+		t.Errorf("XOVER %s: %q, want one line starting with %q", id, got, "0\t")
 	}
 
 	// HDR and OVER by message-id (RFC 3977 8.3, 8.5) do the same.
 	c.ExpectCmd(225, "HDR Subject %s", id)
-	if got := c.ReadDotLines(); len(got) != 1 || got[0] != id+" msgid subject" {
-		t.Errorf("HDR Subject %s: %q, want [%q]", id, got, id+" msgid subject")
+	if got := c.ReadDotLines(); len(got) != 1 || got[0] != "0 msgid subject" {
+		t.Errorf("HDR Subject %s: %q, want [%q]", id, got, "0 msgid subject")
 	}
 	c.ExpectCmd(224, "OVER %s", id)
-	if got := c.ReadDotLines(); len(got) != 1 || !strings.HasPrefix(got[0], id+"\t") {
-		t.Errorf("OVER %s: %q, want one line starting with %q", id, got, id+"\t")
+	if got := c.ReadDotLines(); len(got) != 1 || !strings.HasPrefix(got[0], "0\t") {
+		t.Errorf("OVER %s: %q, want one line starting with %q", id, got, "0\t")
+	}
+
+	// After a message-id list, a range list shows article numbers again: the
+	// message-id must not stay behind as the first field.
+	c.ExpectCmd(221, "XHDR Subject %s", id)
+	c.ReadDotLines()
+	c.ExpectCmd(221, "XHDR Subject 1-")
+	for _, l := range c.ReadDotLines() {
+		if strings.HasPrefix(l, "<") {
+			t.Errorf("XHDR Subject 1- after a message-id list: %q starts with a message-id", l)
+		}
 	}
 
 	// An unknown message-id is "not here", not an empty list.
