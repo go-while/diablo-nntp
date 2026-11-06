@@ -61,8 +61,9 @@
 #		   - Injection-Info: (RFC 5536 3.2.8) in place of
 #		     NNTP-Posting-Host:, X-Trace: and X-Complaints-To: (and
 #		     NNTP-Posting-Date: where built in): posting-host,
-#		     logging-data "<time> <pid>", mail-complaints-to, and
-#		     posting-account with showposter yes; and
+#		     mail-complaints-to, and posting-account with
+#		     showposter yes (no logging-data: the "post ok" log
+#		     line names the Message-ID); and
 #		     Injection-Date: when dreaderd supplied the Message-ID or
 #		     Date;
 #		   - ".POSTED" in the Path (see postpath);
