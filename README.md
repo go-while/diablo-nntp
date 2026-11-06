@@ -15,7 +15,7 @@ This build system replaces the requirement for Matt Dillon's `xmake` while prese
 | SmartOS (illumos) | GNU Make | GCC | `gmake -j4` | Validated |
 | OmniOS (illumos) | GNU Make | GCC | `gmake -j4` | Validated |
 | Linux | GNU Make | GCC | `make -j4` (also tested with `-j16`) | Validated; 0 warnings |
-| Debian GNU/Hurd amd64 | GNU Make | GCC | `make -j1` | Full C build and standalone portability checks; no native Go e2e runner |
+| Debian GNU/Hurd amd64 | GNU Make | GCC | `make -j1` | C build and `tests/portability/d18.sh`; no Go, so no e2e |
 
 Traditional Solaris Make is not supported. On illumos systems, use GNU Make (`gmake`) rather than the system's native `make` when it is Solaris Make.
 
@@ -166,9 +166,6 @@ Linux support has been validated with GCC and GNU Make, including a successful `
 
 ### Debian GNU/Hurd
 
-Install the build tools, OpenSSL and zlib development packages; Berkeley DB and
-Cancel-Lock are optional, as on Linux:
-
 ```sh
 apt install build-essential libssl-dev zlib1g-dev libdb-dev libcanlock-dev
 ./configure
@@ -176,17 +173,9 @@ make -j1
 sh tests/portability/d18.sh
 ```
 
-The GNU/Hurd build uses GNU libc interfaces without Linux kernel headers. The
-Berkeley DB header is selected from the successful configure probe, not the
-kernel name. Hurd has no system-wide `PATH_MAX`; Diablo uses a 4096-byte bound
-for its existing fixed path buffers on systems that do not define it. This is
-not arbitrary-length-path support: use short installation/spool roots and keep
-paths within the application's buffer limits. Other systems keep their native
-`PATH_MAX` value.
-
-Go does not have a Hurd target, so `tests/e2e` cannot run natively there. The
-standalone portability checks above need only the configured C compiler and
-GNU make; a full C build is not a claim of full reader/feeder e2e coverage.
+Hurd has no `PATH_MAX`; Diablo's fixed path buffers use 4096 bytes there, so keep
+installation and spool paths short. Go has no Hurd port, so `tests/e2e` does not
+run there.
 
 ## Build Version Configuration
 
