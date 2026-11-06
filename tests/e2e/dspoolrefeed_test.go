@@ -47,29 +47,53 @@ func TestDspoolrefeed(t *testing.T) {
 			p.ExpectCmd(335, "IHAVE %s", cid)
 			p.MustSend(client.Stuff(art))
 			p.ExpectStatus(235, "IHAVE with a comment")
+			// a second article on the same connection goes into the same spool file, after
+			// the first (on a compressed spool: the next gzip stream); its own line count must
+			// not run on into the next article, nor the first one's into it
+			mid := msgID(t)
+			p.ExpectCmd(335, "IHAVE %s", mid)
+			p.MustSend(client.Stuff(newArticle(mid, "e2e.test", "several lines", "one", "", "..stuffed", "three", ".")))
+			p.ExpectStatus(235, "IHAVE with several lines")
 			p.ExpectCmd(205, "QUIT")
-			ids = append(ids, cid)
-			want := s.waitQueue(t, OutLabel, 4)
+			ids = append(ids, cid, mid)
+			want := s.waitQueue(t, OutLabel, 5)
 			if tc.ctl != "" && !strings.Contains(want[0], " C") {
 				t.Fatalf("diablo's queue line on a compressed spool has no C<size>: %q", want[0])
+			}
+
+			var cFile, mFile string
+			for _, l := range want {
+				f := strings.Fields(l)
+				switch f[1] {
+				case cid:
+					cFile = f[0]
+				case mid:
+					mFile = f[0]
+					if !slices.Contains(f, "L5") {
+						t.Errorf("diablo's queue line for the 5-line article: %q, want L5", l)
+					}
+				}
+			}
+			if cFile == "" || cFile != mFile {
+				t.Logf("the two articles of one connection are in %q and %q, not one spool file", cFile, mFile)
 			}
 
 			out := s.Run(t, "dspoolrefeed", "-o", "dqueue/refeed")
 			if got := refeedLines(t, s, "dqueue/refeed"); !slices.Equal(sorted(got), sorted(want)) {
 				t.Errorf("dspoolrefeed wrote\n%q\nwant diablo's queue lines\n%q\n%s", got, want, out)
 			}
-			if !strings.Contains(out, "4 written") {
+			if !strings.Contains(out, "5 written") {
 				t.Errorf("dspoolrefeed counts: %s", out)
 			}
 
 			s.Run(t, "dspoolrefeed", "-q", "-g", "e2e.*,!e2e.other", "-o", "dqueue/sel")
-			if got := refeedLines(t, s, "dqueue/sel"); len(got) != 3 || strings.Contains(strings.Join(got, "\n"), ids[2]) {
-				t.Errorf("-g e2e.*,!e2e.other: %q, want the three e2e.test articles", got)
+			if got := refeedLines(t, s, "dqueue/sel"); len(got) != 4 || strings.Contains(strings.Join(got, "\n"), ids[2]) {
+				t.Errorf("-g e2e.*,!e2e.other: %q, want the four e2e.test articles", got)
 			}
 
 			s.Run(t, "dspoolrefeed", "-q", "-n", "2", "-o", "dqueue/part")
-			if a, b := refeedLines(t, s, "dqueue/part.0000"), refeedLines(t, s, "dqueue/part.0001"); len(a) != 2 || len(b) != 2 {
-				t.Errorf("-n 2: part.0000 %q, part.0001 %q, want 2 and 2 lines", a, b)
+			if a, b, c := refeedLines(t, s, "dqueue/part.0000"), refeedLines(t, s, "dqueue/part.0001"), refeedLines(t, s, "dqueue/part.0002"); len(a) != 2 || len(b) != 2 || len(c) != 1 {
+				t.Errorf("-n 2: part.0000 %q, part.0001 %q, part.0002 %q, want 2, 2 and 1 lines", a, b, c)
 			}
 
 			if out, err := s.TryRun("dspoolrefeed", "-q", "-o", "dqueue/refeed"); err == nil {

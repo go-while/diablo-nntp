@@ -83,7 +83,7 @@ Prototype void NNFeedOverview(Connection *conn);
 Prototype void FlushOverCache(void);
 Prototype OverInfo *GetOverInfo(const char *group);
 Prototype void PutOverInfo(OverInfo *ov);
-Prototype const char *GetOverRecord(OverInfo *ov, artno_t artno, int *plen, int *aleno, TimeRestrict *tr, int *TimeRcvd);
+Prototype const char *GetOverRecord(OverInfo *ov, artno_t artno, int *plen, int *aleno, int *plines, TimeRestrict *tr, int *TimeRcvd);
 Prototype OverInfo *FindCanceledMsg(const char *group, const char *msgid, artno_t *partNo, int *pvalidGroups);
 Prototype int CancelOverArt(OverInfo *ov, artno_t artNo);
 Prototype void OutputOverRange(OverInfo *ov, Connection *conn);
@@ -821,6 +821,16 @@ WriteOverview(Connection *conn, ArtNumAss *an, const char *group, const char *xr
 	    ovart.oa_MsgHash = hv;
 	    ovart.oa_TimeRcvd = (int)time(NULL);
 	    ovart.oa_ArtSize = (conn->co_ByteCounter > 0.0 ? conn->co_ByteCounter : conn->co_BytesHeader);
+	    /*
+	     * D-174: the body line count, counted here on a full feed, or
+	     * from dnewslink's "Bytes: <size> <lines>" on a header feed
+	     * (MODE HEADFEED).  A Bytes: header on a full feed is the
+	     * poster's and says nothing.
+	     */
+	    if ((conn->co_Flags & COF_HEADFEED) == 0)
+		ovart.oa_Lines = conn->co_BodyLines + 1;
+	    else if (conn->co_LinesHeader >= 0)
+		ovart.oa_Lines = conn->co_LinesHeader + 1;
 
 	    if (ovpos < 0 ||
 		FilePreAllocSpace(ov->ov_OFd, ovpos, prealloc_ov,
@@ -1158,7 +1168,7 @@ GetOverArt(OverInfo *ov, artno_t artno, off_t *ppos)
 }
 
 const char *
-GetOverRecord(OverInfo *ov, artno_t artno, int *plen, int *alen, TimeRestrict *tr, int *TimeRcvd)
+GetOverRecord(OverInfo *ov, artno_t artno, int *plen, int *alen, int *plines, TimeRestrict *tr, int *TimeRcvd)
 {
     int hvpos;
     int xpos;
@@ -1192,6 +1202,8 @@ GetOverRecord(OverInfo *ov, artno_t artno, int *plen, int *alen, TimeRestrict *t
 
     if (alen)
 	*alen = oa->oa_ArtSize;
+    if (plines)
+	*plines = OA_LINES(oa);
 
     if (plen == NULL) 
 	return((const char *)1);
@@ -1461,7 +1473,7 @@ OutputOverRange(OverInfo *ov, Connection *conn)
 		logit(LOG_ERR, "corrupt overview entry for %s:%lld", ov->ov_Group, conn->co_ListBegNo);
 		continue;
 	    }
-	    OutputOverview(conn, r, oa->oa_Bytes, oa->oa_ArtSize);
+	    OutputOverview(conn, r, oa->oa_Bytes, oa->oa_ArtSize, OA_LINES(oa));
 	}
     }
 }
@@ -1804,7 +1816,7 @@ NNTestOverview(Connection *conn)
     int r = -1;
 
     if ((ov = GetOverInfo(conn->co_GroupName)) != NULL) {
-	if (GetOverRecord(ov, conn->co_ArtNo, NULL, NULL, NULL, NULL) != NULL)
+	if (GetOverRecord(ov, conn->co_ArtNo, NULL, NULL, NULL, NULL, NULL) != NULL)
 	    r = 0;
 	PutOverInfo(ov);
     }
@@ -1830,7 +1842,7 @@ NNRetrieveHead(Connection *conn, int *povlen, const char **pmsgid, int *TimeRcvd
 	    *grpIter = ov->ov_Iter;
 	if (endNo != NULL)
 	    *endNo = ov->ov_endNo;
-	if ((res = GetOverRecord(ov, conn->co_ArtNo, povlen, NULL, NULL, TimeRcvd)) != NULL) {
+	if ((res = GetOverRecord(ov, conn->co_ArtNo, povlen, NULL, NULL, NULL, TimeRcvd)) != NULL) {
 
 	    const char *scan = res;
 	    int scanLen = *povlen;

@@ -7,7 +7,7 @@
 #include "defs.h"
 
 void LoadArt(void);
-int fwCallBack(const char *hlabel, const char *msgid, const char *path, const char *offsize, int plfo, int headOnly, const char *artType, const char *cSize);
+int fwCallBack(const char *hlabel, const char *msgid, const char *path, const char *offsize, int plfo, int headOnly, const char *artType, int lines, const char *cSize);
 
 char *Label = NULL;
 char *Newsgroups = NULL;
@@ -227,14 +227,14 @@ main(int ac, char **av)
 	FeedWrite(0, fwCallBack, "", "",
 			offSize, Newsgroups, NumPath, Dist,
 			HeadOnly ? "1" : "0",
-			artType, Spam, 0);
+			artType, Spam, -1, NULL);
     }
 
     exit(0);
 }
 
 int
-fwCallBack(const char *hlabel, const char *msgid, const char *path, const char *offsize, int plfo, int headOnly, const char *artType, const char *cSize)
+fwCallBack(const char *hlabel, const char *msgid, const char *path, const char *offsize, int plfo, int headOnly, const char *artType, int lines, const char *cSize)
 {
     printf("Matched: %s\n", hlabel);
     return(1);

@@ -73,6 +73,16 @@ end
 			if strings.HasPrefix(f, "C") && len(f) > 64 {
 				t.Errorf("queue line carries the Path in the cSize field: %q", fireLine)
 			}
+			// D-174: the L<lines> field, if the shifted line has one, stays a short number
+			if strings.HasPrefix(f, "L") && (len(f) > 12 || strings.Trim(f[1:], "-0123456789") != "") {
+				t.Errorf("queue line has a bad L field %q: %q", f, fireLine)
+			}
+		}
+		// the fill articles have one body line each: L1 (D-174)
+		for _, l := range q {
+			if !strings.Contains(l, fire) && !strings.Contains(l, " L1") {
+				t.Errorf("queue line %q has no L1 (one body line)", l)
+			}
 		}
 	default:
 		t.Fatalf("fire article: %d %q, want 235 or 437", code, line)
