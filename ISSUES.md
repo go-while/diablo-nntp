@@ -208,6 +208,7 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-192](#d-192-precommit-delcomm-evicts-another-message-ids-entry) | Low | precommit PC_DELCOMM evicts another message-id's entry | fixed (#321) |
 | [D-193](#d-193-xhdr-and-xover-by-message-id-answer-an-empty-list) | Low | XHDR and XOVER by message-id answer an empty list | fixed (#323) |
 | [D-194](#d-194-log-messages-ending-in-a-newline-leave-a-blank-line) | Low | Log messages ending in a newline leave a blank line | fixed (#325) |
+| [D-195](#d-195-readerdef-groups-does-not-limit-access-by-message-id) | Medium | readerdef `groups` does not limit access by message-id | open |
 
 Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315), [F-02 configure script](#f-02-configure-script-for-the-build-options), [F-03 refeed a whole spool](#f-03-refeed-a-whole-spool-to-another-server), [F-04 NoCeM notices](#f-04-nocem-notices), [F-05 init scripts](#f-05-init-scripts-and-adm-script-replacements), [F-06 Perl authentication](#f-06-perl-authentication-for-dreaderd).
 
@@ -1221,6 +1222,11 @@ Fixed (#331) further: `HDR`/`XHDR <header> <message-id>` keep the current-group 
 ### D-194 Log messages ending in a newline leave a blank line
 `lib/log.c`, `VLog()`: the log writer adds a newline to each message, and 64 `logit()` formats end in a newline of their own (LDAP errors, "Invalid vserverdef option ...", "PERL auth request for <user>: <result>", and more), so general.log got an empty line after each of them. Reported by Jesse from the SmartOS reader (after every Perl login).
 Fixed (#325): `VLog()` strips newlines at the end of the message before it adds its own, which covers every caller and a Perl result that ends in a newline, and turns a CR or LF inside a message (a logged value such as script output) into a space, so each entry is one line. Syslog is unchanged. Test: `TestLogNoBlankLines`.
+
+### D-195 readerdef groups does not limit access by message-id
+`dreaderd/nntp.c`, `SelectGroup()`, checks a reader's `groups` groupdef (`dr_GroupDef`) only when a group is selected (GROUP, LISTGROUP). A request by message-id never looks at it: `NNArticleRetrieveByMessageId()` (`dreaderd/server.c`) fetches the article from the reader cache or the spool for ARTICLE, HEAD, BODY and STAT, and since #331 HDR/XHDR `<message-id>` fetch the header from the spool the same way. So a reader limited to some groups can read any article on the server whose message-id it knows. INN checks the reader's read access per article (`PERMartok()` in nnrpd/article.c) when it retrieves by message-id. `samples/dreader.access` documents the gap for ARTICLE ("This option doesn't limit articles retrieved with the ARTICLE command"), but not for HEAD, BODY, STAT or HDR.
+Confirmed on main 523b814 (Debian test VM, e2e harness): with `groupdef onlytest` (`group e2e.test`) and `groups onlytest` in the readerdef, `GROUP e2e.other` is 411, but for an article posted only to e2e.other, `ARTICLE <id>` is 220 with the full article, `HEAD <id>` 221, `BODY <id>` 222, `STAT <id>` 223, `HDR Subject <id>` 225 and `XHDR Subject <id>` 221 with its Subject. `OVER <id>` is 430 (it only looks in the current group). Found while reviewing #331.
+Not fixed yet. A fix would check the article's Newsgroups (or Xref) against `dr_GroupDef` after retrieval, as INN does, and answer as for an unknown article; open questions are the reply code, an article crossposted to an allowed and a forbidden group (to be checked against INN), and the cost of the check with large groupdefs.
 
 ## Feature requests
 
