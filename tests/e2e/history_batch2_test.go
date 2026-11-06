@@ -183,13 +183,19 @@ main(void)
     SetPCommitExpire(30, 45 * 60, 1);	/* PCHSize 1: every id shares slot 0 */
     InitPreCommit();
 
-    /* B is post-committed into slot 0 (pid -1). */
-    (void)PreCommit("<b@x>", PC_POSTCOMM);
-    /* A is not in the slot: the DELCOMM must leave B's entry alone. */
+    /*
+     * B is precommitted into slot 0 by one feed child (a PRECOMM, not a
+     * POSTCOMM: without DO_PCOMMIT_POSTCACHE, as on NetBSD, a POSTCOMM
+     * stores nothing).
+     */
+    PCPid = 1000001;
+    (void)PreCommit("<b@x>", PC_PRECOMM);
+    /* Another child's DELCOMM of A, which is not in the slot: B must stay. */
+    PCPid = 1000002;
     (void)PreCommit("<a@x>", PC_DELCOMM);
-    /* B is still there iff the DELCOMM left the slot alone. */
+    /* B is still precommitted by the first child: -2 for the second. */
     r = PreCommit("<b@x>", PC_PRECOMM);
-    printf("delcomm preserves another message-id: %s\n", r == -1 ? "yes" : "no");
+    printf("delcomm preserves another message-id: %s\n", r == -2 ? "yes" : "no");
 
     /*
      * Our own entry: a precommit, then a DELCOMM from the same process (a
@@ -197,9 +203,10 @@ main(void)
      * PCPid is the precommitting process; a different value is another
      * feed child.
      */
+    PCPid = 1000003;
     (void)PreCommit("<c@x>", PC_PRECOMM);
     (void)PreCommit("<c@x>", PC_DELCOMM);
-    PCPid = (int)getpid() + 1;
+    PCPid = 1000004;
     r = PreCommit("<c@x>", PC_PRECOMM);
     printf("delcomm clears our own entry: %s\n", r == 0 ? "yes" : "no");
     return 0;
