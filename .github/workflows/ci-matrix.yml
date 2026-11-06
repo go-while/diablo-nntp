@@ -1,4 +1,6 @@
-name: ci-matrix
+name: illumos-greeting-debug
+
+# DEBUG BRANCH ONLY. Do not merge this workflow configuration into main.
 
 # Public breadth matrix: build Diablo and run the tests/e2e suite across as many
 # targets as GitHub-hosted runners allow, so the results are publicly verifiable
@@ -23,9 +25,8 @@ name: ci-matrix
 # token is never written into .git.
 
 on:
-  pull_request:
   push:
-    branches: [main]
+    branches: [gw-illumos-greeting-debug]
   workflow_dispatch:
 
 permissions:
@@ -41,6 +42,7 @@ jobs:
   # libcanlock off (E2E_NO_CANLOCK=1) so TestCancelLockWithoutLibcanlock runs
   # instead of skipping.
   hosted:
+    if: ${{ false }}
     name: hosted (${{ matrix.name }})
     strategy:
       fail-fast: false
@@ -97,6 +99,7 @@ jobs:
   # binary only execs the C binaries via DIABLO_BIN, so it is pure Go and cross
   # compiles cleanly.
   build-test-binary:
+    if: ${{ false }}
     name: build e2e test binary
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -137,6 +140,7 @@ jobs:
   # archlinux is the deliberately-rolling lane. The script logs each image's
   # digest, the kernel and the fd limits.
   containers:
+    if: ${{ false }}
     name: container (${{ matrix.name }})
     needs: build-test-binary
     runs-on: ubuntu-24.04
@@ -199,6 +203,7 @@ jobs:
   # /etc/rc.subr exists). The prepare step only sets up loopback aliases and the
   # peer host names; the build itself goes through the shared build-on-host.
   freebsd:
+    if: ${{ false }}
     name: freebsd
     needs: build-test-binary
     runs-on: ubuntu-24.04
@@ -252,28 +257,31 @@ jobs:
             # dbin is at the repo root ($root/dbin), two levels up from here.
             su -m news -c "env DIABLO_BIN=$root/dbin NNTP_TEST_DEADLINE=30s ./ci/run-shards ./e2e.test -test.v -test.count=1 -test.timeout=1200s"
 
-  # illumos (OmniOS): best effort, same shape as FreeBSD via build-on-host
-  # (pkg install gcc13 + gnu-make, create the news user, build with gmake and
-  # CC=gcc). Does not fail the workflow; reported either way.
+  # Debug-only illumos lane: retain two CPUs/two shard processes, repeat the
+  # suite and fail visibly if any iteration fails. Do not merge into main.
   illumos:
     name: illumos
-    needs: build-test-binary
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
-    continue-on-error: true
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          name: e2e-test-binaries
-          path: tests/e2e
+          go-version-file: tests/e2e/go.mod
+          cache-dependency-path: tests/e2e/go.sum
+
+      - name: Build illumos diagnostic test binary
+        working-directory: tests/e2e
+        run: CGO_ENABLED=0 GOOS=illumos GOARCH=amd64 go test -c -o e2e.test.illumos .
 
       - name: Build and test on OmniOS
         uses: vmactions/omnios-vm@9576f0b6d15e7696548409baa533bc0a339caf42 # v1.3.7
         with:
+          cpu: "2"
+          copyback: "true"
           prepare: |
             # Same 127.0.0.x client source addresses as the FreeBSD job needs.
             for ip in 2 3 4 9 10; do ifconfig lo0 addif 127.0.0.$ip up 2>/dev/null || true; done
@@ -292,9 +300,25 @@ jobs:
             echo "=== build.log (last 20 lines) ==="; tail -20 build.log
             ls dbin
             chmod -R a+rX .
+            mkdir -p "$root/startup-debug"
+            chown news "$root/startup-debug"
             cd tests/e2e
             # dbin is at the repo root ($root/dbin), two levels up from here.
-            su news -c "DIABLO_BIN=$root/dbin NNTP_TEST_DEADLINE=30s ./ci/run-shards ./e2e.test -test.v -test.count=1 -test.timeout=1200s"
+            # Same 30s greeting deadline and explicit two-way parallelism.
+            # The larger job budget is only for five whole-suite repetitions.
+            rc=0
+            su news -c "DIABLO_BIN=$root/dbin NNTP_TEST_DEADLINE=30s ./ci/repeat-startup-shards ./e2e.test $root/startup-debug 5 -test.v -test.count=1 -test.timeout=1200s" || rc=$?
+            chmod -R a+rX "$root/startup-debug"
+            exit "$rc"
+
+      - name: Retain startup diagnostics and every iteration log
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: illumos-startup-debug
+          path: startup-debug/
+          retention-days: 7
+          if-no-files-found: warn
 
   # OpenBSD: build only, via build-on-host (pkg_add gmake, create the news
   # user, build with gmake and clang from base); it fails on a build error like
@@ -303,6 +327,7 @@ jobs:
   # e2e tests fail (ISSUES.md D-171, won't fix), so no e2e run here. The
   # release is pinned so an action update cannot change the OS under test.
   openbsd:
+    if: ${{ false }}
     name: openbsd (build only)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -331,6 +356,7 @@ jobs:
   # release is pinned so an action update cannot change the OS under test.
   # Does not fail the workflow until it is green; reported either way.
   netbsd:
+    if: ${{ false }}
     name: netbsd
     needs: build-test-binary
     runs-on: ubuntu-24.04

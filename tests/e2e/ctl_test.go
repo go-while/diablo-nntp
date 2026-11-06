@@ -47,6 +47,9 @@ func ctlPath(tb testing.TB, s *Site) string {
 const EnvSleep = "E2E_SLEEP"
 
 func TestMain(m *testing.M) {
+	if runStartupProbe() {
+		os.Exit(0)
+	}
 	if d := os.Getenv(EnvSleep); d != "" {
 		if dur, err := time.ParseDuration(d); err == nil {
 			time.Sleep(dur)
