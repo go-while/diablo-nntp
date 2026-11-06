@@ -15,7 +15,11 @@ void NNSpoolResponse1(Connection *conn);
 void NNSpoolResponse2(Connection *conn);
 void NNSpoolResponse3(Connection *conn);
 void NNSpoolResponseScrap(Connection *conn);
+void NNSpoolHdrResponse(Connection *conn);
 void NNGetLocal1(Connection *conn);
+
+/* Bound a fallback HEAD as a whole, not just each backend response line. */
+#define HDR_MSGID_MAX_BYTES (1024 * 1024)
 
 void
 NNSpoolCommand1(Connection *conn)
@@ -27,16 +31,24 @@ NNSpoolCommand1(Connection *conn)
     if (DebugOpt)
 	printf("NNSpoolCommand1: article %s\n", sreq->sr_MsgId);
 
-    if (conn->co_Desc->d_LocalSpool) {
+    smaxage[0] = 0;
+    if (sreq->sr_MaxAge)
+	snprintf(smaxage, sizeof(smaxage), " a%d", sreq->sr_MaxAge);
+    if (sreq->sr_HeadOnly) {
+	/* A HEAD must not populate the full-article cache or enter the local
+	 * ARTICLE/DFA path. Keep this flag on the request even if its client
+	 * disconnects, so that the response is still drained correctly.
+	 */
+	MBPrintf(&conn->co_TMBuf, "head %s%s\r\n", sreq->sr_MsgId, smaxage);
+	conn->co_ServerArticleRequestedCount++;
+	NNSpoolResponse1(conn);
+    } else if (conn->co_Desc->d_LocalSpool) {
 	if (strcmp(conn->co_Desc->d_LocalSpool, "/") == 0)
 	    MBPrintf(&conn->co_TMBuf, "whereis %s\r\n", sreq->sr_MsgId);
 	else
 	    MBPrintf(&conn->co_TMBuf, "whereis %s REL\r\n", sreq->sr_MsgId);
 	NNGetLocal1(conn) ;
     } else {
-	smaxage[0] = 0;
-	if (sreq->sr_MaxAge)
-	    snprintf(smaxage, sizeof(smaxage), " a%d", sreq->sr_MaxAge);
 	MBPrintf(&conn->co_TMBuf, "article %s%s\r\n", sreq->sr_MsgId, smaxage);
 	conn->co_ServerArticleRequestedCount++;
 	NNSpoolResponse1(conn);
@@ -265,7 +277,14 @@ NNSpoolResponse1(Connection *conn)
 
     if ((len = MBReadLine(&conn->co_RMBuf, &buf)) > 0) {
 	conn->co_ServerByteCount += len;
-	if (strtol(buf, NULL, 10) == 220) {
+	if (sreq->sr_HeadOnly && strtol(buf, NULL, 10) == 221) {
+	    if (sreq->sr_CConn)
+		MBFree(&sreq->sr_CConn->co_ArtBuf);
+	    conn->co_BytesHeader = 0;
+	    NNSpoolHdrResponse(conn);
+	    return;
+	}
+	if (!sreq->sr_HeadOnly && strtol(buf, NULL, 10) == 220) {
 	    /* We have a positive answer, we may cache article */
 	    if (conn->co_Desc->d_Cache) {
 		CreateCache(conn);
@@ -349,6 +368,73 @@ NNSpoolResponse1(Connection *conn)
 	    logit(LOG_ERR, "Timeout elapsed waiting for %s to answer request %s (2), closing spool server", conn->co_Desc->d_Id, sreq->sr_MsgId);
 	    NNServerTerminate(conn);
 	}
+    }
+}
+
+/*
+ * HDR/XHDR message-id fallback. Buffer only a bounded HEAD, then use the same
+ * case-insensitive/folded-header formatter and absent-field rules as overview.
+ * No positive client response is sent until the backend terminator arrives;
+ * transport failures can therefore use the normal spool failover unchanged.
+ */
+void
+NNSpoolHdrResponse(Connection *conn)
+{
+    ServReq *sreq = conn->co_SReq;
+    char *buf;
+    int len;
+
+    conn->co_Func = NNSpoolHdrResponse;
+    conn->co_State = "sphdr";
+    while ((len = MBReadLine(&conn->co_RMBuf, &buf)) > 0) {
+	Connection *client = sreq->sr_CConn;
+
+	conn->co_ServerByteCount += len;
+	if (len == 3 && strcmp(buf, ".\r") == 0) {
+	    conn->co_ServerArticleCount++;
+	    if (client == NULL) {
+		NNFinishSReq(conn, NULL, 0);
+	    } else if (conn->co_BytesHeader > HDR_MSGID_MAX_BYTES) {
+		NNFinishSReq(conn, "503 Spool headers too large\r\n", 0);
+	    } else {
+		int size = client->co_ArtBuf.mh_Bytes;
+		char *headers = zalloc(&client->co_MemPool, size + 1);
+
+		MBRead(&client->co_ArtBuf, headers, size);
+		headers[size] = 0;
+		if (client->co_ListStrict)
+		    MBLogPrintf(client, &client->co_TMBuf, "225 Headers follow\r\n");
+		else
+		    MBLogPrintf(client, &client->co_TMBuf, "221 %s data follows\r\n", client->co_ListHdrs);
+		OutputOverview(client, headers, size, 0, -1);
+		zfree(&client->co_MemPool, headers, size + 1);
+		NNFinishSReq(conn, ".\r\n", 0);
+	    }
+	    return;
+	}
+	buf[len - 1] = '\n';
+	if (len > 1 && buf[0] == '.') {
+	    ++buf;
+	    --len;
+	}
+	if (len <= HDR_MSGID_MAX_BYTES - conn->co_BytesHeader) {
+	    conn->co_BytesHeader += len;
+	    if (client)
+		MBWrite(&client->co_ArtBuf, buf, len);
+	} else {
+	    conn->co_BytesHeader = HDR_MSGID_MAX_BYTES + 1;
+	    if (client)
+		MBFree(&client->co_ArtBuf);
+	    /* Keep draining to the dot, preserving the backend command stream. */
+	}
+    }
+    if (len < 0) {
+	NNServerTerminate(conn);
+    } else if (conn->co_Desc->d_Timeout &&
+	       time(NULL) > sreq->sr_Time + conn->co_Desc->d_Timeout) {
+	logit(LOG_ERR, "Timeout waiting for %s HEAD %s, closing spool server",
+	    conn->co_Desc->d_Id, sreq->sr_MsgId);
+	NNServerTerminate(conn);
     }
 }
 
