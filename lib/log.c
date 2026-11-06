@@ -13,6 +13,7 @@ Prototype void Log(LogInfo *LI, int priority, const char *ctl, ...);
 Prototype void VLog(LogInfo *LI, int priority, const char *ctl, va_list va);
 Prototype void logit(int priority, const char *ctl, ...);
 Prototype void vlogit(int priority, const char *ctl, va_list va);
+Prototype void LogPost(int priority, const char *ctl, ...);
 Prototype void LogIncoming(const char *format, char *label, const char *msgid, char *err);
 Prototype void CloseIncomingLog(void);
 Prototype void WritePath(char *path);
@@ -24,6 +25,7 @@ static LogInfo GeneralLog = { &GeneralLogPat, NULL, NULL, 0, 0, 0, 0, 0, {0} };
 static LogInfo IncomingLog = { &IncomingLogPat, NULL, NULL, 0, 0, 0, 0, 0, {0} };
 static LogInfo PathLog = { &FPathLogPat, NULL, NULL, 0, 0, 0, 0, 0, {0} };
 static LogInfo ArtLog = { &FArtLogPat, NULL, NULL, 0, 0, 0, 0, 0, {0} };
+static LogInfo PostLog = { &PostLogPat, NULL, NULL, 0, 0, 0, 0, 0, {0} };
 
 #if USE_INTERNAL_VSYSLOG
 void
@@ -247,6 +249,27 @@ void
 vlogit(int priority, const char *ctl, va_list va)
 {
     VLog(&GeneralLog, priority, ctl, va);
+}
+
+/*
+ * LogPost() - a line about a post (dreaderd: accepted or refused) into the
+ *	       post log, path_postlog in diablo.config.  Without one the line
+ *	       goes into the general log, as it always did; "NONE" drops it,
+ *	       "SYSLOG" sends it to syslog.
+ */
+void
+LogPost(int priority, const char *ctl, ...)
+{
+    va_list va;
+
+    va_start(va, ctl);
+    if (PostLogPat == NULL || *PostLogPat == 0) {
+	VLog(&GeneralLog, priority, ctl, va);
+    } else {
+	PostLog.Ident = GeneralLog.Ident;
+	VLog(&PostLog, priority, ctl, va);
+    }
+    va_end(va);
 }
 
 void

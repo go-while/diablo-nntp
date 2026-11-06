@@ -124,12 +124,12 @@ func TestAdmDailyAtrim(t *testing.T) {
 }
 
 // TestAdmDailyAtrimDaemonLogs: adm/daily.atrim also rotates the logs diablo and dreaderd
-// write themselves (general, incoming, drincoming, path, article). They were left out, and
+// write themselves (general, incoming, drincoming, path, article, post). They were left out, and
 // grew without limit. The daemons open the new file by themselves (lib/log.c checks the
 // inode), so a plain rename is enough.
 func TestAdmDailyAtrimDaemonLogs(t *testing.T) {
 	s := NewSite(t, SiteOptions{Setup: withAdm(admSource(t))})
-	names := []string{"general.log", "incoming.log", "drincoming.log", "path.log", "article.log"}
+	names := []string{"general.log", "incoming.log", "drincoming.log", "path.log", "article.log", "post.log"}
 	for _, n := range names {
 		if err := os.WriteFile(filepath.Join(s.Dir, "log", n), []byte(n+"\n"), 0o644); err != nil {
 			t.Fatal(err)

@@ -63,6 +63,7 @@ Prototype const char *DRAccessLockPat;		/* db relative  */
 Prototype const char *GeneralLogPat;		/* log relative */
 Prototype const char *IncomingLogPat;		/* log relative */
 Prototype const char *DRIncomingLogPat;		/* log relative */
+Prototype const char *PostLogPat;		/* log relative; "" = the general log */
 Prototype const	char *FPathLogPat;		/* log relative */
 Prototype const	char *FArtLogPat;		/* log relative */
 
@@ -127,6 +128,7 @@ const char *DRAccessLockPat = "%s/.accesslock";
 const char *GeneralLogPat = "SYSLOG";
 const char *IncomingLogPat = "%s/incoming.log";
 const char *DRIncomingLogPat = "NONE";
+const char *PostLogPat = "";
 const char *FPathLogPat = "NONE";
 const char *FArtLogPat = "NONE";
 

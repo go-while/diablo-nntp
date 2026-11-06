@@ -25,9 +25,10 @@ log=$("$dbin/dpath" log)
 cd "$log" || exit 1
 # A pattern that matches nothing stays as it is; rot skips it.
 #
-# general.log, incoming.log, drincoming.log, path.log and article.log are the logs
-# diablo and dreaderd write themselves (path_generallog, path_incominglog,
-# path_drincominglog, path_pathlog, path_artlog in diablo.config, under path_log).
+# general.log, incoming.log, drincoming.log, path.log, article.log and post.log are
+# the logs diablo and dreaderd write themselves (path_generallog, path_incominglog,
+# path_drincominglog, path_pathlog, path_artlog, path_postlog in diablo.config,
+# under path_log).
 # They can be moved while the daemons run: every write checks, at most every 10
 # seconds, whether the file name still points at the file it has open, and opens
 # the new file when it doesn't.  Up to 10 seconds of lines still go to the .0 file.
@@ -39,7 +40,7 @@ keep=$("$here/rot" -k 2>/dev/null) || keep=4
 "$here/rot" "$keep" daily.log hourly.expire.log daily.atrim.log biweekly.atrim.log \
     daily.reader.log weekly.reader.log actsync.log histbackup.log \
     dspoolout.log control.log miscctl \
-    general.log incoming.log drincoming.log path.log article.log \
+    general.log incoming.log drincoming.log path.log article.log post.log \
     newgroup*.alt newgroup*.other newgroup*.log \
     rmgroup*.alt rmgroup*.other rmgroup*.log \
     checkgroup*.alt checkgroup*.other checkgroup*.log || status=$?

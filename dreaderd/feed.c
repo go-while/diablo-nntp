@@ -167,6 +167,7 @@ NNTPPost(Connection *conn, char **pptr)
 					rcode, conn->co_IHaveMsgId, rdesc);
 	NNAcceptArticleStart(conn, NULL);
     } else {
+	PostLogRefused(conn, NULL, "440 Posting Not Allowed.");
 	MBLogPrintf(conn, &conn->co_TMBuf, "440 Posting Not Allowed.\r\n");
 	NNCommand(conn);
     }
