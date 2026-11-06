@@ -21,20 +21,27 @@ import (
 // the executable.
 func histDrvBuild(t *testing.T) string {
 	t.Helper()
+	return libdiabloDriver(t, histDriver, "histdrv", "history driver")
+}
+
+// libdiabloDriver compiles the C source src against the tree's obj/libdiablo.a
+// (skipped when it is not built) and returns the executable. It uses the flags
+// and libraries the Makefile builds libdiablo.a with: the driver must agree with
+// it on off_t (a History record holds one) and link what it needs. config.mk
+// lists the libraries of the optional features (libcanlock, PAM, ...).
+func libdiabloDriver(t *testing.T, src, name, what string) string {
+	t.Helper()
 	cc := wmCC(t)
 	root := wildmatSource(t)
 	if _, err := os.Stat(filepath.Join(root, "obj", "libdiablo.a")); err != nil {
 		t.Skipf("no built library in %s: %v", root, err)
 	}
 	dir := t.TempDir()
-	c := filepath.Join(dir, "histdrv.c")
-	if err := os.WriteFile(c, []byte(histDriver), 0o644); err != nil {
+	c := filepath.Join(dir, name+".c")
+	if err := os.WriteFile(c, []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	exe := filepath.Join(dir, "histdrv")
-	// The flags and libraries the Makefile builds libdiablo.a with: the driver
-	// must agree with it on off_t (a History record holds one) and link what it
-	// needs. config.mk lists the libraries of the optional features.
+	exe := filepath.Join(dir, name)
 	cflags := []string{"-O1", "-g", "-D_FILE_OFFSET_BITS=64"}
 	libs := []string{"-lm", "-lcrypto"}
 	switch runtime.GOOS {
@@ -54,7 +61,7 @@ func histDrvBuild(t *testing.T) string {
 	args := append(append(cflags, "-I"+filepath.Join(root, "lib"), "-I"+root,
 		"-o", exe, c, "-L"+filepath.Join(root, "obj"), "-ldiablo"), libs...)
 	if out, err := exec.Command(cc, args...).CombinedOutput(); err != nil {
-		t.Fatalf("compiling the history driver: %v\n%s", err, out)
+		t.Fatalf("compiling the %s: %v\n%s", what, err, out)
 	}
 	return exe
 }

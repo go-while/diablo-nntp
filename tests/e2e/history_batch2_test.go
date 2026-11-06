@@ -210,28 +210,7 @@ main(void)
 // built) and returns the executable.
 func pcDrvBuild(t *testing.T) string {
 	t.Helper()
-	cc := wmCC(t)
-	root := wildmatSource(t)
-	if _, err := os.Stat(filepath.Join(root, "obj", "libdiablo.a")); err != nil {
-		t.Skipf("no built library in %s: %v", root, err)
-	}
-	dir := t.TempDir()
-	c := filepath.Join(dir, "pcdrv.c")
-	if err := os.WriteFile(c, []byte(pcDriver), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	exe := filepath.Join(dir, "pcdrv")
-	var out []byte
-	var err error
-	for _, libs := range [][]string{{"-lm"}, {"-lm", "-lcrypto", "-lz"}, {"-lm", "-lcrypto", "-lz", "-lpam"}} {
-		args := append([]string{"-O1", "-g", "-I" + filepath.Join(root, "lib"), "-I" + root,
-			"-o", exe, c, "-L" + filepath.Join(root, "obj"), "-ldiablo"}, libs...)
-		if out, err = exec.Command(cc, args...).CombinedOutput(); err == nil {
-			return exe
-		}
-	}
-	t.Fatalf("compiling the precommit driver: %v\n%s", err, out)
-	return ""
+	return libdiabloDriver(t, pcDriver, "pcdrv", "precommit driver")
 }
 
 // TestPrecommitDelcommLeavesOtherSlot (D-192): a PC_DELCOMM for a message-id
