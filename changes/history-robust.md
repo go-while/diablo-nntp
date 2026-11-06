@@ -1,0 +1,3 @@
+- diablo/history: a history file that ends inside a record (a crash during an append) no longer skews the index of every later record; the next add skips to the record boundary and logs the stray bytes.
+- diablo/history: a chain that points at an unreadable record (past the end of the file) is a miss in HistoryLookup, HistoryLookupByHash and HistoryPosLookupByHash instead of a hit, so new articles of that hash bucket are not refused as duplicates.
+- diablo: when the history cannot take the record of a received article (ENOSPC, lock or index write failure) the peer gets 436/431 and offers it again instead of 437/439.
