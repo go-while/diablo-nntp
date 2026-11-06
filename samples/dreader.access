@@ -29,35 +29,57 @@
 # clustername	 : The name of this cluster - used in various posting headers
 #		   Defaults to the same as the hostname
 #
-# postpath	 : The Path: entry to add to posts, followed by the ".POSTED"
-#		   diagnostic (RFC 5537 3.2.1), for example
-#		   "Path: path.host!.POSTED!not-for-mail". With several
-#		   elements ("a!b") the last one is the injecting agent that
-#		   Injection-Info names. Without a postpath there is no
-#		   ".POSTED", and Injection-Info names the hostname.
-#		   (Default: None)
+# postpath	 : The Path: entry to add to posts ("Path: path.host!not-for-mail").
+#		   With rfc5537 it is followed by the ".POSTED" diagnostic
+#		   (RFC 5537 3.2.1): "Path: path.host!.POSTED!not-for-mail".
+#		   With several elements ("a!b") the last one is the
+#		   injecting agent that Injection-Info names. Without a
+#		   postpath there is no ".POSTED", and Injection-Info names
+#		   the hostname. (Default: None)
 #
 # newsadmin	 : News Admin contact address added to connect banners
 #		   Defaults to news@hostname.
 # organisation	 : Organisation: line added to local posts (the US spelling
 #		   with a 'z' can be used too). (Default: None)
-# abuseto	 : The mail-complaints-to of the Injection-Info: line
-#		   (X-Complaints-To: with legacytrace). (Default: None)
+# abuseto	 : The X-Complaints-To: line (with rfc5537 the
+#		   mail-complaints-to of Injection-Info:). (Default: None)
 #
-# cryptpw	 : The password used to encrypt the logging-data of the
-#		   Injection-Info: line (X-Trace: with legacytrace), if set in
-#		   vendor.h (POST_CRYPTXTRACE). With it the posting host is
-#		   given as an hourly hash in posting-account instead of
-#		   posting-host. "G=gen,P=password" adds the generation.
-#		   Default: No crypting.
+# cryptpw	 : The password used to encrypt the X-Trace: line (with
+#		   rfc5537 the posting-account of Injection-Info:), if set
+#		   in vendor.h (POST_CRYPTXTRACE). With it the posting host
+#		   is given as an hourly hash (in NNTP-Posting-Host:, or
+#		   posting-host with rfc5537). "G=gen,P=password" adds the
+#		   generation to X-Trace:. Default: No crypting.
 #
-# legacytrace	 : 'yes' writes the old trace headers to local posts:
-#		   NNTP-Posting-Host:, X-Trace:, X-Complaints-To: (and
-#		   NNTP-Posting-Date: where built in), and no Injection-Info:
-#		   or Injection-Date:, and no ".POSTED" in the Path. By
-#		   default posts get Injection-Info: (RFC 5536 3.2.8) and,
-#		   when dreaderd supplied the Message-ID or Date,
-#		   Injection-Date: (RFC 5537 3.5). Default: no.
+# showposter	 : 'yes' adds posting-account="<user>" to Injection-Info:
+#		   (rfc5537) for a post by a logged-in user, encrypted with
+#		   a cryptpw. Off by default, as the name is then public.
+#		   Default: no.
+#
+# rfc5537	 : 'yes' makes dreaderd post as an injecting agent of RFC
+#		   5537 3.5, with the article format of RFC 5536:
+#		   - Injection-Info: (RFC 5536 3.2.8) in place of
+#		     NNTP-Posting-Host:, X-Trace: and X-Complaints-To: (and
+#		     NNTP-Posting-Date: where built in): posting-host,
+#		     logging-data "<time> <pid>", mail-complaints-to, and
+#		     posting-account with showposter yes; and
+#		     Injection-Date: when dreaderd supplied the Message-ID or
+#		     Date;
+#		   - ".POSTED" in the Path (see postpath);
+#		   - a Date: or Injection-Date: that cannot be read, is more
+#		     than 24 hours ahead or older than feedermaxacceptage
+#		     (at least 72 hours) is refused with 441;
+#		   - a Message-ID: must have the syntax of RFC 5536 3.1.3:
+#		     "<" dot-atom "@" dot-atom or [literal] ">", at most 250
+#		     octets, no comment. Refused with 441 otherwise; with
+#		     'no', some posters' ids with "..", two "@" or a
+#		     comment are taken.
+#		   'no', the default, posts as dreaderd always did. Either
+#		   way a post with Injection-Info:, Xref: or ".POSTED" in its
+#		   Path is refused, and a Date: dreaderd adds ends in
+#		   "+0000 (UTC)".
+#		   "legacytrace yes" is an older spelling of "rfc5537 no".
+#		   Default: no.
 #
 # canlockadmin	 : A secret for Cancel-Lock (RFC 8315), the same as INN's
 #		   canlockadmin in inn-secrets.conf. With it, every local post
@@ -131,6 +153,7 @@
 #  organisation	An Organisation
 #  abuseto	abuse@current.host.name
 #  cryptpw	apassword
+#  rfc5537	yes
 #  canlockadmin	a-random-secret-of-at-least-32-characters
 #  canlockuser	another-random-secret-of-at-least-32-characters
 #  interface	1.2.3.4

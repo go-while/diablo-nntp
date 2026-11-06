@@ -13,8 +13,13 @@ import (
 	"github.com/go-while/nntp-testkit/fakeserver"
 )
 
-// injAccess is DefaultReaderAccess with these vserverdef lines added.
+// injAccess is DefaultReaderAccess with "rfc5537 yes" and these vserverdef lines added.
 func injAccess(vs string) string {
+	return plainAccess("    rfc5537 yes\n" + vs)
+}
+
+// plainAccess is DefaultReaderAccess with these vserverdef lines added.
+func plainAccess(vs string) string {
 	return strings.Replace(DefaultReaderAccess, "    hostname "+PathHost+"\n",
 		"    hostname "+PathHost+"\n"+vs, 1)
 }
@@ -22,6 +27,12 @@ func injAccess(vs string) string {
 // postHead posts an article with these header lines through a reader with access and
 // returns the header the outgoing server got, with folded lines joined.
 func postHead(t *testing.T, access string, hdrs ...string) []string {
+	t.Helper()
+	return postHeadLogin(t, access, "", "", hdrs...)
+}
+
+// postHeadLogin is postHead after AUTHINFO USER/PASS (none when user is "").
+func postHeadLogin(t *testing.T, access, user, pass string, hdrs ...string) []string {
 	t.Helper()
 	_, spool := spoolStore(t)
 	var mu sync.Mutex
@@ -35,6 +46,10 @@ func postHead(t *testing.T, access string, hdrs ...string) []string {
 	})})
 	s := NewReaderSite(t, ReaderOptions{Spool: spool, Post: post, Access: access})
 	c := s.Reader(t)
+	if user != "" {
+		c.ExpectCmd(381, "AUTHINFO USER %s", user)
+		c.ExpectCmd(281, "AUTHINFO PASS %s", pass)
+	}
 	c.ExpectCmd(340, "POST")
 	c.MustSend(client.Stuff(append(append([]string{
 		"From: E2E Poster <poster@example.invalid>",
@@ -70,17 +85,18 @@ func hasHeader(head []string, name string) bool {
 	return false
 }
 
-var injDateRe = regexp.MustCompile(`^(Mon|Tue|Wed|Thu|Fri|Sat|Sun), [0-3][0-9] (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]{4} [0-2][0-9]:[0-5][0-9]:[0-6][0-9] \+0000$`)
+var injDateRe = regexp.MustCompile(`^(Mon|Tue|Wed|Thu|Fri|Sat|Sun), [0-3][0-9] (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]{4} [0-2][0-9]:[0-5][0-9]:[0-6][0-9] \+0000 \(UTC\)$`)
 
-// TestReaderPostInjectionInfo (F-07 step 2, RFC 5537 3.5 steps 9 to 11): a post gets a Path
-// with the "!.POSTED" diagnostic, an Injection-Info with posting-host, logging-data and
-// mail-complaints-to, and no NNTP-Posting-Host, X-Trace or X-Complaints-To. Injection-Date
-// is added only where dreaderd supplied the Message-ID or Date, and a poster's own is kept.
-// Before, the old trace headers were written and no Injection-* header.
+// TestReaderPostInjectionInfo (F-07 step 2, RFC 5537 3.5 steps 9 to 11): with "rfc5537 yes" a
+// post gets a Path with the "!.POSTED" diagnostic, an Injection-Info with posting-host,
+// logging-data and mail-complaints-to, and no NNTP-Posting-Host, X-Trace or X-Complaints-To.
+// Injection-Date is added only where dreaderd supplied the Message-ID or Date, and a poster's
+// own is kept. Without rfc5537 (the default) and with "legacytrace yes", the old trace headers
+// are written and no Injection-* header.
 func TestReaderPostInjectionInfo(t *testing.T) {
 	access := injAccess("    postpath " + PathHost + "\n    abuseto abuse@example.invalid\n")
 
-	t.Run("default", func(t *testing.T) {
+	t.Run("rfc5537", func(t *testing.T) {
 		head := postHead(t, access, "Message-ID: "+msgID(t), "Date: "+time.Now().UTC().Format(time.RFC1123Z))
 		if p := headerValue(head, "Path"); p != PathHost+"!.POSTED!not-for-mail" {
 			t.Errorf("Path %q, want %s!.POSTED!not-for-mail", p, PathHost)
@@ -98,6 +114,14 @@ func TestReaderPostInjectionInfo(t *testing.T) {
 		if m := regexp.MustCompile(`posting-host="([^"]*)"`).FindStringSubmatch(ii); m == nil ||
 			!(m[1] == "127.0.0.1" || regexp.MustCompile(`^[A-Za-z0-9.-]+:127\.0\.0\.1$`).MatchString(m[1])) {
 			t.Errorf("Injection-Info %q: posting-host is not 127.0.0.1 or name:127.0.0.1", ii)
+		}
+		// each datum in its own parameter: logging-data only finds the post in the logs
+		if m := regexp.MustCompile(`logging-data="([^"]*)"`).FindStringSubmatch(ii); m == nil ||
+			!regexp.MustCompile(`^[0-9]+ [0-9]+$`).MatchString(m[1]) {
+			t.Errorf("Injection-Info %q: logging-data is not \"<time> <pid>\"", ii)
+		}
+		if strings.Contains(ii, "posting-account=") {
+			t.Errorf("Injection-Info %q has a posting-account without showposter yes", ii)
 		}
 		for _, h := range []string{"NNTP-Posting-Host", "X-Trace", "X-Complaints-To", "Injection-Date"} {
 			if hasHeader(head, h) {
@@ -131,19 +155,36 @@ func TestReaderPostInjectionInfo(t *testing.T) {
 		for _, pw := range []string{"secret", "G=7,P=secret"} {
 			head := postHead(t, injAccess("    postpath "+PathHost+"\n    cryptpw "+pw+"\n"), "Message-ID: "+msgID(t))
 			ii := headerValue(head, "Injection-Info")
-			want := `logging-data="C=`
-			if strings.HasPrefix(pw, "G=") {
-				want = `logging-data="G=7,C=`
-			}
-			if !strings.Contains(ii, `posting-account="`) || strings.Contains(ii, "posting-host=") ||
-				!strings.Contains(ii, want) || strings.Contains(ii, "127.0.0.1") {
-				t.Errorf("cryptpw %s: Injection-Info %q, want posting-account, no posting-host, %s..., no address", pw, ii, want)
+			// the hourly hash NNTP-Posting-Host had is the posting-host now; logging-data
+			// stays "<time> <pid>", in clear
+			if !regexp.MustCompile(`posting-host="[0-9a-f]{8}\.`).MatchString(ii) || strings.Contains(ii, "posting-account=") ||
+				!regexp.MustCompile(`logging-data="[0-9]+ [0-9]+"`).MatchString(ii) || strings.Contains(ii, "127.0.0.1") {
+				t.Errorf("cryptpw %s: Injection-Info %q, want a hashed posting-host, no posting-account, logging-data \"<time> <pid>\", no address", pw, ii)
 			}
 		}
 	})
 
+	t.Run("showposter", func(t *testing.T) {
+		login := func(vs string) string {
+			return strings.Replace(AuthReaderAccess, "    hostname "+PathHost+"\n",
+				"    hostname "+PathHost+"\n    rfc5537 yes\n    postpath "+PathHost+"\n"+vs, 1)
+		}
+		ii := headerValue(postHeadLogin(t, login("    showposter yes\n"), "fred", "fredspass"), "Injection-Info")
+		if !strings.Contains(ii, `posting-account="fred"`) {
+			t.Errorf("showposter yes, logged in as fred: Injection-Info %q, want posting-account=\"fred\"", ii)
+		}
+		ii = headerValue(postHeadLogin(t, login(""), "fred", "fredspass"), "Injection-Info")
+		if strings.Contains(ii, "posting-account=") {
+			t.Errorf("without showposter: Injection-Info %q has a posting-account", ii)
+		}
+		ii = headerValue(postHeadLogin(t, login("    showposter yes\n    cryptpw secret\n"), "fred", "fredspass"), "Injection-Info")
+		if !strings.Contains(ii, `posting-account="C=`) || strings.Contains(ii, "fred") {
+			t.Errorf("showposter yes with a cryptpw: Injection-Info %q, want an encrypted posting-account", ii)
+		}
+	})
+
 	t.Run("no postpath", func(t *testing.T) {
-		head := postHead(t, DefaultReaderAccess, "Message-ID: "+msgID(t))
+		head := postHead(t, injAccess(""), "Message-ID: "+msgID(t))
 		if p := headerValue(head, "Path"); p != "not-for-mail" {
 			t.Errorf("Path %q without a postpath, want not-for-mail", p)
 		}
@@ -164,22 +205,28 @@ func TestReaderPostInjectionInfo(t *testing.T) {
 		}
 	})
 
-	t.Run("legacytrace", func(t *testing.T) {
-		head := postHead(t, injAccess("    postpath "+PathHost+"\n    abuseto abuse@example.invalid\n    legacytrace yes\n"))
-		if p := headerValue(head, "Path"); p != PathHost+"!not-for-mail" {
-			t.Errorf("legacytrace: Path %q, want %s!not-for-mail", p, PathHost)
-		}
-		for _, h := range []string{"NNTP-Posting-Host", "X-Trace", "X-Complaints-To"} {
-			if !hasHeader(head, h) {
-				t.Errorf("legacytrace: no %s header", h)
+	for _, c := range []struct{ name, vs string }{
+		{"default", ""},
+		{"rfc5537 no", "    rfc5537 no\n"},
+		{"legacytrace yes", "    rfc5537 yes\n    legacytrace yes\n"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			head := postHead(t, plainAccess("    postpath "+PathHost+"\n    abuseto abuse@example.invalid\n"+c.vs))
+			if p := headerValue(head, "Path"); p != PathHost+"!not-for-mail" {
+				t.Errorf("Path %q, want %s!not-for-mail", p, PathHost)
 			}
-		}
-		for _, h := range []string{"Injection-Info", "Injection-Date"} {
-			if hasHeader(head, h) {
-				t.Errorf("legacytrace: post has %s: %q", h, headerValue(head, h))
+			for _, h := range []string{"NNTP-Posting-Host", "X-Trace", "X-Complaints-To"} {
+				if !hasHeader(head, h) {
+					t.Errorf("no %s header", h)
+				}
 			}
-		}
-	})
+			for _, h := range []string{"Injection-Info", "Injection-Date"} {
+				if hasHeader(head, h) {
+					t.Errorf("post has %s: %q", h, headerValue(head, h))
+				}
+			}
+		})
+	}
 }
 
 // TestReaderModeratorGetsNoInjectionInfo (F-07, RFC 5537 3.5 step 7): a post to a moderated

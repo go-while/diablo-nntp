@@ -53,7 +53,7 @@ int BreakIfBadGroup(char *groups, Connection *conn);
 int CheckValidRestrictedGroup(const char *group);
 const char *PostRefusedGroup(char *groups, char *pstatus);
 int HeaderCmp(const char *big, const char *little, char **errMsg);
-void PostInjectionHeaders(MBufHead *mb, Connection *conn, time_t t, const char *cryptpw, const char *cryptgen, int addDate);
+void PostInjectionHeaders(MBufHead *mb, Connection *conn, time_t t, const char *cryptpw, int addDate);
 const char *PostDate(char *buf, int size, time_t t);
 const char *PostDateCheck(const char *h, int l, int nameLen, const char *name);
 
@@ -101,7 +101,7 @@ char *XTRAMangle(char *xtrace, char *cryptpw)
 
 /*
  * PostDate() - t as an RFC 5322 3.3 <date-time> in UTC, the form RFC 5536
- *		3.1.1 wants generated: "Thu, 05 Nov 2026 12:00:00 +0000"
+ *		3.1.1 wants generated: "Thu, 05 Nov 2026 12:00:00 +0000 (UTC)"
  *		(not the obsolete "GMT" zone; the names are fixed, not the
  *		locale's).  Returns buf.
  */
@@ -117,7 +117,7 @@ PostDate(char *buf, int size, time_t t)
 	t = 0;
 	gmtime_r(&t, &tm);
     }
-    snprintf(buf, size, "%s, %02d %s %04d %02d:%02d:%02d +0000",
+    snprintf(buf, size, "%s, %02d %s %04d %02d:%02d:%02d +0000 (UTC)",
 	wd[tm.tm_wday], tm.tm_mday, mo[tm.tm_mon], tm.tm_year + 1900,
 	tm.tm_hour, tm.tm_min, tm.tm_sec);
     return(buf);
@@ -197,11 +197,13 @@ injQuoted(MBufHead *mb, const char *v)
  *		addDate, Injection-Date (3.2.7) for a post (F-07).
  *
  *	Injection-Info carries what NNTP-Posting-Host, X-Trace and
- *	X-Complaints-To carried: posting-host is the client's host and
- *	address; with a cryptpw the hourly hash NNTP-Posting-Host had goes
- *	in posting-account instead (the same value for the same source,
- *	opaque to other sites); logging-data is the X-Trace data, encrypted
- *	with the cryptpw as X-Trace was; mail-complaints-to is abuseto.
+ *	X-Complaints-To carried, each in its own parameter (RFC 5536 3.2.8):
+ *	posting-host is the client's host and address, or with a cryptpw
+ *	the hourly hash NNTP-Posting-Host had (the same value for the same
+ *	source, opaque to other sites); posting-account, only with
+ *	"showposter yes", is the name the client logged in with (encrypted
+ *	with a cryptpw); logging-data identifies the post in the logs,
+ *	"<time> <pid>"; mail-complaints-to is abuseto.
  *	Folded before each parameter (3.2.8: folding only around the ";").
  */
 /*
@@ -226,20 +228,17 @@ injIdent(const Vserver *vs, char *buf, int size)
 }
 
 void
-PostInjectionHeaders(MBufHead *mb, Connection *conn, time_t t, const char *cryptpw, const char *cryptgen, int addDate)
+PostInjectionHeaders(MBufHead *mb, Connection *conn, time_t t, const char *cryptpw, int addDate)
 {
     const Vserver *vs = conn->co_Auth.dr_VServerDef;
     char ident[64];
-    char trace[NI_MAXHOST + 512];
+    char trace[64];
     char addr[NI_MAXHOST + 8];		/* the client's address, for posting-host */
-    char addrPort[NI_MAXHOST + 16];	/* with the port, as X-Trace had it */
     const char *a;
 
     /* NetAddrToSt() returns a static buffer: copy each form */
     a = NetAddrToSt(0, (struct sockaddr *)&conn->co_Auth.dr_Addr, 1, 0, 0);
     snprintf(addr, sizeof(addr), "%s", a ? a : "");
-    a = NetAddrToSt(0, (struct sockaddr *)&conn->co_Auth.dr_Addr, 1, 1, 1);
-    snprintf(addrPort, sizeof(addrPort), "%s", a ? a : "");
 
     if (addDate) {
 	char db[40];
@@ -255,7 +254,7 @@ PostInjectionHeaders(MBufHead *mb, Connection *conn, time_t t, const char *crypt
 
     if (! conn->co_Auth.dr_ReaderDef->rd_TurnOffNNPH) {
 	if (cryptpw) {
-	    MBPrintf(mb, ";\r\n\tposting-account=");
+	    MBPrintf(mb, ";\r\n\tposting-host=");
 	    injQuoted(mb, NNPHMangle((char *)vs->vs_ClusterName,
 		    conn->co_Auth.dr_Host, (char *)cryptpw));
 	} else {
@@ -270,28 +269,21 @@ PostInjectionHeaders(MBufHead *mb, Connection *conn, time_t t, const char *crypt
 	}
     }
 
-    snprintf(trace, sizeof(trace), "%lu %s %d %s%s%s%s%s%s",
-	(unsigned long)t,
-	vs->vs_HostName,
-	(int)getpid(),		/* should probably be slot id */
-	(conn->co_Auth.dr_Flags & DF_IGNORED_AUTH_LONG ? "!" : ""),
-	*conn->co_Auth.dr_AuthUser ? conn->co_Auth.dr_AuthUser : "",
-	*conn->co_Auth.dr_AuthUser ? "/" : "",
-	*conn->co_Auth.dr_IdentUser ? conn->co_Auth.dr_IdentUser : "",
-	*conn->co_Auth.dr_IdentUser ? "@" : "",
-	addrPort
-    );
+    if (vs->vs_ShowPoster && *conn->co_Auth.dr_AuthUser) {
+	MBPrintf(mb, ";\r\n\tposting-account=");
 #ifdef	POST_CRYPTXTRACE
-    if (cryptpw) {
-	char enc[sizeof(trace)];
+	if (cryptpw) {
+	    char enc[2 + 256];	/* "C=" and XTRAMangle()'s 256 */
 
-	if (cryptgen)
-	    snprintf(enc, sizeof(enc), "G=%s,C=%s", cryptgen, XTRAMangle(trace, (char *)cryptpw));
-	else
-	    snprintf(enc, sizeof(enc), "C=%s", XTRAMangle(trace, (char *)cryptpw));
-	snprintf(trace, sizeof(trace), "%s", enc);
-    }
+	    snprintf(enc, sizeof(enc), "C=%s", XTRAMangle(conn->co_Auth.dr_AuthUser, (char *)cryptpw));
+	    injQuoted(mb, enc);
+	} else
 #endif
+	    injQuoted(mb, conn->co_Auth.dr_AuthUser);
+    }
+
+    /* logging-data: what finds the post in the logs, the same with a cryptpw */
+    snprintf(trace, sizeof(trace), "%lu %d", (unsigned long)t, (int)getpid());
     MBPrintf(mb, ";\r\n\tlogging-data=");
     injQuoted(mb, trace);
 
@@ -557,19 +549,18 @@ canLockEmit(MBufHead *mb, const char *name, const char *list)
  *	
  * Internally generated headers:
  *	Path:			(removed, generated; refused with a POSTED entry)
- *	Date:			(kept; checked against the RFC 5537 3.5 step 3
- *				 window; generated if missing, RFC 5322 form)
+ *	Date:			(kept; with rfc5537 checked against the RFC 5537
+ *				 3.5 step 3 window; generated if missing, RFC 5322 form)
  *	Lines:			(removed, generated)
- *	Message-ID:		(checked, generated)
- *	NNTP-Posting-Date:	(refused; generated with legacytrace, optionally)
- *	NNTP-Posting-Host:	(refused; generated with legacytrace)
- *	X-Trace:		(refused; generated with legacytrace)
- *	X-Complaints-To:	(refused; generated with legacytrace)
- *	Injection-Date:		(kept, window checked as Date; generated when we supplied the
- *				 Message-ID or Date, not with legacytrace)
+ *	Message-ID:		(checked, RFC 5536 3.1.3 syntax with rfc5537; generated)
+ *	NNTP-Posting-Date:	(refused; generated without rfc5537, optionally)
+ *	NNTP-Posting-Host:	(refused; generated without rfc5537)
+ *	X-Trace:		(refused; generated without rfc5537)
+ *	X-Complaints-To:	(refused; generated without rfc5537)
+ *	Injection-Date:		(kept, window checked as Date; with rfc5537 generated when
+ *				 we supplied the Message-ID or Date)
  *	Xref:			(refused, RFC 5537 3.5)
- *	Injection-Info:		(refused, RFC 5537 3.5; generated, not with
- *				 legacytrace)
+ *	Injection-Info:		(refused, RFC 5537 3.5; generated with rfc5537)
  *	Distribution:		(checked, generated)
  *
  * Errors:
@@ -644,14 +635,14 @@ NNPostBuffer(Connection *conn)
      */
 
     /*
-     * RFC 5537 3.2.1 step 2 (F-07): the injecting agent's path-identity
-     * followed by the "!.POSTED" diagnostic.  Without a postpath diablo
+     * RFC 5537 3.2.1 step 2 (F-07, with "rfc5537 yes"): the injecting
+     * agent's path-identity followed by the "!.POSTED" diagnostic.  Without a postpath diablo
      * adds the first path-identity, and a diagnostic cannot come first,
      * so a post gets ".POSTED" only with a postpath.  The Path grows to
      * the left: in a postpath "a!b" the injecting agent is "b", the one
      * before ".POSTED", and Injection-Info names it too (injIdent()).
      */
-    if (*vs->vs_PostPath && !vs->vs_LegacyTrace)
+    if (*vs->vs_PostPath && vs->vs_Rfc5537)
 	MBPrintf(&tmbuf, "Path: %s!.POSTED!not-for-mail\r\n", vs->vs_PostPath);
     else
 	MBPrintf(&tmbuf, "Path: %s%snot-for-mail\r\n",
@@ -726,11 +717,11 @@ NNPostBuffer(Connection *conn)
 	    haveOrganization = 1;
 	} else if (HeaderCmp(base, "Injection-Date", &errMsg) == 0) {
 	    haveInjDate = 1;	/* kept as it is (RFC 5537 3.5 step 11) */
-	    if (errMsg == NULL)
+	    if (errMsg == NULL && vs->vs_Rfc5537)
 		errMsg = (char *)PostDateCheck(base, l, 14, "Injection-Date");
 	} else if (HeaderCmp(base, "Date", &errMsg) == 0) {
 	    haveDate = 1;
-	    if (errMsg == NULL)
+	    if (errMsg == NULL && vs->vs_Rfc5537)
 		errMsg = (char *)PostDateCheck(base, l, 4, "Date");
 	} else if (HeaderCmp(base, "Distribution", &errMsg) == 0) {
 	    /*
@@ -776,8 +767,14 @@ NNPostBuffer(Connection *conn)
 #else
 	    const char *msgmsgid;
 
+	    /*
+	     * RFC 5537 3.5 step 2 (F-07): with "rfc5537 yes" the Message-ID
+	     * must be a msg-id as RFC 5536 3.1.3 defines it; without, the
+	     * lax check dreaderd always made.
+	     */
 	    if (strcmp((msgmsgid = MsgId(base + 11, NULL)), "<>") == 0 ||
-		strchr(base, '@') == NULL
+		strchr(base, '@') == NULL ||
+		(vs->vs_Rfc5537 && !MsgIdStrict(base + 11, l - 11))
 	    ) {
 		keep = 0;	/* delete */
 		errMsg = "441 435 Bad Message-ID\r\n";
@@ -1064,9 +1061,9 @@ NNPostBuffer(Connection *conn)
 
 	char identBuf[64];
 
-	if (vs->vs_LegacyTrace || injIdent(vs, identBuf, sizeof(identBuf))[0] == 0) {
+	if (!vs->vs_Rfc5537 || injIdent(vs, identBuf, sizeof(identBuf))[0] == 0) {
 	/*
-	 * legacytrace yes (F-07): the trace headers dreaderd always wrote,
+	 * rfc5537 no (F-07, the default): the trace headers dreaderd always wrote,
 	 * and no Injection-Info or Injection-Date.  Also without a postpath
 	 * and a hostname: Injection-Info needs a path-identity, and the
 	 * trace data must not be lost.
@@ -1146,7 +1143,7 @@ NNPostBuffer(Connection *conn)
 	     * of NNTP-Posting-Host, X-Trace and X-Complaints-To, with the
 	     * same data, and Injection-Date where the standard wants one.
 	     */
-	    PostInjectionHeaders(&tmbuf, conn, t, cryptpw, cryptgen,
+	    PostInjectionHeaders(&tmbuf, conn, t, cryptpw,
 		haveInjDate == 0 && (haveMsgId == 0 || haveDate == 0));
 	}
     }

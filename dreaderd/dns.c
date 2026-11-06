@@ -3971,13 +3971,30 @@ InstallAccessCache(void) {
 		    continue;
 		}
 		/*
-		 * F-07: by default a post gets Injection-Info and, where RFC
-		 * 5537 3.5 step 11 wants one, Injection-Date; "legacytrace
-		 * yes" writes the old X-Trace, NNTP-Posting-Host and
-		 * X-Complaints-To instead, and no Injection-* header.
+		 * F-07: "rfc5537 yes" makes dreaderd post as RFC 5536/5537
+		 * want (Injection-Info and Injection-Date in place of the old
+		 * trace headers, ".POSTED" in the Path, the Date window, the
+		 * strict Message-ID syntax).  The default, no, posts as
+		 * dreaderd always did.  "legacytrace yes" is the older
+		 * spelling of "rfc5537 no", "legacytrace no" of yes.
 		 */
+		if (*val && strcmp(opt, "rfc5537") == 0) {
+		    vserver.vs_Rfc5537 = (*val == 'y' || *val == 'Y' ||
+			*val == '1' || strcasecmp(val, "on") == 0);
+		    continue;
+		}
+		/*
+		 * showposter yes: Injection-Info's posting-account names
+		 * the user a post was made as (off by default, as the name
+		 * is then public; encrypted with a cryptpw).
+		 */
+		if (*val && strcmp(opt, "showposter") == 0) {
+		    vserver.vs_ShowPoster = (*val == 'y' || *val == 'Y' ||
+			*val == '1' || strcasecmp(val, "on") == 0);
+		    continue;
+		}
 		if (*val && strcmp(opt, "legacytrace") == 0) {
-		    vserver.vs_LegacyTrace = (*val == 'y' || *val == 'Y' ||
+		    vserver.vs_Rfc5537 = !(*val == 'y' || *val == 'Y' ||
 			*val == '1' || strcasecmp(val, "on") == 0);
 		    continue;
 		}
@@ -5065,6 +5082,8 @@ PrintAuthDetails(DnsRes *dres)
     printf(" vs_CanLockAdmin: %s\n", dres->dr_VServerDef->vs_CanLockAdmin[0][0] ? "set" : "none");
     printf(" vs_CanLockUser: %s\n", dres->dr_VServerDef->vs_CanLockUser[0][0] ? "set" : "none");
     printf(" vs_NoCanLockSha1: %d\n", dres->dr_VServerDef->vs_NoCanLockSha1);
+    printf(" vs_Rfc5537: %d\n", dres->dr_VServerDef->vs_Rfc5537);
+    printf(" vs_ShowPoster: %d\n", dres->dr_VServerDef->vs_ShowPoster);
     printf(" vs_Interface: %s\n", "XXX"); /* dres->dr_VServerDef->vs_Interface); */
     printf(" vs_AccessFile: %s\n", dres->dr_VServerDef->vs_AccessFile);
    printf("au_Name: %s\n", dres->dr_AuthDef->au_Name);
