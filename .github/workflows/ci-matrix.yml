@@ -89,8 +89,19 @@ jobs:
         env:
           DIABLO_BIN: ${{ github.workspace }}/dbin
           NNTP_TEST_DEADLINE: 30s
+          E2E_STARTUP_DIAGNOSTICS: ${{ matrix.os == 'ubuntu-24.04-arm' && '1' || '0' }}
+          E2E_STARTUP_DIAGNOSTICS_DIR: ${{ github.workspace }}/startup-diagnostics
         # several test processes at once, then the timing-sensitive tests alone
         run: go test -c -o e2e.test . && ./ci/run-shards ./e2e.test -test.v -test.count=1 -test.timeout=1200s
+
+      - name: Retain ARM startup diagnostics on failure
+        if: ${{ failure() && matrix.os == 'ubuntu-24.04-arm' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: startup-diagnostics-${{ matrix.name }}
+          path: startup-diagnostics/
+          retention-days: 7
+          if-no-files-found: warn
 
   # Compile the e2e test binary once, with CGO disabled so it is portable (runs
   # on glibc and musl alike), for every OS the VM/container jobs need. The test
@@ -274,6 +285,7 @@ jobs:
       - name: Build and test on OmniOS
         uses: vmactions/omnios-vm@9576f0b6d15e7696548409baa533bc0a339caf42 # v1.3.7
         with:
+          copyback: "true"
           prepare: |
             # Same 127.0.0.x client source addresses as the FreeBSD job needs.
             for ip in 2 3 4 9 10; do ifconfig lo0 addif 127.0.0.$ip up 2>/dev/null || true; done
@@ -292,9 +304,31 @@ jobs:
             echo "=== build.log (last 20 lines) ==="; tail -20 build.log
             ls dbin
             chmod -R a+rX .
+            mkdir -p "$root/startup-diagnostics"
+            chown news "$root/startup-diagnostics"
             cd tests/e2e
             # dbin is at the repo root ($root/dbin), two levels up from here.
-            su news -c "DIABLO_BIN=$root/dbin NNTP_TEST_DEADLINE=30s ./ci/run-shards ./e2e.test -test.v -test.count=1 -test.timeout=1200s"
+            # This action skips copyback when its VM script fails. Save the
+            # test status, copy captures back, then fail on the host below.
+            rc=0
+            su news -c "DIABLO_BIN=$root/dbin NNTP_TEST_DEADLINE=30s E2E_STARTUP_DIAGNOSTICS=1 E2E_STARTUP_DIAGNOSTICS_DIR=$root/startup-diagnostics ./ci/run-shards ./e2e.test -test.v -test.count=1 -test.timeout=1200s" || rc=$?
+            printf '%s\n' "$rc" > "$root/startup-diagnostics/test-status"
+            chmod -R a+rX "$root/startup-diagnostics"
+
+      - name: Check illumos test result after copyback
+        run: |
+          status=$(cat startup-diagnostics/test-status)
+          echo "illumos e2e exit status: $status"
+          test "$status" = 0
+
+      - name: Retain illumos startup diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: startup-diagnostics-illumos
+          path: startup-diagnostics/
+          retention-days: 7
+          if-no-files-found: warn
 
   # OpenBSD: build only, via build-on-host (pkg_add gmake, create the news
   # user, build with gmake and clang from base); it fails on a build error like

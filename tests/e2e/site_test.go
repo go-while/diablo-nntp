@@ -165,7 +165,7 @@ func NewSite(tb testing.TB, o SiteOptions) *Site {
 	}
 
 	args := append([]string{"-d", "-p", PathHost, "-h", PathHost, "-P", s.Addr}, o.Args...)
-	s.Proc = proc.StartTCP(tb, proc.Options{
+	s.Proc = startSiteTCP(tb, proc.Options{
 		Path: filepath.Join(s.Bin, "diablo"),
 		Args: append(args, "server"),
 		Env:  append(slices.Clone(s.Env), o.Env...),

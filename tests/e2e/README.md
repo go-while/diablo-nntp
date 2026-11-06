@@ -18,6 +18,29 @@ dot-stuffing, a missing `.` terminator or stray bytes after a reply, fake NNTP
 peers, and `proc`, which starts and stops `diablo` and prints its output when a
 test fails.
 
+## Startup diagnostics (opt-in)
+
+Set `E2E_STARTUP_DIAGNOSTICS=1` to retain per-launch PID, test, site, address and
+start/ready timestamps. Set `E2E_STARTUP_DIAGNOSTICS_DIR` to a writable artifact
+directory outside the test sites; otherwise a retained temporary directory is
+created. With diagnostics disabled, startup uses the original helper unchanged.
+
+If a feeder/reader TCP readiness check fails, diagnostics run before server
+cleanup: process table, numeric socket state, resolver configuration and site
+log tails. illumos uses `ptree`, `pstack` and `pfiles`; Linux uses `ss`, per-thread
+`ps` wait channels and `/proc/PID/fd` links without needing a debugger. Utilities
+have three-second guards, a shared 30-second command budget, capped output and
+at most 16 target processes/log files. Missing tools/permissions are recorded.
+An inherited launch token is checked before inspecting each target; environments
+are not saved and debugger force-attach is never used.
+
+The greeting timeout, port allocation and test parallelism are unchanged. The
+opt-in exec launcher/metadata writes can affect rare races; illumos inspectors
+briefly stop their target. The failed client socket is already closed when the
+snapshot starts. This covers `proc.StartTCP` readiness failures, not startup via
+`diablo-ctl`, later test failures or a package timeout. Review artifacts before
+sharing: they contain system/process names and test-site log contents.
+
 ## What is covered
 
 | test | programs | what it checks |
