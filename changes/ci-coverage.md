@@ -1,0 +1,1 @@
+- CI: more of the e2e suite runs: ubuntu-22.04 builds NetRemote in (`E2E_NETREMOTE=1`), FreeBSD installs the OpenLDAP client, illumos installs gnupg and the fake sendmail (also at `/usr/lib/sendmail`, diablo's sendmail path there), and NetBSD runs the tests with `TMPDIR=/var/tmp`. Skips: FreeBSD 21 -> 13, NetBSD 19 -> 14, illumos 74 -> 61, ubuntu-22.04 9 -> 7.
