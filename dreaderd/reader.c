@@ -1473,9 +1473,10 @@ NNTPHelp(Connection *conn, char **pptr)
  *
  * A feed connection starts in transit mode (COF_SERVER): IHAVE, and MODE
  * STREAM with CHECK and TAKETHIS; MODE READER switches to reader mode
- * unless the connection is feed-only.  Not listed: HDR, whose message-id
- * form isn't implemented (RFC 3977 requires it), and with it LIST HEADERS.
- * AUTHINFO USER is listed while this connection needs authentication.
+ * unless the connection is feed-only.  HDR and LIST HEADERS are listed as
+ * INN lists them; the message-id form of HDR looks in the current group
+ * (D-193).  OVER is listed without MSGID, as INN does.  AUTHINFO USER is
+ * listed while this connection needs authentication.
  */
 void
 NNTPCapabilities(Connection *conn, char **pptr)
@@ -1514,8 +1515,9 @@ NNTPCapabilities(Connection *conn, char **pptr)
     } else {
 	if (flags & DF_READ) {
 	    MBPrintf(&conn->co_TMBuf, "READER\r\n");
+	    MBPrintf(&conn->co_TMBuf, "HDR\r\n");
 	    MBPrintf(&conn->co_TMBuf, "OVER\r\n");
-	    MBPrintf(&conn->co_TMBuf, "LIST ACTIVE ACTIVE.TIMES NEWSGROUPS OVERVIEW.FMT DISTRIB.PATS\r\n");
+	    MBPrintf(&conn->co_TMBuf, "LIST ACTIVE ACTIVE.TIMES NEWSGROUPS OVERVIEW.FMT DISTRIB.PATS HEADERS\r\n");
 	    if (conn->co_Auth.dr_ReaderDef->rd_AllowNewnews)
 		MBPrintf(&conn->co_TMBuf, "NEWNEWS\r\n");
 	}

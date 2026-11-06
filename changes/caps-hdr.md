@@ -1,0 +1,1 @@
+- `dreaderd`: CAPABILITIES lists `HDR` and `HEADERS` in `LIST`, as INN does; `OVER` stays without `MSGID`, as INN's. HDR works for a range and, since D-193, for a message-id in the current group.
