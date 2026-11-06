@@ -1,0 +1,1 @@
+- dreaderd: the main process keeps a spare descriptor and frees it just before receiving a reader's hand-back, so a hand-back at the descriptor limit is no longer lost on illumos and the connection no longer stays counted (D-170).
