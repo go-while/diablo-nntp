@@ -140,6 +140,8 @@ test fails.
 | `TestReaderUnavailableCommand502` | dreaderd | D-125 (RFC 3977 3.2.1): TAKETHIS on a reader connection and GROUP on a feed-only connection answer 502; GROUP on a feed connection that may use MODE READER stays 500. **Fails** on main before this fix (500) |
 | `TestMaxParallelCountsRealtime` | dspoolout | `maxparallel 2` with a running realtime dnewslink and a backlog of five queue files: a peer that never answers sees at most 2 connections, the realtime one included. **Fails** on main before this fix (3: the realtime worker came on top) |
 | `TestReaderPostRefusesInjected` | dreaderd | F-07 (RFC 5537 3.5 step 2): a post with Injection-Info, Xref or a Path with a POSTED entry is refused (441); other Path values are fine. **Fails** on main before this fix (accepted; Xref removed silently) |
+| `TestReaderPostInjectionInfo` | dreaderd | F-07 step 2 (RFC 5537 3.5 steps 9 to 11): a post gets `Path: <postpath>!.POSTED!not-for-mail` and an Injection-Info with posting-host (no port), logging-data and mail-complaints-to, and no NNTP-Posting-Host, X-Trace or X-Complaints-To; Injection-Date only when dreaderd supplied the Message-ID or Date, and a poster's own kept; with a cryptpw posting-account and encrypted logging-data; `legacytrace yes` gives the old headers and no Injection-*. **Fails** on main before this change (the old headers) |
+| `TestReaderModeratorGetsNoInjectionInfo` | dreaderd | F-07 (RFC 5537 3.5 step 7): the moderator's copy of a post to a moderated group has no Injection-Info or Injection-Date (needs ci/fake-sendmail) |
 | `TestSpoolCtlUnknownOption` | dexpire | D-120: an unknown option in a spool or metaspool block of dspool.ctl stops the program with an error. **Fails** on main before this fix (logged, then the default was used) |
 | `TestDicmdLongLine` | dicmd | D-127: a 605-byte command line on standard input is sent whole and answered, and the next command still works. **Fails** on main before this fix (hangs) |
 | `TestReaderListLongFileLines` | dreaderd | D-94: LIST MODERATORS and LIST DISTRIBUTIONS send a local file line longer than 255 bytes as one line. **Fails** on main before this fix (split into pieces); a 254-byte CRLF line ends "\r\n", not "\r\r\n" (D-187) |
@@ -236,6 +238,7 @@ test fails.
 | `TestFeederIdleClosesRemovedSpoolFiles` | diablo | Linux (/proc): after one article the spool directory is removed (as dexpire does); the quiet feed connection closes the removed spool files within 20 s, so their space is freed, and the same connection still takes an article (235, STAT 223). **Fails** before: the files stayed open until an article came in |
 | `TestFeederFullDiskTryAgain` | diablo | a preloaded shim (Linux, illumos, FreeBSD, NetBSD) fails the creation of spool files and directories with ENOSPC; IHAVE gets 436 and TAKETHIS 431 (not 437/439), and once there is room the same articles are taken (235/239, STAT 223) |
 | `TestFeederFullDiskBacksOff` | diablo | the same shim: after 10 TAKETHIS in a row whose spool file cannot be created (each 431), the session answers 400 and ends; once there is room a new connection takes an article (235). **Fails** before: no answer after the 10th, the session waits for more |
+| `TestFeederHistoryWriteFailureTryAgain` | diablo | a preloaded shim fails pwrite() to the history with ENOSPC; IHAVE gets 436 and TAKETHIS 431 (not 437/439), and once it works the same articles are taken. **Fails** on main: 437 "IOErrorX" |
 | `TestFeederChildSighupAfterQuit` | diablo | 400 rounds of QUIT, then SIGHUP to the feeder child (as `dicmd exit` and `dicmd pause` send) while it logs its session: no child may be left after 10 s. **Fails** on main before the D-40 fix: 85 to 169 of 1000 children hung in a futex wait inside the SIGHUP handler on glibc, 6 of 2000 on musl. Linux only (/proc); `E2E_SIGHUP_ROUNDS` sets the rounds |
 | `TestFeederMasterSigtermEndsSessions` | diablo | SIGTERM to the master with a feed session open: the master must exit within 10 s, as after `dicmd exit`. **Fails** on main before the fix: the handler set `Exiting` before checking it, so the children never got SIGHUP and the master waited on the session |
 | `TestFeederPidFileOfNewerMaster` | diablo | diablo.pid is overwritten with another pid (a newer master) before `dicmd exit`: the exiting master must leave that file alone. **Fails** on main before the fix (the file was removed) |
@@ -316,6 +319,8 @@ test fails.
 | `TestDoutqRunning` | doutq | doutq lists as running only the queue file a dnewslink (here the test) holds a write lock on; it sets no lock on a queue file itself (an LD_PRELOAD shim logs the lock calls, Linux, also as root); it works on queue files the user can only read (skipped as root). **Fails** on main: doutq took the lock itself with F_SETLK on a descriptor opened for writing, and on read-only files nothing was listed |
 | `TestHistoryReadOnlyWaitsForCreator` | dhisctl, dilookup | a read-only history user (dilookup) that finds the history not yet valid waits on the creator's lock and then reads the finished file. **Fails** on main: it asked for an exclusive lock on its read-only descriptor (EBADF at once) and exited with "Unable to create ... read-only mode" |
 | `TestHistoryFastCreatorKeepsLock` | diload | `diload -f` creating a history keeps its creation lock for fast mode, so a reader waiting for the creation (here the test, with a shared lock) cannot take the gap and make it exit with "Unable to lock history file in fast mode" (a shim widens the gap, Linux). **Fails** on main and on the first version of this fix |
+| `TestHistoryAddAfterPartialRecord` | C driver on lib/history.c | a history file that ends inside a record (5 stray bytes) does not skew the index of later adds: they are found with their own hash, a second add is refused as a duplicate, the file ends on a record boundary. **Fails** on main: lookups read garbage and the duplicate is accepted |
+| `TestHistoryLookupBadChainIsMiss` | C driver on lib/history.c | a chain index past the end of the file ends HistoryLookup, HistoryLookupByHash and HistoryPosLookupByHash as "not found"; a new article of that bucket is added and found. **Fails** on main: all three report a hit and the bucket refuses new articles |
 | `TestDexpireoverLockTimeoutKept` | dexpireover | with a group's over.* lock held, `dexpireover -s` still gives up after LockWaitTime (an alarm) and leaves the file alone, now that the lock wrappers wait again after other signals |
 | `TestKPDBLockInterrupted`, `TestKPDBLockFailureStops`, `TestKPDBReadLockFailureKeepsReader` | dkp, dreaderd | a blocking lock that fails with EINTR is asked for again; a record or append lock that keeps failing with ENOLCK (retried a few times) stops a write with an error and leaves the database unchanged; GROUP in dreaderd, which only reads the record, goes on when its lock fails (fault injection on Linux, illumos, FreeBSD and NetBSD). The first two **fail** on main (results not checked, the write went on without the lock); the third fails on the first version of this fix (every record lock failure was fatal) |
 | `TestKPDBLockWaitSignal` | dreaderd | the test holds the e2e.test record lock of dactive.kp and feeds an article; the feed fork that waits for the lock (found through the shim's holdlog pid log) gets SIGUSR1; NE must not change until the lock is released. **Fails** on illumos before #260 (5 of 5: signal() has no SA_RESTART, so the wait ended with EINTR and NE was updated without the lock); passes on Linux either way. Linux, illumos, FreeBSD and NetBSD (LD_PRELOAD) |
@@ -344,6 +349,19 @@ DIABLO_BIN=$PWD/../../dbin go test ./...
 Without `DIABLO_BIN` every test is skipped. `NNTP_TEST_DEADLINE` (default
 `60s`) bounds every blocking step, so a hung server fails the test instead of
 hanging it.
+
+Faster: run the suite in several processes at once, as CI does. Each process
+gets its own set of tests, balanced by `ci/durations`; the tests matched by
+`ci/serial-tests` (they measure time, or wait for a worker under load) run
+alone afterwards. N defaults to the CPU count, at most 4.
+
+```sh
+go test -c -o e2e.test . && DIABLO_BIN=$PWD/../../dbin ./ci/run-shards ./e2e.test [N] [-test.v ...]
+```
+
+A new test that fails only while other tests run beside it goes in
+`ci/serial-tests`; a slow new test can be added to `ci/durations` (`name
+seconds`; a test not listed counts 2 s).
 
 Prefer a test machine. Each test starts its own daemons in a temporary
 directory on free ports, and the tests only signal processes of their own

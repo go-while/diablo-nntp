@@ -3970,6 +3970,17 @@ InstallAccessCache(void) {
 		    addCanLockSecret(vserver.vs_CanLockUser, opt, val, linecount);
 		    continue;
 		}
+		/*
+		 * F-07: by default a post gets Injection-Info and, where RFC
+		 * 5537 3.5 step 11 wants one, Injection-Date; "legacytrace
+		 * yes" writes the old X-Trace, NNTP-Posting-Host and
+		 * X-Complaints-To instead, and no Injection-* header.
+		 */
+		if (*val && strcmp(opt, "legacytrace") == 0) {
+		    vserver.vs_LegacyTrace = (*val == 'y' || *val == 'Y' ||
+			*val == '1' || strcasecmp(val, "on") == 0);
+		    continue;
+		}
 		if (*val && strcmp(opt, "canlocksha1") == 0) {
 		    if (*val == 'n' || *val == 'N' || *val == '0')
 			vserver.vs_NoCanLockSha1 = 1;

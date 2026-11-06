@@ -145,7 +145,7 @@ docker run --rm --init --cidfile "$cid" "$@" \
       [ "$bok" = 1 ] || { echo "BUILD FAILED"; exit 1; }
       chmod 755 tests/e2e/e2e.test
       cd tests/e2e
-      su -s /bin/sh news -c "DIABLO_BIN=/src/dbin NNTP_TEST_DEADLINE=30s ./e2e.test -test.v -test.count=1 -test.timeout=1200s"
+      su -s /bin/sh news -c "DIABLO_BIN=/src/dbin NNTP_TEST_DEADLINE=30s ./ci/run-shards ./e2e.test -test.v -test.count=1 -test.timeout=1200s"
     ' &
 dpid=$!
 wait "$dpid"

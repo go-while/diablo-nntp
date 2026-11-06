@@ -679,6 +679,7 @@ HistoryLookup(const char *msgid, History *nh)
 					off, msgid, counter);
 		sleep(1);
 	    }
+	    index = 0;	/* unreadable record: a miss, not a hit */
 	    break;
 	}
 	if (h.hv.h1 == hv.h1 && h.hv.h2 == hv.h2)
@@ -741,6 +742,7 @@ HistoryLookupByHash(hash_t hv, History *h)
 		logit(LOG_ERR, "dhistory file corrupted on lookup");
 		sleep(1);
 	    }
+	    index = 0;	/* unreadable record: a miss, not a hit */
 	    break;
 	}
 	if (h->hv.h1 == hv.h1 && h->hv.h2 == hv.h2)
@@ -783,6 +785,7 @@ HistoryPosLookupByHash(hash_t hv, History *h)
 		logit(LOG_ERR, "dhistory file corrupted on lookup");
 		sleep(1);
 	    }
+	    index = 0;	/* unreadable record: a miss, not a hit */
 	    break;
 	}
 	if (h->hv.h1 == hv.h1 && h->hv.h2 == hv.h2)
@@ -959,7 +962,26 @@ HistoryAdd(const char *msgid, History *h)
 		logit(LOG_ERR, "Unable to seek dhistory end: %s",
 		    strerror(errno));
 		r = RCTRYAGAIN;
-	    } else if (HistoryWriteAt(HFd, h, sizeof(*h), writePos) < 0) {
+	    } else if (HHead.version > 1 &&
+		(writePos - (off_t)HEntryOff) % (off_t)sizeof(History) != 0) {
+		/*
+		 * The file ends inside a record (a crash in the middle of an
+		 * append).  Round up to the next record boundary instead of
+		 * truncating down: that never loses a complete record, and
+		 * the stray bytes become a gap that no chain points to.
+		 * Without this every later index is skewed.
+		 */
+		off_t odd = (writePos - (off_t)HEntryOff) % (off_t)sizeof(History);
+		off_t newPos = writePos + ((off_t)sizeof(History) - odd);
+		static const char zeros[sizeof(History)] = { 0 };
+
+		logit(LOG_ERR, "dhistory file ends inside a record, skipping %d stray bytes",
+		    (int)odd);
+		/* make the gap an all-zero record (gmt 0) for sequential scans */
+		(void)HistoryWriteAt(HFd, zeros, (size_t)odd, writePos - odd);
+		writePos = newPos;
+	    }
+	    if (r == RCOK && HistoryWriteAt(HFd, h, sizeof(*h), writePos) < 0) {
 		int error = errno;
 
 		/* Do not leave a partial, unindexed record on disk. */

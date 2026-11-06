@@ -146,6 +146,7 @@ typedef struct Vserver {		/* Define a virtual server	*/
     char vs_CanLockAdmin[CANLOCK_MAXSECRETS][CANLOCK_SECRETLEN];	/* every one makes locks */
     char vs_CanLockUser[CANLOCK_MAXSECRETS][CANLOCK_SECRETLEN];
     int vs_NoCanLockSha1;		/* canlocksha1 no: sha256 only */
+    int vs_LegacyTrace;		/* legacytrace yes: X-Trace etc., no Injection-* */
 } Vserver;
 
 typedef struct GroupDef {		/* Define a group access list	*/
@@ -601,6 +602,7 @@ typedef struct Connection {
 #define	COF_MAXAGE	0x02000000	/* maximum age allowed		*/
 #define	COF_AUTHINFO	0x04000000	/* logged in with AUTHINFO (281)	*/
 #define	COF_POSTXREF	0x08000000	/* the post had an Xref: header	*/
+#define	COF_POSTINJDATE	0x10000000	/* we added the post's Injection-Date */
 
 #define	CON_RFC3977	0		/* RFC3977 numbering behaviour	*/
 #define	CON_RFC977	1		/* RFC977 numbering behaviour	*/

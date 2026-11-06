@@ -196,8 +196,11 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-180](#d-180-netbsd-reader-fork-and-queue-wait-tests-are-intermittent) | Low | NetBSD: reader fork and queue-wait tests are intermittent | fixed (#303) |
 | [D-181](#d-181-readerdns-and-readerfeedforks-take-any-value) | Low | readerdns and readerfeedforks take any value | fixed (#305) |
 | [D-182](#d-182-kpdb-lookup-misses-wait-for-the-append-lock-after-the-resort-limit) | Low | KPDB lookup misses wait for the append lock after the resort limit | fixed (#311) |
-| [D-186](#d-186-a-refused-dspoolctl-reload-is-not-tried-again) | Low | A refused dspool.ctl reload is not tried again | PR |
-| [D-187](#d-187-list-file-lines-get-rrn-at-the-read-buffer-edge) | Low | LIST file lines get "\r\r\n" at the read buffer edge | PR |
+| [D-183](#d-183-history-add-after-a-partial-last-record-skews-every-later-index) | Medium | History add after a partial last record skews every later index | fixed (#314) |
+| [D-184](#d-184-a-failed-read-on-a-history-chain-counts-as-found) | Medium | A failed read on a history chain counts as "found" | fixed (#314) |
+| [D-185](#d-185-a-failed-history-add-is-answered-as-a-permanent-reject) | Medium | A failed history add is answered as a permanent reject | fixed (#314) |
+| [D-186](#d-186-a-refused-dspoolctl-reload-is-not-tried-again) | Low | A refused dspool.ctl reload is not tried again | fixed (#318) |
+| [D-187](#d-187-list-file-lines-get-rrn-at-the-read-buffer-edge) | Low | LIST file lines get "\r\r\n" at the read buffer edge | fixed (#318) |
 
 Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315), [F-02 configure script](#f-02-configure-script-for-the-build-options), [F-03 refeed a whole spool](#f-03-refeed-a-whole-spool-to-another-server), [F-04 NoCeM notices](#f-04-nocem-notices), [F-05 init scripts](#f-05-init-scripts-and-adm-script-replacements), [F-06 Perl authentication](#f-06-perl-authentication-for-dreaderd).
 
@@ -1163,13 +1166,25 @@ Fixed: `readerdns` must be 1..1024 and `readerfeedforks` 0..1024, in diablo.conf
 `lib/kpdb.c`, `KPDBLookup()`: the D-117 fix (#301) waited once on the append lock (offset 4) after a miss whenever the C counter was above `kp_ResortLimit`. But the sort runs only at the start of the next write, so after the write that passes the limit the counter stays above it until then, and every miss in every process (a GROUP or a newgroup check for a group that is not there) took that lock, waited for any writer holding it, and searched again. Not wrong, only slow under writes. Found in our review pass of the code merged since #296.
 Fixed (#311): only the marker the sort writes first and clears last (`0FFFFFFF`) means a sort is running; a counter just past the limit leaves an unsorted tail that the search scans anyway. Test: `TestKPDBMissNoWaitPastLimit` (another process holds the append lock; the miss must come back at once). `TestKPDBLookupDuringSort` still passes.
 
+### D-183 History add after a partial last record skews every later index
+`lib/history.c`, `HistoryAdd()`: the record index is `(writePos - HEntryOff) / sizeof(History)` with `writePos` from `lseek(SEEK_END)` and no alignment check. A history file that ends inside a record (a crash or power loss during an append) skewed every later record by the same amount: the chain index pointed up to 27 bytes before the real record, lookups read garbage, and a second add of the same Message-ID was accepted, until dhisexpire rewrote the file. Same class as D-80 (KPDB), which was fixed for KPDB only. Found by a review of the feeder history path.
+Fixed (#314): under the append lock a tail that is not a whole record is skipped: the new record goes to the next record boundary, the stray bytes are zeroed and become a record no chain points to (gmt 0: dhisexpire drops it as too old, and dexpire, which steps by record size, finds no article for it), and one LOG_ERR line says how many bytes. Rounding up, not truncating, so no complete record can be lost. Test: `TestHistoryAddAfterPartialRecord`.
+
+### D-184 A failed read on a history chain counts as "found"
+`lib/history.c`, `HistoryLookup()`, `HistoryLookupByHash()` and `HistoryPosLookupByHash()`: a failed or short `pread()` while following a chain left the loop with a non-zero index, which the functions took as a hit. A chain index past the end of the file (a torn append, index pages that reached the disk before the record pages) made every new article of that bucket be refused as a duplicate for good, and `HistoryExpire`/`HistoryStoreExp` wrote the exp field at the bad offset. `HistoryAdd()` treated the same condition as "not found", so the two disagreed.
+Fixed (#314): an unreadable record ends the walk as a miss in all three (the existing LOG_ERR line is kept). Valid chains behave as before. Test: `TestHistoryLookupBadChainIsMiss`.
+
+### D-185 A failed history add is answered as a permanent reject
+`util/diablo.c`, commit path: `HistoryAdd()` returns `RCTRYAGAIN` for a full history volume (ENOSPC), a chain lock failure and a failed index write, but the code after `RCALREADY` turned every other value into `RCREJECT`. The peer got 437 or 439, dropped an article that was already in the spool, and did not offer it again, while the spool-open failure a few lines earlier already answered 436/431.
+Fixed (#314): `RCTRYAGAIN` is passed on (436 to IHAVE, 431 to TAKETHIS), counted as an I/O error and logged as `HistoryTryAgain`; `RCREJECT` stays for any other value. Test: `TestFeederHistoryWriteFailureTryAgain` (a shim fails the history pwrite with ENOSPC).
+
 ### D-186 A refused dspool.ctl reload is not tried again
 `lib/spool.c`, `LoadSpoolCtl()`: the D-175 fix (#308) set `SpoolMTime` before the reload was checked, so a file refused for a reason that passes without a change to it (a spool partition not mounted yet: "Missing spool partition") was not looked at again until its mtime changed; diablo kept the old spool set without saying so again. Found in go-while's review pass of the code merged since #296.
-Fixed: a refused file is tried again after 1, 2, 4 ... minutes, then every 60 minutes, and each refusal logs the time of the next try; a changed file is tried at the next minute check as before. Test: `TestSpoolCtlBadReloadRetried`.
+Fixed (#318): a refused file is tried again after 1, 2, 4 ... minutes, then every 60 minutes, and each refusal logs the time of the next try; a changed file is tried at the next minute check as before. Test: `TestSpoolCtlBadReloadRetried`.
 
 ### D-187 LIST file lines get "\r\r\n" at the read buffer edge
 `dreaderd/list.c`, `ListFileLines()` (#306): a local file with CRLF line ends is read in 255-byte chunks; when a chunk ended between the "\r" and the "\n", the "\r" went out as part of the line, and the line ended "\r\r\n". Only lines of 254 bytes or more. Found in go-while's review pass of the code merged since #296.
-Fixed: a "\r" at the end of a chunk is held back and dropped when the next chunk is the "\n". Test: `TestReaderListLongFileLines` (a 254-byte CRLF line).
+Fixed (#318): a "\r" at the end of a chunk is held back and dropped when the next chunk is the "\n". Test: `TestReaderListLongFileLines` (a 254-byte CRLF line).
 
 ## Feature requests
 
@@ -1387,4 +1402,4 @@ because the legacy mode adds none); (3) the Date format and window; (4) syntax
 checks (Message-ID, Date, line length); (5) reserved group names; (6) the header-preservation
 items, Lines among them; (7) removing posttrailer.
 
-Status: (1) PR (#304). The rest open; (6)'s Lines part needs D-174 first.
+Status: (1) PR (#304). (2) PR. The rest open; (6)'s Lines part needs D-174 first.

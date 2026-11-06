@@ -1,0 +1,1 @@
+- `tests/e2e`: `ci/run-shards` runs the suite in several processes at once (CPU count, at most 4), balanced by `ci/durations`, then the timing-sensitive tests of `ci/serial-tests` alone. CI uses it on every job; on a 12-core host the full suite took 8 min instead of about 17.
