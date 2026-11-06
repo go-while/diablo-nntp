@@ -13,7 +13,7 @@ import (
 // TestReaderCapabilities: dreaderd answers CAPABILITIES (RFC 3977 §5.2) with what the
 // connection can use, and everything it lists works. A reader connection (read and post):
 // READER, OVER, LIST with ACTIVE ACTIVE.TIMES NEWSGROUPS OVERVIEW.FMT DISTRIB.PATS, POST; no
-// MODE-READER, IHAVE, STREAMING or HDR (HDR has no message-id form yet). A feed-only connection (transit
+// MODE-READER, IHAVE, STREAMING or HDR (only OVER is advertised). A feed-only connection (transit
 // mode): IHAVE and STREAMING, no READER and no MODE-READER; MODE STREAM gets 203 there and
 // 501 on the reader connection. Then nntp-testkit's conformance
 // checks run against the reader, and none may fail (before the reply-code fixes for D-44 to

@@ -545,6 +545,7 @@ typedef struct Connection {
     int		co_ListRecLen;
     char	*co_ListPat;
     char	*co_ListHdrs;
+    char	*co_ListMsgId;	/* the message-id of a message-id list */
     artno_t	co_ListBegNo;
     artno_t	co_ListEndNo;
     int		co_ListCacheMode;

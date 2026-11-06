@@ -65,7 +65,11 @@ func TestReaderReplyCodes(t *testing.T) {
 	}
 	c.ExpectCmd(221, "XHDR Subject 1")
 	c.ReadDotLines()
-	c.ExpectCmd(503, "HDR Subject %s", id) // the message-id form isn't implemented
+	// HDR by message-id works (D-193): "<msgid> <value>".
+	c.ExpectCmd(225, "HDR Subject %s", id)
+	if got := c.ReadDotLines(); len(got) != 1 || got[0] != id+" reply codes" {
+		t.Errorf("HDR Subject %s: %q, want [%q]", id, got, id+" reply codes")
+	}
 
 	// LIST HEADERS (D-45) and LIST ACTIVE.TIMES (D-47).
 	c.ExpectCmd(215, "LIST HEADERS")

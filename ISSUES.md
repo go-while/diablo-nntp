@@ -206,6 +206,7 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-190](#d-190-hiscachesize-is-not-checked-to-be-a-power-of-two) | Low | hiscachesize is not checked to be a power of two | fixed (#321) |
 | [D-191](#d-191-historyopen-does-not-check-the-headers-entry-and-header-sizes) | Low | HistoryOpen does not check the header's entry and header sizes | fixed (#321) |
 | [D-192](#d-192-precommit-delcomm-evicts-another-message-ids-entry) | Low | precommit PC_DELCOMM evicts another message-id's entry | fixed (#321) |
+| [D-193](#d-193-xhdr-and-xover-by-message-id-answer-an-empty-list) | Low | XHDR and XOVER by message-id answer an empty list | fixed (#NNN) |
 
 Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315), [F-02 configure script](#f-02-configure-script-for-the-build-options), [F-03 refeed a whole spool](#f-03-refeed-a-whole-spool-to-another-server), [F-04 NoCeM notices](#f-04-nocem-notices), [F-05 init scripts](#f-05-init-scripts-and-adm-script-replacements), [F-06 Perl authentication](#f-06-perl-authentication-for-dreaderd).
 
@@ -1206,6 +1207,10 @@ Fixed (#318): a refused file is tried again after 1, 2, 4 ... minutes, then ever
 ### D-187 LIST file lines get "\r\r\n" at the read buffer edge
 `dreaderd/list.c`, `ListFileLines()` (#306): a local file with CRLF line ends is read in 255-byte chunks; when a chunk ended between the "\r" and the "\n", the "\r" went out as part of the line, and the line ended "\r\r\n". Only lines of 254 bytes or more. Found in go-while's review pass of the code merged since #296.
 Fixed (#318): a "\r" at the end of a chunk is held back and dropped when the next chunk is the "\n". Test: `TestReaderListLongFileLines` (a 254-byte CRLF line).
+
+### D-193 XHDR and XOVER by message-id answer an empty list
+`dreaderd/xover.c`, `NNStartListOverviewMsgId()`: it was a stub, so `XHDR <header> <message-id>` and `XOVER <message-id>` answered "221/224 ... follows" and an empty list, and the RFC 3977 `HDR`/`OVER` forms answered 503. The reader does not index overview by message-id, but the article's overview is in the current group. Found by a pynntp run (test_xhdr_by_message_id_and_number).
+Fixed (#NNN): the message-id is resolved against the current group's overview index before the "follows" response (an unknown id is 430 No such article, not an empty list), and the line is output with the message-id as the first field (RFC 2980 2.6). `HDR`/`OVER` by message-id use the same path. Tests: `TestXhdrXoverByMessageId`, and `TestReaderReplyCodes`/`TestReaderCapabilities` updated (the 503 case is gone).
 
 ## Feature requests
 

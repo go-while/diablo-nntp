@@ -1,0 +1,1 @@
+- `dreaderd`: `XHDR <header> <message-id>` and `XOVER <message-id>` now return that article's header line / overview with the message-id as the first field (RFC 2980 2.6), instead of an empty `221`/`224` list; `HDR` and `OVER` by message-id (RFC 3977 8.3, 8.5) work the same way, and an unknown message-id answers `430 No such article`.
