@@ -1215,7 +1215,7 @@ Fixed (#323): the message-id is resolved against the current group's overview in
 
 ### D-194 Log messages ending in a newline leave a blank line
 `lib/log.c`, `VLog()`: the log writer adds a newline to each message, and 64 `logit()` formats end in a newline of their own (LDAP errors, "Invalid vserverdef option ...", "PERL auth request for <user>: <result>", and more), so general.log got an empty line after each of them. Reported by Jesse from the SmartOS reader (after every Perl login).
-Fixed (#325): `VLog()` strips newlines at the end of the message before it adds its own, which covers every caller and a Perl result that ends in a newline. Syslog is unchanged. Test: `TestLogNoBlankLines`.
+Fixed (#325): `VLog()` strips newlines at the end of the message before it adds its own, which covers every caller and a Perl result that ends in a newline, and turns a CR or LF inside a message (a logged value such as script output) into a space, so each entry is one line. Syslog is unchanged. Test: `TestLogNoBlankLines`.
 
 ## Feature requests
 

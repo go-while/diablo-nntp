@@ -196,13 +196,19 @@ VLog(LogInfo *LI, int priority, const char *ctl, va_list va)
 	/*
 	 * One line per message: a message that ends in a newline of its
 	 * own (some formats have one, and so may a Perl auth result) would
-	 * otherwise leave a blank line in the log.
+	 * otherwise leave a blank line in the log, and a CR or LF inside
+	 * one (a logged value such as script output) would split it.
 	 */
 	{
 	    size_t n = strlen(logLine);
+	    char *q;
 
 	    while (n > 0 && (logLine[n - 1] == '\n' || logLine[n - 1] == '\r'))
 		logLine[--n] = 0;
+	    for (q = p; *q; ++q) {
+		if (*q == '\n' || *q == '\r')
+		    *q = ' ';
+	    }
 	}
 	fprintf(LI->Fd, "%s\n", logLine);
 	fflush(LI->Fd);
