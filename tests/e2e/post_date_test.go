@@ -21,7 +21,7 @@ type datePoster struct {
 	arts [][]string
 }
 
-func newDatePoster(t *testing.T, config map[string]string) *datePoster {
+func newDatePoster(t *testing.T, access string, config map[string]string) *datePoster {
 	t.Helper()
 	_, spool := spoolStore(t)
 	d := &datePoster{}
@@ -32,11 +32,17 @@ func newDatePoster(t *testing.T, config map[string]string) *datePoster {
 			d.arts = append(d.arts, wire)
 		},
 	})})
-	d.s = NewReaderSite(t, ReaderOptions{Spool: spool, Post: post, Config: config})
+	d.s = NewReaderSite(t, ReaderOptions{Spool: spool, Post: post, Access: access, Config: config})
 	return d
 }
 
 func (d *datePoster) post(t *testing.T, hdrs ...string) (int, string, []string) {
+	t.Helper()
+	return d.postHdrs(t, append([]string{"Message-ID: " + msgID(t)}, hdrs...)...)
+}
+
+// postHdrs is post without the Message-ID it adds.
+func (d *datePoster) postHdrs(t *testing.T, hdrs ...string) (int, string, []string) {
 	t.Helper()
 	d.mu.Lock()
 	n := len(d.arts)
@@ -48,7 +54,6 @@ func (d *datePoster) post(t *testing.T, hdrs ...string) (int, string, []string) 
 		"From: E2E Poster <poster@example.invalid>",
 		"Newsgroups: e2e.test",
 		"Subject: dates",
-		"Message-ID: " + msgID(t),
 	}, hdrs...), "", "body")))
 	code, line, err := c.ReadStatus()
 	if err != nil {
@@ -73,12 +78,12 @@ func rfcDate(d time.Duration) string {
 }
 
 // TestReaderPostDate (F-07 step 3): the Date dreaderd adds is an RFC 5322 date-time in +0000
-// (RFC 5536 3.1.1: not the obsolete "GMT" zone), and a poster's Date or Injection-Date is
-// refused (441) when it cannot be read, is more than 24 hours in the future, or is older than
-// the feeder accepts (feedermaxacceptage, at least 72 hours; RFC 5537 3.5 step 3). Before,
-// dreaderd wrote "05 Nov 2026 12:00:00 GMT" and took any Date.
+// (RFC 5536 3.1.1: not the obsolete "GMT" zone), and with "rfc5537 yes" a poster's Date or
+// Injection-Date is refused (441) when it cannot be read, is more than 24 hours in the future,
+// or is older than the feeder accepts (feedermaxacceptage, at least 72 hours; RFC 5537 3.5
+// step 3). Before, dreaderd wrote "05 Nov 2026 12:00:00 GMT" and took any Date.
 func TestReaderPostDate(t *testing.T) {
-	d := newDatePoster(t, nil) // feedermaxacceptage: the default of 14 days
+	d := newDatePoster(t, injAccess(""), nil) // feedermaxacceptage: the default of 14 days
 	re := regexp.MustCompile(`^(Mon|Tue|Wed|Thu|Fri|Sat|Sun), [0-3][0-9] (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]{4} [0-2][0-9]:[0-5][0-9]:[0-6][0-9] \+0000$`)
 	if code, line, head := d.post(t); code != 240 {
 		t.Fatalf("POST without a Date: %q", line)
@@ -91,12 +96,12 @@ func TestReaderPostDate(t *testing.T) {
 		want int
 	}{
 		{"Date: " + rfcDate(0), 240},
-		{"Date: " + rfcDate(23 * time.Hour), 240},
-		{"Date: " + rfcDate(26 * time.Hour), 441},
-		{"Date: " + rfcDate(-10 * 24 * time.Hour), 240},
-		{"Date: " + rfcDate(-20 * 24 * time.Hour), 441},
+		{"Date: " + rfcDate(23*time.Hour), 240},
+		{"Date: " + rfcDate(26*time.Hour), 441},
+		{"Date: " + rfcDate(-10*24*time.Hour), 240},
+		{"Date: " + rfcDate(-20*24*time.Hour), 441},
 		{"Date: not a date", 441},
-		{"Injection-Date: " + rfcDate(26 * time.Hour), 441},
+		{"Injection-Date: " + rfcDate(26*time.Hour), 441},
 		{"Injection-Date: " + rfcDate(-time.Hour), 240},
 	} {
 		if code, line, _ := d.post(t, c.hdr); code != c.want {
@@ -108,7 +113,7 @@ func TestReaderPostDate(t *testing.T) {
 // TestReaderPostDateWindowConfig (F-07 step 3): the past limit follows feedermaxacceptage, but
 // is never shorter than 72 hours (RFC 5537 3.5 step 3); feedermaxacceptage 0 turns it off.
 func TestReaderPostDateWindowConfig(t *testing.T) {
-	d := newDatePoster(t, map[string]string{"feedermaxacceptage": "1"})
+	d := newDatePoster(t, injAccess(""), map[string]string{"feedermaxacceptage": "1"})
 	for _, c := range []struct {
 		age  time.Duration
 		want int
@@ -117,11 +122,33 @@ func TestReaderPostDateWindowConfig(t *testing.T) {
 			t.Errorf("feedermaxacceptage 1, Date %v ago: %q, want %d", -c.age, line, c.want)
 		}
 	}
-	off := newDatePoster(t, map[string]string{"feedermaxacceptage": "0"})
+	off := newDatePoster(t, injAccess(""), map[string]string{"feedermaxacceptage": "0"})
 	if code, line, _ := off.post(t, "Date: Mon, 01 Jan 2001 12:00:00 +0000"); code != 240 {
 		t.Errorf("feedermaxacceptage 0, a Date in 2001: %q, want 240", line)
 	}
 	if code, line, _ := off.post(t, "Date: "+rfcDate(48*time.Hour)); code != 441 || !strings.Contains(line, "future") {
 		t.Errorf("feedermaxacceptage 0, a Date 2 days ahead: %q, want 441 (in the future)", line)
+	}
+}
+
+// TestReaderPostDateDefault (F-07): without rfc5537 (the default) a poster's Date and
+// Injection-Date are taken as they are, as dreaderd always did; the Date dreaderd adds is still
+// the RFC 5322 form in +0000.
+func TestReaderPostDateDefault(t *testing.T) {
+	d := newDatePoster(t, DefaultReaderAccess, nil)
+	if code, line, head := d.post(t); code != 240 {
+		t.Fatalf("POST without a Date: %q", line)
+	} else if v := headerValue(head, "Date"); !injDateRe.MatchString(v) {
+		t.Errorf("the Date dreaderd added is %q, want an RFC 5322 date in +0000", v)
+	}
+	for _, h := range []string{
+		"Date: " + rfcDate(26*time.Hour),
+		"Date: " + rfcDate(-20*24*time.Hour),
+		"Date: not a date",
+		"Injection-Date: " + rfcDate(26*time.Hour),
+	} {
+		if code, line, _ := d.post(t, h); code != 240 {
+			t.Errorf("POST with %q: %q, want 240 (no Date window without rfc5537)", h, line)
+		}
 	}
 }

@@ -146,7 +146,7 @@ typedef struct Vserver {		/* Define a virtual server	*/
     char vs_CanLockAdmin[CANLOCK_MAXSECRETS][CANLOCK_SECRETLEN];	/* every one makes locks */
     char vs_CanLockUser[CANLOCK_MAXSECRETS][CANLOCK_SECRETLEN];
     int vs_NoCanLockSha1;		/* canlocksha1 no: sha256 only */
-    int vs_LegacyTrace;		/* legacytrace yes: X-Trace etc., no Injection-* */
+    int vs_Rfc5537;		/* rfc5537 yes: post as RFC 5536/5537 want (F-07); 0: the old way */
 } Vserver;
 
 typedef struct GroupDef {		/* Define a group access list	*/

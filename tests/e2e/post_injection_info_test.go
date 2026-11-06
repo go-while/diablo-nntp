@@ -13,8 +13,13 @@ import (
 	"github.com/go-while/nntp-testkit/fakeserver"
 )
 
-// injAccess is DefaultReaderAccess with these vserverdef lines added.
+// injAccess is DefaultReaderAccess with "rfc5537 yes" and these vserverdef lines added.
 func injAccess(vs string) string {
+	return plainAccess("    rfc5537 yes\n" + vs)
+}
+
+// plainAccess is DefaultReaderAccess with these vserverdef lines added.
+func plainAccess(vs string) string {
 	return strings.Replace(DefaultReaderAccess, "    hostname "+PathHost+"\n",
 		"    hostname "+PathHost+"\n"+vs, 1)
 }
@@ -72,15 +77,16 @@ func hasHeader(head []string, name string) bool {
 
 var injDateRe = regexp.MustCompile(`^(Mon|Tue|Wed|Thu|Fri|Sat|Sun), [0-3][0-9] (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]{4} [0-2][0-9]:[0-5][0-9]:[0-6][0-9] \+0000$`)
 
-// TestReaderPostInjectionInfo (F-07 step 2, RFC 5537 3.5 steps 9 to 11): a post gets a Path
-// with the "!.POSTED" diagnostic, an Injection-Info with posting-host, logging-data and
-// mail-complaints-to, and no NNTP-Posting-Host, X-Trace or X-Complaints-To. Injection-Date
-// is added only where dreaderd supplied the Message-ID or Date, and a poster's own is kept.
-// Before, the old trace headers were written and no Injection-* header.
+// TestReaderPostInjectionInfo (F-07 step 2, RFC 5537 3.5 steps 9 to 11): with "rfc5537 yes" a
+// post gets a Path with the "!.POSTED" diagnostic, an Injection-Info with posting-host,
+// logging-data and mail-complaints-to, and no NNTP-Posting-Host, X-Trace or X-Complaints-To.
+// Injection-Date is added only where dreaderd supplied the Message-ID or Date, and a poster's
+// own is kept. Without rfc5537 (the default) and with "legacytrace yes", the old trace headers
+// are written and no Injection-* header.
 func TestReaderPostInjectionInfo(t *testing.T) {
 	access := injAccess("    postpath " + PathHost + "\n    abuseto abuse@example.invalid\n")
 
-	t.Run("default", func(t *testing.T) {
+	t.Run("rfc5537", func(t *testing.T) {
 		head := postHead(t, access, "Message-ID: "+msgID(t), "Date: "+time.Now().UTC().Format(time.RFC1123Z))
 		if p := headerValue(head, "Path"); p != PathHost+"!.POSTED!not-for-mail" {
 			t.Errorf("Path %q, want %s!.POSTED!not-for-mail", p, PathHost)
@@ -143,7 +149,7 @@ func TestReaderPostInjectionInfo(t *testing.T) {
 	})
 
 	t.Run("no postpath", func(t *testing.T) {
-		head := postHead(t, DefaultReaderAccess, "Message-ID: "+msgID(t))
+		head := postHead(t, injAccess(""), "Message-ID: "+msgID(t))
 		if p := headerValue(head, "Path"); p != "not-for-mail" {
 			t.Errorf("Path %q without a postpath, want not-for-mail", p)
 		}
@@ -164,22 +170,28 @@ func TestReaderPostInjectionInfo(t *testing.T) {
 		}
 	})
 
-	t.Run("legacytrace", func(t *testing.T) {
-		head := postHead(t, injAccess("    postpath "+PathHost+"\n    abuseto abuse@example.invalid\n    legacytrace yes\n"))
-		if p := headerValue(head, "Path"); p != PathHost+"!not-for-mail" {
-			t.Errorf("legacytrace: Path %q, want %s!not-for-mail", p, PathHost)
-		}
-		for _, h := range []string{"NNTP-Posting-Host", "X-Trace", "X-Complaints-To"} {
-			if !hasHeader(head, h) {
-				t.Errorf("legacytrace: no %s header", h)
+	for _, c := range []struct{ name, vs string }{
+		{"default", ""},
+		{"rfc5537 no", "    rfc5537 no\n"},
+		{"legacytrace yes", "    rfc5537 yes\n    legacytrace yes\n"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			head := postHead(t, plainAccess("    postpath "+PathHost+"\n    abuseto abuse@example.invalid\n"+c.vs))
+			if p := headerValue(head, "Path"); p != PathHost+"!not-for-mail" {
+				t.Errorf("Path %q, want %s!not-for-mail", p, PathHost)
 			}
-		}
-		for _, h := range []string{"Injection-Info", "Injection-Date"} {
-			if hasHeader(head, h) {
-				t.Errorf("legacytrace: post has %s: %q", h, headerValue(head, h))
+			for _, h := range []string{"NNTP-Posting-Host", "X-Trace", "X-Complaints-To"} {
+				if !hasHeader(head, h) {
+					t.Errorf("no %s header", h)
+				}
 			}
-		}
-	})
+			for _, h := range []string{"Injection-Info", "Injection-Date"} {
+				if hasHeader(head, h) {
+					t.Errorf("post has %s: %q", h, headerValue(head, h))
+				}
+			}
+		})
+	}
 }
 
 // TestReaderModeratorGetsNoInjectionInfo (F-07, RFC 5537 3.5 step 7): a post to a moderated
