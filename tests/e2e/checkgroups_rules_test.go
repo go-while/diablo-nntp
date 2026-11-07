@@ -197,7 +197,7 @@ func TestCheckgroupsMaxdocheckgroups(t *testing.T) {
 func TestCheckgroupsVerifyTakesGroups(t *testing.T) {
 	s, st, _ := iscSiteCtl(t, []string{"news.announce.newgroups"}, cgLogLine+
 		"/maxdocheckgroups/:*:*:100000\ncheckgroups:*:*:doit\n"+
-		"checkgroups:group-admin@isc.org:sci.*:verify-news.announce.newgroups\n")
+		"checkgroups:group-admin@isc.org:sci.*:verify-news.announce.newgroups\n"+cgGroupLines)
 	feedReader(t, s, st, "news.announce.newgroups", iscArticle(t, "checkgroups", "modern"))
 	log := cgDone(t, s)
 	cgWant(t, s, log, []string{"sci.math", "comp.lang.c"}, nil)
@@ -218,7 +218,7 @@ func TestCheckgroupsVerifyTakesGroups(t *testing.T) {
 func TestCheckgroupsVerifyDgpBlocks(t *testing.T) {
 	s, st, _ := iscSiteCtl(t, []string{"news.announce.newgroups"}, cgLogLine+
 		"/maxdocheckgroups/:*:*:100000\ncheckgroups:*:*:verify-news.announce.newgroups,dgpverify\n"+
-		"checkgroups:*:sci.*:verify-news.announce.newgroups\n")
+		"checkgroups:*:sci.*:verify-news.announce.newgroups\n"+cgGroupLines)
 	feedReader(t, s, st, "news.announce.newgroups", iscArticle(t, "checkgroups", "modern"))
 	log := cgDone(t, s)
 	cgWant(t, s, log, []string{"sci.math"}, []string{"comp.lang.c"})
@@ -233,7 +233,7 @@ func TestCheckgroupsVerifyDgpBlocks(t *testing.T) {
 // address no longer matches that sender's lines.
 func TestCheckgroupsSenderAddress(t *testing.T) {
 	files := func() map[string]string {
-		return map[string]string{"dcontrol.ctl": cgLogLine + "checkgroups:other@example.invalid:*:doit\n"}
+		return map[string]string{"dcontrol.ctl": cgLogLine + "checkgroups:other@example.invalid:*:doit\n" + cgGroupLines}
 	}
 	body := []string{"e2e.test\tThe test group.", "e2e.new\tNew."}
 	t.Run("second address in From", func(t *testing.T) {
@@ -324,7 +324,7 @@ func TestCheckgroupsPgpverifyStatus(t *testing.T) {
 		t.Run("exit "+tc.status, func(t *testing.T) {
 			st, spool := spoolStore(t)
 			s := NewReaderSite(t, ReaderOptions{Spool: spool, Groups: []string{"e2e.test"}, NoStart: true,
-				Files: map[string]string{"dcontrol.ctl": cgLogLine + "checkgroups:*:*:verify-e2e-key\n"}})
+				Files: map[string]string{"dcontrol.ctl": cgLogLine + "checkgroups:*:*:verify-e2e-key\n" + cgGroupLines}})
 			if err := os.MkdirAll(filepath.Join(s.Dir, "dbin"), 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -356,7 +356,7 @@ func TestCheckgroupsPgpverifyArgsBroken(t *testing.T) {
 	st, spool := spoolStore(t)
 	s := NewReaderSite(t, ReaderOptions{Spool: spool, Groups: []string{"e2e.test"}, NoStart: true,
 		Config: map[string]string{"pgpverifyargs": "-k"},
-		Files:  map[string]string{"dcontrol.ctl": cgLogLine + "checkgroups:*:*:doit\ncheckgroups:*:e2e.*:verify-e2e-key\n"}})
+		Files:  map[string]string{"dcontrol.ctl": cgLogLine + "checkgroups:*:*:doit\ncheckgroups:*:e2e.*:verify-e2e-key\n" + cgGroupLines}})
 	linkBin(t, s)
 	_, port, _ := strings.Cut(s.Addr, ":")
 	startReader(t, s, "[127.0.0.1]:"+port)
