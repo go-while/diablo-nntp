@@ -26,8 +26,9 @@
  * 32 bit byte offsets, so such a file is limited to 4GB.  A version 2 file
  * (HVERSION, the format written now) holds record numbers (HistIndex,
  * uint32) that recordOffset() turns into 64 bit file offsets: it is limited
- * to 2^32 - 1 records (record 0 is the dummy written at creation), about
- * 120GB of records plus the hash table.  Past that limit HistoryAdd()
+ * to record numbers up to 2^32 - 2 (record 0 is the dummy written at
+ * creation, and 2^32 - 1 is (HistIndex)-1, the "not found" value of
+ * HistoryPosLookupByHash()), about 120GB of records plus the hash table.  Past that limit HistoryAdd()
  * refuses a record (RCTRYAGAIN, logged once) instead of letting the record
  * number wrap (D-204).
  */
@@ -849,8 +850,10 @@ recordOffset(HistIndex index)
 
 /*
  * A record appended at writePos would get a number that does not fit a
- * HistIndex: in a version 2 file record 2^32 or later, in a version 1
- * file (byte offsets) an offset past 2^32 - 1.  (D-204)
+ * HistIndex: in a version 2 file record 2^32 - 1 or later, in a version 1
+ * file (byte offsets) an offset of 2^32 - 1 or more.  2^32 - 1 itself is
+ * (HistIndex)-1, the "not found" of HistoryPosLookupByHash(), so a record
+ * there would be stored but never updated or expired.  (D-204)
  */
 static int
 historyFull(off_t writePos)
@@ -861,7 +864,7 @@ historyFull(off_t writePos)
 	n = (writePos - (off_t)HEntryOff) / (off_t)sizeof(History);
     else
 	n = writePos;
-    return(n > (off_t)0xFFFFFFFFU);
+    return(n >= (off_t)0xFFFFFFFFU);
 }
 
 static void
@@ -1021,10 +1024,10 @@ HistoryAdd(const char *msgid, History *h)
 	    }
 	    /*
 	     * The new record's number must fit a HistIndex (D-204): past
-	     * 2^32 - 1 records (in a version 1 file, past 4GB) it would wrap
-	     * to a low number, and the chain would point at an old record of
-	     * another article.  Refuse it, so the article is offered again,
-	     * and log that once in this process.
+	     * record number 2^32 - 2 (in a version 1 file, past 4GB) it would
+	     * be the "not found" value or wrap to a low number, and the chain
+	     * would point at an old record of another article.  Refuse it, so
+	     * the article is offered again, and log that once in this process.
 	     */
 	    if (r == RCOK && historyFull(writePos)) {
 		static int loggedFull;

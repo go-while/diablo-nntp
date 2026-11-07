@@ -14,13 +14,15 @@ import (
 // D-204: a version 2 dhistory holds record numbers (HistIndex, uint32). HistoryAdd() took the
 // next number from the end of the file without a check, so the record after number 2^32 - 1
 // got number 0: its hash slot was emptied, the article was not found, and the same article was
-// accepted again when offered again. HistoryAdd() now refuses that record (436, try again
-// later) and logs "dhistory is full" once.
+// accepted again when offered again. Number 2^32 - 1 itself is (HistIndex)-1, the "not found" of
+// HistoryPosLookupByHash(), so that record could not be updated, expired or cancelled. HistoryAdd()
+// now refuses a record past number 2^32 - 2 (436, try again later) and logs "dhistory is full" once.
 
-// TestHistoryFullRefused grows the history (sparse) to 2^32 - 1 records after a first article. The article that gets
-// the last record number is stored and found again; the next one is refused with 436, also
-// when it is offered again, and the one before it is still found. Fails on main: the second
-// article is taken (235) and taken again when offered again (335 instead of 436).
+// TestHistoryFullRefused grows the history (sparse) to 2^32 - 2 records after a first article. The article that gets
+// the last record number (2^32 - 2) is stored, found again and cancelled by dcancel -h, which finds
+// it through HistoryPosLookupByHash(); the next one is refused with 436, also when it is offered
+// again, and the one before it is still found. Fails on main: the next article is taken (235)
+// under number 2^32 - 1 (and on the first version of #350, which refused only from 2^32).
 func TestHistoryFullRefused(t *testing.T) {
 	s := NewSite(t, SiteOptions{Config: map[string]string{"path_generallog": "%s/general.log"}})
 	path := strings.TrimSpace(s.Run(t, "dpath", "dhistory"))
@@ -50,7 +52,7 @@ func TestHistoryFullRefused(t *testing.T) {
 		t.Fatalf("dhistory header: magic %#x version %d henSize %d, want 0xa1b2c3d4, 2, 28", magic, version, henSize)
 	}
 	entOff := int64(headSize) + int64(hashSize)*4
-	full := entOff + int64(henSize)*(1<<32-1) // records 0 .. 2^32 - 2: the next one is 2^32 - 1
+	full := entOff + int64(henSize)*(1<<32-2) // records 0 .. 2^32 - 3: the next one is 2^32 - 2
 	if err := os.Truncate(path, full); err != nil {
 		t.Skipf("no sparse file of %d bytes here: %v", full, err)
 	}
@@ -58,13 +60,17 @@ func TestHistoryFullRefused(t *testing.T) {
 	last, next := msgID(t), msgID(t)
 	p.ExpectCmd(335, "IHAVE %s", last)
 	p.MustSend(client.Stuff(newArticle(last, "e2e.test", "last record number", "body")))
-	p.ExpectStatus(235, "IHAVE of the article with record number 2^32 - 1")
+	p.ExpectStatus(235, "IHAVE of the article with record number 2^32 - 2")
 	p.ExpectCmd(435, "IHAVE %s", last)
+	// the last record is found through the hash chain lookup: dcancel -h marks it expired
+	if out := dcancelRun(t, s, last+"\n", "-h", "-v"); !strings.Contains(out, "Cancelled history entry for: "+last) {
+		t.Errorf("dcancel -h of the article with record number 2^32 - 2:\n%s", out)
+	}
 
 	for i := 0; i < 2; i++ {
 		p.ExpectCmd(335, "IHAVE %s", next)
 		p.MustSend(client.Stuff(newArticle(next, "e2e.test", "past the last record number", "body")))
-		p.ExpectStatus(436, "IHAVE of the article past record number 2^32 - 1")
+		p.ExpectStatus(436, "IHAVE of the article past record number 2^32 - 2")
 	}
 	p.ExpectCmd(435, "IHAVE %s", last)
 	p.ExpectCmd(205, "QUIT")
