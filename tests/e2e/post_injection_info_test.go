@@ -6,6 +6,7 @@ import (
 	"crypto/cipher"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	testkit "github.com/go-while/nntp-testkit"
 	"github.com/go-while/nntp-testkit/client"
@@ -114,7 +116,16 @@ func cryptpwDecrypt(t *testing.T, pw, b64 string) string {
 		t.Errorf("%q is not a salted openssl enc value (%v)", b64, err)
 		return ""
 	}
-	salt, enc := raw[8:16], raw[16:]
+	out, ok := cryptpwOpen(pw, raw[8:16], raw[16:])
+	if !ok {
+		t.Errorf("%q does not decrypt with the cryptpw", b64)
+		return ""
+	}
+	return string(out)
+}
+
+// cryptpwKey is EVP_BytesToKey with SHA-256 and one round: the AES-256 key and the IV.
+func cryptpwKey(pw string, salt []byte) (cipher.Block, []byte) {
 	var kiv, d []byte
 	for len(kiv) < 48 {
 		h := sha256.Sum256(append(append(append([]byte{}, d...), pw...), salt...))
@@ -122,14 +133,30 @@ func cryptpwDecrypt(t *testing.T, pw, b64 string) string {
 		kiv = append(kiv, d...)
 	}
 	blk, _ := aes.NewCipher(kiv[:32])
+	return blk, kiv[32:48]
+}
+
+// cryptpwOpen decrypts enc with pw and salt; ok is false when the padding is not valid.
+func cryptpwOpen(pw string, salt, enc []byte) ([]byte, bool) {
+	blk, iv := cryptpwKey(pw, salt)
 	out := make([]byte, len(enc))
-	cipher.NewCBCDecrypter(blk, kiv[32:48]).CryptBlocks(out, enc)
+	cipher.NewCBCDecrypter(blk, iv).CryptBlocks(out, enc)
 	n := int(out[len(out)-1])
 	if n < 1 || n > aes.BlockSize || !bytes.Equal(out[len(out)-n:], bytes.Repeat([]byte{byte(n)}, n)) {
-		t.Errorf("%q does not decrypt with the cryptpw", b64)
-		return ""
+		return nil, false
 	}
-	return string(out[:len(out)-n])
+	return out[:len(out)-n], true
+}
+
+// cryptpwSeal encrypts plain with pw and salt as dreaderd does: base64 of "Salted__", the salt
+// and the AES-256-CBC text with PKCS#7 padding.
+func cryptpwSeal(pw string, salt []byte, plain string) string {
+	blk, iv := cryptpwKey(pw, salt)
+	n := aes.BlockSize - len(plain)%aes.BlockSize
+	in := append([]byte(plain), bytes.Repeat([]byte{byte(n)}, n)...)
+	out := make([]byte, len(in))
+	cipher.NewCBCEncrypter(blk, iv).CryptBlocks(out, in)
+	return base64.StdEncoding.EncodeToString(append(append([]byte("Salted__"), salt...), out...))
 }
 
 // decryptScript runs contrib/xtrace/decrypt-aes.sh with args on the header and returns what it
@@ -140,13 +167,76 @@ func decryptScript(t *testing.T, head []string, args ...string) (string, bool) {
 		t.Log("no openssl: contrib/xtrace/decrypt-aes.sh not run")
 		return "", false
 	}
-	cmd := exec.Command("sh", append([]string{filepath.Join(repoRoot(t), "contrib", "xtrace", "decrypt-aes.sh")}, args...)...)
-	cmd.Stdin = strings.NewReader(strings.Join(head, "\r\n") + "\r\n\r\nbody\r\n")
-	out, err := cmd.CombinedOutput()
+	out, err := runDecryptScript(t, head, args...)
 	if err != nil {
 		t.Errorf("contrib/xtrace/decrypt-aes.sh: %v: %s", err, out)
 	}
-	return string(out), true
+	return out, true
+}
+
+// runDecryptScript runs contrib/xtrace/decrypt-aes.sh with args on the header.
+func runDecryptScript(t *testing.T, head []string, args ...string) (string, error) {
+	t.Helper()
+	cmd := exec.Command("sh", append([]string{filepath.Join(repoRoot(t), "contrib", "xtrace", "decrypt-aes.sh")}, args...)...)
+	cmd.Stdin = strings.NewReader(strings.Join(head, "\r\n") + "\r\n\r\nbody\r\n")
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// TestDecryptAesWrongCryptpw (D-201): contrib/xtrace/decrypt-aes.sh must not take a wrong
+// cryptpw's output as the value. A wrong password gives valid CBC padding about 1 time in
+// 256; the script took the first cryptpw of dreader.access whose output had no control
+// characters, and it let every byte above 127 through. So with another vserverdef's cryptpw
+// listed first, a short value read back as garbage about once in 2,000 posts (the
+// TestReaderPostInjectionInfo/cryptpw flake). The test finds a salt for which "fred",
+// encrypted with "secret", decrypts with "another" to such garbage (not valid UTF-8), and
+// checks that the script prints fred with both cryptpws listed, in either order, and refuses
+// the value with the wrong password alone. Fails before D-201: the garbage was printed.
+func TestDecryptAesWrongCryptpw(t *testing.T) {
+	if _, err := exec.LookPath("openssl"); err != nil {
+		t.Skip("no openssl: contrib/xtrace/decrypt-aes.sh not run")
+	}
+	var value string
+	var garbage []byte
+	salt := make([]byte, 8)
+	for i := uint64(1); i < 1<<22 && value == ""; i++ {
+		binary.BigEndian.PutUint64(salt, i)
+		enc := cryptpwSeal("secret", salt, "fred")
+		raw, _ := base64.StdEncoding.DecodeString(enc)
+		p, ok := cryptpwOpen("another", salt, raw[16:])
+		if !ok || len(p) == 0 || utf8.Valid(p) {
+			continue
+		}
+		high, ctl := false, false
+		for _, b := range p {
+			high = high || b >= 0x80
+			ctl = ctl || b < 0x20 || b == 0x7f
+		}
+		if high && !ctl {
+			value, garbage = enc, p
+		}
+	}
+	if value == "" {
+		t.Fatal("no salt found for which the wrong cryptpw gives printable garbage")
+	}
+	t.Logf("salt %x: \"another\" decrypts %s to %q", salt, value, garbage)
+	head := []string{`Injection-Info: e2e.test; posting-account="C=` + value + `"`}
+	dir := t.TempDir()
+	for _, order := range [][2]string{{"another", "secret"}, {"secret", "another"}} {
+		acc := filepath.Join(dir, "dreader.access."+order[0])
+		text := "vserverdef other\n    cryptpw " + order[0] + "\nend\nvserverdef DEFAULT\n    cryptpw " + order[1] + "\nend\n"
+		if err := os.WriteFile(acc, []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		out, err := runDecryptScript(t, head, "-a", acc)
+		if err != nil || !strings.Contains(out, "Injection-Info posting-account: fred\n") || strings.Contains(out, string(garbage)) {
+			t.Errorf("cryptpw %s listed first: %v, printed %q, want posting-account fred", order[0], err, out)
+		}
+	}
+	out, err := runDecryptScript(t, head, "pass:another")
+	if err == nil || !strings.Contains(out, "cannot decrypt") || strings.Contains(out, string(garbage)) {
+		t.Errorf("pass:another: %v, printed %q, want \"cannot decrypt\" and exit status 1", err, out)
+	}
 }
 
 func hasHeader(head []string, name string) bool {

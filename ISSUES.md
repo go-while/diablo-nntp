@@ -213,6 +213,7 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-197](#d-197-a-vserverdef-without-hostname-serves-an-empty-host-name) | Low | A vserverdef without hostname serves an empty host name | fixed (#338) |
 | [D-198](#d-198-an-empty-first-line-on-a-haproxy-readerdef-reaches-strcmp-with-null) | Medium | An empty first line on a haproxy readerdef reaches strcmp() with NULL | fixed (#341) |
 | [D-199](#d-199-a-long-welcome-text-writes-past-the-greeting-buffer) | Low | A long welcome text writes past the greeting buffer | fixed (#341) |
+| [D-201](#d-201-decrypt-aessh-can-take-a-wrong-cryptpw) | Low | decrypt-aes.sh can take a wrong cryptpw | PR |
 
 Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315), [F-02 configure script](#f-02-configure-script-for-the-build-options), [F-03 refeed a whole spool](#f-03-refeed-a-whole-spool-to-another-server), [F-04 NoCeM notices](#f-04-nocem-notices), [F-05 init scripts](#f-05-init-scripts-and-adm-script-replacements), [F-06 Perl authentication](#f-06-perl-authentication-for-dreaderd).
 
@@ -1253,6 +1254,10 @@ Fixed (#341): `cmd` is checked for NULL, so an empty line gets the same `400 <ho
 ### D-199 A long welcome text writes past the greeting buffer
 `dreaderd/reader.c`, `WelcomeString()`: the `welcome` text of a vserverdef is expanded into a 512-byte static buffer, and the length `snprintf()` returned (the length it wanted, not what it wrote) was added to the position unchecked, so with expansions like `%o` (organization, up to 127 bytes) the closing `'\0'` was written past the buffer, up to about 130 bytes beyond it; text that filled the buffer exactly wrote it one byte past. A welcome ending in `%` stepped over the end of the text. Only dreader.access sets the text.
 Fixed (#341): the position is held at the last byte of the buffer, so the greeting is cut at 511 bytes, and a `%` at the end ends the text. Test: `TestReaderWelcomeLong` (fails on an AddressSanitizer build of main: global-buffer-overflow in `WelcomeString()`).
+
+### D-201 decrypt-aes.sh can take a wrong cryptpw
+`contrib/xtrace/decrypt-aes.sh` (#328), without a password, tries each `cryptpw` of dreader.access and took the first one whose output passed `printable()`. A wrong password gives valid CBC padding about 1 time in 256, and `printable()` let every byte above 127 through, so for a one-block value such as a posting-account the wrong password of another vserverdef listed first was taken about once in 2,000 posts, and garbage was printed as the value. Seen as the `TestReaderPostInjectionInfo/cryptpw` flake on rockylinux-9 (run 42320411955; go-while's v7 list). `pass:<wrong password>` printed the garbage the same way.
+Fixed (PR): the output must be readable text (not empty, no control characters, bytes above 127 only as valid UTF-8, checked with `iconv`; without `iconv` only ASCII), it is checked on a file instead of a shell variable (which drops NUL bytes), and every cryptpw is tried: if two give different readable text, the value is reported as ambiguous instead of guessed. Test: `TestDecryptAesWrongCryptpw` (a crafted salt for which the wrong cryptpw gives printable non-UTF-8 garbage; fails on main).
 
 ## Feature requests
 

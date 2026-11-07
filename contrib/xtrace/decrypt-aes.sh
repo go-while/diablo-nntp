@@ -9,8 +9,9 @@
 #
 # The article is read from stdin, or with -m from this server's spool
 # (dreadart -h).  Without a password every cryptpw in dreader.access is
-# tried, so run it as news (or root) on the server.  Plain sh, sed and
-# openssl: works on Linux, the BSDs, macOS and illumos.
+# tried, so run it as news (or root) on the server; if two give different
+# readable text, the value is not guessed.  Plain sh, sed and openssl (and
+# iconv, if found, for UTF-8): works on Linux, the BSDs, macOS and illumos.
 
 usage() {
 	exec >&2
@@ -104,30 +105,55 @@ if [ -z "$PASS" ]; then
 	fi
 fi
 
-# printable: the plain text has no control characters (a wrong password
-# can give valid padding by chance, but not readable text)
-printable() {
-	[ -z "$(printf '%s' "$1" | LC_ALL=C tr -d '[:print:]\200-\377')" ]
+# readable <file>: the plain text is text: not empty, no control
+# characters, and bytes above 127 only as valid UTF-8 (checked with iconv;
+# without iconv only ASCII counts).  A wrong password gives valid padding
+# about 1 time in 256, but almost never such text (D-201).
+ICONV=$(command -v iconv 2>/dev/null)
+readable() {
+	[ -s "$1" ] || return 1
+	n=$(LC_ALL=C tr -d '[:print:]\200-\377' < "$1" | wc -c)
+	[ $n -eq 0 ] || return 1
+	n=$(LC_ALL=C tr -d '\200-\377' < "$1" | wc -c)
+	[ $n -eq $(wc -c < "$1") ] && return 0
+	[ -n "$ICONV" ] && "$ICONV" -f UTF-8 -t UTF-8 < "$1" >/dev/null 2>&1
 }
 
-# try <base64>: the plain text on stdout, status 1 if no password fits
+# try <base64>: the plain text on stdout.  Status 1 if no password gives
+# readable text, 2 if more than one password gives readable text and the
+# texts differ: then nothing is guessed.
 try() {
+	plain=$TMPD/plain
 	if [ -n "$PASS" ]; then
-		d=$(printf '%s\n' "$1" | openssl enc -d -aes-256-cbc -md sha256 -a -A -pass "$PASS" 2>/dev/null) &&
-			printable "$d" && printf '%s' "$d"
+		printf '%s\n' "$1" | openssl enc -d -aes-256-cbc -md sha256 -a -A -pass "$PASS" > "$plain" 2>/dev/null &&
+			readable "$plain" && cat "$plain"
 		return
 	fi
-	printf '%s' "$PWLIST" | {
-		while IFS= read -r pw; do
-			[ -n "$pw" ] || continue
-			if d=$(printf '%s\n' "$1" | DECRYPT_AES_PW=$pw openssl enc -d -aes-256-cbc -md sha256 -a -A -pass env:DECRYPT_AES_PW 2>/dev/null) &&
-			    printable "$d"; then
-				printf '%s' "$d"
-				exit 0
+	found=0
+	case $- in *f*) noglob=1 ;; *) noglob= ;; esac
+	set -f
+	old_ifs=$IFS
+	IFS='
+'
+	for pw in $PWLIST; do
+		IFS=$old_ifs
+		if printf '%s\n' "$1" | DECRYPT_AES_PW=$pw openssl enc -d -aes-256-cbc -md sha256 -a -A -pass env:DECRYPT_AES_PW > "$plain" 2>/dev/null &&
+		    readable "$plain"; then
+			if [ $found = 0 ]; then
+				cp "$plain" "$TMPD/found"
+				found=1
+			elif ! cmp -s "$plain" "$TMPD/found"; then
+				found=2
 			fi
-		done
-		exit 1
-	}
+		fi
+	done
+	IFS=$old_ifs
+	[ -n "$noglob" ] || set +f
+	case $found in
+	1) cat "$TMPD/found" ;;
+	0) return 1 ;;
+	*) return 2 ;;
+	esac
 }
 
 # decrypt <label> <value>: value is "C=<b64>", "G=<gen>,C=<b64>" or plain text
@@ -146,14 +172,21 @@ decrypt() {
 		echo "$1: $2 (not encrypted)"
 		return 0
 	fi
-	if d=$(try "$c"); then
+	d=$(try "$c")
+	case $? in
+	0)
 		if [ -n "$gen" ]; then
 			echo "$1: $d (generation $gen)"
 		else
 			echo "$1: $d"
 		fi
 		return 0
-	fi
+		;;
+	2)
+		echo "$1: more than one cryptpw gives readable text (give the password)" >&2
+		return 1
+		;;
+	esac
 	echo "$1: cannot decrypt (wrong cryptpw?)" >&2
 	return 1
 }
@@ -169,8 +202,9 @@ article() {
 }
 
 TAB=$(printf '\t')
-TMP=$(mktemp "${TMPDIR:-/tmp}/decrypt-aes.XXXXXX") || exit 1
-trap 'rm -f "$TMP"' EXIT
+TMPD=$(mktemp -d "${TMPDIR:-/tmp}/decrypt-aes.XXXXXX") || exit 1
+trap 'rm -rf "$TMPD"' EXIT
+TMP=$TMPD/article
 trap 'exit 1' HUP INT TERM
 if ! article > "$TMP" || [ ! -s "$TMP" ]; then
 	if [ -n "$MSGID" ]; then

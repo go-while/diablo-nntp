@@ -1,0 +1,1 @@
+- contrib/xtrace/decrypt-aes.sh: a wrong cryptpw is no longer taken for the right one. The decrypted value must be readable text (bytes above 127 only as valid UTF-8, checked with iconv), every cryptpw of dreader.access is tried, and if two give different text the value is reported as ambiguous instead of guessed (D-201).
