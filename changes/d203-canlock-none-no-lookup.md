@@ -1,0 +1,1 @@
+- dreaderd: with `readercanlock none` a cancel or supersede is refused before dreaderd scans the overview of its groups for the target; before, every cancel cost that scan, and one whose target was not there was logged as "target not here yet, dropped (readercanlock)" instead of "refused (readercanlock none)" (D-203).
