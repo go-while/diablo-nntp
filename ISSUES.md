@@ -216,7 +216,7 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-200](#d-200-checkgroups-creates-and-removes-groups-the-newgroup-and-rmgroup-lines-do-not-allow) | Medium | checkgroups creates and removes groups the newgroup and rmgroup lines do not allow | fixed (#342) |
 | [D-201](#d-201-decrypt-aessh-can-take-a-wrong-cryptpw) | Low | decrypt-aes.sh can take a wrong cryptpw | fixed (#344) |
 | [D-202](#d-202-the-first-ldap-login-after-a-start-spends-its-deadline-on-a-host-name-lookup) | Low | The first LDAP login after a start spends its deadline on a host name lookup | fixed (#343) |
-| [D-203](#d-203-readercanlock-none-looks-up-every-cancel-target-before-refusing-it) | Low | readercanlock none looks up every cancel target before refusing it | open |
+| [D-203](#d-203-readercanlock-none-looks-up-every-cancel-target-before-refusing-it) | Low | readercanlock none looks up every cancel target before refusing it | fixed (#349) |
 
 Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315), [F-02 configure script](#f-02-configure-script-for-the-build-options), [F-03 refeed a whole spool](#f-03-refeed-a-whole-spool-to-another-server), [F-04 NoCeM notices](#f-04-nocem-notices), [F-05 init scripts](#f-05-init-scripts-and-adm-script-replacements), [F-06 Perl authentication](#f-06-perl-authentication-for-dreaderd).
 
@@ -1273,7 +1273,7 @@ Fixed (#343): the worker makes one harmless libldap call (`ldap_get_option(NULL,
 ### D-203 readercanlock none looks up every cancel target before refusing it
 `dreaderd/control.c`, `CtlCancel()`: with `readercanlock none` no cancel or supersede is executed, but `CtlCancel()` first scanned the overview of every group the cancel names for its target (`FindCanceledMsg()`), and only then `canLockDecide()` refused it. A cancel whose target was not there went through the whole scan and was logged as `target not here yet, dropped (readercanlock)`, not as refused. On a server that refuses all cancels, such as an archive, every cancel (and every Supersedes:) cost those lookups for nothing. Seen by Jesse on the archive zone (2026-11-07):
 `cancel <...@rutgers.rutgers.edu>: target not here yet, dropped (readercanlock), 0 item(s)` next to `cancel <...>: refused (readercanlock none), 0 item(s)`.
-Fixed (#PR): `CtlCancel()` returns before any lookup when `readercanlock` is `none`, logging `cancel <id>: refused (readercanlock none), 0 item(s)` for every cancel and supersede, as INN's `docancels none` processes none. Test: `TestCancelLockNoneNoLookup`.
+Fixed (#349): `CtlCancel()` returns before any lookup when `readercanlock` is `none`, logging `cancel <id>: refused (readercanlock none), 0 item(s)` for every cancel and supersede, as INN's `docancels none` processes none. Test: `TestCancelLockNoneNoLookup`.
 
 ## Feature requests
 
