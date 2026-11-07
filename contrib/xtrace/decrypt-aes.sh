@@ -10,8 +10,8 @@
 # The article is read from stdin, or with -m from this server's spool
 # (dreadart -h).  Without a password every cryptpw in dreader.access is
 # tried, so run it as news (or root) on the server; if two give different
-# readable text, the value is not guessed.  Plain sh, sed and openssl (and
-# iconv, if found, for UTF-8): works on Linux, the BSDs, macOS and illumos.
+# readable text, the value is not guessed.  Plain sh, sed, od, awk and
+# openssl: works on Linux, the BSDs, macOS and illumos.
 
 usage() {
 	exec >&2
@@ -106,17 +106,38 @@ if [ -z "$PASS" ]; then
 fi
 
 # readable <file>: the plain text is text: not empty, no control
-# characters, and bytes above 127 only as valid UTF-8 (checked with iconv;
-# without iconv only ASCII counts).  A wrong password gives valid padding
-# about 1 time in 256, but almost never such text (D-201).
-ICONV=$(command -v iconv 2>/dev/null)
+# characters, and bytes above 127 only as valid UTF-8 (no overlong form,
+# surrogate, C1 control or code point above U+10FFFF).  A wrong password
+# gives valid padding about 1 time in 256, but almost never such text
+# (D-201).  The bytes are checked with od and awk: illumos iconv copies
+# UTF-8 to UTF-8 unchecked (and exits 0 after an illegal sequence), and
+# busybox tr does not delete all of [:print:].
 readable() {
 	[ -s "$1" ] || return 1
-	n=$(LC_ALL=C tr -d '[:print:]\200-\377' < "$1" | wc -c)
-	[ $n -eq 0 ] || return 1
-	n=$(LC_ALL=C tr -d '\200-\377' < "$1" | wc -c)
-	[ $n -eq $(wc -c < "$1") ] && return 0
-	[ -n "$ICONV" ] && "$ICONV" -f UTF-8 -t UTF-8 < "$1" >/dev/null 2>&1
+	LC_ALL=C od -An -v -tu1 < "$1" | LC_ALL=C awk '
+	{ for (i = 1; i <= NF; i++) b[n++] = $i + 0 }
+	END {
+		for (i = 0; i < n; i++) {
+			c = b[i]
+			if (c < 32 || c == 127) exit 1
+			if (c < 128) continue
+			if (c >= 194 && c <= 223) k = 1
+			else if (c >= 224 && c <= 239) k = 2
+			else if (c >= 240 && c <= 244) k = 3
+			else exit 1
+			lo = 128; hi = 191
+			if (c == 194) lo = 160
+			else if (c == 224) lo = 160
+			else if (c == 237) hi = 159
+			else if (c == 240) lo = 144
+			else if (c == 244) hi = 143
+			if (i + k >= n) exit 1
+			if (b[i + 1] < lo || b[i + 1] > hi) exit 1
+			for (j = 2; j <= k; j++)
+				if (b[i + j] < 128 || b[i + j] > 191) exit 1
+			i += k
+		}
+	}'
 }
 
 # try <base64>: the plain text on stdout.  Status 1 if no password gives
