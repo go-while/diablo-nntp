@@ -3773,10 +3773,25 @@ InstallAccessCache(void) {
 		    logit(LOG_ERR, "Found 'end' without define in line %d", linecount);
 		    break;
 		case OPT_VSERVER:
-		    if (strcmp(vserver.vs_HostName, "DEFAULT") == 0 &&
-			DOpts.ReaderHostName != NULL)
-			strncpy(vserver.vs_HostName, DOpts.ReaderHostName,
-					sizeof(vserver.vs_HostName) - 1);
+		    /*
+		     * A vserverdef without hostname (or with "hostname
+		     * DEFAULT") serves as the host dreaderd runs as (-h,
+		     * else the system's host name), as the built-in DEFAULT
+		     * does: "vserverdef" starts from an empty definition,
+		     * which gave an empty name in the banner, Path and Xref.
+		     * Its newsadmin then defaults to dreaderd's (-A, else
+		     * news@ that host); a block that names its own host
+		     * keeps an empty newsadmin unless it sets one.
+		     */
+		    if ((!*vserver.vs_HostName ||
+			strcmp(vserver.vs_HostName, "DEFAULT") == 0) &&
+			DOpts.ReaderHostName != NULL) {
+			diablo_strlcpy(vserver.vs_HostName, DOpts.ReaderHostName,
+					sizeof(vserver.vs_HostName), sizeof(vserver.vs_HostName));
+			if (!*vserver.vs_NewsAdm && DOpts.NewsAdmin != NULL)
+			    diablo_strlcpy(vserver.vs_NewsAdm, DOpts.NewsAdmin,
+					sizeof(vserver.vs_NewsAdm), sizeof(vserver.vs_NewsAdm));
+		    }
 		    if (!*vserver.vs_ClusterName)
 			diablo_strlcpy(vserver.vs_ClusterName, vserver.vs_HostName,
 					sizeof(vserver.vs_ClusterName), sizeof(vserver.vs_ClusterName));
