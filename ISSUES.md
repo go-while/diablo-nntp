@@ -211,8 +211,8 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-195](#d-195-readerdef-groups-does-not-limit-access-by-message-id) | Medium | readerdef `groups` does not limit access by message-id | fixed (#333) |
 | [D-196](#d-196-body-by-message-id-answers-the-current-article-number) | Low | BODY by message-id answers the current article number | fixed (#333) |
 | [D-197](#d-197-a-vserverdef-without-hostname-serves-an-empty-host-name) | Low | A vserverdef without hostname serves an empty host name | fixed (#338) |
-| [D-198](#d-198-an-empty-first-line-on-a-haproxy-readerdef-reaches-strcmp-with-null) | Medium | An empty first line on a haproxy readerdef reaches strcmp() with NULL | fixed (PR) |
-| [D-199](#d-199-a-long-welcome-text-writes-past-the-greeting-buffer) | Low | A long welcome text writes past the greeting buffer | fixed (PR) |
+| [D-198](#d-198-an-empty-first-line-on-a-haproxy-readerdef-reaches-strcmp-with-null) | Medium | An empty first line on a haproxy readerdef reaches strcmp() with NULL | fixed (#341) |
+| [D-199](#d-199-a-long-welcome-text-writes-past-the-greeting-buffer) | Low | A long welcome text writes past the greeting buffer | fixed (#341) |
 
 Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315), [F-02 configure script](#f-02-configure-script-for-the-build-options), [F-03 refeed a whole spool](#f-03-refeed-a-whole-spool-to-another-server), [F-04 NoCeM notices](#f-04-nocem-notices), [F-05 init scripts](#f-05-init-scripts-and-adm-script-replacements), [F-06 Perl authentication](#f-06-perl-authentication-for-dreaderd).
 
@@ -1248,11 +1248,11 @@ Fixed (#338): at `end` of a vserverdef, an empty (or `DEFAULT`) hostname is the 
 
 ### D-198 An empty first line on a haproxy readerdef reaches strcmp with NULL
 `dreaderd/reader.c`, `NNCommand2()`: with `haproxy yes` the first line of a connection is parsed as a PROXY v1 header with `parseword()`, which returns NULL for an empty line, and `strcmp(cmd, "PROXY")` then got the NULL. Whether that crashed depended on the compiler: gcc -O2 tests `proto` (also NULL) first and skips the call, but an -O0 build died with SIGSEGV in `strcmp()`, and with it the reader process and every connection it served. Without `proxyfrom` any client that matches the readerdef could send that line.
-Fixed (PR): `cmd` is checked for NULL, so an empty line gets the same `400 <host>: failed to read haproxy PROXY v1 header.` as any other bad header. Test: `TestReaderHAProxyEmptyLine` (fails on an -O0 or AddressSanitizer build of main).
+Fixed (#341): `cmd` is checked for NULL, so an empty line gets the same `400 <host>: failed to read haproxy PROXY v1 header.` as any other bad header. Test: `TestReaderHAProxyEmptyLine` (fails on an -O0 or AddressSanitizer build of main).
 
 ### D-199 A long welcome text writes past the greeting buffer
 `dreaderd/reader.c`, `WelcomeString()`: the `welcome` text of a vserverdef is expanded into a 512-byte static buffer, and the length `snprintf()` returned (the length it wanted, not what it wrote) was added to the position unchecked, so with expansions like `%o` (organization, up to 127 bytes) the closing `'\0'` was written past the buffer, up to about 130 bytes beyond it; text that filled the buffer exactly wrote it one byte past. A welcome ending in `%` stepped over the end of the text. Only dreader.access sets the text.
-Fixed (PR): the position is held at the last byte of the buffer, so the greeting is cut at 511 bytes, and a `%` at the end ends the text. Test: `TestReaderWelcomeLong` (fails on an AddressSanitizer build of main: global-buffer-overflow in `WelcomeString()`).
+Fixed (#341): the position is held at the last byte of the buffer, so the greeting is cut at 511 bytes, and a `%` at the end ends the text. Test: `TestReaderWelcomeLong` (fails on an AddressSanitizer build of main: global-buffer-overflow in `WelcomeString()`).
 
 ## Feature requests
 
