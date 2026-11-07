@@ -76,6 +76,13 @@
 ##  localgroups next to this one, one name or wildcard per line, '#' for
 ##  comments.  A group that is not in the message is never changed except by the
 ##  removal, and its description stays.
+##  A group is only created, or its moderated flag corrected, where a newgroup of
+##  it from the sender would be executed, and only removed where an rmgroup would
+##  be: the last newgroup (rmgroup) or "all" line that matches the sender and the
+##  group must be doit, or verify-<key> when the checkgroups line was verified
+##  with that key.  So "newgroup:*:*:drop" and "rmgroup:*:*:drop" as the last
+##  lines keep checkgroups from creating and removing groups too; the changes
+##  not made are logged as the dgrpctl commands that make them.
 ##
 ##			xxx=/full/path logs to /full/path; xxx=foo logs to
 ##			foo in path_log (/news/log/foo, no .log is added).

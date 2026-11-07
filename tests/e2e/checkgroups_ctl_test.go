@@ -16,7 +16,7 @@ func TestReaderCheckgroupsControl(t *testing.T) {
 	st, spool := spoolStore(t)
 	s := NewReaderSite(t, ReaderOptions{
 		Spool: spool,
-		Files: map[string]string{"dcontrol.ctl": "checkgroups:*:*:doit\n"},
+		Files: map[string]string{"dcontrol.ctl": "checkgroups:*:*:doit\n" + cgGroupLines},
 	})
 	a := newArticle(msgID(t), "e2e.test", "cmsg checkgroups",
 		"e2e.ghost\tA group that did not exist.", "e2e.test\tRenamed test group.")

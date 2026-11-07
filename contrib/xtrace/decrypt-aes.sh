@@ -9,7 +9,8 @@
 #
 # The article is read from stdin, or with -m from this server's spool
 # (dreadart -h).  Without a password every cryptpw in dreader.access is
-# tried, so run it as news (or root) on the server.  Plain sh, sed and
+# tried, so run it as news (or root) on the server; if two give different
+# readable text, the value is not guessed.  Plain sh, sed, od, awk and
 # openssl: works on Linux, the BSDs, macOS and illumos.
 
 usage() {
@@ -104,30 +105,76 @@ if [ -z "$PASS" ]; then
 	fi
 fi
 
-# printable: the plain text has no control characters (a wrong password
-# can give valid padding by chance, but not readable text)
-printable() {
-	[ -z "$(printf '%s' "$1" | LC_ALL=C tr -d '[:print:]\200-\377')" ]
+# readable <file>: the plain text is text: not empty, no control
+# characters, and bytes above 127 only as valid UTF-8 (no overlong form,
+# surrogate, C1 control or code point above U+10FFFF).  A wrong password
+# gives valid padding about 1 time in 256, but almost never such text
+# (D-201).  The bytes are checked with od and awk: illumos iconv copies
+# UTF-8 to UTF-8 unchecked (and exits 0 after an illegal sequence), and
+# busybox tr does not delete all of [:print:].
+readable() {
+	[ -s "$1" ] || return 1
+	LC_ALL=C od -An -v -tu1 < "$1" | LC_ALL=C awk '
+	{ for (i = 1; i <= NF; i++) b[n++] = $i + 0 }
+	END {
+		for (i = 0; i < n; i++) {
+			c = b[i]
+			if (c < 32 || c == 127) exit 1
+			if (c < 128) continue
+			if (c >= 194 && c <= 223) k = 1
+			else if (c >= 224 && c <= 239) k = 2
+			else if (c >= 240 && c <= 244) k = 3
+			else exit 1
+			lo = 128; hi = 191
+			if (c == 194) lo = 160
+			else if (c == 224) lo = 160
+			else if (c == 237) hi = 159
+			else if (c == 240) lo = 144
+			else if (c == 244) hi = 143
+			if (i + k >= n) exit 1
+			if (b[i + 1] < lo || b[i + 1] > hi) exit 1
+			for (j = 2; j <= k; j++)
+				if (b[i + j] < 128 || b[i + j] > 191) exit 1
+			i += k
+		}
+	}'
 }
 
-# try <base64>: the plain text on stdout, status 1 if no password fits
+# try <base64>: the plain text on stdout.  Status 1 if no password gives
+# readable text, 2 if more than one password gives readable text and the
+# texts differ: then nothing is guessed.
 try() {
+	plain=$TMPD/plain
 	if [ -n "$PASS" ]; then
-		d=$(printf '%s\n' "$1" | openssl enc -d -aes-256-cbc -md sha256 -a -A -pass "$PASS" 2>/dev/null) &&
-			printable "$d" && printf '%s' "$d"
+		printf '%s\n' "$1" | openssl enc -d -aes-256-cbc -md sha256 -a -A -pass "$PASS" > "$plain" 2>/dev/null &&
+			readable "$plain" && cat "$plain"
 		return
 	fi
-	printf '%s' "$PWLIST" | {
-		while IFS= read -r pw; do
-			[ -n "$pw" ] || continue
-			if d=$(printf '%s\n' "$1" | DECRYPT_AES_PW=$pw openssl enc -d -aes-256-cbc -md sha256 -a -A -pass env:DECRYPT_AES_PW 2>/dev/null) &&
-			    printable "$d"; then
-				printf '%s' "$d"
-				exit 0
+	found=0
+	case $- in *f*) noglob=1 ;; *) noglob= ;; esac
+	set -f
+	old_ifs=$IFS
+	IFS='
+'
+	for pw in $PWLIST; do
+		IFS=$old_ifs
+		if printf '%s\n' "$1" | DECRYPT_AES_PW=$pw openssl enc -d -aes-256-cbc -md sha256 -a -A -pass env:DECRYPT_AES_PW > "$plain" 2>/dev/null &&
+		    readable "$plain"; then
+			if [ $found = 0 ]; then
+				cp "$plain" "$TMPD/found"
+				found=1
+			elif ! cmp -s "$plain" "$TMPD/found"; then
+				found=2
 			fi
-		done
-		exit 1
-	}
+		fi
+	done
+	IFS=$old_ifs
+	[ -n "$noglob" ] || set +f
+	case $found in
+	1) cat "$TMPD/found" ;;
+	0) return 1 ;;
+	*) return 2 ;;
+	esac
 }
 
 # decrypt <label> <value>: value is "C=<b64>", "G=<gen>,C=<b64>" or plain text
@@ -146,14 +193,21 @@ decrypt() {
 		echo "$1: $2 (not encrypted)"
 		return 0
 	fi
-	if d=$(try "$c"); then
+	d=$(try "$c")
+	case $? in
+	0)
 		if [ -n "$gen" ]; then
 			echo "$1: $d (generation $gen)"
 		else
 			echo "$1: $d"
 		fi
 		return 0
-	fi
+		;;
+	2)
+		echo "$1: more than one cryptpw gives readable text (give the password)" >&2
+		return 1
+		;;
+	esac
 	echo "$1: cannot decrypt (wrong cryptpw?)" >&2
 	return 1
 }
@@ -169,8 +223,9 @@ article() {
 }
 
 TAB=$(printf '\t')
-TMP=$(mktemp "${TMPDIR:-/tmp}/decrypt-aes.XXXXXX") || exit 1
-trap 'rm -f "$TMP"' EXIT
+TMPD=$(mktemp -d "${TMPDIR:-/tmp}/decrypt-aes.XXXXXX") || exit 1
+trap 'rm -rf "$TMPD"' EXIT
+TMP=$TMPD/article
 trap 'exit 1' HUP INT TERM
 if ! article > "$TMP" || [ ! -s "$TMP" ]; then
 	if [ -n "$MSGID" ]; then
