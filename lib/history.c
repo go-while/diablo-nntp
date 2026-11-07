@@ -27,8 +27,9 @@
  * (HVERSION, the format written now) holds record numbers (HistIndex,
  * uint32) that recordOffset() turns into 64 bit file offsets: it is limited
  * to 2^32 - 1 records (record 0 is the dummy written at creation), about
- * 120GB of records plus the hash table.  HistoryAdd() does not check that
- * limit; past it the record number would wrap (D-204).
+ * 120GB of records plus the hash table.  Past that limit HistoryAdd()
+ * refuses a record (RCTRYAGAIN, logged once) instead of letting the record
+ * number wrap (D-204).
  */
 
 #include "defs.h"
@@ -846,6 +847,23 @@ recordOffset(HistIndex index)
     return((off_t)index);
 }
 
+/*
+ * A record appended at writePos would get a number that does not fit a
+ * HistIndex: in a version 2 file record 2^32 or later, in a version 1
+ * file (byte offsets) an offset past 2^32 - 1.  (D-204)
+ */
+static int
+historyFull(off_t writePos)
+{
+    off_t n;
+
+    if (HHead.version > 1)
+	n = (writePos - (off_t)HEntryOff) / (off_t)sizeof(History);
+    else
+	n = writePos;
+    return(n > (off_t)0xFFFFFFFFU);
+}
+
 static void
 unlockChain(off_t chainlock)
 {
@@ -1000,6 +1018,25 @@ HistoryAdd(const char *msgid, History *h)
 		/* make the gap an all-zero record (gmt 0) for sequential scans */
 		(void)HistoryWriteAt(HFd, zeros, (size_t)odd, writePos - odd);
 		writePos = newPos;
+	    }
+	    /*
+	     * The new record's number must fit a HistIndex (D-204): past
+	     * 2^32 - 1 records (in a version 1 file, past 4GB) it would wrap
+	     * to a low number, and the chain would point at an old record of
+	     * another article.  Refuse it, so the article is offered again,
+	     * and log that once in this process.
+	     */
+	    if (r == RCOK && historyFull(writePos)) {
+		static int loggedFull;
+
+		if (!loggedFull) {
+		    loggedFull = 1;
+		    logit(LOG_CRIT, "dhistory is full (no record number left after %lld records): articles are refused until the history is rebuilt with fewer records",
+			(long long)((HHead.version > 1) ?
+			    (writePos - (off_t)HEntryOff) / (off_t)sizeof(History) :
+			    writePos));
+		}
+		r = RCTRYAGAIN;
 	    }
 	    if (r == RCOK && HistoryWriteAt(HFd, h, sizeof(*h), writePos) < 0) {
 		int error = errno;
