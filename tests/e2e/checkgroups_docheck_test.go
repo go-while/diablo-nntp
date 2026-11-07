@@ -24,11 +24,17 @@ func cgActive(t *testing.T, s *Site) map[string]string {
 	return m
 }
 
-// cgSite starts a reader site with the groups, the dcontrol.ctl lines and feeds it the checkgroups
-// with the lines as the body.
+// cgGroupLines lets a newgroup and an rmgroup of any group from anyone be executed. A
+// checkgroups only creates (removes) a group where a newgroup (rmgroup) would be executed
+// (D-200), so the dcontrol.ctl of the checkgroups tests ends with them; they do not change
+// which checkgroups lines are used.
+const cgGroupLines = "newgroup:*:*:doit\nrmgroup:*:*:doit\n"
+
+// cgSite starts a reader site with the groups, the dcontrol.ctl lines (and cgGroupLines) and
+// feeds it the checkgroups with the lines as the body.
 func cgSite(t *testing.T, groups []string, dcontrol string, lines ...string) *Site {
 	t.Helper()
-	return cgSiteWith(t, groups, map[string]string{"dcontrol.ctl": dcontrol}, nil, lines...)
+	return cgSiteWith(t, groups, map[string]string{"dcontrol.ctl": dcontrol + cgGroupLines}, nil, lines...)
 }
 
 // cgSiteWith is cgSite with more files in the home directory (localgroups) and groups with a
@@ -198,7 +204,7 @@ func TestCheckgroupsLimitLines(t *testing.T) {
 // left alone by checkgroups: no description, no flag change, never removed.
 func TestCheckgroupsLocal(t *testing.T) {
 	s := cgSiteWith(t, []string{"e2e.test", "e2e.priv.a"},
-		map[string]string{"dcontrol.ctl": "checkgroups:*:*:doit\n", "localgroups": "# groups of this site\ne2e.local\ne2e.priv.*\n"},
+		map[string]string{"dcontrol.ctl": "checkgroups:*:*:doit\n" + cgGroupLines, "localgroups": "# groups of this site\ne2e.local\ne2e.priv.*\n"},
 		[]string{"e2e.local=Our own description.", "e2e.obsolete=Obsolete group."},
 		"e2e.test\tThe test group.",
 		"e2e.local\tThe description of the sender. (Moderated)",
@@ -228,7 +234,7 @@ func TestCheckgroupsKeepsDescriptions(t *testing.T) {
 		lines = append(lines, "e2e.new"+n+"\tNew group "+n+".")
 	}
 	s := cgSiteWith(t, []string{"e2e.test"},
-		map[string]string{"dcontrol.ctl": "checkgroups:*:e2e.*:doit\n"},
+		map[string]string{"dcontrol.ctl": "checkgroups:*:e2e.*:doit\n" + cgGroupLines},
 		[]string{"e2e.obsolete=Not removed: over the limit.", "other.keep=Another hierarchy."},
 		lines...)
 	testkit.WaitFor(t, 10*time.Second, "the description", func() bool {

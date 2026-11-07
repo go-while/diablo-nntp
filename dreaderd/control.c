@@ -1043,6 +1043,17 @@ CtlRmGroup(Connection *conn, Control *ctl, const char **cmd, const char *body, i
  *	      pattern, no later line's pattern and is not in the list is removed (a
  *	      removal).
  *
+ *	An addition or a flag correction is only made where a newgroup of that group
+ *	from the sender would be executed, and a removal only where an rmgroup would
+ *	(D-200): the last newgroup (rmgroup) or "all" line of dcontrol.ctl that matches
+ *	the sender and the group, as ParseControl() finds it ("break" ends the scan),
+ *	must be doit or verify-<key>; verify-<key> only when the checkgroups line was
+ *	verified with that key; no such line, drop, log, mail and dgpverify allow
+ *	nothing.  So "newgroup:*:*:drop" also stops checkgroups from creating groups.
+ *	The changes that are not allowed are written to the control log as the
+ *	dgrpctl commands that make them.  (INN's controlchan does not look at the
+ *	newgroup and rmgroup lines for a checkgroups.)
+ *
  *	The descriptions are always updated.  The additions, flag corrections (status
  *	changes) and removals are only made when no limit is exceeded; beyond that they
  *	are written to the control log as the dgrpctl commands that make them, and not
@@ -1085,7 +1096,23 @@ typedef struct CgEnt {
     char *ce_Group;
     char *ce_Desc;
     char  ce_Flags;		/* 'y' or 'm' */
+    char  ce_Ok;		/* a newgroup of it would be executed */
 } CgEnt;
+
+#define CGG_ALL		0
+#define CGG_NEWGROUP	1
+#define CGG_RMGROUP	2
+
+/*
+ * A newgroup, rmgroup or "all" line of dcontrol.ctl whose <from> matches the
+ * checkgroups sender: what a newgroup or rmgroup from that sender would do.
+ */
+typedef struct CgGrpRule {
+    int   gr_Type;		/* CGG_* */
+    char *gr_Groups;
+    char *gr_Verify;		/* the key of the last verify-<key>, or NULL */
+    int   gr_Flags;		/* CTF_EXECUTE, CTF_DROP, CTF_PGPVERIFY, CTF_DGPVERIFY, CTF_BREAK */
+} CgGrpRule;
 
 static int
 CgCompare(const void *a, const void *b)
@@ -1323,6 +1350,147 @@ CgReadRules(const char *addr, CgRule **prules, int *pnRules, CgLimit **plimits, 
     return(failed ? -1 : 0);
 }
 
+static void
+CgFreeGrpRules(CgGrpRule *grules, int nGrules)
+{
+    int i;
+
+    for (i = 0; i < nGrules; ++i) {
+	free(grules[i].gr_Groups);
+	free(grules[i].gr_Verify);
+    }
+    free(grules);
+}
+
+/*
+ * The newgroup, rmgroup and "all" lines of dcontrol.ctl that match the sender's
+ * address, in file order, with their actions read as ParseControl() reads them.
+ * Returns -1 when memory runs out (nothing is returned then).
+ */
+static int
+CgReadGrpRules(const char *addr, CgGrpRule **pgrules, int *pnGrules)
+{
+    FILE *fi = fopen(PatLibExpand(DControlCtlPat), "r");
+    char buf[256];
+    int tooLong;
+    CgGrpRule *grules = NULL;
+    int nGrules = 0;
+    int failed = 0;
+
+    while (fi != NULL && !failed && ConfigGets(buf, sizeof(buf), fi, &tooLong) != NULL) {
+	char *smsg;
+	char *sfrom;
+	char *sgroups;
+	char *saction;
+	char *a;
+	CgGrpRule g;
+	CgGrpRule *ng;
+
+	if (tooLong)
+	    continue;		/* ParseControl() logs it */
+	if (buf[0] == '\n' || buf[0] == '#' ||
+	    (smsg = strtok(buf, ":\n")) == NULL ||
+	    smsg[0] == '#'
+	) {
+	    continue;
+	}
+	if ((sfrom = strtok(NULL, ":\n")) == NULL ||
+	    (sgroups = strtok(NULL, ":\n")) == NULL ||
+	    (saction = strtok(NULL, ":\n")) == NULL
+	) {
+	    continue;
+	}
+	memset(&g, 0, sizeof(g));
+	if (strcmp(smsg, "all") == 0)
+	    g.gr_Type = CGG_ALL;
+	else if (strcasecmp(smsg, "newgroup") == 0)
+	    g.gr_Type = CGG_NEWGROUP;
+	else if (strcasecmp(smsg, "rmgroup") == 0)
+	    g.gr_Type = CGG_RMGROUP;
+	else
+	    continue;
+	if (!CgSenderMatches(sfrom, addr))
+	    continue;
+	for (a = strtok(saction, ",\n"); a; a = strtok(NULL, ",\n")) {
+	    char *eq;
+
+	    if ((eq = strchr(a, '=')) != NULL)
+		*eq = 0;
+	    if (strcmp(a, "doit") == 0) {
+		g.gr_Flags |= CTF_EXECUTE;
+	    } else if (strcmp(a, "break") == 0) {
+		g.gr_Flags |= CTF_BREAK;
+	    } else if (strcmp(a, "drop") == 0) {
+		g.gr_Flags &= ~CTF_EXECUTE;
+		g.gr_Flags |= CTF_DROP;
+	    } else if (strncmp(a, "verify-", 7) == 0) {
+		g.gr_Flags |= CTF_PGPVERIFY;
+		if ((g.gr_Flags & CTF_DROP) == 0)
+		    g.gr_Flags |= CTF_EXECUTE;
+		free(g.gr_Verify);
+		if ((g.gr_Verify = strdup(a + 7)) == NULL)
+		    failed = 1;
+	    } else if (strcmp(a, "dgpverify") == 0) {
+		g.gr_Flags |= CTF_DGPVERIFY;
+		if ((g.gr_Flags & CTF_DROP) == 0)
+		    g.gr_Flags |= CTF_EXECUTE;
+	    }
+	}
+	if (!failed && (g.gr_Groups = strdup(sgroups)) != NULL &&
+	    (ng = realloc(grules, (nGrules + 1) * sizeof(CgGrpRule))) != NULL
+	) {
+	    grules = ng;
+	    grules[nGrules++] = g;
+	} else {
+	    free(g.gr_Groups);
+	    free(g.gr_Verify);
+	    failed = 1;
+	}
+    }
+    if (fi != NULL)
+	fclose(fi);
+    if (failed) {
+	CgFreeGrpRules(grules, nGrules);
+	grules = NULL;
+	nGrules = 0;
+    }
+    *pgrules = grules;
+    *pnGrules = nGrules;
+    return(failed ? -1 : 0);
+}
+
+/*
+ * A newgroup (type CGG_NEWGROUP) or rmgroup (CGG_RMGROUP) of the group from the
+ * sender would be executed, as ParseControl() decides it: its last matching line
+ * is doit, or verify-<key> with the key the checkgroups line (rule) was verified
+ * with.  dgpverify is never verified for a checkgroups.
+ */
+static int
+CgGrpAllowed(const CgGrpRule *grules, int nGrules, int type, const char *group, const CgRule *rule)
+{
+    const CgGrpRule *last = NULL;
+    int i;
+
+    for (i = 0; i < nGrules; ++i) {
+	if (grules[i].gr_Type != CGG_ALL && grules[i].gr_Type != type)
+	    continue;
+	if (WildOrCmp(grules[i].gr_Groups, group) != 0)
+	    continue;
+	last = &grules[i];
+	if (last->gr_Flags & CTF_BREAK)
+	    break;
+    }
+    if (last == NULL || (last->gr_Flags & CTF_EXECUTE) == 0)
+	return(0);
+    if (last->gr_Flags & CTF_DGPVERIFY)
+	return(0);
+    if (last->gr_Flags & CTF_PGPVERIFY) {
+	return((rule->cr_Flags & CTF_PGPVERIFY) && rule->cr_Verify &&
+	    last->gr_Verify && strcmp(rule->cr_Verify, last->gr_Verify) == 0);
+    }
+    return(1);
+}
+
 /*
  * The limit that a change of the group counts for: the last /maxdocheckgroups/
  * line that matches it, or nLimits for the default.
@@ -1489,7 +1657,7 @@ CgCreate(const char *group, char flags, const char *description)
  * matches the first group of the message limits all its changes.
  */
 static int
-CgCheck(Control *ctl, const char *body, int bodyLen, const char *include, const char *exclude, const char *drop, const CgLimit *limits, int nLimits)
+CgCheck(Control *ctl, const char *body, int bodyLen, const char *include, const char *exclude, const char *drop, const CgLimit *limits, int nLimits, const CgRule *rule, const CgGrpRule *grules, int nGrules)
 {
     int i;
     int r;
@@ -1504,6 +1672,11 @@ CgCheck(Control *ctl, const char *body, int bodyLen, const char *include, const 
     int maxGone = 0;
     int nAdd = 0;
     int nFlags = 0;
+    int noAdd = 0;		/* not allowed by the newgroup lines */
+    int noFlags = 0;
+    char **kept = NULL;		/* removals the rmgroup lines do not allow */
+    int noGone = 0;
+    int maxKept = 0;
     int *counts = NULL;		/* changes per limit, [nLimits] is the default */
     int shown;			/* the limit for the log line */
     int doit;
@@ -1614,12 +1787,17 @@ CgCheck(Control *ctl, const char *body, int bodyLen, const char *include, const 
     }
 
     /*
-     * Count the additions and the flags to correct.
+     * Count the additions and the flags to correct, those a newgroup would make.
      */
     for (i = 0; i < nEnts; ++i) {
 	const char *rec = KPDBReadRecord(KDBActive, ents[i].ce_Group, 0, &recLen);
 
+	ents[i].ce_Ok = CgGrpAllowed(grules, nGrules, CGG_NEWGROUP, ents[i].ce_Group, rule);
 	if (rec == NULL) {
+	    if (!ents[i].ce_Ok) {
+		++noAdd;
+		continue;
+	    }
 	    ++nAdd;
 	    ++counts[CgLimitFor(limits, nLimits, ents[i].ce_Group)];
 	} else {
@@ -1628,6 +1806,10 @@ CgCheck(Control *ctl, const char *body, int bodyLen, const char *include, const 
 
 	    p = KPDBGetField(rec, recLen, "S", (int *)&plen, "n");
 	    if (p == NULL || plen != 1 || p[0] != ents[i].ce_Flags) {
+		if (!ents[i].ce_Ok) {
+		    ++noFlags;
+		    continue;
+		}
 		++nFlags;
 		++counts[CgLimitFor(limits, nLimits, ents[i].ce_Group)];
 	    }
@@ -1666,6 +1848,20 @@ CgCheck(Control *ctl, const char *body, int bodyLen, const char *include, const 
 	key.ce_Group = grpbuf;
 	if (bsearch(&key, ents, nEnts, sizeof(CgEnt), CgCompare) != NULL)
 	    continue;
+	if (!CgGrpAllowed(grules, nGrules, CGG_RMGROUP, grpbuf, rule)) {
+	    if (noGone == maxKept) {
+		char **nk;
+
+		maxKept = maxKept ? maxKept * 2 : 64;
+		if ((nk = realloc(kept, maxKept * sizeof(char *))) == NULL)
+		    goto out;
+		kept = nk;
+	    }
+	    if ((kept[noGone] = strdup(grpbuf)) == NULL)
+		goto out;
+	    ++noGone;
+	    continue;
+	}
 	if (nGone == maxGone) {
 	    char **ng;
 
@@ -1717,7 +1913,9 @@ CgCheck(Control *ctl, const char *body, int bodyLen, const char *include, const 
 	const char *g = ents[i].ce_Group;
 	const char *rec = KPDBReadRecord(KDBActive, g, KP_LOCK, &recLen);
 
-	if (rec == NULL) {
+	if (rec == NULL && !ents[i].ce_Ok) {
+	    continue;			/* logged below */
+	} else if (rec == NULL) {
 	    if (doit) {
 		CgCreate(g, ents[i].ce_Flags, ents[i].ce_Desc);
 		if (ctl->ct_LogFo)
@@ -1738,9 +1936,9 @@ CgCheck(Control *ctl, const char *body, int bodyLen, const char *include, const 
 	    p = KPDBGetFieldDecode(rec, recLen, "GD", NULL, NULL);
 	    wrongDesc = (p == NULL || strcmp(p, ents[i].ce_Desc) != 0);
 
-	    if (!doit && wrongFlags && ctl->ct_LogFo)
+	    if (!doit && wrongFlags && ents[i].ce_Ok && ctl->ct_LogFo)
 		fprintf(ctl->ct_LogFo, "dgrpctl modgroup %s %c \"\" \"%s\"\n", g, ents[i].ce_Flags, ents[i].ce_Desc);
-	    if (!doit)
+	    if (!doit || !ents[i].ce_Ok)
 		wrongFlags = 0;			/* only the description */
 	    if (!wrongDesc && !wrongFlags) {
 		KPDBUnlock(KDBActive, rec);
@@ -1775,6 +1973,32 @@ CgCheck(Control *ctl, const char *body, int bodyLen, const char *include, const 
 	    fprintf(ctl->ct_LogFo, "dgrpctl rmgroup %s\n", gone[i]);
 	}
     }
+
+    /*
+     * The changes a newgroup or rmgroup would not make: the commands that make them.
+     */
+    if ((noAdd + noFlags + noGone) && ctl->ct_LogFo) {
+	fprintf(ctl->ct_LogFo, ">> Checkgroups: %d to add, %d to change, %d to remove: not allowed by the newgroup/rmgroup lines of dcontrol.ctl, NOT made, the commands follow (newsgroups %s)\n",
+	    noAdd, noFlags, noGone, include);
+	for (i = 0; i < nEnts; ++i) {
+	    const char *g = ents[i].ce_Group;
+	    const char *rec;
+	    const char *p;
+	    uint32 plen;
+
+	    if (ents[i].ce_Ok)
+		continue;
+	    if ((rec = KPDBReadRecord(KDBActive, g, 0, &recLen)) == NULL) {
+		fprintf(ctl->ct_LogFo, "dgrpctl newgroup %s %c \"\" \"%s\"\n", g, ents[i].ce_Flags, ents[i].ce_Desc);
+		continue;
+	    }
+	    p = KPDBGetField(rec, recLen, "S", (int *)&plen, "n");
+	    if (p == NULL || plen != 1 || p[0] != ents[i].ce_Flags)
+		fprintf(ctl->ct_LogFo, "dgrpctl modgroup %s %c \"\" \"%s\"\n", g, ents[i].ce_Flags, ents[i].ce_Desc);
+	}
+	for (i = 0; i < noGone; ++i)
+	    fprintf(ctl->ct_LogFo, "dgrpctl rmgroup %s\n", kept[i]);
+    }
     failed = 0;
 out:
     r = failed ? -1 : nEnts;
@@ -1789,6 +2013,9 @@ out:
     for (i = 0; i < nGone; ++i)
 	free(gone[i]);
     free(gone);
+    for (i = 0; i < noGone; ++i)
+	free(kept[i]);
+    free(kept);
     free(counts);
     free(local);
     return(r);
@@ -1870,6 +2097,8 @@ CgRun(Connection *conn, Control *ctl, const char *art, int artLen, const char *b
     int nRules;
     int nLimits;
     char *addr;
+    CgGrpRule *grules = NULL;
+    int nGrules = 0;
     char *exclude = NULL;	/* the patterns of the later lines used */
     char *drop = NULL;		/* the patterns of the later drop lines */
     char signer[256];
@@ -1884,6 +2113,18 @@ CgRun(Connection *conn, Control *ctl, const char *art, int artLen, const char *b
     if ((addr = CgSenderAddr(sender)) == NULL)
 	return("checkgroups: out of memory\n");
     i = CgReadRules(addr, &rules, &nRules, &limits, &nLimits);
+    if (i == 0 && CgReadGrpRules(addr, &grules, &nGrules) < 0) {
+	for (i = 0; i < nRules; ++i) {
+	    free(rules[i].cr_Groups);
+	    free(rules[i].cr_Verify);
+	    free(rules[i].cr_Log);
+	}
+	free(rules);
+	for (i = 0; i < nLimits; ++i)
+	    free(limits[i].cl_Groups);
+	free(limits);
+	i = -1;
+    }
     free(addr);
     if (i < 0)
 	return("checkgroups: out of memory\n");
@@ -1967,7 +2208,7 @@ CgRun(Connection *conn, Control *ctl, const char *art, int artLen, const char *b
 		if ((rule->cr_Flags & CTFF_VERIFY) && ctl->ct_LogFo)
 		    fprintf(ctl->ct_LogFo, ">> Checkgroups: verified (newsgroups %s)\n", rule->cr_Groups);
 		if (rule->cr_Kind == CGR_CHECK)
-		    n = CgCheck(ctl, body, bodyLen, rule->cr_Groups, exclude, drop, limits, nLimits);
+		    n = CgCheck(ctl, body, bodyLen, rule->cr_Groups, exclude, drop, limits, nLimits, rule, grules, nGrules);
 		else
 		    n = CgReport(ctl, body, bodyLen, rule->cr_Groups, exclude, drop);
 		if (n < 0 || CgAppend(&exclude, rule->cr_Groups) < 0)
@@ -1997,6 +2238,7 @@ CgRun(Connection *conn, Control *ctl, const char *art, int artLen, const char *b
     for (i = 0; i < nLimits; ++i)
 	free(limits[i].cl_Groups);
     free(limits);
+    CgFreeGrpRules(grules, nGrules);
     free(exclude);
     free(drop);
     return(bad);
