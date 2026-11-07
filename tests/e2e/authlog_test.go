@@ -1,0 +1,102 @@
+package e2e
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// TestReaderAuthinfoNotLogged: with logcmd yes, dreaderd logs every command but never the
+// password of AUTHINFO PASS, however the words are separated (the parser accepts any run of
+// spaces and tabs) and in any case, and not the credentials of an AUTHINFO SASL either.
+// Before the fix only a line starting with exactly "authinfo pass " was masked.
+func TestReaderAuthinfoNotLogged(t *testing.T) {
+	const pass = "Pw-e2e-n0t-in-log"
+	const sasl = "AGpvZQBQdy1lMmUtbjB0LWluLWxvZw==" // SASL PLAIN initial response: user and password
+	access := `vserverdef DEFAULT
+    hostname ` + PathHost + `
+end
+authdef joe
+    user joe
+    pass ` + pass + `
+end
+readerdef userjoe
+    read yes
+    auth joe
+    logcmd yes
+end
+access 127.0.0.1 userjoe
+`
+	_, spool := spoolStore(t)
+	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: access,
+		Config: map[string]string{"path_generallog": "%s/general.log"}})
+
+	logins := [][2]string{
+		{"AUTHINFO USER joe", "AUTHINFO  PASS " + pass},
+		{"authinfo\tuser joe", "AUTHINFO\tPASS\t" + pass},
+		{"AuthInfo   User joe", "Authinfo \t pass " + pass},
+		{"AUTHINFO USER joe", "AUTHINFO PASS " + pass},
+	}
+	for _, l := range logins {
+		c := s.Reader(t)
+		c.ExpectCmd(381, "%s", l[0])
+		c.ExpectCmd(281, "%s", l[1])
+		c.ExpectCmd(205, "QUIT")
+	}
+	c := s.Reader(t)
+	c.ExpectCmd(501, "AUTHINFO  SASL PLAIN %s", sasl)
+	c.ExpectCmd(205, "QUIT")
+
+	// A command with leading whitespace is rejected by the parser (so it never
+	// authenticates), but LogCmd/StatusUpdate run before parsing, so its
+	// password reaches the log unless MaskAuthInfo skips leading spaces/tabs.
+	const lead = "Pw-leading-ws-not-logged"
+	lc := s.Reader(t)
+	lc.MustSend(" AUTHINFO PASS " + lead + "\r\n")
+	if _, _, err := lc.ReadStatus(); err != nil {
+		t.Fatalf("reply to leading-space AUTHINFO PASS: %v", err)
+	}
+	lc.ExpectCmd(205, "QUIT")
+
+	// Same with a leading tab: MaskAuthInfo's leading-whitespace skip must handle
+	// '\t' as well as ' ', so the password after a tab-led line stays out of the log.
+	const leadtab = "Pw-leading-tab-not-logged"
+	tc := s.Reader(t)
+	tc.MustSend("\tAUTHINFO PASS " + leadtab + "\r\n")
+	if _, _, err := tc.ReadStatus(); err != nil {
+		t.Fatalf("reply to leading-tab AUTHINFO PASS: %v", err)
+	}
+	tc.ExpectCmd(205, "QUIT")
+
+	// AUTHINFO USER keeps logging the user name, but any extra token after it
+	// is masked: the parser uses only the first token as the user name, so a
+	// secret placed after it is ignored by auth yet still logged verbatim
+	// unless MaskAuthInfo masks the tail.
+	const extra = "Extra-tok-not-logged"
+	ec := s.Reader(t)
+	ec.ExpectCmd(381, "AUTHINFO USER joe %s", extra)
+	ec.ExpectCmd(205, "QUIT")
+
+	logged := s.ReadFile(t, "log/general.log")
+	if n := strings.Count(logged, "authinfo pass **unlogged**"); n < len(logins) {
+		t.Errorf("general.log has %d masked AUTHINFO PASS lines, want %d (logcmd not working?)", n, len(logins))
+	}
+	for _, secret := range []string{pass, sasl, lead, leadtab, extra} {
+		if strings.Contains(logged, secret) {
+			for _, line := range strings.Split(logged, "\n") {
+				if strings.Contains(line, secret) {
+					t.Errorf("general.log shows a secret: %q", line)
+				}
+			}
+		}
+	}
+	// The extra token after AUTHINFO USER must be replaced by the mask, not just
+	// dropped: the masked form has to appear verbatim in the log.
+	if !strings.Contains(logged, "authinfo user **unlogged**") {
+		t.Errorf("AUTHINFO USER with an extra token was not masked in general.log")
+	}
+	if b, err := os.ReadFile(filepath.Join(s.Dir, "log", "dreaderd.status")); err == nil && strings.Contains(string(b), pass) {
+		t.Errorf("dreaderd.status shows the password")
+	}
+}
