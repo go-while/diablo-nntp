@@ -3,6 +3,7 @@ package e2e
 // NEWGROUPS date and time arguments (RFC 3977 7.3.2): yymmdd or yyyymmdd, hhmmss, optional GMT.
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +20,83 @@ func newgroupsList(t *testing.T, s *Site, want int, args string) []string {
 		return nil
 	}
 	return c.ReadDotLines()
+}
+
+// RFC 977 distribution lists are accepted for compatibility but do not filter
+// results.  In particular, a list without GMT must not change local time to UTC.
+func TestNewgroupsLegacyDistributions(t *testing.T) {
+	_, spool := spoolStore(t)
+	s := NewReaderSite(t, ReaderOptions{Spool: spool, NoStart: true})
+	s.Env = append(s.Env, "TZ=XXX-14")
+	startReader(t, s, "[127.0.0.1]:"+s.Addr[strings.LastIndex(s.Addr, ":")+1:])
+	ahead := time.Now().UTC().Add(time.Hour).Format("20060102 150405")
+	local := newgroupsList(t, s, 231, ahead)
+	slices.Sort(local)
+	if !strings.Contains(strings.Join(local, "\n"), "e2e.test") {
+		t.Fatalf("local control did not include e2e.test: %q", local)
+	}
+	for _, suffix := range []string{" <other>", " <world,local>"} {
+		got := newgroupsList(t, s, 231, ahead+suffix)
+		slices.Sort(got)
+		if !slices.Equal(got, local) {
+			t.Errorf("NEWGROUPS %s%s: %q, want %q", ahead, suffix, got, local)
+		}
+	}
+	for _, suffix := range []string{" GMT", " gMt <other>"} {
+		if got := newgroupsList(t, s, 231, ahead+suffix); len(got) != 0 {
+			t.Errorf("NEWGROUPS %s%s: %q, want no groups", ahead, suffix, got)
+		}
+	}
+	for _, suffix := range []string{" bogus", " <world> extra", " GMT <world> extra", " GMT bogus"} {
+		c := s.Reader(t)
+		code, _ := c.Cmd("NEWGROUPS %s%s", ahead, suffix)
+		if code == 231 {
+			c.ReadDotLines()
+		}
+		if code != 501 {
+			t.Errorf("NEWGROUPS %s%s: got %d, want 501", ahead, suffix, code)
+		}
+		c.ExpectCmd(205, "QUIT")
+	}
+}
+
+func TestNewnewsLegacyDistributions(t *testing.T) {
+	st, spool := spoolStore(t)
+	access := strings.Replace(DefaultReaderAccess, "readerdef rp\n", "readerdef rp\n    allownewnews yes\n", 1)
+	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: access, NoStart: true})
+	s.Env = append(s.Env, "TZ=XXX-14")
+	startReader(t, s, "[127.0.0.1]:"+s.Addr[strings.LastIndex(s.Addr, ":")+1:])
+	id := msgID(t)
+	feedReader(t, s, st, "e2e.test", newArticle(id, "e2e.test", "distribution", "body"))
+	c := s.Reader(t)
+	defer c.ExpectCmd(205, "QUIT")
+	ahead := time.Now().UTC().Add(time.Hour).Format("20060102 150405")
+	get := func(args string) []string {
+		c.ExpectCmd(230, "NEWNEWS e2e.test %s", args)
+		return c.ReadDotLines()
+	}
+	local := get(ahead)
+	if !slices.Contains(local, id) {
+		t.Fatalf("local control did not include %s: %q", id, local)
+	}
+	for _, suffix := range []string{" <other>", " <world,local>"} {
+		if got := get(ahead + suffix); !slices.Equal(got, local) {
+			t.Errorf("NEWNEWS %s%s: %q, want %q", ahead, suffix, got, local)
+		}
+	}
+	for _, suffix := range []string{" GMT", " gMt <other>"} {
+		if got := get(ahead + suffix); len(got) != 0 {
+			t.Errorf("NEWNEWS %s%s: %q, want no articles", ahead, suffix, got)
+		}
+	}
+	for _, suffix := range []string{" bogus", " <world> extra", " GMT <world> extra", " GMT bogus"} {
+		if code, _ := c.Cmd("NEWNEWS e2e.test %s%s", ahead, suffix); code != 501 {
+			if code == 230 {
+				c.ReadDotLines()
+			}
+			t.Errorf("NEWNEWS %s%s: got %d, want 501", ahead, suffix, code)
+		}
+	}
 }
 
 // TestNewgroupsDates: invalid months, days and times are 501 (they were rolled over into the

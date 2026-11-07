@@ -41,6 +41,10 @@
     box.  Another alternative is to simply not have the reader cache articles
     at all, instead always retrieving them from a remote host.
 
+    NEWNEWS and NEWGROUPS accept the obsolete RFC 977 <distributions>
+    argument, with or without GMT, for compatibility.  It is ignored:
+    results are not filtered by distribution.  RFC 3977 removed it.
+
     Please refer to the samples/ directory for a typical feeder+reader
     setup.
 
