@@ -452,6 +452,36 @@ AuthWait(int fd, int events, double deadline)
 }
 #endif
 
+#ifdef LDAP_ENABLED
+/*
+ * OpenLDAP's first API call initializes process-global state, including a
+ * canonical lookup of the local hostname.  Do that in the DNS worker when
+ * LDAP first appears in its access map, before any per-login AuthCall()
+ * deadline.  A slow local resolver must not consume the first login's
+ * connect/bind/search/compare budget.  No LDAP connection is opened here.
+ */
+static void
+LDAPAuthInit(void)
+{
+    static int initialized;
+    int i;
+
+    if (initialized)
+	return;
+    for (i = 0; i < accessmap.AuthCount; ++i) {
+	if (accessmap.AuthList[i].au_LDAP[0]) {
+	    int version;
+
+	    if (ldap_get_option(NULL, LDAP_OPT_PROTOCOL_VERSION, &version) == LDAP_OPT_SUCCESS)
+		initialized = 1;
+	    else
+		logit(LOG_ERR, "Unable to initialize LDAP global options");
+	    break;
+	}
+    }
+}
+#endif
+
 /*
  * This is the process that loops handling DNS and authentication requests
  *
@@ -468,6 +498,9 @@ DnsTask(int fd, const char *id)
      */
     DnsReq dreq;
     int n;
+#ifdef LDAP_ENABLED
+    int ldapChecked = 0;
+#endif
 
     DFd = fd;
 
@@ -489,6 +522,7 @@ DnsTask(int fd, const char *id)
 
     while ((n = readExactly(fd, &dreq, sizeof(dreq))) == sizeof(dreq)) {
 	DnsRes dres;
+	int cacheChanged;
 
 	if (DnsTerminate > 0)
 	    break;
@@ -497,8 +531,16 @@ DnsTask(int fd, const char *id)
 
 	stprintf("reverse auth %s", NetAddrToSt(0, (struct sockaddr *)&dreq.dr_RSin, 1, 0, 1));
 
-	if (ReadAccessCache() == 1)
+	cacheChanged = ReadAccessCache();
+	if (cacheChanged == 1)
 	    ClearOldAccessMap();
+#ifdef LDAP_ENABLED
+	/* The initial map may have been inherited from main at fork. */
+	if (!ldapChecked || cacheChanged == 1) {
+	    LDAPAuthInit();
+	    ldapChecked = 1;
+	}
+#endif
 	if (dreq.dr_ResultFlags == DR_SESSEXIT_RPT) {
 		/*
 		 * This handles session termination reporting, from a
