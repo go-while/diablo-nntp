@@ -1,0 +1,1 @@
+- `samples/diablo.config`: the log path examples add the missing `path_generallog` file and NONE lines and the `path_postlog` SYSLOG line, drop the wrong "(default)" on `path_drincominglog SYSLOG` (its default is NONE), and say SYSLOG does not apply to `path_artlog` either.
