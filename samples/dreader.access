@@ -26,6 +26,7 @@
 # postings.
 #
 # hostname	 : The visible hostname - this defaults to the current hostname
+#		   (dreaderd -h sets another)
 # clustername	 : The name of this cluster - used in various posting headers
 #		   Defaults to the same as the hostname
 #
@@ -39,6 +40,7 @@
 #
 # newsadmin	 : News Admin contact address added to connect banners
 #		   Defaults to news@hostname.
+#		   (dreaderd -A for a vserverdef without hostname)
 # organisation	 : Organisation: line added to local posts (the US spelling
 #		   with a 'z' can be used too). (Default: None)
 # abuseto	 : The X-Complaints-To: line (with rfc5537 the

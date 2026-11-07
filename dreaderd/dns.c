@@ -3773,10 +3773,45 @@ InstallAccessCache(void) {
 		    logit(LOG_ERR, "Found 'end' without define in line %d", linecount);
 		    break;
 		case OPT_VSERVER:
-		    if (strcmp(vserver.vs_HostName, "DEFAULT") == 0 &&
-			DOpts.ReaderHostName != NULL)
-			strncpy(vserver.vs_HostName, DOpts.ReaderHostName,
-					sizeof(vserver.vs_HostName) - 1);
+		    /*
+		     * A vserverdef without hostname (or with "hostname
+		     * DEFAULT") serves as the host dreaderd runs as (-h,
+		     * else the system's host name), as the built-in DEFAULT
+		     * does: "vserverdef" starts from an empty definition,
+		     * which gave an empty name in the banner, Path and Xref.
+		     * Without a newsadmin line the newsadmin is news@hostname:
+		     * dreaderd's own (-A, else news@ the -h host) for a block
+		     * that took the -h host, news@<its hostname> for a block
+		     * that names its own host.
+		     */
+		    {
+			int defHost = 0;
+
+			if ((!*vserver.vs_HostName ||
+			    strcmp(vserver.vs_HostName, "DEFAULT") == 0) &&
+			    DOpts.ReaderHostName != NULL) {
+			    diablo_strlcpy(vserver.vs_HostName, DOpts.ReaderHostName,
+					sizeof(vserver.vs_HostName), sizeof(vserver.vs_HostName));
+			    defHost = 1;
+			}
+			if (*vserver.vs_NewsAdm) {
+			    ;
+			} else if (defHost) {
+			    if (DOpts.NewsAdmin != NULL)
+				diablo_strlcpy(vserver.vs_NewsAdm, DOpts.NewsAdmin,
+					sizeof(vserver.vs_NewsAdm), sizeof(vserver.vs_NewsAdm));
+			} else if (*vserver.vs_HostName &&
+			    strcmp(vserver.vs_HostName, "DEFAULT") != 0) {
+			    /* a cut address is another one: none then */
+			    if (snprintf(vserver.vs_NewsAdm, sizeof(vserver.vs_NewsAdm),
+				    "news@%s", vserver.vs_HostName) >=
+				    (int)sizeof(vserver.vs_NewsAdm)) {
+				vserver.vs_NewsAdm[0] = 0;
+				logit(LOG_WARNING, "dreader.access: vserverdef %s: news@%s is too long for the default newsadmin, none set",
+					vserver.vs_Name, vserver.vs_HostName);
+			    }
+			}
+		    }
 		    if (!*vserver.vs_ClusterName)
 			diablo_strlcpy(vserver.vs_ClusterName, vserver.vs_HostName,
 					sizeof(vserver.vs_ClusterName), sizeof(vserver.vs_ClusterName));
