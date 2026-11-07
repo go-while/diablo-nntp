@@ -213,7 +213,7 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-197](#d-197-a-vserverdef-without-hostname-serves-an-empty-host-name) | Low | A vserverdef without hostname serves an empty host name | fixed (#338) |
 | [D-198](#d-198-an-empty-first-line-on-a-haproxy-readerdef-reaches-strcmp-with-null) | Medium | An empty first line on a haproxy readerdef reaches strcmp() with NULL | fixed (#341) |
 | [D-199](#d-199-a-long-welcome-text-writes-past-the-greeting-buffer) | Low | A long welcome text writes past the greeting buffer | fixed (#341) |
-| [D-202](#d-202-the-first-ldap-login-after-a-start-spends-its-deadline-on-a-host-name-lookup) | Low | The first LDAP login after a start spends its deadline on a host name lookup | fixed (PR) |
+| [D-202](#d-202-the-first-ldap-login-after-a-start-spends-its-deadline-on-a-host-name-lookup) | Low | The first LDAP login after a start spends its deadline on a host name lookup | fixed (#343) |
 
 Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315), [F-02 configure script](#f-02-configure-script-for-the-build-options), [F-03 refeed a whole spool](#f-03-refeed-a-whole-spool-to-another-server), [F-04 NoCeM notices](#f-04-nocem-notices), [F-05 init scripts](#f-05-init-scripts-and-adm-script-replacements), [F-06 Perl authentication](#f-06-perl-authentication-for-dreaderd).
 
@@ -1257,7 +1257,7 @@ Fixed (#341): the position is held at the last byte of the buffer, so the greeti
 
 ### D-202 The first LDAP login after a start spends its deadline on a host name lookup
 `dreaderd/dns.c`: OpenLDAP initializes its process-global options on the first API call, and that includes a canonical lookup of the machine's own host name (`ldap_pvt_get_fqdn()`: `gethostname()`, then `getaddrinfo(..., AI_CANONNAME)`), even when the LDAP URL is a numeric address. In the DNS/auth worker that first call came inside `AuthCall()`, so the lookup counted against the per-login authentication deadline: with a slow resolver, or a host name that is not in /etc/hosts, the first LDAP login after a start (or after a worker was replaced) was refused with 481 although the LDAP server answered at once. Seen as the NetBSD CI flake in `TestAuthTimeoutLDAPSlowSteps` (#335 run, 2026-11-06), where the VM's name went to external DNS.
-Fixed (PR): the worker makes one harmless libldap call (`ldap_get_option(NULL, LDAP_OPT_PROTOCOL_VERSION, ...)`) when its access map first holds an LDAP authdef, at start or after an access reload, outside any login deadline; without LDAP nothing changes. The deadline, its grace and the LDAP exchange are unchanged; a slow lookup can still delay the worker's first answer. Tests: `TestLDAPInitSlowHostname`, `TestLDAPInitWithoutLDAP`, `TestLDAPInitOnAccessReload` (an LD_PRELOAD shim delays only that lookup by five seconds; on main the first login gets 481).
+Fixed (#343): the worker makes one harmless libldap call (`ldap_get_option(NULL, LDAP_OPT_PROTOCOL_VERSION, ...)`) when its access map first holds an LDAP authdef, at start or after an access reload, outside any login deadline; without LDAP nothing changes. The deadline, its grace and the LDAP exchange are unchanged; a slow lookup can still delay the worker's first answer. Tests: `TestLDAPInitSlowHostname`, `TestLDAPInitWithoutLDAP`, `TestLDAPInitOnAccessReload` (an LD_PRELOAD shim delays only that lookup by five seconds; on main the first login gets 481).
 
 ## Feature requests
 
