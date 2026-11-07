@@ -514,6 +514,13 @@
 #	DEFAULT: 0 (disabled; historic reconnect-per-rotation behavior).
 #	Only applies when realtime is enabled.
 #
+#  logafter		N
+#	The number of articles dnewslink offers between its "mark"
+#	status lines in the general log ("... mark secs=... acc=...").
+#	0 turns these periodic lines off; dnewslink still logs a mark
+#	when it reconnects and its final totals when it exits.
+#	Passed to dnewslink as -l N.  DEFAULT: 1000.
+#
 #  nobatch		on|off
 #	Tell dspoolout NOT to run any batch dnewslink's for this feed. 
 #	Nominally used for realtime-only feeds where the loss of an

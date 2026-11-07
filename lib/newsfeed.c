@@ -1783,6 +1783,19 @@ LoadNewsFeed(time_t t, int force, const char *hlabel)
 				err = 0;
 			    }
 			}
+		    } else if (strcmp(s1, "logafter") == 0) {
+			if (nf && s2 != NULL) {
+			    char *end;
+			    long value;
+
+			    errno = 0;
+			    value = strtol(s2, &end, 10);
+			    if (errno == 0 && end != s2 && *end == '\0' &&
+				value >= 0 && value <= INT_MAX) {
+				nf->nf_LinkInfo.li_LogAfter = (int)value;
+				err = 0;
+			    }
+			}
 		    } else if (strcmp(s1, "notify") == 0) {
 			if (nf) {
 			    nf->nf_LinkInfo.li_Notify = enabled(s2);
@@ -2197,6 +2210,7 @@ setLinkGLOBAL(NewslinkInfo *nf)
     nf->li_DelayInFeed = 0;
     nf->li_RealTime = 0;
     nf->li_ConnLife = 0;
+    nf->li_LogAfter = -1;
     nf->li_Notify = 0;
     nf->li_MaxQueueFile = 0;
     nf->li_HeadFeed = 0;
@@ -2234,6 +2248,7 @@ setLinkStart(NewslinkInfo *nf)
     nf->li_DelayInFeed = -1;
     nf->li_RealTime = -1;
     nf->li_ConnLife = -1;
+    nf->li_LogAfter = -1;
     nf->li_Notify = -1;
     nf->li_MaxQueueFile = -1;
     nf->li_HeadFeed = -1;
@@ -2277,6 +2292,8 @@ setLinkDefaults(NewslinkInfo *nf, NewslinkInfo *gl)
 	nf->li_RealTime = gl->li_RealTime;
     if (nf->li_ConnLife < 0 && gl->li_ConnLife >= 0)
 	nf->li_ConnLife = gl->li_ConnLife;
+    if (nf->li_LogAfter < 0 && gl->li_LogAfter >= 0)
+	nf->li_LogAfter = gl->li_LogAfter;
     if (nf->li_Notify < 0 && gl->li_Notify >= 0)
 	nf->li_Notify = gl->li_Notify;
     if (nf->li_MaxQueueFile < 0 && gl->li_MaxQueueFile >= 0)
@@ -2753,6 +2770,7 @@ DumpFeedInfo(FILE *fo, char *label)
     fprintf(fo, "  DelayInFeed    : %d\n", nf->nf_LinkInfo.li_DelayInFeed);
     fprintf(fo, "  RealTime       : %d\n", nf->nf_LinkInfo.li_RealTime);
     fprintf(fo, "  ConnLife       : %d\n", nf->nf_LinkInfo.li_ConnLife);
+    fprintf(fo, "  LogAfter       : %d\n", nf->nf_LinkInfo.li_LogAfter);
     fprintf(fo, "  Notify         : %d\n", nf->nf_LinkInfo.li_Notify);
     fprintf(fo, "  MaxQueueFile   : %d\n", nf->nf_LinkInfo.li_MaxQueueFile);
     fprintf(fo, "  PreserveBytes  : %d\n", nf->nf_LinkInfo.li_PreserveBytes);

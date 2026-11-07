@@ -1,0 +1,1 @@
+- dspoolout: new dnewsfeeds option `logafter N`, passed to dnewslink as `-l N`: the number of articles between dnewslink's "mark" status lines in the general log. 0 turns the periodic lines off (the reconnect mark and the final totals stay). Default 1000 (unchanged); a label without it takes GLOBAL's value.
