@@ -506,8 +506,13 @@ scanDirectory(const char *dirpath, char *dirname, int *level)
 {
     DIR *dir2;
     char path[PATH_MAX];
+    int n;
 
-    sprintf(path, "%s/%s", dirpath, dirname);
+    n = snprintf(path, sizeof(path), "%s/%s", dirpath, dirname);
+    if (n < 0 || (size_t)n >= sizeof(path)) {
+	fprintf(stderr, "Skipping overlong directory pathname: %s/%s\n", dirpath, dirname);
+	return;
+    }
 
     if (chdir(dirname) != 0) {
 	printf("Unable to chdir(%s)\n", dirname);

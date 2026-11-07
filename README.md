@@ -1,6 +1,6 @@
 # Diablo 6 — Portable Make Build Guide
 
-Diablo 6 supports building with GNU Make on Linux, FreeBSD, and illumos-based operating systems, as well as native BSD Make on FreeBSD. This guide also records the build-system conversion and the subsequent cross-platform source changes so that the repository and pull request retain a consolidated technical history.
+Diablo 6 supports building with GNU Make on Linux, Debian GNU/Hurd, FreeBSD, and illumos-based operating systems, as well as native BSD Make on FreeBSD. This guide also records the build-system conversion and the subsequent cross-platform source changes so that the repository and pull request retain a consolidated technical history.
 
 This build system replaces the requirement for Matt Dillon's `xmake` while preserving the original XMakefiles for reference.
 
@@ -15,6 +15,7 @@ This build system replaces the requirement for Matt Dillon's `xmake` while prese
 | SmartOS (illumos) | GNU Make | GCC | `gmake -j4` | Validated |
 | OmniOS (illumos) | GNU Make | GCC | `gmake -j4` | Validated |
 | Linux | GNU Make | GCC | `make -j4` (also tested with `-j16`) | Validated; 0 warnings |
+| Debian GNU/Hurd amd64 | GNU Make | GCC | `make -j1` | C build and `tests/portability/d18.sh`; no Go, so no e2e |
 
 Traditional Solaris Make is not supported. On illumos systems, use GNU Make (`gmake`) rather than the system's native `make` when it is Solaris Make.
 
@@ -162,6 +163,19 @@ make -j4
 ```
 
 Linux support has been validated with GCC and GNU Make, including a successful `make -j16` build linking all 39 executables without warnings, with Berkeley DB-enabled build flags.
+
+### Debian GNU/Hurd
+
+```sh
+apt install build-essential libssl-dev zlib1g-dev libdb-dev libcanlock-dev
+./configure
+make -j1
+sh tests/portability/d18.sh
+```
+
+Hurd has no `PATH_MAX`; Diablo's fixed path buffers use 4096 bytes there, so keep
+installation and spool paths short. Go has no Hurd port, so `tests/e2e` does not
+run there.
 
 ## Build Version Configuration
 

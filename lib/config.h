@@ -272,6 +272,7 @@
 #endif
 #define USE_SYSV_SETPGRP	1
 #define USE_SYS_VFS		1
+#define USE_POSIX_SIGMASK       1       /* sigprocmask, not BSD integer masks */
 #define USE_PCOMMIT_SHM		1	/* use sharedmem r/w map vs file map */
 #define USE_PCOMMIT_RW_MAP	1	/* use r/w map for pcommit cache */
 #define USE_SPAM_SHM		1	/* use sharedmem r/w map vs file map */
@@ -285,6 +286,21 @@
 #define HAS_USLEEP		1	/* < 1 second sleeps		 */
 #define	USE_PRCTL		1	/* use linux coredump act	 */
 
+#endif
+
+/********************************************************
+ * 			  GNU/HURD			*
+ ********************************************************
+ * GNU libc interfaces, without Linux-specific headers, prctl or cgroups.
+ */
+#ifdef __GNU__
+#define USE_SYSV_DIR            1
+#define USE_SYS_VFS             1
+#define USE_POSIX_SIGMASK       1
+#define USE_ANON_MMAP           1
+#define USE_FALL_MMAP           0
+#define USE_POLL                1
+#define HAS_USLEEP              1
 #endif
 
 /********************************************************
@@ -382,6 +398,9 @@ uint64_t		i;
 #endif
 #ifndef USE_SYSV_SIGNALS
 #define USE_SYSV_SIGNALS	0
+#endif
+#ifndef USE_POSIX_SIGMASK
+#define USE_POSIX_SIGMASK       0
 #endif
 #ifndef USE_SYSV_SETPGRP
 #define USE_SYSV_SETPGRP	0

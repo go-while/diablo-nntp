@@ -36,7 +36,7 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-15](#d-15-dreaderd-has-no-capabilities) | Medium | dreaderd has no `CAPABILITIES` (RFC 3977) | fixed (#41) |
 | [D-16](#d-16-linux-build-fails-with-the-default-libvendorh) | Medium | Linux build fails with the default `lib/vendor.h` (RADIUS) | fixed (#127) |
 | [D-17](#d-17-unchecked-results-under-_fortify_source) | Low | 80 `-Wunused-result` warnings under `_FORTIFY_SOURCE` | fixed (#71) |
-| [D-18](#d-18-debian-gnuhurd-build) | Low | Debian GNU/Hurd build: `PATH_MAX`, `setpgrp`, `db_185.h` | open |
+| [D-18](#d-18-debian-gnuhurd-build) | Low | Debian GNU/Hurd build: `PATH_MAX`, `setpgrp`, `db_185.h` | fixed (#335) |
 | [D-19](#d-19-changelog-links-a-missing-document) | Low | CHANGELOG links the missing `BUILD-PORTABLE-MAKE.md` | fixed (#61) |
 | [D-20](#d-20-strncpy-truncation-warning-in-dreaderddnsc) | Low | `strncpy` truncation warning in `dreaderd/dns.c` (GCC 16) | fixed (#65) |
 | [D-21](#d-21-dactivekp-write-errors-now-exit-the-process) | — | dactive.kp write errors now exit the process (#7) | won't fix (kept on purpose) |
@@ -307,6 +307,8 @@ on 6-CUR-20261024-BWH, 80 after #5 to #9 (mostly `write()` in `util/` and
 `PATH_MAX` is undefined on Hurd (`lib/defs.h:580`); `dreaderd/main.c` uses `setpgrp(0, 0)`
 because `USE_SYSV_SETPGRP` isn't set for Hurd; `dreaderd/dns.c:19` picks `db_185.h` only for
 `__linux__`/`__sun`. Low priority for the maintainer.
+
+Fixed in #335: Hurd also has no `sys/mount.h`. `compat/pathmax.h` sets `PATH_MAX` to 4096 where the system has none (system values are kept), and four path joins that relied on it (`MakeGroupDirectory()`, dexpire's `findSize()`, `scanDirectory()` in dexpireover and doverctl) refuse an overlong name. diablo and dreaderd call `setpgid(0, 0)`; configure records which DB header its `dbopen()` probe linked; `sys/mount.h` is left out where `sys/vfs.h` gives `statfs()`; `lib/config.h` has a GNU/Hurd block and the Makefile sets 64-bit file offsets there. The full C build passes on Debian GNU/Hurd amd64. Go has no Hurd port, so the e2e suite does not run there; `tests/portability/d18.sh` checks the fallback and the overlong refusal.
 
 ### D-19 CHANGELOG links a missing document
 `CHANGELOG.md` links `BUILD-PORTABLE-MAKE.md`, which isn't in the repository. The maintainer

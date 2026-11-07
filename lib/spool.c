@@ -10,7 +10,7 @@
 #include "defs.h"
 
 #include <sys/param.h>
-#ifndef _AIX
+#if !defined(_AIX) && !USE_SYS_VFS
 #include <sys/mount.h>
 #endif
 #ifdef _AIX

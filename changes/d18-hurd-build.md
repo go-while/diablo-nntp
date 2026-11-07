@@ -1,0 +1,1 @@
+- Builds on Debian GNU/Hurd (D-18): `PATH_MAX` fallback, `setpgid()`, the DB header from configure's probe, no `sys/mount.h` where `sys/vfs.h` is used; four path joins refuse an overlong name.
