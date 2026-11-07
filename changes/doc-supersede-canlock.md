@@ -1,0 +1,1 @@
+- samples/diablo.config, README.READER: what readercanlock does to a supersede (stored in any case; withdrawal checked as a cancel through dcontrol.ctl and readercanlock; under require-auth an article without Cancel-Lock stays). ISSUES: D-205, a supersede is logged as a cancel.
