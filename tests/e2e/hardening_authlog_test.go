@@ -3,7 +3,8 @@ package e2e
 import (
 	"strings"
 	"testing"
-	"time"
+
+	testkit "github.com/go-while/nntp-testkit"
 )
 
 // TestReaderLogcmdMasksPassword: with `logcmd yes`, the password of AUTHINFO PASS is not
@@ -23,11 +24,14 @@ func TestReaderLogcmdMasksPassword(t *testing.T) {
 	}
 	for _, cmd := range cmds {
 		c := s.Reader(t)
-		expect(t, c, 381, "AUTHINFO USER fred")
-		expect(t, c, 481, "%s", cmd)
+		c.ExpectCmd(381, "AUTHINFO USER fred")
+		c.ExpectCmd(481, "%s", cmd)
 	}
-	time.Sleep(time.Second)
-	log := s.ReadFile(t, "log/general.log")
+	var log string
+	testkit.WaitFor(t, testkit.Deadline(), "the masked AUTHINFO PASS lines in general.log", func() bool {
+		log = s.ReadFile(t, "log/general.log")
+		return strings.Count(log, "authinfo pass **unlogged**") >= len(cmds)
+	})
 	for i := 1; i <= len(cmds); i++ {
 		if strings.Contains(log, "-secret"+string(rune('0'+i))) {
 			t.Errorf("password of %q written to the log", cmds[i-1])

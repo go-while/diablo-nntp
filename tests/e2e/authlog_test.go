@@ -40,34 +40,34 @@ access 127.0.0.1 userjoe
 	}
 	for _, l := range logins {
 		c := s.Reader(t)
-		expect(t, c, 381, "%s", l[0])
-		expect(t, c, 281, "%s", l[1])
-		expect(t, c, 205, "QUIT")
+		c.ExpectCmd(381, "%s", l[0])
+		c.ExpectCmd(281, "%s", l[1])
+		c.ExpectCmd(205, "QUIT")
 	}
 	c := s.Reader(t)
-	expect(t, c, 501, "AUTHINFO  SASL PLAIN %s", sasl)
-	expect(t, c, 205, "QUIT")
+	c.ExpectCmd(501, "AUTHINFO  SASL PLAIN %s", sasl)
+	c.ExpectCmd(205, "QUIT")
 
 	// A command with leading whitespace is rejected by the parser (so it never
 	// authenticates), but LogCmd/StatusUpdate run before parsing, so its
 	// password reaches the log unless MaskAuthInfo skips leading spaces/tabs.
 	const lead = "Pw-leading-ws-not-logged"
 	lc := s.Reader(t)
-	send(t, lc, " AUTHINFO PASS "+lead+"\r\n")
+	lc.MustSend(" AUTHINFO PASS " + lead + "\r\n")
 	if _, _, err := lc.ReadStatus(); err != nil {
 		t.Fatalf("reply to leading-space AUTHINFO PASS: %v", err)
 	}
-	expect(t, lc, 205, "QUIT")
+	lc.ExpectCmd(205, "QUIT")
 
 	// Same with a leading tab: MaskAuthInfo's leading-whitespace skip must handle
 	// '\t' as well as ' ', so the password after a tab-led line stays out of the log.
 	const leadtab = "Pw-leading-tab-not-logged"
 	tc := s.Reader(t)
-	send(t, tc, "\tAUTHINFO PASS "+leadtab+"\r\n")
+	tc.MustSend("\tAUTHINFO PASS " + leadtab + "\r\n")
 	if _, _, err := tc.ReadStatus(); err != nil {
 		t.Fatalf("reply to leading-tab AUTHINFO PASS: %v", err)
 	}
-	expect(t, tc, 205, "QUIT")
+	tc.ExpectCmd(205, "QUIT")
 
 	// AUTHINFO USER keeps logging the user name, but any extra token after it
 	// is masked: the parser uses only the first token as the user name, so a
@@ -75,8 +75,8 @@ access 127.0.0.1 userjoe
 	// unless MaskAuthInfo masks the tail.
 	const extra = "Extra-tok-not-logged"
 	ec := s.Reader(t)
-	expect(t, ec, 381, "AUTHINFO USER joe %s", extra)
-	expect(t, ec, 205, "QUIT")
+	ec.ExpectCmd(381, "AUTHINFO USER joe %s", extra)
+	ec.ExpectCmd(205, "QUIT")
 
 	logged := s.ReadFile(t, "log/general.log")
 	if n := strings.Count(logged, "authinfo pass **unlogged**"); n < len(logins) {
