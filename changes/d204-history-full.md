@@ -1,0 +1,1 @@
+- diablo: an article that would get history record number 2^32 (about 120GB of records; in a version 1 history, past 4GB) is refused with 436/431 (try again later) and "dhistory is full ..." is logged once, instead of the record number wrapping to 0, which emptied a hash chain so that its articles were accepted again (D-204).

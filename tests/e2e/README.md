@@ -48,6 +48,7 @@ sharing: they contain system/process names and test-site log contents.
 | `TestPeerIHAVE` | diablo | IHAVE from the peer (127.0.0.2) is accepted (335, 235); a second offer gets 435 |
 | `TestStrangerRefused` | diablo | a host that no `dnewsfeeds` label lists gets `502 ... Transfer permission denied` |
 | `TestDicmdConfig` | diablo, dicmd | `dicmd config maxconnect 17` is applied and reported; `path_dumphist` is rejected (startup only) |
+| `TestHistoryFullRefused` | diablo | D-204: after a first article the dhistory is grown (sparse, about 112GB on tmpfs) to 2^32 - 1 records. The article that gets the last record number is stored (235) and found (435). The next one is refused with 436 twice (not stored, not in the history), the one before is still found, one record is appended, and "dhistory is full" is logged once. Skipped where the file system cannot hold such a sparse file. **Fails** on main: the next article is taken (235) under record number 0 |
 | `TestGeneralLogNotWritable` | diablo | with an unwritable `path_generallog`, diablo reports it and keeps accepting articles instead of crashing |
 | `TestHostCacheLastPeerRemoved` | diablo, dprimehostcache | removing the last `inhost` empties `dhosts.cache`, and the former peer gets a permission denial, not "label missing" |
 | `TestHostCacheRebuildAfterFreshStart` | diablo | after a start without `dhosts.cache`, a peer added to `dnewsfeeds` is let in once the cache is rebuilt |
