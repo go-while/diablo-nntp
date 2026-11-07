@@ -1,0 +1,1 @@
+- `dreaderd`: `newsadmin none` in a `vserverdef` (any case) sets no newsadmin address, so banners and refusals show none; without a newsadmin line the default stays news@hostname (D-197).
