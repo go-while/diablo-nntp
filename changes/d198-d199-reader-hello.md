@@ -1,0 +1,1 @@
+- dreaderd: with `haproxy yes`, an empty first line is refused with 400 like any bad PROXY header; before, it reached `strcmp()` with NULL (D-198). A `welcome` text whose expansion is longer than the greeting buffer is cut at 511 bytes, and a `%` at its end ends it; before, the closing NUL was written past the buffer (D-199).

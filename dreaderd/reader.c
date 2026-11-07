@@ -770,32 +770,44 @@ WelcomeString(char *base, Vserver *vs, const char *servertype)
     char *e = strchr(shorthost, '.');
     int shlen = e ? e - shorthost : strlen(shorthost);
 
+    /*
+     * The text is cut at the end of r: snprintf() returns the length it
+     * wanted, so l is held at the last byte, which stays for the '\0'.
+     */
     r[0] = 0;
-    while (l < sizeof(r) && *base) {
+    while (l < (int)sizeof(r) - 1 && *base) {
 	if (*base == '%') {
-	    switch (*(++base)) {
+	    int n = 0;
+
+	    if (*++base == 0)
+		break;		/* a '%' at the end: nothing follows */
+	    switch (*base) {
 		case 'a':
-		    l += snprintf(&r[l], 512 - l, "%s", vs->vs_NewsAdm);
+		    n = snprintf(&r[l], sizeof(r) - l, "%s", vs->vs_NewsAdm);
 		    break;
 		case 'c':
-		    l += snprintf(&r[l], 512 - l, "%s", vs->vs_ClusterName);
+		    n = snprintf(&r[l], sizeof(r) - l, "%s", vs->vs_ClusterName);
 		    break;
 		case 'h':
-		    l += snprintf(&r[l], 512 - l, "%s", vs->vs_HostName);
+		    n = snprintf(&r[l], sizeof(r) - l, "%s", vs->vs_HostName);
 		    break;
 		case 'H':
-		    l += snprintf(&r[l], 512 - l, "%.*s", shlen, vs->vs_HostName);
+		    n = snprintf(&r[l], sizeof(r) - l, "%.*s", shlen, vs->vs_HostName);
 		    break;
 		case 'o':
-		    l += snprintf(&r[l], 512 - l, "%s", vs->vs_Org);
+		    n = snprintf(&r[l], sizeof(r) - l, "%s", vs->vs_Org);
 		    break;
 		case 't':
-		    l += snprintf(&r[l], 512 - l, "%s", servertype);
+		    n = snprintf(&r[l], sizeof(r) - l, "%s", servertype);
 		    break;
 		case 'v':
-		    l += snprintf(&r[l], 512 - l, "Diablo %s-%s", VERS, SUBREV);
+		    n = snprintf(&r[l], sizeof(r) - l, "Diablo %s-%s", VERS, SUBREV);
 		    break;
 	    }
+	    if (n > 0)
+		l += n;
+	    if (l > (int)sizeof(r) - 1)
+		l = sizeof(r) - 1;
 	    base++;
 	} else {
 	    r[l++] = *base++;
@@ -1260,7 +1272,8 @@ NNCommand2(Connection *conn)
         proto = NULL;
       }
 
-      if (strcmp(cmd, "PROXY") == 0 && proto &&
+      /* an empty first line has no word: cmd is NULL */
+      if (cmd != NULL && strcmp(cmd, "PROXY") == 0 && proto &&
           srcaddr && srcport && dstaddr && dstport) {
         memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_UNSPEC;
