@@ -181,6 +181,11 @@ const fdLostSource = `#if defined(__sun)
 #define _GNU_SOURCE
 #define REAL_RECVMSG "recvmsg"
 #endif
+#if defined(__NetBSD__)
+#define REAL_SELECT "__select50"	/* <sys/select.h> renames select() to it */
+#else
+#define REAL_SELECT "select"
+#endif
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/select.h>
@@ -224,7 +229,7 @@ select(int n, fd_set *r, fd_set *w, fd_set *e, struct timeval *tv)
     int res;
 
     if (real == NULL)
-	real = (int (*)(int, fd_set *, fd_set *, fd_set *, struct timeval *))dlsym(RTLD_NEXT, "select");
+	real = (int (*)(int, fd_set *, fd_set *, fd_set *, struct timeval *))dlsym(RTLD_NEXT, REAL_SELECT);
     res = real(n, r, w, e, tv);
     if (res > 0 && !filled && fullmode()) {
 	int cap = 0, fd;
