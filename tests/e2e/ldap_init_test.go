@@ -1,8 +1,8 @@
 package e2e
 
-// OpenLDAP canonicalizes the machine's own hostname on first use, even for
-// a numeric LDAP URL. That process-global initialization belongs before the
-// per-login deadline, not inside the first LDAP authentication attempt.
+// OpenLDAP builds with eager hostname initialization canonicalize the machine's
+// own hostname even for a numeric LDAP URL. That process-global initialization
+// belongs before the per-login deadline, not inside the first LDAP auth attempt.
 
 import (
 	"os"
@@ -43,6 +43,13 @@ func ldapInitLog(t *testing.T, marks string) string {
 func wantLDAPInitOnce(t *testing.T, marks string) {
 	t.Helper()
 	l := ldapInitLog(t, marks)
+	// Call only after a successful real LDAP login. OpenLDAP 2.7 defers
+	// local-hostname resolution until it is needed (e.g. TLS/SASL), so
+	// anonymous initialization and simple binds may not exercise this hook.
+	// Report missing coverage explicitly; a partial/extra mark still fails.
+	if l == "" {
+		t.Skip("libldap performed no local-hostname lookup during successful LDAP authentication (e.g. OpenLDAP 2.7 lazy initialization)")
+	}
 	if strings.Count(l, "begin\n") != 1 || strings.Count(l, "end\n") != 1 {
 		t.Fatalf("want one completed LDAP global initialization, got:\n%s", l)
 	}
@@ -57,8 +64,8 @@ func TestLDAPInitSlowHostname(t *testing.T) {
 	// login gets 481, although every LDAP protocol step answers immediately.
 	backendLogin(t, s, "x@slow")
 	backendLogin(t, s, "x@slow")
-	wantLDAPInitOnce(t, marks)
 	wantTimeoutLog(t, s, "LDAP", 0, false)
+	wantLDAPInitOnce(t, marks)
 }
 
 func TestLDAPInitWithoutLDAP(t *testing.T) {
@@ -77,17 +84,32 @@ func TestLDAPInitOnAccessReload(t *testing.T) {
 	if l := ldapInitLog(t, marks); l != "" {
 		t.Fatalf("LDAP initialized before it was configured:\n%s", l)
 	}
+	cache := filepath.Join(s.Dir, "cache.authdef")
+	before, err := os.Stat(cache)
+	if err != nil {
+		t.Fatal(err)
+	}
 	// The compiled cache's lock timestamp has one-second resolution.
 	time.Sleep(1100 * time.Millisecond)
 	port := slowLDAPServer(t, 0, 0, 0)
 	s.WriteFile(t, "dreader.access", slowAuthAccess(ldapURL(port)))
-	testkit.WaitFor(t, testkit.Deadline(), "LDAP initialization after access reload", func() bool {
+	// Wait for the access map, not an optional libldap hostname lookup.
+	// Otherwise a library with lazy initialization waits forever before the
+	// real login that is needed to distinguish a skip from a broken login.
+	testkit.WaitFor(t, testkit.Deadline(), "LDAP access-cache reload", func() bool {
 		goodLogin(t, s) // each connection makes main check for a new access file
-		return strings.Contains(ldapInitLog(t, marks), "end\n")
+		after, err := os.Stat(cache)
+		if os.IsNotExist(err) {
+			return false
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		return !os.SameFile(before, after)
 	})
 	backendLogin(t, s, "x@slow")
-	wantLDAPInitOnce(t, marks)
 	wantTimeoutLog(t, s, "LDAP", 0, false)
+	wantLDAPInitOnce(t, marks)
 }
 
 // Delay only the canonical lookup of this machine's hostname. LDAP's actual
