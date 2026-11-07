@@ -787,6 +787,22 @@ CtlCancel(Connection *conn, Control *ctl, const char **cmd, const char *art, con
     const char *why = NULL;
 
     /*
+     * readercanlock none executes no cancel or supersede (as INN's docancels
+     * none): refuse it here, before the overview of its groups is scanned
+     * for the target (D-203).  Before, every cancel cost that scan, only to
+     * be refused by canLockDecide() or, for a target not here, dropped.
+     */
+    if (DOpts.ReaderCanLock == CANLOCK_NONE) {
+	why = "refused (readercanlock none)";
+	logit(LOG_NOTICE, "cancel %s: %s, 0 item(s)", cmd[1], why);
+	if (DebugOpt)
+	    printf("CtlCancel %s: %s, not looked up: %s\n", cmd[1], why, safestr(groups, ""));
+	if (ctl->ct_LogFo)
+	    fprintf(ctl->ct_LogFo, ">> control cancel, not looked up, %s\n", why);
+	return(NULL);
+    }
+
+    /*
      * Cancel-Key of the cancelling (or superseding) article, if any.
      */
 
