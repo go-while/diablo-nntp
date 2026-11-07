@@ -89,3 +89,23 @@ func TestVserverdefOwnHostname(t *testing.T) {
 		})
 	}
 }
+
+// TestVserverdefNewsadminNone: "newsadmin none" (any case) leaves the newsadmin empty, so the
+// banner has no address: for a block with its own hostname and for one that takes the -h host.
+// Fails on main: the default news@<host> is shown.
+func TestVserverdefNewsadminNone(t *testing.T) {
+	for _, c := range []struct{ name, body, want string }{
+		{"own-host", "    hostname own.example\n    newsadmin none\n",
+			"200 own.example NNRP Service Ready (posting ok)."},
+		{"h-host", "    postpath " + PathHost + "\n    newsadmin NONE\n",
+			"200 " + PathHost + " NNRP Service Ready (posting ok)."},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			_, spool := spoolStore(t)
+			s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: d197Access("own", c.body)})
+			if g := strings.TrimSpace(readerGreeting(s.Addr)); g != c.want {
+				t.Errorf("greeting %q, want %q", g, c.want)
+			}
+		})
+	}
+}

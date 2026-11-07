@@ -3782,7 +3782,8 @@ InstallAccessCache(void) {
 		     * Without a newsadmin line the newsadmin is news@hostname:
 		     * dreaderd's own (-A, else news@ the -h host) for a block
 		     * that took the -h host, news@<its hostname> for a block
-		     * that names its own host.
+		     * that names its own host.  "newsadmin none" leaves it
+		     * empty: no address in the banner and refusals.
 		     */
 		    {
 			int defHost = 0;
@@ -3794,7 +3795,9 @@ InstallAccessCache(void) {
 					sizeof(vserver.vs_HostName), sizeof(vserver.vs_HostName));
 			    defHost = 1;
 			}
-			if (*vserver.vs_NewsAdm) {
+			if (strcasecmp(vserver.vs_NewsAdm, "none") == 0) {
+			    vserver.vs_NewsAdm[0] = 0;
+			} else if (*vserver.vs_NewsAdm) {
 			    ;
 			} else if (defHost) {
 			    if (DOpts.NewsAdmin != NULL)
