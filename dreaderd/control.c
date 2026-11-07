@@ -40,7 +40,7 @@ const char *PerformControl(Connection *conn, Control *ctl, const char **cmd, con
 const char *CtlCancel(Connection *conn, Control *ctl, const char **cmd, const char *art, const char *body, int bodyLen, char *groups);
 const char *CtlNewGroup(Connection *conn, Control *ctl, const char **cmd, const char *body, int bodyLen);
 const char *CtlRmGroup(Connection *conn, Control *ctl, const char **cmd, const char *body, int bodyLen);
-const char *CgRun(Connection *conn, Control *ctl, const char *art, int artLen, const char *body, int bodyLen, const char *from, int hasPGP, int hasDGP);
+const char *CgRun(Connection *conn, Control *ctl, const char *art, int artLen, const char *body, int bodyLen, const char *sender, const char *from, int hasPGP, int hasDGP);
 int CtlFromMatches(const char *pat, const char *from);
 static void CtlLogArticle(FILE *fo, const char *art, int artLen);
 const char *locateXTrace(const char *art, int headLen, int *pxtLen);
@@ -239,7 +239,7 @@ ExecuteControl(Connection *conn, const char *ctlMsg, const char *art, int artLen
 	    hasDGP = hasXDGPSig;
 #endif
 	    if (badCmd == NULL)
-		badCmd = CgRun(conn, ctl, art, artLen, body, artLen - (body - art), (sender && sender[0]) ? sender : from, hasPGP, hasDGP);
+		badCmd = CgRun(conn, ctl, art, artLen, body, artLen - (body - art), (sender && sender[0]) ? sender : from, from, hasPGP, hasDGP);
 	} else if (ctl->ct_Flags & CTFF_VERIFY) {
 	    /*
 	     * On success, verification routine will clear other CTFF_VERIFY
@@ -1046,7 +1046,8 @@ CtlRmGroup(Connection *conn, Control *ctl, const char **cmd, const char *body, i
  *	An addition or a flag correction is only made where a newgroup of that group
  *	from the sender would be executed, and a removal only where an rmgroup would
  *	(D-200): the last newgroup (rmgroup) or "all" line of dcontrol.ctl that matches
- *	the sender and the group, as ParseControl() finds it ("break" ends the scan),
+ *	the From: header and the group, as ParseControl() finds it for a newgroup
+ *	(CtlFromMatches(); "break" ends the scan),
  *	must be doit or verify-<key>; verify-<key> only when the checkgroups line was
  *	verified with that key; no such line, drop, log, mail and dgpverify allow
  *	nothing.  So "newgroup:*:*:drop" also stops checkgroups from creating groups.
@@ -1363,12 +1364,17 @@ CgFreeGrpRules(CgGrpRule *grules, int nGrules)
 }
 
 /*
- * The newgroup, rmgroup and "all" lines of dcontrol.ctl that match the sender's
- * address, in file order, with their actions read as ParseControl() reads them.
- * Returns -1 when memory runs out (nothing is returned then).
+ * The newgroup, rmgroup and "all" lines of dcontrol.ctl that match the From:
+ * header, in file order, with their actions read as ParseControl() reads them.
+ * The <from> pattern is matched as for a real newgroup or rmgroup
+ * (CtlFromMatches(): the From: header as it is, its <address> and the forms
+ * around a space, case-sensitive), not as the checkgroups lines are (Sender:,
+ * reduced to a lower-case address), so "would be executed" is what a newgroup
+ * from this sender would get.  Returns -1 when memory runs out (nothing is
+ * returned then).
  */
 static int
-CgReadGrpRules(const char *addr, CgGrpRule **pgrules, int *pnGrules)
+CgReadGrpRules(const char *from, CgGrpRule **pgrules, int *pnGrules)
 {
     FILE *fi = fopen(PatLibExpand(DControlCtlPat), "r");
     char buf[256];
@@ -1409,7 +1415,7 @@ CgReadGrpRules(const char *addr, CgGrpRule **pgrules, int *pnGrules)
 	    g.gr_Type = CGG_RMGROUP;
 	else
 	    continue;
-	if (!CgSenderMatches(sfrom, addr))
+	if (from == NULL || !CtlFromMatches(sfrom, from))
 	    continue;
 	for (a = strtok(saction, ",\n"); a; a = strtok(NULL, ",\n")) {
 	    char *eq;
@@ -2090,7 +2096,7 @@ CgOpenLog(const char *name, const char *art, int artLen)
  * groups are left alone, as by a log line.
  */
 const char *
-CgRun(Connection *conn, Control *ctl, const char *art, int artLen, const char *body, int bodyLen, const char *sender, int hasPGP, int hasDGP)
+CgRun(Connection *conn, Control *ctl, const char *art, int artLen, const char *body, int bodyLen, const char *sender, const char *from, int hasPGP, int hasDGP)
 {
     CgRule *rules;
     CgLimit *limits;
@@ -2113,7 +2119,7 @@ CgRun(Connection *conn, Control *ctl, const char *art, int artLen, const char *b
     if ((addr = CgSenderAddr(sender)) == NULL)
 	return("checkgroups: out of memory\n");
     i = CgReadRules(addr, &rules, &nRules, &limits, &nLimits);
-    if (i == 0 && CgReadGrpRules(addr, &grules, &nGrules) < 0) {
+    if (i == 0 && CgReadGrpRules(from, &grules, &nGrules) < 0) {
 	for (i = 0; i < nRules; ++i) {
 	    free(rules[i].cr_Groups);
 	    free(rules[i].cr_Verify);
