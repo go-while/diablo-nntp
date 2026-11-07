@@ -12,7 +12,8 @@ import (
 // the host name and the cluster name were empty: the banner read "200  NNRP Service Ready"
 // and dreaderd added nothing to Path or Xref. Such a block now serves as the host given
 // with -h (else the system's host name), its cluster name is that host, and its newsadmin
-// defaults to dreaderd's (-A, else news@host). A block with its own hostname is unchanged.
+// defaults to dreaderd's (-A, else news@host). A block with its own hostname and no newsadmin
+// line gets news@<its hostname>, as samples/dreader.access says ("Defaults to news@hostname").
 
 const d197Readers = `readerdef rp
     read yes
@@ -69,14 +70,22 @@ func TestVserverdefWithoutHostname(t *testing.T) {
 	}
 }
 
-// TestVserverdefOwnHostnameKept: a vserverdef with its own hostname and no newsadmin is
-// served as before: its host in the banner and no newsadmin.
-func TestVserverdefOwnHostnameKept(t *testing.T) {
-	_, spool := spoolStore(t)
-	s := NewReaderSite(t, ReaderOptions{Spool: spool,
-		Access: d197Access("own", "    hostname own.example\n")})
-	g := strings.TrimSpace(readerGreeting(s.Addr))
-	if want := "200 own.example NNRP Service Ready (posting ok)."; g != want {
-		t.Errorf("greeting %q, want %q", g, want)
+// TestVserverdefOwnHostname: a vserverdef with its own hostname greets with that host; without
+// a newsadmin line its newsadmin is news@<that host>, and its own newsadmin line is kept. The
+// first case fails on main: no newsadmin ("200 own.example NNRP Service Ready (posting ok).").
+func TestVserverdefOwnHostname(t *testing.T) {
+	for _, c := range []struct{ name, body, want string }{
+		{"default-newsadmin", "    hostname own.example\n",
+			"200 own.example NNRP Service Ready - news@own.example (posting ok)."},
+		{"own-newsadmin", "    hostname own.example\n    newsadmin admin@own.example\n",
+			"200 own.example NNRP Service Ready - admin@own.example (posting ok)."},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			_, spool := spoolStore(t)
+			s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: d197Access("own", c.body)})
+			if g := strings.TrimSpace(readerGreeting(s.Addr)); g != c.want {
+				t.Errorf("greeting %q, want %q", g, c.want)
+			}
+		})
 	}
 }

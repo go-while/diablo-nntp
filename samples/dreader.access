@@ -25,8 +25,8 @@
 # different strings that are seen by the client or added to local
 # postings.
 #
-# hostname	 : The visible hostname - this defaults to the host given
-#		   with dreaderd -h, else the system's host name
+# hostname	 : The visible hostname - this defaults to the current hostname
+#		   (dreaderd -h sets another)
 # clustername	 : The name of this cluster - used in various posting headers
 #		   Defaults to the same as the hostname
 #
@@ -39,9 +39,8 @@
 #		   the hostname. (Default: None)
 #
 # newsadmin	 : News Admin contact address added to connect banners
-#		   Without a hostname line it defaults to dreaderd's (-A,
-#		   else news@ the -h host); a vserverdef that sets its own
-#		   hostname has none unless it sets one.
+#		   Defaults to news@hostname.
+#		   (dreaderd -A for a vserverdef without hostname)
 # organisation	 : Organisation: line added to local posts (the US spelling
 #		   with a 'z' can be used too). (Default: None)
 # abuseto	 : The X-Complaints-To: line (with rfc5537 the
