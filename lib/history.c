@@ -28,7 +28,7 @@
  * uint32) that recordOffset() turns into 64 bit file offsets: it is limited
  * to 2^32 - 1 records (record 0 is the dummy written at creation), about
  * 120GB of records plus the hash table.  HistoryAdd() does not check that
- * limit; past it the record number would wrap.
+ * limit; past it the record number would wrap (D-204).
  */
 
 #include "defs.h"
