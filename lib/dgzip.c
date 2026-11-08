@@ -50,6 +50,7 @@
 
 Prototype int diablo_minigzip(char *file);
 Prototype int dominigzip(int ifd, int ofd, const char *outbase, uint32_t mtime, off_t *osize);
+Prototype int SpoolGunzip(int fd, off_t off, char *buf, int len);
 
 #ifndef USE_ZLIB
 
@@ -65,6 +66,13 @@ dominigzip(int ifd, int ofd, const char *outbase, uint32_t mtime, off_t *osizep)
 
 int
 diablo_minigzip(char *file)
+{
+	errno = ENOSYS;
+	return(-1);
+}
+
+int
+SpoolGunzip(int fd, off_t off, char *buf, int len)
 {
 	errno = ENOSYS;
 	return(-1);
@@ -317,6 +325,63 @@ diablo_minigzip(char *file)
 		return(-1);
 
 	return(0);
+}
+
+/*
+ * SpoolGunzip() - inflate the gzip member at off in fd into buf, which it
+ * must fill exactly: len bytes, ending with the member's trailer (CRC and
+ * length checked by zlib).  Anything else (bad data or checksum, a member
+ * longer or shorter than len, a truncated member) is an error.  What
+ * follows the member (the terminator, the next article) is not read
+ * beyond the input buffer and not looked at.
+ *
+ * It reads with pread(), leaving fd and its offset alone: gzdopen(dup(fd))
+ * would close a descriptor for the file at gzclose(), and that drops our
+ * lock on it when it is the spool file we are appending to.  Used by
+ * diablo (serving an article) and dcancel (rewriting a spool file).
+ */
+int
+SpoolGunzip(int fd, off_t off, char *buf, int len)
+{
+    z_stream z;
+    char ibuf[16384];
+    int zr;
+
+    bzero(&z, sizeof(z));
+    if (inflateInit2(&z, MAX_WBITS + 16) != Z_OK)
+	return(-1);
+    z.next_out = (Bytef *)buf;
+    z.avail_out = len;
+    for (;;) {
+	if (z.avail_in == 0) {
+	    ssize_t n = pread(fd, ibuf, sizeof(ibuf), off);
+
+	    if (n < 0 && errno == EINTR)
+		continue;
+	    if (n <= 0) {
+		zr = Z_BUF_ERROR;	/* read error or truncated member */
+		break;
+	    }
+	    off += n;
+	    z.next_in = (Bytef *)ibuf;
+	    z.avail_in = n;
+	}
+	zr = inflate(&z, Z_NO_FLUSH);
+	if (zr == Z_STREAM_END)
+	    break;
+	if (zr == Z_OK || (zr == Z_BUF_ERROR && z.avail_in == 0))
+	    continue;		/* progress, or it needs more input */
+	/*
+	 * Z_DATA_ERROR (bad data, CRC or length), Z_MEM_ERROR, Z_NEED_DICT,
+	 * or Z_BUF_ERROR with input left: buf is full but the member is not
+	 * done (it is longer than len).
+	 */
+	break;
+    }
+    inflateEnd(&z);
+    if (zr != Z_STREAM_END || z.avail_out != 0)
+	return(-1);
+    return(0);
 }
 
 #endif /* USE_ZLIB */

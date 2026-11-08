@@ -339,95 +339,85 @@ getMsgId(int fd, char *buf, int hdrLen)
 }
 
 /*
- * Map an article into memory, using xmap() if it is not compressed or
- * allocating/reallocating a buffer for it if it is compresssed
+ * Map an uncompressed article into memory (size bytes at offset, its
+ * spool header included).
  *
  * Returns:
  *	pointer	Success
  *	NULL	Failure
  */
 char *
-MapArticle(int fd, char *fname, off_t offset, uint32 size, int exp, int *artSize, int *compressed, FILE *logFo)
+MapArticle(int fd, char *fname, off_t offset, uint32 size, int *artSize, FILE *logFo)
 {
     static char *mmapBase = NULL;
     static off_t mmapLen = 0;
 
     if (mmapBase != NULL)
 	xunmap(mmapBase, mmapLen);
+    mmapBase = NULL;
 
     *artSize = 0;
-    *compressed = 0;
-
-    if (SpoolCompressed(H_SPOOL(exp))) {
-#ifdef X_USE_ZLIB
-	static char *base = NULL;
-	static off_t baseLen = 0;
-
-	gzFile gzf;
-	SpoolArtHdr tah = { 0 };
-	char *p;
-
-	lseek(fd, offset, 0);
-	if (read(fd, &tah, sizeof(SpoolArtHdr)) != sizeof(SpoolArtHdr)) {
-	    close(fd);
-	    fprintf(logFo, "Unable to read article header (%s)\n",
-							strerror(errno));
-	    return(NULL);
-	}
-	if ((uint8)tah.Magic1 != STORE_MAGIC1 &&
-					(uint8)tah.Magic2 != STORE_MAGIC2) {
-	    lseek(fd, h->boffset, 0);
-	    tah.Magic1 = STORE_MAGIC1;
-	    tah.Magic2 = STORE_MAGIC2;
-	    tah.HeadLen = sizeof(tah);
-	    tah.ArtLen = h->bsize;
-	    tah.ArtHdrLen = h->bsize;
-	    tah.StoreLen = h->bsize;
-	}
-	gzf = gzdopen(fd, "r");
-	if (gzf == NULL) {
-	    fprintf(logFo, "Error opening compressed article\n");
-	    return(NULL);
-	}
-	if (base == NULL || baseLen < tah.HeadLen + tah.ArtLen + 2) {
-	    baseLen = tah.ArtLen + tah.HeadLen + 2;
-	    base = (char *)realloc(base, baseLen);
-	    if (base == NULL) {
-		fprintf(logFo, "Unable to malloc %d bytes for article (%s)\n",
-						baseLen, strerror(errno));
-		gzclose(gzf);
-		return(NULL);
-	    }
-	}
-	p = base;
-	*p++ = 0;
-	bcopy(&tah, p, tah.HeadLen);
-	p += tah.HeadLen;
-	if (gzread(gzf, p, tah.ArtLen) != tah.ArtLen) {
-	    fprintf(logFo, "Error uncompressing article\n");
-	    return(NULL);
-	}
-	p[tah.ArtLen] = 0;
-	*artSize = tah.ArtLen + tah.HeadLen;
-	*compressed = 1;
-	gzclose(gzf);
-#else
-        fprintf(logFo, "Compressed spools not yet supported with dcancel\n");
-#endif
-    } else {
-	mmapLen = size;
-	mmapBase = xmap(NULL, mmapLen, PROT_READ, MAP_SHARED, fd, offset);
-	if (mmapBase != NULL) {
-	    *artSize = size;
-	    *compressed = 0;
-	} else {
-	    fprintf(logFo, "Unable to map file %s: %s (%lld,%u)\n",
-					fname, strerror(errno),
-					(long long)offset, size);
-	 }
-	return(mmapBase);
+    mmapLen = size;
+    mmapBase = xmap(NULL, mmapLen, PROT_READ, MAP_SHARED, fd, offset);
+    if (mmapBase == NULL) {
+	fprintf(logFo, "Unable to map file %s: %s (%lld,%u)\n",
+				fname, strerror(errno),
+				(long long)offset, size);
+	return(NULL);
     }
-    return(NULL);
+    *artSize = size;
+    return(mmapBase);
+}
+
+/*
+ * Uncompress the article whose spool header *ah is at offset into a
+ * buffer laid out like a mapped one: the spool header, then the article.
+ * SpoolGunzip() reads with pread(), so fd's offset is left alone.
+ *
+ * Returns:
+ *	pointer	Success
+ *	NULL	Failure (bad data, or a build without zlib)
+ */
+char *
+InflateArticle(int fd, char *fname, off_t offset, const SpoolArtHdr *ah, int *artSize)
+{
+    static char *base = NULL;
+    static size_t baseLen = 0;
+    size_t need;
+
+    *artSize = 0;
+    if (ah->HeadLen < 8 || ah->HeadLen > sizeof(SpoolArtHdr) ||
+						ah->ArtLen > (1U << 30)) {
+	fprintf(stderr, "Invalid compressed article header at %lld in %s\n",
+						(long long)offset, fname);
+	return(NULL);
+    }
+    need = (size_t)ah->HeadLen + ah->ArtLen + 1;
+    if (need > baseLen) {
+	char *nb = realloc(base, need);
+
+	if (nb == NULL) {
+	    fprintf(stderr, "Unable to malloc %lu bytes for article (%s)\n",
+					(unsigned long)need, strerror(errno));
+	    return(NULL);
+	}
+	base = nb;
+	baseLen = need;
+    }
+    bcopy(ah, base, ah->HeadLen);
+    errno = 0;
+    if (SpoolGunzip(fd, offset + ah->HeadLen, base + ah->HeadLen, ah->ArtLen) < 0) {
+	if (errno == ENOSYS)
+	    fprintf(stderr, "%s holds compressed articles: dcancel needs a build with zlib\n",
+									fname);
+	else
+	    fprintf(stderr, "Unable to uncompress the article at %lld in %s\n",
+						(long long)offset, fname);
+	return(NULL);
+    }
+    base[ah->HeadLen + ah->ArtLen] = 0;
+    *artSize = ah->HeadLen + ah->ArtLen;
+    return(base);
 }
 
 /*
@@ -471,6 +461,7 @@ rewriteFile(HistoryList *hl_file)
     char *msgid;
     int artSize;
     int compressed;
+    off_t recLen;
     hash_t hv;
     HistoryList *pend = NULL;	/* history entries to store after the rename */
     HistoryList *pl;
@@ -533,19 +524,27 @@ rewriteFile(HistoryList *hl_file)
 	}
 
 	/*
-	 * Map the article into memory (including the artHdr)
+	 * An article on a compressed spool object is one gzip member after
+	 * its header (see diablo's store): StoreLen counts the header and the
+	 * member, and the terminator follows.  For an uncompressed article
+	 * StoreLen includes the terminator.  The flag is per article, so a
+	 * spool object whose compresslvl was changed is read either way.
 	 */
-	artBuf = MapArticle(oldf, opath, filepos,
-				artHdr.StoreLen,
-				SpoolCompressed(H_SPOOL(hl_file->h.exp)),
-				&artSize, &compressed, stderr);
+	compressed = (artHdr.StoreType & STORETYPE_GZIP) != 0;
+	recLen = (off_t)artHdr.StoreLen + (compressed ? 1 : 0);
+
+	/*
+	 * Get the article into memory (including the artHdr): mapped, or
+	 * uncompressed into a buffer, which only serves to find its
+	 * Message-ID; a kept compressed article is copied as it is.
+	 */
+	if (compressed)
+	    artBuf = InflateArticle(oldf, opath, filepos, &artHdr, &artSize);
+	else
+	    artBuf = MapArticle(oldf, opath, filepos, artHdr.StoreLen,
+							&artSize, stderr);
 	if (artBuf == NULL)
 	    break;
-
-	if (compressed) {
-	    fprintf(stderr, "Compressed spools are currently not supported\n");
-	    break;
-	}
 
 	/*
 	 * Extract the Message-ID from the article headers
@@ -562,7 +561,7 @@ rewriteFile(HistoryList *hl_file)
 	if (!inHistory && HistoryCancel) {
 	    fprintf(stderr, "Cannot find %s in history - skipping\n",
 								msgid);
-	    filepos += artSize;
+	    filepos += recLen;
 	    continue;
 	}
 
@@ -579,15 +578,29 @@ rewriteFile(HistoryList *hl_file)
 	if (copyArt) {
 	    h.boffset = lseek(newf, 0, 1);
 	    if (compressed) {
+		/* the stored record as it is: header, member, terminator */
+		static char *recBuf = NULL;
+		static size_t recBufLen = 0;
+
 	        printf("Copying article at offset %lld to offset %d\n",
 					(long long)filepos, h.boffset);
-		lseek(oldf, filepos, SEEK_SET);
-		if (read(oldf, artBuf, artHdr.StoreLen) != artHdr.StoreLen) {
+		if ((size_t)recLen > recBufLen) {
+		    char *nb = realloc(recBuf, (size_t)recLen);
+
+		    if (nb == NULL) {
+			fprintf(stderr, "Unable to malloc %lld bytes for article (%s)\n",
+					(long long)recLen, strerror(errno));
+			break;
+		    }
+		    recBuf = nb;
+		    recBufLen = (size_t)recLen;
+		}
+		if (pread(oldf, recBuf, (size_t)recLen, filepos) != recLen) {
 		    fprintf(stderr, "Error reading article in %s (%s)\n",
 							opath, strerror(errno));
 		    break;
 		}
-		if (write(newf, artBuf, artHdr.StoreLen) != artHdr.StoreLen) {
+		if (write(newf, recBuf, (size_t)recLen) != recLen) {
 		    fprintf(stderr, "Error writing article in %s (%s)\n",
 							npath, strerror(errno));
 		    break;
@@ -601,11 +614,11 @@ rewriteFile(HistoryList *hl_file)
 		    break;
 		}
 	    }
-	    filepos += artSize;
+	    filepos += recLen;
 	} else {
 	    printf("Skipped article at offset %lld in old, currently at %d in new\n", 
 					(long long)filepos, h.boffset);
-	    filepos += artHdr.StoreLen;
+	    filepos += recLen;
 	    lseek(oldf, filepos, SEEK_SET);
 	    h.iter = (uint16)-1;
 	    h.boffset = 0;

@@ -73,7 +73,8 @@
 #		 this spool object. This option cannot be changed without
 #		 losing the contents of the spool object, although the
 #		 level can be adjusted once enabled (except to set it to 0)
-#		 NOTE: Not all the recovery tools support compressed spools.
+#		 NOTE: The recovery tools (dcancel, dreadart, diloadfromspool,
+#		 dspoolrefeed) support compressed spools.
 #		 Default: 0 (disabled)
 #
 #   expiremethod: This option defines the type of expire used on
