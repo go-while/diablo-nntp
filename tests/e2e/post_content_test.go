@@ -2,6 +2,8 @@ package e2e
 
 import (
 	"net"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -124,7 +126,12 @@ func TestReaderPostTrailerIgnored(t *testing.T) {
 				return
 			}
 			if mode.name == "default" {
-				s.WriteFile(t, "dreader.access", access+"# reload the same obsolete options\n")
+				// Install one complete snapshot; an in-place truncate/write can
+				// legitimately cause more than one read of the changing file.
+				s.WriteFile(t, "dreader.access.next", access+"# reload the same obsolete options\n")
+				if err := os.Rename(filepath.Join(s.Dir, "dreader.access.next"), filepath.Join(s.Dir, "dreader.access")); err != nil {
+					t.Fatal(err)
+				}
 				testkit.WaitFor(t, 10*time.Second, "one warning for the reloaded file", func() bool {
 					c := s.Reader(t)
 					c.Close()
@@ -135,7 +142,7 @@ func TestReaderPostTrailerIgnored(t *testing.T) {
 					c.Close()
 				}
 				if n := strings.Count(generalLog(s), warning); n != 2 {
-					t.Errorf("warning count after one reload and repeated clients %d, want 2", n)
+					t.Errorf("warning count after one reload and repeated clients %d, want 2:\n%s", n, generalLog(s))
 				}
 			}
 		})
