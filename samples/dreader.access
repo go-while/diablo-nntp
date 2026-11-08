@@ -97,6 +97,11 @@
 #		     Control articles may use control.*; ihave/sendme Control
 #		     articles may use to.* (controlpost permission still applies).
 #		     'no' permits the old behavior for local agreements.
+#		   - a supplied Lines: must be one decimal number, with no
+#		     folding or duplicate field; otherwise it is refused with 441.
+#		   - an empty Distribution: is refused with 441, rather than
+#		     removed or replaced. Valid supplied headers keep their text,
+#		     order and folding, except for the Path changes above.
 #		   'no' posts as dreaderd always did. Either
 #		   way a post with Injection-Info:, Xref: or ".POSTED" in its
 #		   Path is refused, and a Date: dreaderd adds ends in

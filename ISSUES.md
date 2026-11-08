@@ -1513,7 +1513,7 @@ because the legacy mode adds none); (3) the Date format and window; (4) syntax
 checks (Message-ID, Date, line length); (5) reserved group names; (6) the header-preservation
 items, Lines among them; (7) removing posttrailer.
 
-Status: (1) fixed (#304). (2) fixed (#313). (3) fixed (#319). (4) the Message-ID syntax: fixed (#322), together with the vserverdef option `rfc5537` (default yes) that now turns (2) to (4) on together; `legacytrace` is its older spelling. The refusals of (1) and the +0000 Date stay on either way. The line length of (4), (5) and the remaining header-preservation items of (6) are open; (6)'s Lines part and (7) are PR (#365), using D-174 (#312) for overview line counts.
+Status: (1) fixed (#304). (2) fixed (#313). (3) fixed (#319). (4) the Message-ID syntax: fixed (#322), together with the vserverdef option `rfc5537` (default yes) that now turns (2) to (4) on together; `legacytrace` is its older spelling. The refusals of (1) and the +0000 Date stay on either way. The line length of (4) is fixed (#366), and (5) is fixed (#367); (6)'s Lines part and (7) are fixed (#365), using D-174 (#312) for overview line counts. The remaining header-preservation items of (6), including supplied-Lines syntax and empty Distribution, are fixed (#369).
 
 ### F-08 Smaller overview: overview fields only, one copy per article
 dreaderd stores the whole header block of every article in the overview data files (`data.*`), once

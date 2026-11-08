@@ -662,6 +662,30 @@ PostHeaderLinesFit(const char *base, int len)
     return(len - start <= 998);
 }
 
+/* RFC 5536 3.3.1: an unsigned decimal, no comments or folding. */
+static int
+PostLinesValid(const char *header, int len)
+{
+    const char *p = header + 6;
+    const char *end = header + len;
+    const char *digits;
+
+    if (end > p && end[-1] == '\n')
+        --end;
+    if (end > p && end[-1] == '\r')
+        --end;
+    while (p < end && (*p == ' ' || *p == '\t'))
+        ++p;
+    digits = p;
+    while (p < end && *p >= '0' && *p <= '9')
+        ++p;
+    if (p == digits)
+        return(0);
+    while (p < end && (*p == ' ' || *p == '\t'))
+        ++p;
+    return(p == end);
+}
+
 /*
  * NNPostBuffer() - called when client connection post buffer contains the
  *		    entire article.  We need to check the article headers
@@ -857,7 +881,7 @@ NNPostBuffer(Connection *conn)
 		zfree(&conn->co_MemPool, newsGrps2, n);
 		newsGrps2 = t;
 #ifdef	POST_CLEANUPNEWSGROUPSLINE
-		if (strcmp(newsGrps, newsGrps2))
+		if (!vs->vs_Rfc5537 && strcmp(newsGrps, newsGrps2))
 		    keep = 2;	/* keep = 2 overloaded to mean substitute ng hdr */
 #endif
 	    }
@@ -873,13 +897,15 @@ NNPostBuffer(Connection *conn)
 		errMsg = (char *)PostDateCheck(base, l, 4, "Date");
 	} else if (HeaderCmp(base, "Distribution", &errMsg) == 0) {
 	    /*
-	     * Only keep the header and set haveDist if it has something in 
-	     * it, otherwise we (potentially) override it.
+	     * Keep supplied Distribution text. Refuse an empty value in RFC
+	     * mode; legacy mode may discard it and generate a replacement.
 	     */
 	    {
 		char *ptr = zallocStrTrim2(&conn->co_MemPool, 0, base+13, l - 13);
 		if (ptr && *ptr)
 		    haveDist = 1;
+		else if (vs->vs_Rfc5537 && errMsg == NULL)
+		    errMsg = "441 Empty Distribution header rejected\r\n";
 		zfreeStr(&conn->co_MemPool, &ptr);
 	    }
 	    if (haveDist == 0)
@@ -908,6 +934,12 @@ NNPostBuffer(Connection *conn)
 	} else if (HeaderCmp(base, "Date", &errMsg) == 0) {
 	    keep = 0;	/* delete */
 	} else if (HeaderCmp(base, "Lines", &errMsg) == 0) {
+	    if (vs->vs_Rfc5537 && errMsg == NULL) {
+		if (haveLines)
+		    errMsg = "441 More than one Lines header\r\n";
+		else if (!PostLinesValid(base, l))
+		    errMsg = "441 Invalid Lines header\r\n";
+	    }
 	    haveLines = 1;	/* RFC 5537 3.5 step 6: keep the poster's header */
 	} else if (HeaderCmp(base, "Message-ID", &errMsg) == 0) {
 #ifdef	POST_FORCEMSGID
@@ -947,9 +979,11 @@ NNPostBuffer(Connection *conn)
 	} else if (HeaderCmp(base, "Relay-Version", &errMsg) == 0) {
 		errMsg = "441 Obsolete \"Relay-Version\" header rejected\r\n";
 	} else if (HeaderCmp(base, "To", &errMsg) == 0) {
-		errMsg = "441 Obsolete \"To\" header rejected\r\n";
+		if (!vs->vs_Rfc5537)
+		    errMsg = "441 Obsolete \"To\" header rejected\r\n";
 	} else if (HeaderCmp(base, "Cc", &errMsg) == 0) {
-		errMsg = "441 Obsolete \"Cc\" header rejected\r\n";
+		if (!vs->vs_Rfc5537)
+		    errMsg = "441 Obsolete \"Cc\" header rejected\r\n";
 #endif
 	} else if (HeaderCmp(base, "X-Complaints-To", &errMsg) == 0) {
 		errMsg = "441 Illegal \"X-Complaints-To\" header rejected\r\n";
