@@ -378,7 +378,7 @@ NNFeedOverview(Connection *conn)
 	if (supers) {
 	    if (DebugOpt)
 		printf("has Supersedes: %s %s\n", msgid, newsgroups);
-	    ExecuteSupersedes(conn, supers, art, artLen);
+	    ExecuteSupersedes(conn, supers, msgid, art, artLen);
 	}
 
 	err = 0;

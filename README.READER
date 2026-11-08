@@ -451,6 +451,20 @@
     withdrawn, and only with a matching key.  Set 'readercanlock all' for the
     old behaviour (every cancel executed).
 
+    An article with a Supersedes header is always accepted and stored,
+    whatever readercanlock is set to.  The article it replaces is removed
+    only if a cancel of that article would be allowed: the dcontrol.ctl
+    'cancel' rule must match the From of the new article, and readercanlock
+    checks the Cancel-Key of the new article against the Cancel-Lock of the
+    old one.  So under require-auth an old article without a Cancel-Lock
+    (most articles from other sites) stays, next to its replacement; under
+    'readercanlock auth' it is removed, and an old article with a
+    Cancel-Lock is still protected.  If the replacement arrives before the
+    old article, the removal is dropped, as for an early cancel (only 'all'
+    remembers it for later).  INN's docancels treats supersede requests the
+    same way.  The decision is logged as
+    "supersede <old id> by <new id>: ..." (nothing is logged under 'all').
+
     The locks and keys are computed by libcanlock, the library INN uses, so
     articles posted through INN with the same secrets stay cancellable.
     Checking needs no secret.  The build needs libcanlock 3.3.0 or later

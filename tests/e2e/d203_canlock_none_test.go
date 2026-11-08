@@ -31,6 +31,7 @@ func TestCancelLockNoneNoLookup(t *testing.T) {
 	target := msgID(t)
 	superseded := msgID(t)
 	missing := msgID(t)
+	replacement := msgID(t)
 	c := s.Reader(t)
 	defer c.ExpectCmd(205, "QUIT")
 	feedAndSettle(t, s, st, c,
@@ -38,7 +39,7 @@ func TestCancelLockNoneNoLookup(t *testing.T) {
 		newArticle(superseded, "e2e.test", "superseded", "the superseded article"),
 		cancelArticle(t, target, "e2e.test"),
 		cancelArticle(t, missing, "e2e.test"),
-		withHeaders(newArticle(msgID(t), "e2e.test", "supersedes", "the new version"), "Supersedes: "+superseded),
+		withHeaders(newArticle(replacement, "e2e.test", "supersedes", "the new version"), "Supersedes: "+superseded),
 	)
 
 	var log string
@@ -46,8 +47,13 @@ func TestCancelLockNoneNoLookup(t *testing.T) {
 		log = generalLog(s)
 		return strings.Count(log, "refused (readercanlock none)") >= 3 || strings.Contains(log, "target not here yet")
 	})
-	for _, id := range []string{target, missing, superseded} {
-		if want := "cancel " + id + ": refused (readercanlock none), 0 item(s)"; !strings.Contains(log, want) {
+	for _, want := range []string{
+		"cancel " + target + ": refused (readercanlock none), 0 item(s)",
+		"cancel " + missing + ": refused (readercanlock none), 0 item(s)",
+		// a supersede is logged as one (D-205)
+		"supersede " + superseded + " by " + replacement + ": refused (readercanlock none), 0 item(s)",
+	} {
+		if !strings.Contains(log, want) {
 			t.Errorf("general log lacks %q", want)
 		}
 	}
