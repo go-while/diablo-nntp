@@ -19,6 +19,9 @@ func TestReaderNewsgroupsSpace(t *testing.T) {
 		"e2e.test ,e2e.other", // a space before the comma
 		"e2e.test e2e.other",  // a space and no comma
 		"e2e.nogroup e2e.test,e2e.other",
+		"e2e.test,e2e.other,", // the plain list is shorter: a trailing comma
+		"e2e.test,,e2e.other", // an empty entry
+		"e2e.test  e2e.other", // two spaces
 	} {
 		t.Run(groups, func(t *testing.T) {
 			st, spool := spoolStore(t)

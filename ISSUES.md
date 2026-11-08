@@ -219,7 +219,7 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-203](#d-203-readercanlock-none-looks-up-every-cancel-target-before-refusing-it) | Low | readercanlock none looks up every cancel target before refusing it | fixed (#349) |
 | [D-204](#d-204-historyadd-wraps-the-record-number-past-232---1-records) | Low | HistoryAdd wraps the record number past 2^32 - 1 records | fixed (#350) |
 | [D-205](#d-205-a-supersede-is-logged-as-a-cancel) | Low | A supersede is logged as a cancel | fixed (#351) |
-| [D-206](#d-206-white-space-between-two-newsgroups-names-hides-the-names-after-it) | Low | White space between two Newsgroups names hides the names after it | fixed |
+| [D-206](#d-206-white-space-between-two-newsgroups-names-hides-the-names-after-it) | Low | White space between two Newsgroups names hides the names after it | fixed (#358) |
 
 Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315), [F-02 configure script](#f-02-configure-script-for-the-build-options), [F-03 refeed a whole spool](#f-03-refeed-a-whole-spool-to-another-server), [F-04 NoCeM notices](#f-04-nocem-notices), [F-05 init scripts](#f-05-init-scripts-and-adm-script-replacements), [F-06 Perl authentication](#f-06-perl-authentication-for-dreaderd).
 
@@ -1290,7 +1290,7 @@ Fixed (#351): `ExecuteSupersedes()` gets the new article's Message-ID from `grou
 
 ### D-206 White space between two Newsgroups names hides the names after it
 `lib/active.c`, `util/diablo.c`, `dreaderd/group.c`: RFC 5536 3.1.4 allows white space in the `Newsgroups:` list only around the commas. The feeder's walks over the list (`InActive()`, `GenerateXRef()` and the others) end a name at a space or tab but go on only after a comma, so in `x a,b` they stop after `x`: with `activedrop yes` the article is refused NotInActive although `b` is in the active file. dreaderd splits the list at the commas and cuts each entry at its first space or tab, so `a b` is filed under `a` only and `x a,b` not under `a`.
-Fixed: `NormalizeNewsgroups()` (`lib/subs.c`) rewrites the value as a plain comma list (each run of commas and white space becomes one comma); the feeder calls it on its copy of the list and dreaderd on the header value, so every name is looked up. Tests: `TestNewsgroupsSpaceInsideList`, `TestReaderNewsgroupsSpace`.
+Fixed (#358): `NormalizeNewsgroups()` (`lib/subs.c`) rewrites the value as a plain comma list (each run of commas and white space becomes one comma); the feeder calls it on its copy of the list and dreaderd on the header value, so every name is looked up. Tests: `TestNewsgroupsSpaceInsideList`, `TestReaderNewsgroupsSpace`.
 
 ## Feature requests
 
