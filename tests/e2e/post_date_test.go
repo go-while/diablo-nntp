@@ -132,24 +132,35 @@ func TestReaderPostDateWindowConfig(t *testing.T) {
 	}
 }
 
-// TestReaderPostDateDefault (F-07): without rfc5537 (the default) a poster's Date and
-// Injection-Date are taken as they are, as dreaderd always did; the Date dreaderd adds is still
-// the RFC 5322 form in +0000.
+// TestReaderPostDateDefault (F-07): the default checks a poster's Date and
+// Injection-Date. The explicit opt-outs keep the old lax checks; generated dates
+// remain in the RFC 5322 form in +0000 in every mode.
 func TestReaderPostDateDefault(t *testing.T) {
-	d := newDatePoster(t, DefaultReaderAccess, nil)
-	if code, line, head := d.post(t); code != 240 {
-		t.Fatalf("POST without a Date: %q", line)
-	} else if v := headerValue(head, "Date"); !injDateRe.MatchString(v) {
-		t.Errorf("the Date dreaderd added is %q, want an RFC 5322 date in +0000", v)
-	}
-	for _, h := range []string{
-		"Date: " + rfcDate(26*time.Hour),
-		"Date: " + rfcDate(-20*24*time.Hour),
-		"Date: not a date",
-		"Injection-Date: " + rfcDate(26*time.Hour),
+	for _, c := range []struct {
+		name, access string
+		want         int
+	}{
+		{"default", DefaultReaderAccess, 441},
+		{"rfc5537 no", plainAccess("    rfc5537 no\n"), 240},
+		{"legacytrace yes", plainAccess("    legacytrace yes\n"), 240},
 	} {
-		if code, line, _ := d.post(t, h); code != 240 {
-			t.Errorf("POST with %q: %q, want 240 (no Date window without rfc5537)", h, line)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			d := newDatePoster(t, c.access, nil)
+			if code, line, head := d.post(t); code != 240 {
+				t.Fatalf("POST without a Date: %q", line)
+			} else if v := headerValue(head, "Date"); !injDateRe.MatchString(v) {
+				t.Errorf("the Date dreaderd added is %q, want an RFC 5322 date in +0000", v)
+			}
+			for _, h := range []string{
+				"Date: " + rfcDate(26*time.Hour),
+				"Date: " + rfcDate(-20*24*time.Hour),
+				"Date: not a date",
+				"Injection-Date: " + rfcDate(26*time.Hour),
+			} {
+				if code, line, _ := d.post(t, h); code != c.want {
+					t.Errorf("POST with %q: %q, want %d", h, line, c.want)
+				}
+			}
+		})
 	}
 }

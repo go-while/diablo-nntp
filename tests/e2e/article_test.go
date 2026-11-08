@@ -14,7 +14,17 @@ var idSeq atomic.Int64
 
 // msgID returns a Message-ID that no other test uses.
 func msgID(tb testing.TB) string {
-	name := strings.NewReplacer("/", ".", " ", "_").Replace(tb.Name())
+	// Test names can contain punctuation or Unicode that is not dot-atom-text
+	// (RFC 5536 3.1.3). Keep generated IDs valid under the default POST checks.
+	name := strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' {
+			return r
+		}
+		return '_'
+	}, tb.Name())
+	if len(name) > 180 { // room for the timestamp, counter and domain within 250 octets
+		name = name[:180]
+	}
 	return fmt.Sprintf("<%s.%d.%d@%s>", name, time.Now().UnixNano(), idSeq.Add(1), PathHost)
 }
 
