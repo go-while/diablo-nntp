@@ -587,6 +587,33 @@ canLockEmit(MBufHead *mb, const char *name, const char *list)
 }
 
 /*
+ * Strict POST policy for RFC 5536 2.2: each physical header line is at
+ * most 998 octets without CRLF. Folded fields may be longer in total.
+ * Stop at the header/body separator; transport limits handle the body.
+ */
+static int
+PostHeaderLinesFit(const char *base, int len)
+{
+    int start = 0;
+    int i;
+
+    for (i = 0; i < len; ++i) {
+	if (base[i] == '\n') {
+	    int n = i - start;
+
+	    if (n > 0 && base[i - 1] == '\r')
+		--n;
+	    if (n == 0)
+		return(1);
+	    if (n > 998)
+		return(0);
+	    start = i + 1;
+	}
+    }
+    return(len - start <= 998);
+}
+
+/*
  * NNPostBuffer() - called when client connection post buffer contains the
  *		    entire article.  We need to check the article headers
  *		    and post it as appropriate.  If we are unable to post it
@@ -680,6 +707,10 @@ NNPostBuffer(Connection *conn)
     }
 #endif
 
+
+    /* RFC 5536 2.2 permits acceptance; strict mode chooses to refuse it. */
+    if (!errMsg && vs->vs_Rfc5537 && !PostHeaderLinesFit(base, artLen))
+	errMsg = "441 Header line too long (limit 998 octets)\r\n";
 
     /*
      * Output Path: line

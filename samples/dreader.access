@@ -88,6 +88,9 @@
 #		     octets, no comment. Refused with 441 otherwise; with
 #		     'no', some posters' ids with "..", two "@" or a
 #		     comment are taken.
+#		   - a physical header line over 998 octets, excluding CRLF,
+#		     is refused with 441; folded fields may be longer in total.
+#		     With 'no', longer header lines are still accepted.
 #		   'no' posts as dreaderd always did. Either
 #		   way a post with Injection-Info:, Xref: or ".POSTED" in its
 #		   Path is refused, and a Date: dreaderd adds ends in
