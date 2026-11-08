@@ -3663,6 +3663,7 @@ InstallAccessCache(void) {
     AccessDef accessdef;
     int copt = OPT_NONE;
     int parseError = 0;	/* bad file content, as opposed to a transient failure */
+    int postTrailerWarned = 0;	/* one obsolete-option warning per file read */
     int skiptail = 0;	/* the rest of a line longer than buf */
     GroupListRef *glRefs = NULL;	/* the readerdefs' group list names */
     int glRefCount = 0;
@@ -3997,7 +3998,7 @@ InstallAccessCache(void) {
 	    copt = OPT_NONE;
 	    continue;
 	}
-	if (!*val) {
+	if (!*val && !(copt == OPT_VSERVER && strcmp(opt, "posttrailer") == 0)) {
 	    logit(LOG_ERR, "dreader.access: Missing value/label for %s in line %d", opt, linecount);
 	    parseError = 1;
 	    continue;
@@ -4145,9 +4146,12 @@ InstallAccessCache(void) {
 			parseError = 1;
 		    continue;
 		}
-		if (*val && strcmp(opt, "posttrailer") == 0) {
-		    if (accessValue(vserver.vs_PostTrailer, sizeof(vserver.vs_PostTrailer), val, opt, linecount, 1) < 0)
-			parseError = 1;
+		if (strcmp(opt, "posttrailer") == 0) {
+		    /* RFC 5537 3.5 step 6: a POST body must not be altered. */
+		    if (!postTrailerWarned) {
+			logit(LOG_WARNING, "dreader.access: posttrailer is no longer supported; ignored (line %d)", linecount);
+			postTrailerWarned = 1;
+		    }
 		    continue;
 		}
 		logit(LOG_ERR, "dreader.access: Invalid vserverdef option : %s in line %d; the file is not installed\n", opt, linecount);
