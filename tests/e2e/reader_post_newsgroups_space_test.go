@@ -31,7 +31,8 @@ access ` + PeerIP + ` feed
 // around the commas. A POST whose list has white space between two names ("a b") is refused
 // with 441 Invalid newsgroup(s) line and not passed on. Before, dreaderd checked such a list as
 // one name, which a wildcard groups entry (e2e.t*) matched as a whole. A list without such white
-// space is checked by its plain comma list, so white space before a comma is fine (D-206).
+// space is checked by its plain comma list, so white space before a comma is fine (D-206), and
+// after a comma too ("a, b" was refused with 441 Invalid newsgroup(s) line, D-207).
 func TestReaderPostNewsgroupsSpace(t *testing.T) {
 	_, spool := spoolStore(t)
 	var mu sync.Mutex
@@ -53,8 +54,10 @@ func TestReaderPostNewsgroupsSpace(t *testing.T) {
 		{"e2e.test e2e.other", 441},  // white space between two names
 		{"e2e.test\te2e.other", 441}, // a tab between two names
 		{"e2e.other e2e.test", 441},
-		{"e2e.test ,e2e.test", 240}, // white space before a comma is allowed
-		{"e2e.other", 441},          // not in the groups list: refused as before
+		{"e2e.test ,e2e.test", 240},  // white space before a comma is allowed
+		{"e2e.test, e2e.test", 240},  // and after it (D-207: was 441 Invalid)
+		{"e2e.test , e2e.test", 240}, // and on both sides
+		{"e2e.other", 441},           // not in the groups list: refused as before
 	} {
 		id := msgID(t)
 		c2 := s.Reader(t)
@@ -75,14 +78,13 @@ func TestReaderPostNewsgroupsSpace(t *testing.T) {
 		if code != c.want {
 			t.Errorf("POST with Newsgroups: %q: %q, want %d", c.groups, line, c.want)
 		}
-		if c.want == 441 && strings.ContainsAny(c.groups, " \t") && !strings.HasSuffix(c.groups, " ,e2e.test") &&
-			!strings.Contains(line, "Invalid newsgroup") {
+		if c.want == 441 && strings.ContainsAny(c.groups, " \t") && !strings.Contains(line, "Invalid newsgroup") {
 			t.Errorf("POST with Newsgroups: %q: %q, want \"Invalid newsgroup(s) line\"", c.groups, line)
 		}
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(sent) > 2 {
-		t.Errorf("%d articles passed on, want at most the 2 accepted ones: %q", len(sent), sent)
+	if len(sent) > 4 {
+		t.Errorf("%d articles passed on, want at most the 4 accepted ones: %q", len(sent), sent)
 	}
 }

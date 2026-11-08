@@ -756,18 +756,12 @@ NNPostBuffer(Connection *conn)
 	    haveNewsgroups = 1;
 	    newsGrps = zallocStrTrim(&conn->co_MemPool, base + 11, l - 11);
 	    newsGrps2 = zallocStrTrim2(&conn->co_MemPool, ',', base + 11, l - 11);
-	    if (strcmp(newsGrps, newsGrps2)) {
-#ifdef	POST_CLEANUPNEWSGROUPSLINE
-		keep = 2;	/* keep = 2 overloaded to mean substitute ng hdr */
-#else
-		errMsg = "441 Invalid newsgroup(s) line\r\n";
-#endif
-	    }
 	    /*
 	     * White space between two names (RFC 5536 3.1.4 allows it only
-	     * around the commas) is refused.  The group checks below go by
-	     * the plain comma list, as the feeder does (D-206); it goes into
-	     * a copy of its own size for zfreeStr().
+	     * around the commas) is refused.  White space around a comma is
+	     * fine ("a, b", "a ,b": D-207).  The group checks below go by the
+	     * plain comma list, as the feeder does (D-206); it goes into a
+	     * copy of its own size for zfreeStr().
 	     */
 	    if (NewsgroupsSpaceInName(newsGrps2)) {
 		badNgLine = 1;
@@ -779,6 +773,10 @@ NNPostBuffer(Connection *conn)
 		t = zallocStr(&conn->co_MemPool, newsGrps2);
 		zfree(&conn->co_MemPool, newsGrps2, n);
 		newsGrps2 = t;
+#ifdef	POST_CLEANUPNEWSGROUPSLINE
+		if (strcmp(newsGrps, newsGrps2))
+		    keep = 2;	/* keep = 2 overloaded to mean substitute ng hdr */
+#endif
 	    }
 	} else if (HeaderCmp(base, "Organization", &errMsg) == 0) {
 	    haveOrganization = 1;
