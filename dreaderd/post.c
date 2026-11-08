@@ -1130,7 +1130,7 @@ NNPostBuffer(Connection *conn)
 
 	if (!vs->vs_Rfc5537 || injIdent(vs, identBuf, sizeof(identBuf))[0] == 0) {
 	/*
-	 * rfc5537 no (F-07, the default): the trace headers dreaderd always wrote,
+	 * rfc5537 no (F-07, explicit opt-out): the trace headers dreaderd always wrote,
 	 * and no Injection-Info or Injection-Date.  Also without a postpath
 	 * and a hostname: Injection-Info needs a path-identity, and the
 	 * trace data must not be lost.
