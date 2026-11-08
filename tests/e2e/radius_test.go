@@ -23,6 +23,7 @@ type fakeRadius struct {
 	conn   *net.UDPConn
 	secret string
 	users  map[string]radiusUser
+	noMA   bool // like an old server: never put a Message-Authenticator in the reply
 	mu     sync.Mutex
 	reqs   []radiusReq
 }
@@ -31,6 +32,7 @@ type radiusUser struct{ pass, filterID string }
 
 type radiusReq struct {
 	user, pass, callingStation, connectInfo string
+	msgAuth                                 bool // the request had a Message-Authenticator
 }
 
 func startFakeRadius(tb testing.TB, secret string, users map[string]radiusUser) *fakeRadius {
@@ -86,11 +88,15 @@ func (f *fakeRadius) answer(p []byte) []byte {
 		case 77:
 			req.connectInfo = string(v)
 		case 80:
-			wantMA = true // Message-Authenticator: newer radcli sends it and wants it back
+			wantMA = true // Message-Authenticator: newer radcli and libradius send it and want it back
+			req.msgAuth = true
 		}
 	}
 	f.mu.Lock()
 	f.reqs = append(f.reqs, req)
+	if f.noMA {
+		wantMA = false
+	}
 	f.mu.Unlock()
 
 	code := byte(3) // Access-Reject
@@ -170,6 +176,18 @@ func radiusBuild(tb testing.TB) (ok, radcli bool) {
 	return bytes.Contains(b, []byte("dns auth radius")), bytes.Contains(b, []byte("rc_read_config"))
 }
 
+// radiusNoMsgAuth is true for a libradius build whose libradius cannot add a Message-Authenticator
+// (configure found no rad_put_message_authentic(), e.g. the old pkgsrc libradius of SmartOS):
+// such a dreaderd refuses every RADIUS login.
+func radiusNoMsgAuth(tb testing.TB) bool {
+	tb.Helper()
+	b, err := os.ReadFile(filepath.Join(bin(tb), "dreaderd"))
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return bytes.Contains(b, []byte("this libradius cannot add a Message-Authenticator, RADIUS login refused"))
+}
+
 func radiusSite(tb testing.TB, conf string) *Site {
 	tb.Helper()
 	_, spool := spoolStore(tb)
@@ -183,8 +201,12 @@ func radiusSite(tb testing.TB, conf string) *Site {
 // the user, the password (encrypted with the shared secret) and the client address in
 // Calling-Station-Id. Skipped when dreaderd is built without RADIUS_ENABLED.
 func TestReaderRadiusAuth(t *testing.T) {
-	if ok, _ := radiusBuild(t); !ok {
+	ok, radcli := radiusBuild(t)
+	if !ok {
 		t.Skip("dreaderd is built without RADIUS support (RADIUS_ENABLED)")
+	}
+	if !radcli && radiusNoMsgAuth(t) {
+		t.Skip("this libradius cannot add a Message-Authenticator: every RADIUS login is refused (TestReaderRadiusMessageAuthenticator checks that)")
 	}
 	srv := startFakeRadius(t, "testing123", map[string]radiusUser{
 		"pat": {pass: "patspass"},
@@ -303,4 +325,61 @@ func TestReaderRadiusNativeConfig(t *testing.T) {
 	c := s.Reader(t)
 	c.ExpectCmd(381, "AUTHINFO USER pat")
 	c.ExpectCmd(281, "AUTHINFO PASS patspass")
+}
+
+// TestReaderRadiusMessageAuthenticator: every Access-Request carries a Message-Authenticator and
+// an Access-Accept without one is refused (Blast-RADIUS, CVE-2024-3596): dreaderd adds it with
+// libradius, which checks one in the reply but would accept a reply without it; radcli 1.4 and
+// later add and require it themselves (an older radcli sends none: then the test is skipped for
+// it). A server that answers with one logs the user in. A build whose libradius cannot add one
+// (configure found no rad_put_message_authentic()) refuses every RADIUS login.
+func TestReaderRadiusMessageAuthenticator(t *testing.T) {
+	ok, radcli := radiusBuild(t)
+	if !ok {
+		t.Skip("dreaderd is built without RADIUS support (RADIUS_ENABLED)")
+	}
+	for _, noMA := range []bool{false, true} {
+		name := "server sends it"
+		if noMA {
+			name = "server leaves it out"
+		}
+		t.Run(name, func(t *testing.T) {
+			srv := startFakeRadius(t, "testing123", map[string]radiusUser{"pat": {pass: "patspass"}})
+			srv.mu.Lock()
+			srv.noMA = noMA
+			srv.mu.Unlock()
+			conf := filepath.Join(t.TempDir(), "radius.conf")
+			if err := os.WriteFile(conf, []byte(fmt.Sprintf("auth 127.0.0.1:%d testing123 2 1\n", srv.port())), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			s := radiusSite(t, conf)
+			c := s.Reader(t)
+			c.ExpectCmd(381, "AUTHINFO USER pat")
+			code, line := c.Cmd("AUTHINFO PASS patspass")
+			reqs := srv.requests()
+			if !radcli && radiusNoMsgAuth(t) {
+				// a libradius without rad_put_message_authentic(): every login is refused,
+				// before a request is sent
+				if code == 281 || len(reqs) != 0 {
+					t.Errorf("a libradius without Message-Authenticator: %s, %d request(s); want a refusal and none", line, len(reqs))
+				}
+				return
+			}
+			if len(reqs) == 0 {
+				t.Fatalf("the server got no request (%s)", line)
+			}
+			if !reqs[0].msgAuth {
+				if radcli {
+					t.Skip("this radcli sends no Message-Authenticator (before 1.4)")
+				}
+				t.Fatalf("the Access-Request has no Message-Authenticator")
+			}
+			if noMA && code == 281 {
+				t.Errorf("an Access-Accept without Message-Authenticator logged in: %s", line)
+			}
+			if !noMA && code != 281 {
+				t.Errorf("an Access-Accept with Message-Authenticator: %s, want 281", line)
+			}
+		})
+	}
 }

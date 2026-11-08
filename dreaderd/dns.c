@@ -912,6 +912,28 @@ radiusAuthenticate(char *user, char *pass, const char *ipname, int is_proxied, c
 	rad_close(h);
 	return(NULL);
     }
+#ifdef RADIUS_MSGAUTH
+    /*
+     * Message-Authenticator in every request, and required in the reply
+     * (Blast-RADIUS, CVE-2024-3596).  libradius checks one that is there
+     * but accepts a reply without it.  A libradius built without OpenSSL
+     * cannot add it: then no login goes through RADIUS.
+     */
+    if (rad_put_message_authentic(h) < 0) {
+	logit(LOG_ERR, "radius: cannot add a Message-Authenticator (libradius without OpenSSL?): %s",
+	    rad_strerror(h));
+	rad_close(h);
+	return(NULL);
+    }
+#else
+    /*
+     * This libradius (the old pkgsrc one of SmartOS) cannot add one, so
+     * its replies could be forged: no login through it.
+     */
+    logit(LOG_ERR, "radius: this libradius cannot add a Message-Authenticator, RADIUS login refused");
+    rad_close(h);
+    return(NULL);
+#endif
     if (rad_put_string(h, RAD_USER_NAME, user) < 0) {
 	logit(LOG_ERR, "rad_put_string(RAD_USER_NAME) failed: %s", rad_strerror(h));
 	rad_close(h);
@@ -938,18 +960,30 @@ radiusAuthenticate(char *user, char *pass, const char *ipname, int is_proxied, c
 	return(NULL);
     }
     if (rval == RAD_ACCESS_ACCEPT) {
+	int msgauth = 0;
+
         while ((attrtype = rad_get_attr(h, &attrval, &attrlen)) > 0) {
            if (attrtype == RAD_FILTER_ID) {
+               free(readerdef);
                readerdef = rad_cvt_string(attrval, attrlen);
+#ifdef RADIUS_MSGAUTH
+           } else if (attrtype == RAD_MESSAGE_AUTHENTIC) {
+               msgauth = 1;
+#endif
            }
         }
-        if (readerdef) {
-           snprintf(result, sizeof(result), "110 %s", readerdef);
-           free(readerdef);
-	} else {
-    	    strcpy(result, "100 Success");
-       }
-       r = result;
+        if (! msgauth) {
+           /* libradius verified it if it was there; it must be there */
+           logit(LOG_ERR, "radius: Access-Accept without Message-Authenticator, login refused");
+           r = NULL;
+        } else {
+           if (readerdef)
+               snprintf(result, sizeof(result), "110 %s", readerdef);
+           else
+               strcpy(result, "100 Success");
+           r = result;
+        }
+        free(readerdef);
     } else
        r = NULL;
 
