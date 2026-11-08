@@ -225,6 +225,8 @@ NNFeedOverview(Connection *conn)
 	    break;
 	} else if (ch == 'n' && strncasecmp(line, "Newsgroups:", 11) == 0) {
 	    newsgroups = zallocStrTrim2(&conn->co_MemPool, ',', line + 11, l - 11);
+	    /* white space between names separates them (D-206) */
+	    NormalizeNewsgroups(newsgroups);
 	} else if (ch == 'm' && strncasecmp(line, "Message-ID:", 11) == 0) {
 	    msgid = zallocStrTrim2(&conn->co_MemPool, 0, line + 11, l - 11);
 	} else if (ch == 's' && strncasecmp(line, "Subject:", 8) == 0) {

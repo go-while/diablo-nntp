@@ -3341,6 +3341,8 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 			   strncasecmp(p, "Newsgroups:", 11) == 0) {
 		    hdrNewsgroups++;
 		    diablo_strlcpynl(nglist, p + 11, bytes - 11 - aflen, MAXLINE);
+		    /* white space between names separates them (D-206) */
+		    NormalizeNewsgroups(nglist);
 
 		    /*
 		     * FeedAdd breaks if newsgroups: header contains a
