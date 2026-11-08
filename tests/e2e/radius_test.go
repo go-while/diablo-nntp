@@ -177,14 +177,15 @@ func radiusBuild(tb testing.TB) (ok, radcli bool) {
 }
 
 // radiusNoMsgAuth is true for a libradius build whose libradius cannot add a Message-Authenticator
-// (configure found no rad_put_message_authentic(), e.g. the old pkgsrc libradius of SmartOS).
+// (configure found no rad_put_message_authentic(), e.g. the old pkgsrc libradius of SmartOS):
+// such a dreaderd refuses every RADIUS login.
 func radiusNoMsgAuth(tb testing.TB) bool {
 	tb.Helper()
 	b, err := os.ReadFile(filepath.Join(bin(tb), "dreaderd"))
 	if err != nil {
 		tb.Fatal(err)
 	}
-	return bytes.Contains(b, []byte("this libradius cannot add a Message-Authenticator"))
+	return bytes.Contains(b, []byte("this libradius cannot add a Message-Authenticator, RADIUS login refused"))
 }
 
 func radiusSite(tb testing.TB, conf string) *Site {
@@ -200,8 +201,12 @@ func radiusSite(tb testing.TB, conf string) *Site {
 // the user, the password (encrypted with the shared secret) and the client address in
 // Calling-Station-Id. Skipped when dreaderd is built without RADIUS_ENABLED.
 func TestReaderRadiusAuth(t *testing.T) {
-	if ok, _ := radiusBuild(t); !ok {
+	ok, radcli := radiusBuild(t)
+	if !ok {
 		t.Skip("dreaderd is built without RADIUS support (RADIUS_ENABLED)")
+	}
+	if !radcli && radiusNoMsgAuth(t) {
+		t.Skip("this libradius cannot add a Message-Authenticator: every RADIUS login is refused (TestReaderRadiusMessageAuthenticator checks that)")
 	}
 	srv := startFakeRadius(t, "testing123", map[string]radiusUser{
 		"pat": {pass: "patspass"},
@@ -326,7 +331,8 @@ func TestReaderRadiusNativeConfig(t *testing.T) {
 // an Access-Accept without one is refused (Blast-RADIUS, CVE-2024-3596): dreaderd adds it with
 // libradius, which checks one in the reply but would accept a reply without it; radcli 1.4 and
 // later add and require it themselves (an older radcli sends none: then the test is skipped for
-// it). A server that answers with one logs the user in.
+// it). A server that answers with one logs the user in. A build whose libradius cannot add one
+// (configure found no rad_put_message_authentic()) refuses every RADIUS login.
 func TestReaderRadiusMessageAuthenticator(t *testing.T) {
 	ok, radcli := radiusBuild(t)
 	if !ok {
@@ -351,15 +357,20 @@ func TestReaderRadiusMessageAuthenticator(t *testing.T) {
 			c.ExpectCmd(381, "AUTHINFO USER pat")
 			code, line := c.Cmd("AUTHINFO PASS patspass")
 			reqs := srv.requests()
+			if !radcli && radiusNoMsgAuth(t) {
+				// a libradius without rad_put_message_authentic(): every login is refused,
+				// before a request is sent
+				if code == 281 || len(reqs) != 0 {
+					t.Errorf("a libradius without Message-Authenticator: %s, %d request(s); want a refusal and none", line, len(reqs))
+				}
+				return
+			}
 			if len(reqs) == 0 {
 				t.Fatalf("the server got no request (%s)", line)
 			}
 			if !reqs[0].msgAuth {
 				if radcli {
 					t.Skip("this radcli sends no Message-Authenticator (before 1.4)")
-				}
-				if radiusNoMsgAuth(t) {
-					t.Skip("this libradius has no rad_put_message_authentic() (configure: no RADIUS_MSGAUTH)")
 				}
 				t.Fatalf("the Access-Request has no Message-Authenticator")
 			}

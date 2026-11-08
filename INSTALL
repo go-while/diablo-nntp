@@ -82,11 +82,15 @@ Edit lib/vendor.h if required.
 	configurations.
 	Every Access-Request carries a Message-Authenticator and an
 	Access-Accept without one is refused (Blast-RADIUS, CVE-2024-3596),
-	so the server must send it: FreeRADIUS 3.2.5 or later does.  With
-	libradius this needs a libradius built with OpenSSL that has
-	rad_put_message_authentic() (./configure checks; the old pkgsrc
-	libradius of SmartOS lacks it, and dreaderd then logs a warning);
-	with radcli it needs radcli 1.4.0 or later.
+	so the server must send it: FreeRADIUS 3.2.5 or later does.  This is
+	a change for older servers, or ones with it turned off: their users
+	can no longer log in.  With radcli it needs radcli 1.4.0 or later;
+	with libradius one built with OpenSSL that has
+	rad_put_message_authentic() (./configure checks).  A build with a
+	libradius without it refuses every RADIUS login.  On SmartOS the
+	pkgsrc libradius lacks it, so RADIUS there needs radcli 1.4 or
+	later, built from source (pkgsrc has no radcli), or a newer
+	libradius.
 
 Edit lib/config.h
 
