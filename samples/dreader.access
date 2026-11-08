@@ -91,6 +91,12 @@
 #		   - a physical header line over 998 octets, excluding CRLF,
 #		     is refused with 441; folded fields may be longer in total.
 #		     With 'no', longer header lines are still accepted.
+#		   - reserved Newsgroups: names/components are refused with 441,
+#		     even when present in active: example.*, poster, junk,
+#		     all/ctl components, to.* and control.* for ordinary posts.
+#		     Control articles may use control.*; ihave/sendme Control
+#		     articles may use to.* (controlpost permission still applies).
+#		     'no' permits the old behavior for local agreements.
 #		   'no' posts as dreaderd always did. Either
 #		   way a post with Injection-Info:, Xref: or ".POSTED" in its
 #		   Path is refused, and a Date: dreaderd adds ends in
