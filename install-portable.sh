@@ -60,14 +60,16 @@ scan() {
     scan_out=$(find "$@" -print) || { echo "install-portable.sh: find $* failed" >&2; exit 1; }
     [ -z "$scan_out" ] || printf '%s\n' "$scan_out"
 }
-copy_file() {
+# A subshell keeps helper variables from changing the caller's source and
+# destination (notably before printing the path of an adm replacement).
+copy_file() (
     src=$1 dst=$2 mode_bits=$3
     tmp="${dst}.new.$$"
     cp "$src" "$tmp"
     chmod "$mode_bits" "$tmp"
     set_owner "$tmp"
     mv -f "$tmp" "$dst"
-}
+)
 
 if [ "$mode" != uninstall ]; then
     # The programs must have been built (make): an empty dbin/ is no install.
