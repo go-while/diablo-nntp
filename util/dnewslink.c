@@ -348,7 +348,7 @@ int SpoolErrno = 0;		/* and the errno, for SPOOL_ERR */
  */
 int GoneCnt, BadCnt, SpoolErrCnt;
 int GoneTotal, BadTotal, SpoolErrTotal;
-int LogAfterCount = -1;
+int LogAfterCount = 0;	/* next OfferedTotal to log a mark at (-l) */
 int CloseReopenCount = -1;
 int KillFd = -1;
 int WritesLosing = 0;
@@ -1359,7 +1359,8 @@ main(int ac, char **av)
 		     * Log stats after specified count
 		     */
 
-		    if (LogAfterCount > 0 && Stats->SentStats.OfferedTotal >= LogAfterCount) {
+		    /* -l 0: no marks; -l N: one after every N offered articles */
+		    if (LogAfter > 0 && Stats->SentStats.OfferedTotal >= LogAfterCount) {
 			loggedMark = 1;
 			logStats("mark");
 			LogAfterCount += LogAfter;

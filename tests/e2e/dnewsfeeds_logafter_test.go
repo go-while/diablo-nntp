@@ -3,6 +3,10 @@ package e2e
 import (
 	"strings"
 	"testing"
+	"time"
+
+	testkit "github.com/go-while/nntp-testkit"
+	"github.com/go-while/nntp-testkit/fakeserver"
 )
 
 // dspooloutLinks runs dspoolout -n -v (print the dnewslink command lines, start nothing) and
@@ -90,4 +94,40 @@ func TestDnewsfeedsLogAfter(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestDnewslinkLogAfterMarks: dnewslink -l N writes a "mark" status line after every N offered
+// articles, and -l 0 writes none (the final totals stay). dnewslink started its counter at -1,
+// so -l 1 never logged a mark and the default ones came at 999, 1999, ... (go-while's review
+// of #352); the counter now starts at 0.
+func TestDnewslinkLogAfterMarks(t *testing.T) {
+	for _, tc := range []struct {
+		l       string
+		minMark int
+		maxMark int
+	}{
+		{"1", 3, 4}, // after each of the 3 articles, plus the closing mark of a run that logged marks
+		{"0", 0, 0},
+	} {
+		t.Run("-l "+tc.l, func(t *testing.T) {
+			peer, got := newPeer(t, &fakeserver.PeerOptions{})
+			s := NewSite(t, SiteOptions{Newsfeeds: OutNewsfeeds,
+				Config: map[string]string{"path_generallog": "%s/general.log"}})
+			ids := s.Inject(t, "e2e.test", 3)
+			s.waitQueue(t, OutLabel, 3)
+			out := s.dnewslink(t, peer, OutLabel, "-l", tc.l)
+			noSanitizerReport(t, out)
+			if len(got.list()) != len(ids) {
+				t.Fatalf("peer accepted %q, want %q\n%s", got.list(), ids, out)
+			}
+			var log string
+			testkit.WaitFor(t, 10*time.Second, "dnewslink's final line in general.log", func() bool {
+				log = generalLog(s)
+				return strings.Contains(log, " final secs=")
+			})
+			if n := strings.Count(log, " mark secs="); n < tc.minMark || n > tc.maxMark {
+				t.Errorf("dnewslink -l %s: %d mark lines, want %d..%d:\n%s", tc.l, n, tc.minMark, tc.maxMark, log)
+			}
+		})
+	}
 }
