@@ -1,0 +1,1 @@
+- `dlockhistory -a` keeps a growing history file locked. Before, every size change (each article the feeder adds) unlocked and relocked the whole file on every check, every 5 seconds by default. Now a grown file is locked before the old lock is dropped, and only after 1/64 growth. A replaced file is locked anew, and an mlock failure is reported instead of ignored.
