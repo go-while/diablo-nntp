@@ -627,7 +627,7 @@ PostHeaderLinesFit(const char *base, int len)
  *	Path:			(removed, generated; refused with a POSTED entry)
  *	Date:			(kept; with rfc5537 checked against the RFC 5537
  *				 3.5 step 3 window; generated if missing, RFC 5322 form)
- *	Lines:			(removed, generated)
+ *	Lines:			(kept; generated only in legacy mode when missing)
  *	Message-ID:		(checked, RFC 5536 3.1.3 syntax with rfc5537; generated)
  *	NNTP-Posting-Date:	(refused; generated without rfc5537, optionally)
  *	NNTP-Posting-Host:	(refused; generated without rfc5537)
@@ -653,6 +653,7 @@ NNPostBuffer(Connection *conn)
     int haveSubject = 0;
     int haveFrom = 0;
     int haveDate = 0;
+    int haveLines = 0;
     int haveInjDate = 0;
     int haveApproved = 0;
     const char *refused;
@@ -856,7 +857,7 @@ NNPostBuffer(Connection *conn)
 	} else if (HeaderCmp(base, "Date", &errMsg) == 0) {
 	    keep = 0;	/* delete */
 	} else if (HeaderCmp(base, "Lines", &errMsg) == 0) {
-	    keep = 0;	/* delete */
+	    haveLines = 1;	/* RFC 5537 3.5 step 6: keep the poster's header */
 	} else if (HeaderCmp(base, "Message-ID", &errMsg) == 0) {
 #ifdef	POST_FORCEMSGID
 	    keep = 0;   /* delete */
@@ -1051,9 +1052,10 @@ NNPostBuffer(Connection *conn)
 	    MBPrintf(&tmbuf, "Date: %s\r\n", PostDate(buf, sizeof(buf), t));
 	}
 	/*
-	 * Add Lines:
+	 * RFC 5536 3.3.1: do not generate Lines by default.  The explicit
+	 * legacy mode may add one, but never replace a poster's own header.
 	 */
-	{
+	if (!vs->vs_Rfc5537 && !haveLines) {
 	    int lines = 0;
 	    int i;
 
@@ -1252,19 +1254,6 @@ NNPostBuffer(Connection *conn)
 
     if (errMsg == NULL) {
 	MBWrite(&tmbuf, base, artLen);
-    }
-    if (*conn->co_Auth.dr_VServerDef->vs_PostTrailer) {
-	/* This is sinful even for me. JG20030206 */
-	char buf[512], *ptr, *head;
-
-	snprintf(buf, sizeof(buf), "%s", conn->co_Auth.dr_VServerDef->vs_PostTrailer);
-	head = buf;
-	while ((ptr = strstr(head, "\\n"))) {
-		*ptr = '\0';
-		MBPrintf(&tmbuf, "%s\r\n", head);
-		head = ptr + 2;
-	}
-	MBPrintf(&tmbuf, "%s\r\n", head);
     }
     MBFree(&conn->co_ArtBuf);
 

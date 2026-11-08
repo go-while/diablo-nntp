@@ -96,7 +96,11 @@
 #		   Path is refused, and a Date: dreaderd adds ends in
 #		   "+0000 (UTC)".
 #		   "legacytrace yes" is an older spelling of "rfc5537 no".
-#		   Default: yes.
+#		   Default: yes. A supplied Lines: header is kept. With 'yes'
+#		   none is generated; 'no' adds one only when it is missing.
+#
+# posttrailer	 : Obsolete: ignored in every mode, with one warning per
+#		   access-file read. POST bodies are not changed (RFC 5537 3.5).
 #
 # canlockadmin	 : A secret for Cancel-Lock (RFC 8315), the same as INN's
 #		   canlockadmin in inn-secrets.conf. With it, every local post
