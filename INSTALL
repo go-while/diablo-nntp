@@ -80,6 +80,11 @@ Edit lib/vendor.h if required.
 	where a RADIUS library is found.  It needs an operational RADIUS
 	server and understanding of how to update and maintain RADIUS
 	configurations.
+	Every Access-Request carries a Message-Authenticator and an
+	Access-Accept without one is refused (Blast-RADIUS, CVE-2024-3596),
+	so the server must send it: FreeRADIUS 3.2.5 or later does.  With
+	libradius this needs a libradius built with OpenSSL; with radcli it
+	needs radcli 1.4.0 or later.
 
 Edit lib/config.h
 
