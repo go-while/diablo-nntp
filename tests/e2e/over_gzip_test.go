@@ -186,9 +186,9 @@ func TestReaderReadsGzipData(t *testing.T) {
 
 	// -n -v: the per-file lines, nothing compressed
 	out := s.Run(t, "dexpireover", "-y", "-z", "-n", "-v")
-	if n := strings.Count(out, " compression\n"); n != 2 || !strings.Contains(out, "2 files would be compressed") ||
+	if n := strings.Count(out, " compressing\n"); n != 2 || !strings.Contains(out, "2 files would be compressed") ||
 		strings.Count(out, "not eligible for compression: proximity") != 2 {
-		t.Errorf("dexpireover -y -z -n -v: want 2 \"compression\" and 2 \"proximity\" lines and \"2 files would be compressed\":\n%s", out)
+		t.Errorf("dexpireover -y -z -n -v: want 2 \"compressing\" and 2 \"proximity\" lines and \"2 files would be compressed\":\n%s", out)
 	}
 	if _, gz := dataFiles(); len(gz) != 0 {
 		t.Fatalf("dexpireover -n compressed %q", gz)
@@ -204,7 +204,7 @@ func TestReaderReadsGzipData(t *testing.T) {
 	if !strings.Contains(out, "Compressed 2 files") {
 		t.Errorf("dexpireover -y -z: no \"Compressed 2 files\":\n%s", out)
 	}
-	for _, l := range []string{"No .gz on ", "not eligible for compression", " compression\n"} {
+	for _, l := range []string{"No .gz on ", "not eligible for compression", " compressing\n"} {
 		if strings.Contains(out, l) {
 			t.Errorf("dexpireover -y -z without -v printed a per-file line (%q):\n%s", l, out)
 		}

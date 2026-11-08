@@ -1175,7 +1175,7 @@ ProcessOverviewFile(const char *dirPath, const char *name, int type)
 		        }
 		    } else {
 		        if (VerboseOpt > 0) {
-			    printf("Overview %s compression\n", path);
+			    printf("Overview %s compressing\n", path);
 		        }
 			if (!ForReal) {
 			    CompressEligible++;
