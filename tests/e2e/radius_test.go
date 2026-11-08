@@ -176,6 +176,17 @@ func radiusBuild(tb testing.TB) (ok, radcli bool) {
 	return bytes.Contains(b, []byte("dns auth radius")), bytes.Contains(b, []byte("rc_read_config"))
 }
 
+// radiusNoMsgAuth is true for a libradius build whose libradius cannot add a Message-Authenticator
+// (configure found no rad_put_message_authentic(), e.g. the old pkgsrc libradius of SmartOS).
+func radiusNoMsgAuth(tb testing.TB) bool {
+	tb.Helper()
+	b, err := os.ReadFile(filepath.Join(bin(tb), "dreaderd"))
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return bytes.Contains(b, []byte("this libradius cannot add a Message-Authenticator"))
+}
+
 func radiusSite(tb testing.TB, conf string) *Site {
 	tb.Helper()
 	_, spool := spoolStore(tb)
@@ -346,6 +357,9 @@ func TestReaderRadiusMessageAuthenticator(t *testing.T) {
 			if !reqs[0].msgAuth {
 				if radcli {
 					t.Skip("this radcli sends no Message-Authenticator (before 1.4)")
+				}
+				if radiusNoMsgAuth(t) {
+					t.Skip("this libradius has no rad_put_message_authentic() (configure: no RADIUS_MSGAUTH)")
 				}
 				t.Fatalf("the Access-Request has no Message-Authenticator")
 			}

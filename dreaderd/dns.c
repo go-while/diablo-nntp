@@ -912,6 +912,7 @@ radiusAuthenticate(char *user, char *pass, const char *ipname, int is_proxied, c
 	rad_close(h);
 	return(NULL);
     }
+#ifdef RADIUS_MSGAUTH
     /*
      * Message-Authenticator in every request, and required in the reply
      * (Blast-RADIUS, CVE-2024-3596).  libradius checks one that is there
@@ -924,6 +925,17 @@ radiusAuthenticate(char *user, char *pass, const char *ipname, int is_proxied, c
 	rad_close(h);
 	return(NULL);
     }
+#else
+    {
+	static int warned;
+
+	if (! warned) {
+	    warned = 1;
+	    logit(LOG_WARNING, "radius: this libradius cannot add a Message-Authenticator; "
+		"replies are not protected against forgery (Blast-RADIUS, CVE-2024-3596)");
+	}
+    }
+#endif
     if (rad_put_string(h, RAD_USER_NAME, user) < 0) {
 	logit(LOG_ERR, "rad_put_string(RAD_USER_NAME) failed: %s", rad_strerror(h));
 	rad_close(h);
@@ -950,14 +962,20 @@ radiusAuthenticate(char *user, char *pass, const char *ipname, int is_proxied, c
 	return(NULL);
     }
     if (rval == RAD_ACCESS_ACCEPT) {
+#ifdef RADIUS_MSGAUTH
 	int msgauth = 0;
+#else
+	int msgauth = 1;	/* cannot be asked for: see above */
+#endif
 
         while ((attrtype = rad_get_attr(h, &attrval, &attrlen)) > 0) {
            if (attrtype == RAD_FILTER_ID) {
                free(readerdef);
                readerdef = rad_cvt_string(attrval, attrlen);
+#ifdef RADIUS_MSGAUTH
            } else if (attrtype == RAD_MESSAGE_AUTHENTIC) {
                msgauth = 1;
+#endif
            }
         }
         if (! msgauth) {

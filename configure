@@ -222,6 +222,24 @@ EOT
     return 1
 }
 
+# rad_put_message_authentic() and RAD_MESSAGE_AUTHENTIC (Blast-RADIUS): FreeBSD's libradius has
+# them, the old pkgsrc libradius of SmartOS does not; with the flags probe_radlib found
+probe_radlib_msgauth() {
+    cat > "$tmp/m.c" <<'EOT'
+#include <sys/types.h>
+#if defined(__sun)
+#include "compat/smartos_radlib.h"
+#endif
+#include <radlib.h>
+#if defined(__sun)
+void srandomdev(void) { }
+#endif
+int main(void) { struct rad_handle *h = rad_auth_open(); return h == 0 || rad_put_message_authentic(h) != RAD_MESSAGE_AUTHENTIC; }
+EOT
+    # shellcheck disable=SC2086
+    $CC -I. $radlib_cpp -o "$tmp/t" "$tmp/m.c" $radlib_ld $radlib_libs >/dev/null 2>&1
+}
+
 # radcli: the RADIUS client library of Linux distributions; its dictionary file is found here
 # too, as the adapter in dreaderd/dns.c reads it
 probe_radcli() {
@@ -350,7 +368,13 @@ else
 fi
 case $radius in
     off) set_option RADIUS_ENABLED off; set_option RADIUS_RADCLI off ;;
-    radlib) set_option RADIUS_ENABLED on; set_option RADIUS_RADCLI off; add_flags radlib ;;
+    radlib)
+	set_option RADIUS_ENABLED on; set_option RADIUS_RADCLI off; add_flags radlib
+	if probe_radlib_msgauth; then
+	    echo "CPPFLAGS += -DRADIUS_MSGAUTH" >> "$tmp/mk"
+	else
+	    note "radius: this libradius has no rad_put_message_authentic(): no Message-Authenticator (Blast-RADIUS)"
+	fi ;;
     radcli)
 	set_option RADIUS_ENABLED on; set_option RADIUS_RADCLI on; add_flags radcli
 	[ -z "$radcli_dict" ] || echo "CPPFLAGS += -DRADCLI_DICTIONARY=\\\"$radcli_dict\\\"" >> "$tmp/mk" ;;
