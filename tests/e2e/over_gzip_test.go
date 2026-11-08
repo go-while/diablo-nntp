@@ -98,8 +98,9 @@ func TestDexpireoverRewriteGzipData(t *testing.T) {
 	}
 }
 
-// TestReaderReadsGzipData: dreaderd serves OVER, HDR and XPAT from overview data files that
-// dexpireover -z gzipped. dreaderd unpacks such a file into a temporary file when it opens it
+// TestReaderReadsGzipData: dreaderd serves OVER, HDR, XPAT, and HEAD and ARTICLE by number (the
+// number is looked up in the overview) from overview data files that dexpireover -z gzipped.
+// dreaderd unpacks such a file into a temporary file when it opens it
 // (dreaderd/group.c, GetOverData); until now no test read through that path. With e4 and 12
 // articles a group has four data files; F1 keeps the two newest plain and Z1 lets the two
 // older ones (made two hours old) be compressed. After a dreaderd restart (so no open plain
@@ -138,6 +139,8 @@ func TestReaderReadsGzipData(t *testing.T) {
 			{225, "HDR Subject 1-12"},
 			{225, "HDR X-Gz-Note 1-12"},
 			{221, "XPAT Subject 1-12 *data 0[3-6]"},
+			{221, "HEAD 2"},
+			{220, "ARTICLE 6"},
 		} {
 			c.ExpectCmd(cmd.code, "%s", cmd.text)
 			got[cmd.text] = c.ReadDotLines()
@@ -148,6 +151,11 @@ func TestReaderReadsGzipData(t *testing.T) {
 	before := read()
 	if n := len(before["HDR X-Gz-Note 1-12"]); n != 12 {
 		t.Fatalf("HDR X-Gz-Note before compression: %d lines, want 12: %q", n, before["HDR X-Gz-Note 1-12"])
+	}
+	for _, cmd := range []string{"HEAD 2", "ARTICLE 6"} {
+		if !slices.Contains(before[cmd], "X-Gz-Note: note 0"+cmd[len(cmd)-1:]) {
+			t.Fatalf("%s before compression is not article %s: %q", cmd, cmd[len(cmd)-1:], before[cmd])
+		}
 	}
 	if n := len(before["XPAT Subject 1-12 *data 0[3-6]"]); n != 4 {
 		t.Fatalf("XPAT before compression: %d lines, want 4: %q", n, before["XPAT Subject 1-12 *data 0[3-6]"])
