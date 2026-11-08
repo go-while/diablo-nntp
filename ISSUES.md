@@ -1538,3 +1538,55 @@ Until then, `dexpireover -z` (dexpire.ctl `Z`) gzips old data files whole, which
 text much better than file system compression in small records; dreaderd reads them through a
 temporary file (tested by `TestReaderReadsGzipData`). Status: open, after v7. Requested by
 go-while on 2026-11-08, from the archive zone's numbers.
+
+### F-09 Overview writes scattered over thousands of files
+For every article and every group it is in, dreaderd writes the overview twice
+(`dreaderd/group.c`, `WriteOverview()`):
+- it appends the header block to the group's `data.*` file;
+- it overwrites one ~40-byte `OverArt` slot in the group's circular index with `pwrite`. The
+  index is `over.*`, and the slot is the article number modulo the index size.
+
+Diablo reads nothing to do this (`GetOverArt()` only computes the slot), but the writes are
+tiny and land in thousands of different files. A copy-on-write file system such as ZFS
+rewrites the whole record for each change, plus the record's indirect blocks and the file's
+dnode, so a ~1.2 KB overview entry costs far more on disk. Measured on 2026-11-09 on an archive
+test box (illumos, ZFS, about 30,000 groups, history and overview on an SSD pool), in 30-second
+samples:
+- the pool wrote about 46 times what the daemons wrote (58 KB per overview entry); indirect
+  blocks were about 14 of 18 GB logical;
+- `zfs_dirty_data_sync_pct` 50 (fewer syncs, so more rewrites of the same block merge) brought
+  it to about 25x, and `redundant_metadata=most` to about 18x (23 KB per entry);
+- the spool pool, written sequentially, was about 1.1x.
+
+Two overview stores by go-while append in order instead, with few files touched per batch:
+- [nntp-overview](https://github.com/go-while/nntp-overview) keeps one append-only file per
+  group with one line per article (the overview fields). The article numbers are consecutive,
+  so the line number is the article number and no slot table is needed. A sparse `.Index`
+  every 100 articles serves seeks, and a footer written after the line commits it, which
+  makes the file crash-safe.
+- [go-pugleaf](https://github.com/go-while/go-pugleaf) keeps one SQLite database per group in
+  WAL mode. The article number is the `INTEGER PRIMARY KEY`, so new rows go to the right edge
+  of the B-tree, and inserts are batched per group.
+
+A design would have to settle:
+- An append-only index instead of the circular one. The position of an article comes from its
+  number and a sparse index, or the index is appended to and searched from the end.
+- Expire by dropping whole files from the front (rotated index and data files) instead of
+  reusing slots. Cancels mark the record in place (rare) or go to a small tombstone list.
+- Writes batched per group and flushed together, not one `pwrite` per article.
+- Crash consistency: a commit marker after each batch, as nntp-overview's footer.
+- One new on-disk format together with F-08 (overview fields only, one copy per article), not
+  two. The conversion is the same `dexpireover -R` step, and the same question applies of what
+  an older reader does with converted groups.
+
+Until then, on ZFS (from the 2026-11-08 and 2026-11-09 measurements):
+- fewer transaction-group syncs (`zfs_dirty_data_sync_pct` 50, below the 60% write throttle)
+  and, where the data can be rebuilt, `redundant_metadata=most`;
+- a smaller `recordsize` is not free: it means more indirect blocks. On raidz, overview at 128K
+  wrote faster than at 16K;
+- history and overview on SSDs with power-loss protection, the spool on rotating disks;
+- `primarycache=all` on the spool when a reader header feed reads new articles right after
+  they are written.
+
+Status: open, after v7. Requested by go-while on 2026-11-08; numbers from the archive test box
+on 2026-11-09.
