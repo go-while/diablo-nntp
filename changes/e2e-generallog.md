@@ -1,0 +1,2 @@
+- `dreaderd`: the "Listening on" startup line goes to `path_generallog` like dreaderd's other messages, instead of always to syslog.
+- e2e tests: every test site logs to its own `log/general.log` (`path_generallog`), so a test run no longer writes into the host's syslog; a failing test prints that log.
