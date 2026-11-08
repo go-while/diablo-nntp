@@ -165,3 +165,35 @@ func TestNewsgroupsEmptyEntryActive(t *testing.T) {
 		}
 	}
 }
+
+// TestNewsgroupsSpaceInsideList: RFC 5536 3.1.4 allows white space only around the commas of the
+// Newsgroups: list; white space between two names is taken as a separator like a comma, so every
+// group the list names is looked up. The feeder stopped reading the list at the first such space:
+// "x a,b" was refused NotInActive although b is in the active file (D-206).
+func TestNewsgroupsSpaceInsideList(t *testing.T) {
+	s := NewSite(t, SiteOptions{
+		Config: map[string]string{
+			"active":     "on",
+			"activedrop": "yes",
+			"xrefhost":   PathHost,
+		},
+		Setup: func(tb testing.TB, s *Site) {
+			s.WriteFile(tb, "dactive.kp", "")
+			s.Run(tb, "dgrpctl", "-s", "newgroup", OpenGroup, "y")
+		},
+	})
+	for _, c := range []struct {
+		groups string
+		want   string
+	}{
+		{"e2e.nogroup e2e.nogroup2," + OpenGroup, "235"}, // the active group after a space and a comma
+		{"e2e.nogroup " + OpenGroup, "235"},              // a space and no comma
+		{"e2e.nogroup  ,  " + OpenGroup, "235"},          // spaces on both sides of the comma (allowed)
+		{"e2e.nogroup e2e.nogroup2,e2e.nogroup3", "437"}, // no group in the active file: refused
+	} {
+		line := offerGroups(t, s, c.groups)
+		if !strings.HasPrefix(line, c.want) {
+			t.Errorf("IHAVE with Newsgroups: %q: %q, want %s", c.groups, line, c.want)
+		}
+	}
+}

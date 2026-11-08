@@ -15,6 +15,8 @@ Prototype int AddrConfigFlag(const char *host);
 Prototype char *ConfigGets(char *buf, int size, FILE *fi, int *tooLong);
 Prototype const char *PatSubst(char *buf, size_t size, const char *pat, const char *dir);
 Prototype void diablo_strlcpy(char *d, const char *s, int ssize, int dsize);
+Prototype void NormalizeNewsgroups(char *ng);
+Prototype int NewsgroupsSpaceInName(const char *ng);
 Prototype void diablo_strlcpynl(char *d, const char *s, int ssize, int dsize);
 Prototype void diablo_strlcpynl2(char *d, int trimwsafter, const char *s, int ssize, int dsize);
 Prototype const char *PatExpand(const char *pat);
@@ -71,6 +73,60 @@ void
 diablo_strlcpynl(char *d, const char *s, int ssize, int dsize)
 {
     diablo_strlcpynl2(d, 0, s, ssize, dsize);
+}
+
+/*
+ * NormalizeNewsgroups() - rewrite a Newsgroups: value in place as a plain
+ * comma list: each run of commas, spaces, tabs, CRs and LFs becomes one
+ * comma, with none at either end.  RFC 5536 3.1.4 allows white space only
+ * around the commas; white space between two names is taken as a separator
+ * too, so every name in the list is still seen (D-206).
+ */
+void
+NormalizeNewsgroups(char *ng)
+{
+    char *d = ng;
+    const char *s;
+    int sep = 0;
+
+    for (s = ng; *s; ++s) {
+	if (*s == ',' || *s == ' ' || *s == '\t' || *s == '\r' || *s == '\n') {
+	    sep = 1;
+	    continue;
+	}
+	if (sep && d != ng)
+	    *d++ = ',';
+	sep = 0;
+	*d++ = *s;
+    }
+    *d = 0;
+}
+
+/*
+ * NewsgroupsSpaceInName() - 1 if a Newsgroups: value has white space
+ * between two names, not next to a comma ("a b,c"); RFC 5536 3.1.4
+ * allows white space only around the commas.
+ */
+int
+NewsgroupsSpaceInName(const char *ng)
+{
+    const char *p;
+    int prev = 0;	/* the last character that is not white space */
+
+    for (p = ng; *p; ++p) {
+	if (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') {
+	    const char *q = p;
+
+	    while (*q == ' ' || *q == '\t' || *q == '\r' || *q == '\n')
+		++q;
+	    if (prev != 0 && prev != ',' && *q != 0 && *q != ',')
+		return(1);
+	    p = q - 1;
+	    continue;
+	}
+	prev = *p;
+    }
+    return(0);
 }
 
 void 

@@ -646,6 +646,7 @@ NNPostBuffer(Connection *conn)
     int canKeyMerge = 0;
     char *errMsg = NULL;
     char *newsGrps = NULL, *newsGrps2 = NULL;
+    int badNgLine = 0;		/* white space between two Newsgroups names */
     char *base = MBNormalize(&conn->co_ArtBuf, &artLen);
 #ifdef	POST_CRYPTXTRACE
     char xtrace[256];
@@ -761,6 +762,23 @@ NNPostBuffer(Connection *conn)
 #else
 		errMsg = "441 Invalid newsgroup(s) line\r\n";
 #endif
+	    }
+	    /*
+	     * White space between two names (RFC 5536 3.1.4 allows it only
+	     * around the commas) is refused.  The group checks below go by
+	     * the plain comma list, as the feeder does (D-206); it goes into
+	     * a copy of its own size for zfreeStr().
+	     */
+	    if (NewsgroupsSpaceInName(newsGrps2)) {
+		badNgLine = 1;
+	    } else {
+		int n = strlen(newsGrps2) + 1;
+		char *t;
+
+		NormalizeNewsgroups(newsGrps2);
+		t = zallocStr(&conn->co_MemPool, newsGrps2);
+		zfree(&conn->co_MemPool, newsGrps2, n);
+		newsGrps2 = t;
 	    }
 	} else if (HeaderCmp(base, "Organization", &errMsg) == 0) {
 	    haveOrganization = 1;
@@ -958,6 +976,8 @@ NNPostBuffer(Connection *conn)
 
     if (haveNewsgroups == 0) {
 	errMsg = "441 Required \"Newsgroups\" header is missing\r\n";
+    } else if (badNgLine) {
+	errMsg = "441 Invalid newsgroup(s) line\r\n";
     } else if ((refused = PostRefusedGroup(newsGrps2, &refusedStatus)) != NULL) {
 	/*
 	 * Like INN: status "n" means no local posting (articles from

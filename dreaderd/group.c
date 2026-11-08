@@ -225,6 +225,20 @@ NNFeedOverview(Connection *conn)
 	    break;
 	} else if (ch == 'n' && strncasecmp(line, "Newsgroups:", 11) == 0) {
 	    newsgroups = zallocStrTrim2(&conn->co_MemPool, ',', line + 11, l - 11);
+	    /*
+	     * White space between names separates them (D-206).  The plain
+	     * list can be shorter, and zfreeStr() frees strlen() + 1, so it
+	     * goes into a copy of its own size.
+	     */
+	    {
+		int n = strlen(newsgroups) + 1;
+		char *t;
+
+		NormalizeNewsgroups(newsgroups);
+		t = zallocStr(&conn->co_MemPool, newsgroups);
+		zfree(&conn->co_MemPool, newsgroups, n);
+		newsgroups = t;
+	    }
 	} else if (ch == 'm' && strncasecmp(line, "Message-ID:", 11) == 0) {
 	    msgid = zallocStrTrim2(&conn->co_MemPool, 0, line + 11, l - 11);
 	} else if (ch == 's' && strncasecmp(line, "Subject:", 8) == 0) {
