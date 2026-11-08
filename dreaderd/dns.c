@@ -3767,6 +3767,7 @@ InstallAccessCache(void) {
     /* The first entry is the default */
 
     bzero(&vserver, sizeof(vserver));
+    vserver.vs_Rfc5537 = 1;
     strcpy(vserver.vs_Name, "DEFAULT");
     if (DOpts.ReaderHostName != NULL)
     strncpy(vserver.vs_HostName, DOpts.ReaderHostName, sizeof(vserver.vs_HostName) - 1);
@@ -4098,8 +4099,8 @@ InstallAccessCache(void) {
 		 * F-07: "rfc5537 yes" makes dreaderd post as RFC 5536/5537
 		 * want (Injection-Info and Injection-Date in place of the old
 		 * trace headers, ".POSTED" in the Path, the Date window, the
-		 * strict Message-ID syntax).  The default, no, posts as
-		 * dreaderd always did.  "legacytrace yes" is the older
+		 * strict Message-ID syntax).  The default is yes; no posts
+		 * as dreaderd always did.  "legacytrace yes" is the older
 		 * spelling of "rfc5537 no", "legacytrace no" of yes.
 		 */
 		if (*val && strcmp(opt, "rfc5537") == 0) {
@@ -4591,6 +4592,7 @@ InstallAccessCache(void) {
 	if (strcmp(opt, "vserverdef") == 0) {
 	    copt = OPT_VSERVER;
 	    bzero(&vserver, sizeof(vserver));
+	    vserver.vs_Rfc5537 = 1;
 	    if (accessValue(vserver.vs_Name, sizeof(vserver.vs_Name), val, opt, linecount, 0) < 0)
 		parseError = 1;
 	    continue;

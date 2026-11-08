@@ -8,11 +8,13 @@ import (
 // TestReaderPostMessageIDSyntax (F-07 step 4, RFC 5537 3.5 step 2): with "rfc5537 yes" a
 // poster's Message-ID must be a msg-id as RFC 5536 3.1.3 defines it, "<" dot-atom-text "@"
 // (dot-atom-text or a "[...]" literal) ">", at most 250 octets and without a comment; others
-// are refused with 441. Without rfc5537 (the default) the old lax check stays: such ids are
+// are refused with 441. This is the default. With rfc5537 no the old lax check stays: ids are
 // taken, as INN does with laxmid. Before, there was only the lax check.
 func TestReaderPostMessageIDSyntax(t *testing.T) {
 	strict := newDatePoster(t, injAccess(""), nil)
-	lax := newDatePoster(t, DefaultReaderAccess, nil)
+	defaults := newDatePoster(t, DefaultReaderAccess, nil)
+	lax := newDatePoster(t, plainAccess("    rfc5537 no\n"), nil)
+	legacy := newDatePoster(t, plainAccess("    legacytrace yes\n"), nil)
 	// tok makes each id unique: the test name and a counter, a dot-atom-text
 	tok := func() string {
 		id := msgID(t)
@@ -46,7 +48,7 @@ func TestReaderPostMessageIDSyntax(t *testing.T) {
 				name string
 				d    *datePoster
 				want int
-			}{{"rfc5537", strict, c.strict}, {"default", lax, c.lax}} {
+			}{{"rfc5537", strict, c.strict}, {"default", defaults, c.strict}, {"rfc5537 no", lax, c.lax}, {"legacytrace yes", legacy, c.lax}} {
 				if m.want == 0 {
 					continue
 				}

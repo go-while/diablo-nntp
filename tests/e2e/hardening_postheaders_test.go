@@ -61,7 +61,7 @@ func TestPostBareLFHeaders(t *testing.T) {
 	} {
 		head := func(sep string) string {
 			return "From: a <a@example.invalid>" + "\r\n" + "Newsgroups: e2e.test" + "\r\n" +
-				"Subject: s" + sep + h + sep + "Date: Mon, 02 Jan 2006 15:04:05 -0700" + "\r\n" +
+				"Subject: s" + sep + h + sep + "Date: " + rfcDate(0) + "\r\n" +
 				"Message-ID: <hardening-bare" + string(rune('a'+i)) + "@e2e.test>\r\n\r\nbody\r\n"
 		}
 		if code := postRaw(t, s, head("\r\n")); code != 441 {

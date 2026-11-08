@@ -256,43 +256,49 @@ var injDateRe = regexp.MustCompile(`^(Mon|Tue|Wed|Thu|Fri|Sat|Sun), [0-3][0-9] (
 // "showposthost no" leaves posting-host out, and with a cryptpw posting-host, posting-account
 // and X-Trace decrypt with it (also with contrib/xtrace/decrypt-aes.sh).
 // Injection-Date is added only where dreaderd supplied the Message-ID or Date, and a poster's
-// own is kept. Without rfc5537 (the default) and with "legacytrace yes", the old trace headers
+// own is kept. With "rfc5537 no" and with "legacytrace yes", the old trace headers
 // are written and no Injection-* header.
 func TestReaderPostInjectionInfo(t *testing.T) {
 	access := injAccess("    postpath " + PathHost + "\n    abuseto abuse@example.invalid\n")
 
-	t.Run("rfc5537", func(t *testing.T) {
-		head := postHead(t, access, "Message-ID: "+msgID(t), "Date: "+time.Now().UTC().Format(time.RFC1123Z))
-		if p := headerValue(head, "Path"); p != PathHost+"!.POSTED!not-for-mail" {
-			t.Errorf("Path %q, want %s!.POSTED!not-for-mail", p, PathHost)
-		}
-		ii := headerValue(head, "Injection-Info")
-		for _, want := range []string{PathHost + ";", `posting-host="`, "127.0.0.1", `mail-complaints-to="abuse@example.invalid"`} {
-			if !strings.Contains(ii, want) {
-				t.Errorf("Injection-Info %q, want it to contain %s", ii, want)
+	for _, mode := range []string{"rfc5537 yes", "default", "legacytrace no"} {
+		t.Run(mode, func(t *testing.T) {
+			access := strings.Replace(access, "    rfc5537 yes\n", "", 1)
+			if mode != "default" {
+				access = strings.Replace(access, "    hostname "+PathHost+"\n", "    hostname "+PathHost+"\n    "+mode+"\n", 1)
 			}
-		}
-		if !strings.HasPrefix(ii, PathHost+";") {
-			t.Errorf("Injection-Info %q does not start with the path-identity %s", ii, PathHost)
-		}
-		// posting-host is a <host-value>: the address, or name:address, without a port
-		if m := regexp.MustCompile(`posting-host="([^"]*)"`).FindStringSubmatch(ii); m == nil ||
-			!(m[1] == "127.0.0.1" || regexp.MustCompile(`^[A-Za-z0-9.-]+:127\.0\.0\.1$`).MatchString(m[1])) {
-			t.Errorf("Injection-Info %q: posting-host is not 127.0.0.1 or name:127.0.0.1", ii)
-		}
-		// the "post ok" log line has the Message-ID, which finds the post: no logging-data
-		if strings.Contains(ii, "logging-data=") {
-			t.Errorf("Injection-Info %q has a logging-data", ii)
-		}
-		if strings.Contains(ii, "posting-account=") {
-			t.Errorf("Injection-Info %q has a posting-account without showposter yes", ii)
-		}
-		for _, h := range []string{"NNTP-Posting-Host", "X-Trace", "X-Complaints-To", "Injection-Date"} {
-			if hasHeader(head, h) {
-				t.Errorf("post has %s: %q (Message-ID and Date were the poster's)", h, headerValue(head, h))
+			head := postHead(t, access, "Message-ID: "+msgID(t), "Date: "+time.Now().UTC().Format(time.RFC1123Z))
+			if p := headerValue(head, "Path"); p != PathHost+"!.POSTED!not-for-mail" {
+				t.Errorf("Path %q, want %s!.POSTED!not-for-mail", p, PathHost)
 			}
-		}
-	})
+			ii := headerValue(head, "Injection-Info")
+			for _, want := range []string{PathHost + ";", `posting-host="`, "127.0.0.1", `mail-complaints-to="abuse@example.invalid"`} {
+				if !strings.Contains(ii, want) {
+					t.Errorf("Injection-Info %q, want it to contain %s", ii, want)
+				}
+			}
+			if !strings.HasPrefix(ii, PathHost+";") {
+				t.Errorf("Injection-Info %q does not start with the path-identity %s", ii, PathHost)
+			}
+			// posting-host is a <host-value>: the address, or name:address, without a port
+			if m := regexp.MustCompile(`posting-host="([^"]*)"`).FindStringSubmatch(ii); m == nil ||
+				!(m[1] == "127.0.0.1" || regexp.MustCompile(`^[A-Za-z0-9.-]+:127\.0\.0\.1$`).MatchString(m[1])) {
+				t.Errorf("Injection-Info %q: posting-host is not 127.0.0.1 or name:127.0.0.1", ii)
+			}
+			// the "post ok" log line has the Message-ID, which finds the post: no logging-data
+			if strings.Contains(ii, "logging-data=") {
+				t.Errorf("Injection-Info %q has a logging-data", ii)
+			}
+			if strings.Contains(ii, "posting-account=") {
+				t.Errorf("Injection-Info %q has a posting-account without showposter yes", ii)
+			}
+			for _, h := range []string{"NNTP-Posting-Host", "X-Trace", "X-Complaints-To", "Injection-Date"} {
+				if hasHeader(head, h) {
+					t.Errorf("post has %s: %q (Message-ID and Date were the poster's)", h, headerValue(head, h))
+				}
+			}
+		})
+	}
 
 	t.Run("dreaderd adds the Message-ID", func(t *testing.T) {
 		head := postHead(t, access)
@@ -364,8 +370,8 @@ func TestReaderPostInjectionInfo(t *testing.T) {
 		}
 	})
 
-	t.Run("cryptpw without rfc5537", func(t *testing.T) {
-		head := postHead(t, plainAccess("    cryptpw secret\n"), "Message-ID: "+msgID(t))
+	t.Run("cryptpw with rfc5537 no", func(t *testing.T) {
+		head := postHead(t, plainAccess("    rfc5537 no\n    cryptpw secret\n"), "Message-ID: "+msgID(t))
 		xt := headerValue(head, "X-Trace")
 		if !strings.HasPrefix(xt, "C=") {
 			t.Fatalf("X-Trace %q, want C=<base64>", xt)
@@ -417,7 +423,6 @@ func TestReaderPostInjectionInfo(t *testing.T) {
 	})
 
 	for _, c := range []struct{ name, vs string }{
-		{"default", ""},
 		{"rfc5537 no", "    rfc5537 no\n"},
 		{"legacytrace yes", "    rfc5537 yes\n    legacytrace yes\n"},
 	} {

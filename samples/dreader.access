@@ -88,12 +88,12 @@
 #		     octets, no comment. Refused with 441 otherwise; with
 #		     'no', some posters' ids with "..", two "@" or a
 #		     comment are taken.
-#		   'no', the default, posts as dreaderd always did. Either
+#		   'no' posts as dreaderd always did. Either
 #		   way a post with Injection-Info:, Xref: or ".POSTED" in its
 #		   Path is refused, and a Date: dreaderd adds ends in
 #		   "+0000 (UTC)".
 #		   "legacytrace yes" is an older spelling of "rfc5537 no".
-#		   Default: no.
+#		   Default: yes.
 #
 # canlockadmin	 : A secret for Cancel-Lock (RFC 8315), the same as INN's
 #		   canlockadmin in inn-secrets.conf. With it, every local post
