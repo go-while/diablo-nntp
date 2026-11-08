@@ -99,7 +99,10 @@ func TestDnewsfeedsLogAfter(t *testing.T) {
 // TestDnewslinkLogAfterMarks: dnewslink -l N writes a "mark" status line after every N offered
 // articles, and -l 0 writes none (the final totals stay). dnewslink started its counter at -1,
 // so -l 1 never logged a mark and the default ones came at 999, 1999, ... (go-while's review
-// of #352); the counter now starts at 0.
+// of #352); the counter now starts at 0. The totals restart with each pass (batch file or
+// connlife session), and so does the mark count: with two batch files (-N 2) both get their
+// marks. Before, the count kept growing while the totals restarted, so a later pass logged
+// fewer marks or none.
 func TestDnewslinkLogAfterMarks(t *testing.T) {
 	for _, tc := range []struct {
 		l       string
@@ -129,5 +132,29 @@ func TestDnewslinkLogAfterMarks(t *testing.T) {
 				t.Errorf("dnewslink -l %s: %d mark lines, want %d..%d:\n%s", tc.l, n, tc.minMark, tc.maxMark, log)
 			}
 		})
+	}
+}
+
+// TestDnewslinkLogAfterMarksTwoPasses: dnewslink -N 2 -l 1 over two batch files of 3 articles
+// each logs a mark after every article of both passes.
+func TestDnewslinkLogAfterMarksTwoPasses(t *testing.T) {
+	peer, _ := newPeer(t, &fakeserver.PeerOptions{})
+	s := NewSite(t, SiteOptions{Newsfeeds: OutNewsfeeds,
+		Config: map[string]string{"path_generallog": "%s/general.log"}})
+	s.Inject(t, "e2e.test", 3)
+	s.waitQueue(t, OutLabel, 3)
+	q := s.ReadFile(t, "dqueue/"+OutLabel)
+	// the same three articles in two batch files: marks count offers, accepted or not
+	s.WriteFile(t, "dqueue/"+OutLabel+".S00000", q)
+	s.WriteFile(t, "dqueue/"+OutLabel+".S00001", q)
+	out := s.dnewslink(t, peer, OutLabel+".S%05d", "-S", "0", "-N", "2", "-l", "1")
+	noSanitizerReport(t, out)
+	var log string
+	testkit.WaitFor(t, 10*time.Second, "two final lines in general.log", func() bool {
+		log = generalLog(s)
+		return strings.Count(log, " final secs=") >= 2
+	})
+	if n := strings.Count(log, " mark secs="); n < 6 {
+		t.Errorf("dnewslink -N 2 -l 1 over two batches of 3: %d mark lines, want at least 6:\n%s", n, log)
 	}
 }
