@@ -221,7 +221,7 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-205](#d-205-a-supersede-is-logged-as-a-cancel) | Low | A supersede is logged as a cancel | fixed (#351) |
 | [D-206](#d-206-white-space-between-two-newsgroups-names-hides-the-names-after-it) | Low | White space between two Newsgroups names hides the names after it | fixed (#358) |
 
-Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315), [F-02 configure script](#f-02-configure-script-for-the-build-options), [F-03 refeed a whole spool](#f-03-refeed-a-whole-spool-to-another-server), [F-04 NoCeM notices](#f-04-nocem-notices), [F-05 init scripts](#f-05-init-scripts-and-adm-script-replacements), [F-06 Perl authentication](#f-06-perl-authentication-for-dreaderd).
+Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315), [F-02 configure script](#f-02-configure-script-for-the-build-options), [F-03 refeed a whole spool](#f-03-refeed-a-whole-spool-to-another-server), [F-04 NoCeM notices](#f-04-nocem-notices), [F-05 init scripts](#f-05-init-scripts-and-adm-script-replacements), [F-06 Perl authentication](#f-06-perl-authentication-for-dreaderd), [F-07 POST as an injecting agent](#f-07-dreaderd-post-as-an-rfc-55365537-injecting-agent), [F-08 smaller overview](#f-08-smaller-overview-overview-fields-only-one-copy-per-article).
 
 ## Details
 
@@ -1509,3 +1509,27 @@ checks (Message-ID, Date, line length); (5) reserved group names; (6) the header
 items, Lines among them; (7) removing posttrailer.
 
 Status: (1) fixed (#304). (2) fixed (#313). (3) fixed (#319). (4) the Message-ID syntax: PR, together with the vserverdef option `rfc5537` (default no) that now turns (2) to (4) on together; `legacytrace` is its older spelling. The refusals of (1) and the +0000 Date stay on either way. The line length of (4) and the rest open; (6)'s Lines part needs D-174 first.
+
+### F-08 Smaller overview: overview fields only, one copy per article
+dreaderd stores the whole header block of every article in the overview data files (`data.*`), once
+for each group the article is in (`dreaderd/group.c`, `WriteOverview()`: the header block, plus the
+Xref it adds, is appended to each group's data file). Only control messages also keep their body.
+INN stores one overview line per group (the overview fields, a few hundred bytes). This is why
+HDR and XPAT work on any header in Diablo, but it makes the overview large: on Jesse's archive
+test zone (2026-11-07) the overview is 122 GB on ZFS at a compression ratio of 2x, so about 244 GB
+of header data, for a 276 GB spool; INN's overview for the whole 5+ TB spool is 202 GB. Old text
+articles have short bodies and long headers (Path, References), and a crosspost multiplies them.
+A design would have to settle:
+- Which headers to keep: the overview fields (Subject, From, Date, Message-ID, References, Bytes,
+  Lines, Xref) plus a configured list of extra headers, as INN's `extraoverviewadvertised` and
+  `extraoverviewhidden`. HDR and XPAT on any other header then read the article from the spool,
+  or answer as INN does. LIST OVERVIEW.FMT follows the list.
+- One copy per article: store the header record once and point every group's index slot at it
+  (the slot already has the Message-ID hash, `oa_MsgHash`), so a crosspost costs one index
+  slot per group instead of one header copy per group. Expire then has to count references.
+- The on-disk change: a new data format next to the old one, `dexpireover -R` to convert, and
+  what a reader of an older version does with converted groups.
+Until then, `dexpireover -z` (dexpire.ctl `Z`) gzips old data files whole, which compresses header
+text much better than file system compression in small records; dreaderd reads them through a
+temporary file (tested by `TestReaderReadsGzipData`). Status: open, after v7. Requested by
+go-while on 2026-11-08, from the archive zone's numbers.
