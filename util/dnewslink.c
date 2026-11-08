@@ -348,7 +348,7 @@ int SpoolErrno = 0;		/* and the errno, for SPOOL_ERR */
  */
 int GoneCnt, BadCnt, SpoolErrCnt;
 int GoneTotal, BadTotal, SpoolErrTotal;
-int LogAfterCount = -1;
+int LogAfterCount;	/* next OfferedTotal to log a mark at (-l), set per pass */
 int CloseReopenCount = -1;
 int KillFd = -1;
 int WritesLosing = 0;
@@ -687,7 +687,6 @@ main(int ac, char **av)
 	}
     }
 
-    LogAfterCount += LogAfter;
     CloseReopenCount += CloseReopenAfter;
 
     if (ConnLife < 0 || (ConnLife > 0 && !RealTimeOpt)) {
@@ -764,6 +763,7 @@ main(int ac, char **av)
 
 	Stats->SentStats.ConnectTotal = 0;
 	Stats->SentStats.OfferedTotal = 0;
+	LogAfterCount = LogAfter;	/* marks count from this pass's totals */
 	Stats->SentStats.AcceptedTotal = 0;
 	Stats->SentStats.RefusedTotal = 0;
 	Stats->SentStats.RejectedTotal = 0;
@@ -1359,7 +1359,8 @@ main(int ac, char **av)
 		     * Log stats after specified count
 		     */
 
-		    if (LogAfterCount > 0 && Stats->SentStats.OfferedTotal >= LogAfterCount) {
+		    /* -l 0: no marks; -l N: one after every N offered articles */
+		    if (LogAfter > 0 && Stats->SentStats.OfferedTotal >= LogAfterCount) {
 			loggedMark = 1;
 			logStats("mark");
 			LogAfterCount += LogAfter;
