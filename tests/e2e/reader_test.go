@@ -71,6 +71,7 @@ func NewReaderSite(tb testing.TB, o ReaderOptions) *Site {
 		tb.Fatalf("NewReaderSite: Spool or SpoolAddr is required: %v", err)
 	}
 	s := &Site{Dir: tb.TempDir(), Bin: bin(tb)}
+	logGeneralOnFailure(tb, s)
 	port := testkit.FreePort(tb)
 	s.Addr = net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
 	s.Env = []string{"DIABLO_CONFIG_PATH=" + filepath.Join(s.Dir, "diablo.config")}
@@ -87,6 +88,8 @@ func NewReaderSite(tb testing.TB, o ReaderOptions) *Site {
 		"readerdns":       "1",
 		"readerfeedforks": "1",
 		"readercache":     "off",
+		// Log into the site's own log directory, not the host's syslog (the default).
+		"path_generallog": "%s/general.log",
 	}
 	for k, v := range o.Config {
 		conf[k] = s.expand(v)

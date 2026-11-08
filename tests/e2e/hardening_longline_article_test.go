@@ -107,7 +107,7 @@ func TestReaderCommandLongLine(t *testing.T) {
 	// A close/reset before the 500 is also valid: the limit was enforced
 	// while the client was still writing.  Verify that it was the line limit,
 	// rather than an unrelated reader failure.  Needs a FreeBSD/illumos CI run.
-	if !strings.Contains(s.Proc.Stderr(), "MBReadLine line longer than") {
+	if !strings.Contains(s.logOutput(), "MBReadLine line longer than") {
 		t.Fatalf("oversized command closed without enforcing the line limit: %v", err)
 	}
 }

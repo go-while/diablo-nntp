@@ -126,6 +126,7 @@ expire * trad
 func NewSite(tb testing.TB, o SiteOptions) *Site {
 	tb.Helper()
 	s := &Site{Dir: tb.TempDir(), Bin: bin(tb)}
+	logGeneralOnFailure(tb, s)
 	port := testkit.FreePort(tb)
 	s.Addr = net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
 	s.Env = []string{"DIABLO_CONFIG_PATH=" + filepath.Join(s.Dir, "diablo.config")}
@@ -142,6 +143,8 @@ func NewSite(tb testing.TB, o SiteOptions) *Site {
 		"hsize":         "256k", // the smallest diablo accepts
 		"remember":      "7",
 		"feederrtstats": "none",
+		// Log into the site's own log directory, not the host's syslog (the default).
+		"path_generallog": "%s/general.log",
 	}
 	for k, v := range o.Config {
 		conf[k] = s.expand(v)
@@ -180,6 +183,26 @@ func NewSite(tb testing.TB, o SiteOptions) *Site {
 		return err == nil
 	})
 	return s
+}
+
+// logGeneralOnFailure logs the site's general log when the test failed. The site logs
+// there (path_generallog) instead of the host's syslog, so syslog lines no longer reach
+// the daemon's stderr, which proc logs. Registered before the daemon starts, so it runs
+// after the daemon is stopped.
+func logGeneralOnFailure(tb testing.TB, s *Site) {
+	tb.Cleanup(func() {
+		if !tb.Failed() {
+			return
+		}
+		if g := generalLog(s); g != "" {
+			tb.Logf("%s/log/general.log:\n%s", s.Dir, g)
+		}
+	})
+}
+
+// logOutput is what the site's daemon logged: its general log, then its own output.
+func (s *Site) logOutput() string {
+	return generalLog(s) + s.Proc.Stderr()
 }
 
 // expand replaces @home@ and @bindir@ in a configuration file.
