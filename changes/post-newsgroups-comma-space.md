@@ -1,0 +1,1 @@
+- dreaderd: POST accepts white space after a comma in `Newsgroups:` (`a, b`), as RFC 5536 3.1.4 allows; it was refused with 441 Invalid newsgroup(s) line while `a ,b` was accepted. With `POST_CLEANUPNEWSGROUPSLINE` the header is rewritten as the plain comma list (D-207).
