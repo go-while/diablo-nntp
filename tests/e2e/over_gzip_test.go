@@ -184,11 +184,30 @@ func TestReaderReadsGzipData(t *testing.T) {
 		}
 	}
 
-	out := s.Run(t, "dexpireover", "-y", "-z", "-v")
+	// -n -v: the per-file lines, nothing compressed
+	out := s.Run(t, "dexpireover", "-y", "-z", "-n", "-v")
+	if n := strings.Count(out, " compression\n"); n != 2 || !strings.Contains(out, "2 files would be compressed") ||
+		strings.Count(out, "not eligible for compression: proximity") != 2 {
+		t.Errorf("dexpireover -y -z -n -v: want 2 \"compression\" and 2 \"proximity\" lines and \"2 files would be compressed\":\n%s", out)
+	}
+	if _, gz := dataFiles(); len(gz) != 0 {
+		t.Fatalf("dexpireover -n compressed %q", gz)
+	}
+
+	// without -v: only the totals, no line per data file (the cron runs it so)
+	out = s.Run(t, "dexpireover", "-y", "-z")
 	plain, gz := dataFiles()
 	if len(gz) != 2 || len(plain) != 2 {
 		t.Fatalf("after dexpireover -z: %d .gz and %d plain data files, want 2 and 2:\n%q\n%q\n%s",
 			len(gz), len(plain), gz, plain, out)
+	}
+	if !strings.Contains(out, "Compressed 2 files") {
+		t.Errorf("dexpireover -y -z: no \"Compressed 2 files\":\n%s", out)
+	}
+	for _, l := range []string{"No .gz on ", "not eligible for compression", " compression\n"} {
+		if strings.Contains(out, l) {
+			t.Errorf("dexpireover -y -z without -v printed a per-file line (%q):\n%s", l, out)
+		}
 	}
 
 	// a fresh dreaderd: no data file of before is still open in a cache

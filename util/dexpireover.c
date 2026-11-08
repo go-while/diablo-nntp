@@ -1152,13 +1152,17 @@ ProcessOverviewFile(const char *dirPath, const char *name, int type)
 		remove(path);
 	}
 
-	/* check to see if we might want to compress this file */
+	/*
+	 * check to see if we might want to compress this file; the per-file
+	 * lines only with -v or -n (VerboseOpt is -1 without them)
+	 */
 	if (CompressDataOpt && strcmp(path + strlen(path) - 3, ".gz")) {
 	    OverExpire save;
 	    (void)GetOverExpire(group->gr_GroupName, &save);
-	    printf("No .gz on %s artBase %lld\n", path, artBase);
+	    if (DebugOpt)
+		printf("No .gz on %s artBase %lld\n", path, artBase);
 	    if (artBase >= group->gr_EndNo - save.oe_StoreGZMinFiles * oh.oh_DataEntries) {
-		if (VerboseOpt) {
+		if (VerboseOpt > 0) {
 		    printf("Overview %s not eligible for compression: proximity to end of data (%lld/%lld), %d files protected\n", path, artBase, group->gr_EndNo, save.oe_StoreGZMinFiles);
 		}
 	    } else {
@@ -1166,11 +1170,11 @@ ProcessOverviewFile(const char *dirPath, const char *name, int type)
 		struct stat st;
 		if (stat(path, &st) == 0) {
 		    if (st.st_mtime > time(NULL) - save.oe_StoreGZHours * 3600) {
-		        if (VerboseOpt) {
+		        if (VerboseOpt > 0) {
 			    printf("Overview %s not eligible for compression: modified too recently\n", path);
 		        }
 		    } else {
-		        if (VerboseOpt) {
+		        if (VerboseOpt > 0) {
 			    printf("Overview %s compression\n", path);
 		        }
 			if (!ForReal) {
