@@ -586,6 +586,82 @@ canLockEmit(MBufHead *mb, const char *name, const char *list)
     MBWrite(mb, "\r\n", 2);
 }
 
+/* RFC 5536 3.1.4: reserved whole names/components, not substrings. */
+static int
+PostReservedName(const char *name, int len, int control, int point)
+{
+    int start = 0;
+    int i;
+
+    if ((len == 6 && strncasecmp(name, "poster", 6) == 0) ||
+	(len == 4 && strncasecmp(name, "junk", 4) == 0))
+	return(1);
+    for (i = 0; i <= len; ++i) {
+	if (i == len || name[i] == '.') {
+	    int n = i - start;
+	    const char *p = name + start;
+
+	    if (n == 3 && (strncasecmp(p, "all", 3) == 0 ||
+			  strncasecmp(p, "ctl", 3) == 0))
+		return(1);
+	    if (start == 0 &&
+		((n == 7 && strncasecmp(p, "example", 7) == 0) ||
+		 (n == 2 && strncasecmp(p, "to", 2) == 0 && (!point || len <= 3)) ||
+		 (n == 7 && strncasecmp(p, "control", 7) == 0 && !control)))
+		return(1);
+	    start = i + 1;
+	}
+    }
+    return(0);
+}
+
+static const char *
+PostReservedGroup(const char *groups, int control, int point)
+{
+    static char name[MAXGNAME + 1];
+
+    while (*groups) {
+	const char *end = strchr(groups, ',');
+	int n = end ? (int)(end - groups) : (int)strlen(groups);
+
+	if (PostReservedName(groups, n, control, point)) {
+	    snprintf(name, sizeof(name), "%.*s", n, groups);
+	    return(name);
+	}
+	if (!end)
+	    break;
+	groups = end + 1;
+    }
+    return(NULL);
+}
+
+/*
+ * Strict POST policy for RFC 5536 2.2: each physical header line is at
+ * most 998 octets without CRLF. Folded fields may be longer in total.
+ * Stop at the header/body separator; transport limits handle the body.
+ */
+static int
+PostHeaderLinesFit(const char *base, int len)
+{
+    int start = 0;
+    int i;
+
+    for (i = 0; i < len; ++i) {
+	if (base[i] == '\n') {
+	    int n = i - start;
+
+	    if (n > 0 && base[i - 1] == '\r')
+		--n;
+	    if (n == 0)
+		return(1);
+	    if (n > 998)
+		return(0);
+	    start = i + 1;
+	}
+    }
+    return(len - start <= 998);
+}
+
 /* RFC 5536 3.3.1: an unsigned decimal, no comments or folding. */
 static int
 PostLinesValid(const char *header, int len)
@@ -653,6 +729,8 @@ NNPostBuffer(Connection *conn)
     int haveLines = 0;
     int haveInjDate = 0;
     int haveApproved = 0;
+    int controlPurpose = 0;
+    int pointPurpose = 0;
     const char *refused;
     char refusedStatus = 0;
     static char refusedMsg[MAXGNAME + 64];
@@ -704,6 +782,10 @@ NNPostBuffer(Connection *conn)
     }
 #endif
 
+
+    /* RFC 5536 2.2 permits acceptance; strict mode chooses to refuse it. */
+    if (!errMsg && vs->vs_Rfc5537 && !PostHeaderLinesFit(base, artLen))
+	errMsg = "441 Header line too long (limit 998 octets)\r\n";
 
     /*
      * Output Path: line
@@ -918,6 +1000,16 @@ NNPostBuffer(Connection *conn)
 	    /* RFC 5537 3.5 step 2; before, it was removed silently */
 	    errMsg = "441 Xref header not allowed in a post\r\n";
 	} else if (HeaderCmp(base, "Control", &errMsg) == 0) {
+		const char *p = base + 8;
+		const char *end = base + l;
+
+		while (p < end && (*p == ' ' || *p == '\t'))
+		    ++p;
+		controlPurpose = p < end && *p != '\r' && *p != '\n';
+		pointPurpose = ((end - p > 5 && strncasecmp(p, "ihave", 5) == 0 &&
+				isspace((unsigned char)p[5])) ||
+			       (end - p > 6 && strncasecmp(p, "sendme", 6) == 0 &&
+				isspace((unsigned char)p[6])));
 		if (strncasecmp(base, "Control: cancel", 15)) {
 			if (! (conn->co_Auth.dr_Flags & DF_CONTROLPOST)) {
 				errMsg = "441 Illegal \"Control\" message rejected\r\n";
@@ -1011,6 +1103,12 @@ NNPostBuffer(Connection *conn)
 	errMsg = "441 Required \"Newsgroups\" header is missing\r\n";
     } else if (badNgLine) {
 	errMsg = "441 Invalid newsgroup(s) line\r\n";
+    } else if (vs->vs_Rfc5537 &&
+	       (refused = PostReservedGroup(newsGrps2, controlPurpose, pointPurpose)) != NULL) {
+	/* RFC 5537 3.5 step 4; the legacy opt-out permits local agreements. */
+	snprintf(refusedMsg, sizeof(refusedMsg),
+	    "441 Reserved newsgroup name: %s\r\n", refused);
+	errMsg = refusedMsg;
     } else if ((refused = PostRefusedGroup(newsGrps2, &refusedStatus)) != NULL) {
 	/*
 	 * Like INN: status "n" means no local posting (articles from
