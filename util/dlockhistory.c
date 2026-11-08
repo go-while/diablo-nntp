@@ -31,9 +31,15 @@
 
 #include "defs.h"
 
+/*
+ * -a: lock the grown file once it is this fraction (1/64) larger than what is locked.
+ * The unlocked tail holds the newest records, which a running feeder keeps cached.
+ */
+#define GROW_SHIFT	6
+
 void
 usage(char *progname) {
-    printf("Usage: %s [-f] [-s sleeptime] historypath\n\n", progname);
+    printf("Usage: %s [-a] [-f] [-s sleeptime] historypath\n\n", progname);
     printf(" Mlock the history hash table into memory\n");
     printf("\t-a           = lock the entire history file into memory\n");
     printf("\t-f           = don't check for root user\n");
@@ -44,6 +50,93 @@ usage(char *progname) {
     printf("  Doing so can compromise security. Make sure you understand\n");
     printf("  what it does, how and why before trusting it.\n");
     exit(1);
+}
+
+/*
+ * Map and lock the whole file; its size and inode come from the open file, so a file
+ * replaced after the caller's stat() is never mapped past its end. Exits on failure:
+ * mlock() refused (privilege, RLIMIT_MEMLOCK, memory) is a setup problem to fix.
+ */
+static char *
+lockFile(const char *path, off_t *size, ino_t *ino)
+{
+    struct stat st;
+    char *map;
+    int fd;
+
+    if ((fd = open(path, O_RDONLY)) < 0 || fstat(fd, &st) < 0) {
+	fprintf(stderr, "dlockhistory: %s: %s\n", path, strerror(errno));
+	exit(1);
+    }
+    if (st.st_size <= 0 || (off_t)(size_t)st.st_size != st.st_size) {
+	fprintf(stderr, "dlockhistory: %s: cannot map %lld bytes\n", path, (long long)st.st_size);
+	exit(1);
+    }
+    map = xmap(NULL, (size_t)st.st_size, PROT_READ, MAP_SHARED, fd, 0);
+    close(fd);
+    if (map == NULL) {
+	fprintf(stderr, "dlockhistory: mmap %s: %s\n", path, strerror(errno));
+	exit(1);
+    }
+    if (mlock(map, (size_t)st.st_size) < 0) {
+	fprintf(stderr, "dlockhistory: mlock %lld bytes of %s: %s\n",
+		(long long)st.st_size, path, strerror(errno));
+	exit(1);
+    }
+    *size = st.st_size;
+    *ino = st.st_ino;
+    printf("Locked %lld bytes of %s\n", (long long)st.st_size, path);
+    fflush(stdout);
+    return(map);
+}
+
+static void
+unlockFile(char *map, off_t size)
+{
+    munlock(map, (size_t)size);
+    xunmap((void *)map, (size_t)size);
+}
+
+/*
+ * -a: keep the whole file locked. The feeder appends to the history all the time, so
+ * a grown file is locked before the old lock is dropped (the pages stay locked
+ * throughout), and only after GROW_SHIFT growth. A replaced (or shorter) file is
+ * locked after the old lock is dropped, since two locked copies may not fit.
+ */
+static void
+lockWhole(const char *path, int sleepTime)
+{
+    struct stat st;
+    char *map;
+    off_t mapsize;
+    ino_t ino;
+
+    map = lockFile(path, &mapsize, &ino);
+    for (;;) {
+	sleep(sleepTime);
+	if (stat(path, &st) != 0)
+	    continue;	/* between dhisexpire's unlink and rename */
+	if (st.st_ino == ino && st.st_size >= mapsize) {
+	    char *nmap;
+	    off_t nsize;
+	    ino_t nino;
+
+	    if (st.st_size - mapsize < (mapsize >> GROW_SHIFT))
+		continue;
+	    nmap = lockFile(path, &nsize, &nino);
+	    unlockFile(map, mapsize);
+	    map = nmap;
+	    mapsize = nsize;
+	    if (nino == ino)
+		continue;
+	    ino = nino;	/* replaced after the stat: already locked, just report it */
+	} else {
+	    unlockFile(map, mapsize);
+	    map = lockFile(path, &mapsize, &ino);
+	}
+	printf("New history\n");
+	fflush(stdout);
+    }
 }
 
 int
@@ -58,8 +151,6 @@ main(int argc, char **argv) {
     struct stat st;
     int PrevIno = -1;
     int Force = 0;
-    char *map = NULL;
-    off_t mapsize = 0;
     int All = 0;
 
     optind = 1;
@@ -93,37 +184,22 @@ main(int argc, char **argv) {
 	exit(1);
     }
 
+    if (All)
+	lockWhole(HistoryFile, SleepTime);	/* does not return */
+
     while (1) {
 	if (!Opened) {
 	    if (stat(HistoryFile, &st) == 0)
 		PrevIno = st.st_ino;
-	    if (All) {
-		int fd;
-		mapsize = st.st_size;
-		fd = open(HistoryFile, O_RDONLY);
-		if (fd == -1) {
-		    perror("history open");
-		    exit(1);
-		}
-		map = xmap(NULL, mapsize, PROT_READ, MAP_SHARED, fd, 0);
-		close(fd);
-		mlock(map, mapsize);
-	    } else {
-		HistoryOpen(HistoryFile, HGF_MLOCK);
-	    }
+	    HistoryOpen(HistoryFile, HGF_MLOCK);
 	    Opened = 1;
 	}
 	sleep(SleepTime);
-	if (stat(HistoryFile, &st) != 0 || st.st_ino != PrevIno ||
-					(All && st.st_size != mapsize)) {
-	    if (All && map != NULL) {
-		munlock(map, mapsize);
-		xunmap((void *)map, mapsize);
-	    } else {
-		HistoryClose();
-	    }
+	if (stat(HistoryFile, &st) != 0 || st.st_ino != PrevIno) {
+	    HistoryClose();
 	    Opened = 0;
 	    printf("New history\n");
+	    fflush(stdout);
 	}
     }
 }
