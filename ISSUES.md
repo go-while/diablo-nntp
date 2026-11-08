@@ -1290,7 +1290,7 @@ Fixed (#351): `ExecuteSupersedes()` gets the new article's Message-ID from `grou
 
 ### D-206 White space between two Newsgroups names hides the names after it
 `lib/active.c`, `util/diablo.c`, `dreaderd/group.c`: RFC 5536 3.1.4 allows white space in the `Newsgroups:` list only around the commas. The feeder's walks over the list (`InActive()`, `GenerateXRef()` and the others) end a name at a space or tab but go on only after a comma, so in `x a,b` they stop after `x`: with `activedrop yes` the article is refused NotInActive although `b` is in the active file. dreaderd splits the list at the commas and cuts each entry at its first space or tab, so `a b` is filed under `a` only and `x a,b` not under `a`.
-Fixed (#358): `NormalizeNewsgroups()` (`lib/subs.c`) rewrites the value as a plain comma list (each run of commas and white space becomes one comma); the feeder calls it on its copy of the list and dreaderd on the header value, so every name is looked up. Tests: `TestNewsgroupsSpaceInsideList`, `TestReaderNewsgroupsSpace`.
+Fixed (#358): `NormalizeNewsgroups()` (`lib/subs.c`) rewrites the value as a plain comma list (each run of commas and white space becomes one comma); the feeder calls it on its copy of the list and dreaderd on the header value, so every name is looked up. dreaderd's POST refuses a list with white space between two names (441 Invalid newsgroup(s) line, `NewsgroupsSpaceInName()`) and runs its group checks on the plain list. Tests: `TestNewsgroupsSpaceInsideList`, `TestReaderNewsgroupsSpace`, `TestReaderPostNewsgroupsSpace`.
 
 ## Feature requests
 
