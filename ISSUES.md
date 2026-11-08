@@ -218,7 +218,7 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-202](#d-202-the-first-ldap-login-after-a-start-spends-its-deadline-on-a-host-name-lookup) | Low | The first LDAP login after a start spends its deadline on a host name lookup | fixed (#343) |
 | [D-203](#d-203-readercanlock-none-looks-up-every-cancel-target-before-refusing-it) | Low | readercanlock none looks up every cancel target before refusing it | fixed (#349) |
 | [D-204](#d-204-historyadd-wraps-the-record-number-past-232---1-records) | Low | HistoryAdd wraps the record number past 2^32 - 1 records | open |
-| [D-205](#d-205-a-supersede-is-logged-as-a-cancel) | Low | A supersede is logged as a cancel | open |
+| [D-205](#d-205-a-supersede-is-logged-as-a-cancel) | Low | A supersede is logged as a cancel | fixed (#351) |
 
 Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315), [F-02 configure script](#f-02-configure-script-for-the-build-options), [F-03 refeed a whole spool](#f-03-refeed-a-whole-spool-to-another-server), [F-04 NoCeM notices](#f-04-nocem-notices), [F-05 init scripts](#f-05-init-scripts-and-adm-script-replacements), [F-06 Perl authentication](#f-06-perl-authentication-for-dreaderd).
 
@@ -1284,6 +1284,7 @@ Plan (go-while/cc-1's proposal): `HistoryAdd()` refuses to add when the next rec
 ### D-205 A supersede is logged as a cancel
 `dreaderd/control.c`: `ExecuteSupersedes()` turns the `Supersedes:` header of an article into a made-up `cancel <target>` command and runs it through `ExecuteControl()` and `CtlCancel()`, so the readercanlock decision is logged as `cancel <target>: <why>, N item(s)`, the same line as for a real cancel control message, and the dcontrol.ctl log gets `>> control cancel, ...`. Neither says that the request came from a Supersedes header, nor which article superseded the target, so a refused supersede (under the default `readercanlock require-auth` most targets have no Cancel-Lock and are not withdrawn) can't be told apart from a refused cancel. With `readercanlock all` `CtlCancel()` logs no decision at all, for cancels and supersedes alike, although samples/diablo.config says "Every decision is logged". Found by Jesse while looking at supersedes after #19.
 Plan: `ExecuteSupersedes()` tells `CtlCancel()` that the request is a supersede, and the log line says `supersede <target> by <Message-ID of the new article>: <why>, N item(s)`; the dcontrol.ctl log the same. Decide whether `readercanlock all` logs its decisions too (then at LOG_INFO), or the sample says that it doesn't.
+Fixed (#351): `ExecuteSupersedes()` gets the new article's Message-ID from `group.c` and sets it for its made-up cancel; `CtlCancel()` then logs `supersede <target> by <new Message-ID>: <why>, N item(s)` and the dcontrol.ctl log gets `>> control supersede, ...`. A real cancel still logs `cancel <target>: ...`. `readercanlock all` still logs no decision; samples/diablo.config and README.READER say so for supersedes ("nothing is logged under 'all'"). Tests: `TestCancelLockNoneNoLookup` and `TestSupersedeLogLine`.
 
 ## Feature requests
 

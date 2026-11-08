@@ -451,15 +451,17 @@
     withdrawn, and only with a matching key.  Set 'readercanlock all' for the
     old behaviour (every cancel executed).
 
-    A supersede is checked as a cancel of the article it names: the
-    dcontrol.ctl 'cancel' rule (for the From of the new article) and
-    readercanlock decide, with the Cancel-Key of the new article.  The new
-    article is stored in any case.  Under require-auth an article without a
-    Cancel-Lock (most articles from other sites) is not withdrawn by a
-    supersede, so the old and the new article both stay;
-    'readercanlock auth' withdraws such articles and still protects locked
-    ones.  INN's docancels treats supersede requests the same way.  The log
-    line is the cancel's, "cancel <id>: ..." (none under 'all').
+    An article with a Supersedes header is always accepted and stored,
+    whatever readercanlock is set to.  The article it replaces is removed
+    only if a cancel of that article would be allowed: the dcontrol.ctl
+    'cancel' rule must match the From of the new article, and readercanlock
+    checks the Cancel-Key of the new article against the Cancel-Lock of the
+    old one.  So under require-auth an old article without a Cancel-Lock
+    (most articles from other sites) stays, next to its replacement; under
+    'readercanlock auth' it is removed, and an old article with a
+    Cancel-Lock is still protected.  INN's docancels treats supersede
+    requests the same way.  The decision is logged as
+    "supersede <old id> by <new id>: ..." (nothing is logged under 'all').
 
     The locks and keys are computed by libcanlock, the library INN uses, so
     articles posted through INN with the same secrets stay cancellable.

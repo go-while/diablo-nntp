@@ -32,7 +32,7 @@
 
 Prototype void ExecuteControl(Connection *conn, const char *ctl, const char *art, int artLen);
 Prototype void FreeControl(Connection *conn);
-Prototype void ExecuteSupersedes(Connection *conn, const char *supers, const char *art, int artLen);
+Prototype void ExecuteSupersedes(Connection *conn, const char *supers, const char *msgid, const char *art, int artLen);
 
 Control *ParseControl(Connection *conn, const char *cmd, const char *from, const char *newsgroup);
 void SendMail(FILE *logf, long lpos, char *hostname, const char *cmd, const char *arg);
@@ -775,6 +775,24 @@ canLockDecide(OverInfo *ov, artno_t artNo, const char *ckey, const char **why)
     return(-1);
 }
 
+/*
+ * While ExecuteSupersedes() runs its dummy cancel: the Message-ID of the
+ * superseding article, so that CtlCancel() logs the decision as
+ * "supersede <old> by <new>" instead of "cancel <old>" (D-205).
+ */
+static const char *SupersedeBy;
+
+/* "cancel <id>" or "supersede <id> by <new id>" for the logs */
+static const char *
+cancelWhat(char *buf, size_t size, const char *id)
+{
+    if (SupersedeBy != NULL)
+	snprintf(buf, size, "supersede %s by %s", id, SupersedeBy);
+    else
+	snprintf(buf, size, "cancel %s", id);
+    return(buf);
+}
+
 const char *
 CtlCancel(Connection *conn, Control *ctl, const char **cmd, const char *art, const char *body, int bodyLen, char *groups)
 {
@@ -785,6 +803,8 @@ CtlCancel(Connection *conn, Control *ctl, const char **cmd, const char *art, con
     char ckeyBuf[1024];
     const char *ckey = NULL;
     const char *why = NULL;
+    char what[2 * MAXMSGIDLEN + 32];
+    const char *kind = (SupersedeBy != NULL) ? "supersede" : "cancel";
 
     /*
      * readercanlock none executes no cancel or supersede (as INN's docancels
@@ -794,11 +814,12 @@ CtlCancel(Connection *conn, Control *ctl, const char **cmd, const char *art, con
      */
     if (DOpts.ReaderCanLock == CANLOCK_NONE) {
 	why = "refused (readercanlock none)";
-	logit(LOG_NOTICE, "cancel %s: %s, 0 item(s)", cmd[1], why);
+	logit(LOG_NOTICE, "%s: %s, 0 item(s)",
+	    cancelWhat(what, sizeof(what), cmd[1]), why);
 	if (DebugOpt)
 	    printf("CtlCancel %s: %s, not looked up: %s\n", cmd[1], why, safestr(groups, ""));
 	if (ctl->ct_LogFo)
-	    fprintf(ctl->ct_LogFo, ">> control cancel, not looked up, %s\n", why);
+	    fprintf(ctl->ct_LogFo, ">> control %s, not looked up, %s\n", kind, why);
 	return(NULL);
     }
 
@@ -869,12 +890,13 @@ CtlCancel(Connection *conn, Control *ctl, const char **cmd, const char *art, con
     }
     if (DOpts.ReaderCanLock != CANLOCK_ALL)
 	logit((isValidCancel > 0) ? LOG_INFO : LOG_NOTICE,
-	    "cancel %s: %s, %d item(s)", cmd[1], why, (isValidCancel > 0) ? count : 0);
+	    "%s: %s, %d item(s)", cancelWhat(what, sizeof(what), cmd[1]), why,
+	    (isValidCancel > 0) ? count : 0);
     if (DebugOpt)
 	printf("CtlCancel %s: %s, %d items found: %s\n", cmd[1], why, count, safestr(groups, ""));
     if (ctl->ct_LogFo) {
-	fprintf(ctl->ct_LogFo, ">> control cancel, %d items found, %s\n",
-	    count, why);
+	fprintf(ctl->ct_LogFo, ">> control %s, %d items found, %s\n",
+	    kind, count, why);
     }
     return(NULL);
 }
@@ -2272,12 +2294,14 @@ CgRun(Connection *conn, Control *ctl, const char *art, int artLen, const char *b
  */
 
 void
-ExecuteSupersedes(Connection *conn, const char *supers, const char *art, int artLen)
+ExecuteSupersedes(Connection *conn, const char *supers, const char *msgid, const char *art, int artLen)
 {
     char *cmd = zalloc(&conn->co_MemPool, strlen(supers) + 32);
 
     sprintf(cmd, "cancel %s", supers);
+    SupersedeBy = (msgid != NULL && *msgid) ? msgid : "<unknown>";
     ExecuteControl(conn, cmd, art, artLen);
+    SupersedeBy = NULL;
     zfree(&conn->co_MemPool, cmd, strlen(supers) + 32);
 }
 
