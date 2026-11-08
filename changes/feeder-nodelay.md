@@ -1,0 +1,1 @@
+- Disable Nagle buffering on accepted feeder TCP connections so small streaming replies do not stall behind a peer's delayed acknowledgments.

@@ -1185,8 +1185,16 @@ DoAccept(int lfd)
 	int fds[2] = { -1, -1 };
 	int ok = 0;
 	int count = 0;
+	int noDelay = 1;
 
 	fcntl(fd, F_SETFL, 0);
+	/* A streaming peer can wait for replies before sending more input.
+	 * Do not hold a small reply for its delayed ACK of the previous one.
+	 */
+	if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY,
+	    (void *)&noDelay, sizeof(noDelay)) < 0)
+	    logit(LOG_WARNING, "Unable to set feeder TCP_NODELAY: %s",
+		strerror(errno));
 
 	/*
 	 * Handle connection limit.  Note that we assume the TCP write buffer
