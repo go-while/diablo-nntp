@@ -1377,7 +1377,7 @@ all 4775 records, 1843 of them still on the spool), so entries whose file is gon
 skipped, and `file=` is an absolute path, so the spool directory has to be stripped to get the
 `D.xxxxxxxx/B.xxxx` form. Raised by the maintainer.
 
-**Status: PR (#310)** (maintainer, 2026-11-04: "Take F-03"): a new tool, `dspoolrefeed`, writes the queue files the recipe above builds by hand. It walks the history, reads each Message-ID from the article on the spool (compressed spool objects too) and checks it against the history hash, and leaves out expired, header-only and vanished entries. `-a days` and `-g groups` select; `-n` splits the output for parallel dnewslinks. The man page dspoolrefeed(8) covers the receiving side.
+**Status: done (#310, merged 2026-11-05)** (maintainer, 2026-11-04: "Take F-03"): a new tool, `dspoolrefeed`, writes the queue files the recipe above builds by hand. It walks the history, reads each Message-ID from the article on the spool (compressed spool objects too) and checks it against the history hash, and leaves out expired, header-only and vanished entries. `-a days` and `-g groups` select; `-n` splits the output for parallel dnewslinks. The man page dspoolrefeed(8) covers the receiving side.
 
 ### F-04 NoCeM notices
 INN can act on NoCeM notices (signed notices from third parties that list the Message-IDs of
@@ -1513,7 +1513,7 @@ because the legacy mode adds none); (3) the Date format and window; (4) syntax
 checks (Message-ID, Date, line length); (5) reserved group names; (6) the header-preservation
 items, Lines among them; (7) removing posttrailer.
 
-Status: (1) fixed (#304). (2) fixed (#313). (3) fixed (#319). (4) the Message-ID syntax: PR, together with the vserverdef option `rfc5537` (default yes) that now turns (2) to (4) on together; `legacytrace` is its older spelling. The refusals of (1) and the +0000 Date stay on either way. The line length of (4), (5) and the remaining header-preservation items of (6) are open; (6)'s Lines part and (7) are PR (#365), using D-174 (#312) for overview line counts.
+Status: (1) fixed (#304). (2) fixed (#313). (3) fixed (#319). (4) the Message-ID syntax: fixed (#322), together with the vserverdef option `rfc5537` (default yes) that now turns (2) to (4) on together; `legacytrace` is its older spelling. The refusals of (1) and the +0000 Date stay on either way. The line length of (4), (5) and the remaining header-preservation items of (6) are open; (6)'s Lines part and (7) are PR (#365), using D-174 (#312) for overview line counts.
 
 ### F-08 Smaller overview: overview fields only, one copy per article
 dreaderd stores the whole header block of every article in the overview data files (`data.*`), once
