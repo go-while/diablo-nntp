@@ -274,3 +274,46 @@ func TestInstallStopsWhenFindFails(t *testing.T) {
 		}
 	}
 }
+
+// TestInstallReportsAdminUpdates checks that every advertised replacement exists,
+// including after another reinstall, and that local maintenance files survive.
+func TestInstallReportsAdminUpdates(t *testing.T) {
+	root := sourceRoot(t)
+	for _, mode := range []string{"install", "bininstall"} {
+		t.Run(mode, func(t *testing.T) {
+			stage := t.TempDir()
+			install(t, root, "install", stage)
+			names := []string{"daily.atrim", "diablo-ctl.conf", "rc.news", "rot", "rot.conf"}
+			local := []byte("# local maintenance settings\n")
+			for _, name := range names {
+				path := filepath.Join(stage, "news", "adm", name)
+				if err := os.WriteFile(path, local, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for pass := 0; pass < 2; pass++ {
+				out := install(t, root, mode, stage)
+				for _, name := range names {
+					path := filepath.Join(stage, "news", "adm", name)
+					note := "NOTE: " + path + " was changed locally; the new version is " + path + ".new\n"
+					if !strings.Contains(out, note) {
+						t.Errorf("pass %d: missing exact note %q in output:\n%s", pass, note, out)
+					}
+					if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, local) {
+						t.Errorf("local %s changed: %q, %v", name, got, err)
+					}
+					want, err := os.ReadFile(filepath.Join(root, "samples", "adm", name))
+					if err != nil {
+						t.Fatal(err)
+					}
+					if got, err := os.ReadFile(path + ".new"); err != nil || !bytes.Equal(got, want) {
+						t.Errorf("replacement %s.new: %q, %v; want sample content", name, got, err)
+					}
+					if _, err := os.Lstat(path + ".new.new"); !os.IsNotExist(err) {
+						t.Errorf("unexpected %s.new.new: %v", name, err)
+					}
+				}
+			}
+		})
+	}
+}
