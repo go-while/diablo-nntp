@@ -459,8 +459,10 @@
     old one.  So under require-auth an old article without a Cancel-Lock
     (most articles from other sites) stays, next to its replacement; under
     'readercanlock auth' it is removed, and an old article with a
-    Cancel-Lock is still protected.  INN's docancels treats supersede
-    requests the same way.  The decision is logged as
+    Cancel-Lock is still protected.  If the replacement arrives before the
+    old article, the removal is dropped, as for an early cancel (only 'all'
+    remembers it for later).  INN's docancels treats supersede requests the
+    same way.  The decision is logged as
     "supersede <old id> by <new id>: ..." (nothing is logged under 'all').
 
     The locks and keys are computed by libcanlock, the library INN uses, so
