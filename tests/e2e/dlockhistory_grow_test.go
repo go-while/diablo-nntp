@@ -71,7 +71,8 @@ func TestDlockhistoryAllGrows(t *testing.T) {
 			return strings.Contains(out.String(), what) || exited()
 		})
 		if !strings.Contains(out.String(), what) {
-			if strings.Contains(out.String(), "mlock") {
+			// Only the first lock may skip: after it, an mlock failure is a regression.
+			if !strings.Contains(out.String(), "Locked ") && strings.Contains(out.String(), "mlock") {
 				t.Skipf("mlock refused to this user here: %s", out.String())
 			}
 			t.Fatalf("dlockhistory exited without %q:\n%s", what, out.String())
