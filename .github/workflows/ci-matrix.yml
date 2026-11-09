@@ -257,7 +257,7 @@ jobs:
           path: tests/e2e
 
       - name: Build and test on OmniOS
-        uses: vmactions/omnios-vm@9576f0b6d15e7696548409baa533bc0a339caf42 # v1.3.7
+        uses: vmactions/omnios-vm@aeee92416495d9685b2997d954f6b063ae5b832d # v1.3.8
         with:
           prepare: |
             # Same 127.0.0.x client source addresses as the FreeBSD job needs.
