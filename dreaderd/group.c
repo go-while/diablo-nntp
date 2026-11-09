@@ -893,14 +893,20 @@ WriteOverview(Connection *conn, ArtNumAss *an, const char *group, const char *xr
     return(err);
 }
 
-void FlushOverCache(void)
+/*
+ * Free cached groups nobody is using, about 'want' of them (whole hash
+ * chains are freed), or all of them when want < 0.  Returns how many.
+ */
+static int
+FreeOverCache(int want)
 {
     OverInfo **pov;
     OverInfo *ov;
     int i;
+    int freed = 0;
     static int OI = 0;
 
-    for (i = 0; i < OVHSIZE; ++i) {
+    for (i = 0; i < OVHSIZE && (want < 0 || freed < want); ++i) {
 	int ai = OI;
 	OI = (ai + 1) & OVHMASK;
 
@@ -910,11 +916,52 @@ void FlushOverCache(void)
 		*pov = ov->ov_Next;
 		FreeOverInfo(ov);
 		--NumOverInfo;
+		++freed;
 	    } else {
 		pov = &ov->ov_Next;
 	    }
 	}
     }
+    return(freed);
+}
+
+void FlushOverCache(void)
+{
+    (void)FreeOverCache(-1);
+}
+
+/*
+ * The number of groups whose overview files this process keeps open
+ * (readerovcache), lowered once to what the descriptor limit allows: the
+ * readers select() on their clients, so the limit is at most FD_SETSIZE,
+ * and each cached group holds about two descriptors (index and data file),
+ * besides one per client and a reserve for the server connections, logs
+ * and databases.
+ */
+static int
+OverCacheMax(void)
+{
+    static int max = 0;
+
+    if (max == 0) {
+	struct rlimit rl;
+	long lim = FD_SETSIZE;
+	long fit;
+
+	if (getrlimit(RLIMIT_NOFILE, &rl) == 0 && rl.rlim_cur != RLIM_INFINITY &&
+	    (long)rl.rlim_cur < lim)
+	    lim = (long)rl.rlim_cur;
+	fit = (lim - DOpts.ReaderThreads - 64) / 2;
+	if (fit < 2)
+	    fit = 2;
+	max = DOpts.ReaderOvCache >= 2 ? DOpts.ReaderOvCache : 8;
+	if (max > fit) {
+	    logit(LOG_NOTICE, "readerovcache %d lowered to %ld: descriptor limit %ld, readerthreads %d",
+		max, fit, lim, DOpts.ReaderThreads);
+	    max = (int)fit;
+	}
+    }
+    return(max);
 }
 
 OverInfo *
@@ -944,28 +991,8 @@ GetOverInfo(const char *group)
 	 * we may not be able to.
 	 */
 
-	if (NumOverInfo >= OV_CACHE_MAX) {
-	    int i;
-	    int freeup = OV_CACHE_MAX / 2;
-	    static int OI = 0;
-
-	    for (i = 0; i < OVHSIZE && freeup; ++i) {
-		int ai = OI;
-		OI = (ai + 1) & OVHMASK;
-
-		pov = &OvHash[ai];
-		while ((ov = *pov) != NULL) {
-		    if (ov->ov_Refs == 0) {
-			*pov = ov->ov_Next;
-			FreeOverInfo(ov);
-			--NumOverInfo;
-			--freeup;
-		    } else {
-			pov = &ov->ov_Next;
-		    }
-		}
-	    }
-	}
+	if (NumOverInfo >= OverCacheMax())
+	    (void)FreeOverCache(OverCacheMax() / 2);
 	ov = zalloc(&SysMemPool, sizeof(OverInfo));
 	ov->ov_Group = zallocStr(&SysMemPool, group);
 	/*
@@ -1002,8 +1029,13 @@ again:
 	    if (MakeGroupDirectory(path) == -1)
 		logit(LOG_ERR, "Error on overview dir open/create: %s (%s)",
 						path, strerror(errno));
-	    else
+	    else {
 		ov->ov_OFd = xopen(O_RDWR|O_CREAT, 0644, "%s", path);
+		/* out of descriptors: drop the cached groups and try once more */
+		if (ov->ov_OFd < 0 && (errno == EMFILE || errno == ENFILE) &&
+		    FreeOverCache(-1) > 0)
+		    ov->ov_OFd = xopen(O_RDWR|O_CREAT, 0644, "%s", path);
+	    }
 	}
 	if (ov->ov_OFd < 0) {
 	    logit(LOG_ERR, "Error on overview open/create for group %s: %s (%s)",
@@ -1681,6 +1713,11 @@ MakeOverHFile(OverInfo *ov, artno_t artNo, int create)
 	*pod = od = zalloc(&SysMemPool, sizeof(OverData));
         errno = 0;
 	hfd = xopen(O_RDWR|create, 0644, "%s/%s", MyGroupHome, gfname);
+	/* out of descriptors: drop the other cached groups and try once more */
+	if (hfd < 0 && (errno == EMFILE || errno == ENFILE) && FreeOverCache(-1) > 0) {
+	    errno = 0;
+	    hfd = xopen(O_RDWR|create, 0644, "%s/%s", MyGroupHome, gfname);
+	}
 #ifdef USE_ZLIB
 	/* a data file dexpireover -z compressed (not without zlib) */
 	if (hfd < 0 && ! create) {

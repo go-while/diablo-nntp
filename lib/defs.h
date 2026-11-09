@@ -241,6 +241,7 @@ struct DiabloOpts {
     int FeederRTStats;
     int ReaderForks;
     int ReaderThreads;
+    int ReaderOvCache;		/* readerovcache: groups with open overview files */
     int ReaderFeedForks;
     int ReaderDns;
     int ReaderDnsCacheTTL;	/* readerdnscachettl: seconds, 0 = off */

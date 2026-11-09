@@ -131,6 +131,7 @@ initDOpts(void)
     DOpts.ReaderMaxArtSize = OVER_HMAPSIZE / 2;
     DOpts.ReaderForks = 10;
     DOpts.ReaderThreads = 40;
+    DOpts.ReaderOvCache = 8;
     DOpts.ReaderFeedForks = 2;
     DOpts.ReaderDns = 5;
     DOpts.ReaderDnsCacheTTL = 300;
@@ -681,6 +682,20 @@ SetCommand(FILE *fo, char *cmd, char *opt, int *cmdErr)
 	} else if (strcasecmp(cmd, "readerauthtimeout") == 0) {
 	    if (opt && confRange(opt, 0, 300, &DOpts.ReaderAuthTimeout))
 		optErr = 0;
+	} else if (strcasecmp(cmd, "readerovcache") == 0) {
+	    /*
+	     * Groups whose overview files each dreaderd process keeps open;
+	     * lowered at start to what its descriptor limit allows.
+	     */
+	    char *e = NULL;
+	    long n = opt ? strtol(opt, &e, 10) : -1;
+
+	    if (opt && *opt && *e == 0 && n >= 2 && n <= 65536) {
+		DOpts.ReaderOvCache = (int)n;
+		optErr = 0;
+	    } else if (fo != NULL) {
+		fprintf(fo, "readerovcache requires a number of groups from 2 to 65536\n");
+	    }
 	} else if (strcasecmp(cmd, "readerthreads") == 0) {
 	    if (opt) {
 		DOpts.ReaderThreads = strtol(opt, NULL, 0);
@@ -1066,6 +1081,8 @@ dumpConfigReader(FILE *fo, char *cmd)
 	fprintf(fo, "readerdetaillog: %d\n", DOpts.ReaderDetailLog);
     if (cmd == NULL || strcasecmp(cmd, "readerthreads") == 0)
 	fprintf(fo, "readerthreads: %d\n", DOpts.ReaderThreads);
+    if (cmd == NULL || strcasecmp(cmd, "readerovcache") == 0)
+	fprintf(fo, "readerovcache: %d\n", DOpts.ReaderOvCache);
     if (cmd == NULL || strcasecmp(cmd, "readercache") == 0)
 	fprintf(fo, "readercache: %d\n", DOpts.ReaderCacheMode);
     if (cmd == NULL || strcasecmp(cmd, "readercachehashsize") == 0) {

@@ -39,7 +39,6 @@ struct DnsRes;
 #define OVERVIEW_FMT	"Subject:\r\nFrom:\r\nDate:\r\nMessage-ID:\r\nReferences:\r\nBytes:\r\nLines:\r\nXref:full\r\n"
 #define DEFMAXARTSINGROUP		1024
 #define DEFARTSINGROUP			512
-#define OV_CACHE_MAX			8	/* open fd's for N groups */
 #define MAX_OVERVIEW_CACHE_REGIONS      2       /* 256x2 = 512 articles   */
 #define MAX_CROSS			64
 
