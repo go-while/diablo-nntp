@@ -54,11 +54,12 @@ usage(char *progname) {
 
 /*
  * Map and lock the whole file; its size and inode come from the open file, so a file
- * replaced after the caller's stat() is never mapped past its end. Exits on failure:
- * mlock() refused (privilege, RLIMIT_MEMLOCK, memory) is a setup problem to fix.
+ * replaced after the caller's stat() is never mapped past its end. On failure, the
+ * first lock (must) exits: mlock() refused (privilege, RLIMIT_MEMLOCK, memory) is a
+ * setup problem to fix. A later one reports it and returns NULL, to retry next time.
  */
 static char *
-lockFile(const char *path, off_t *size, ino_t *ino)
+lockFile(const char *path, off_t *size, ino_t *ino, int must)
 {
     struct stat st;
     char *map;
@@ -66,28 +67,37 @@ lockFile(const char *path, off_t *size, ino_t *ino)
 
     if ((fd = open(path, O_RDONLY)) < 0 || fstat(fd, &st) < 0) {
 	fprintf(stderr, "dlockhistory: %s: %s\n", path, strerror(errno));
-	exit(1);
+	if (fd >= 0)
+	    close(fd);
+	goto fail;
     }
     if (st.st_size <= 0 || (off_t)(size_t)st.st_size != st.st_size) {
 	fprintf(stderr, "dlockhistory: %s: cannot map %lld bytes\n", path, (long long)st.st_size);
-	exit(1);
+	close(fd);
+	goto fail;
     }
     map = xmap(NULL, (size_t)st.st_size, PROT_READ, MAP_SHARED, fd, 0);
     close(fd);
     if (map == NULL) {
 	fprintf(stderr, "dlockhistory: mmap %s: %s\n", path, strerror(errno));
-	exit(1);
+	goto fail;
     }
     if (mlock(map, (size_t)st.st_size) < 0) {
 	fprintf(stderr, "dlockhistory: mlock %lld bytes of %s: %s\n",
 		(long long)st.st_size, path, strerror(errno));
-	exit(1);
+	xunmap((void *)map, (size_t)st.st_size);
+	goto fail;
     }
     *size = st.st_size;
     *ino = st.st_ino;
     printf("Locked %lld bytes of %s\n", (long long)st.st_size, path);
     fflush(stdout);
     return(map);
+fail:
+    if (must)
+	exit(1);
+    fflush(stderr);
+    return(NULL);
 }
 
 static void
@@ -101,7 +111,9 @@ unlockFile(char *map, off_t size)
  * -a: keep the whole file locked. The feeder appends to the history all the time, so
  * a grown file is locked before the old lock is dropped (the pages stay locked
  * throughout), and only after GROW_SHIFT growth. A replaced (or shorter) file is
- * locked after the old lock is dropped, since two locked copies may not fit.
+ * locked after the old lock is dropped, since two locked copies may not fit. After
+ * the first lock, a failed lock keeps what is locked (nothing, for a replaced file)
+ * and is tried again after the next sleep.
  */
 static void
 lockWhole(const char *path, int sleepTime)
@@ -111,19 +123,20 @@ lockWhole(const char *path, int sleepTime)
     off_t mapsize;
     ino_t ino;
 
-    map = lockFile(path, &mapsize, &ino);
+    map = lockFile(path, &mapsize, &ino, 1);
     for (;;) {
 	sleep(sleepTime);
 	if (stat(path, &st) != 0)
 	    continue;	/* between dhisexpire's unlink and rename */
-	if (st.st_ino == ino && st.st_size >= mapsize) {
+	if (map != NULL && st.st_ino == ino && st.st_size >= mapsize) {
 	    char *nmap;
 	    off_t nsize;
 	    ino_t nino;
 
 	    if (st.st_size - mapsize < (mapsize >> GROW_SHIFT))
 		continue;
-	    nmap = lockFile(path, &nsize, &nino);
+	    if ((nmap = lockFile(path, &nsize, &nino, 0)) == NULL)
+		continue;	/* the old lock stays */
 	    unlockFile(map, mapsize);
 	    map = nmap;
 	    mapsize = nsize;
@@ -131,8 +144,10 @@ lockWhole(const char *path, int sleepTime)
 		continue;
 	    ino = nino;	/* replaced after the stat: already locked, just report it */
 	} else {
-	    unlockFile(map, mapsize);
-	    map = lockFile(path, &mapsize, &ino);
+	    if (map != NULL)
+		unlockFile(map, mapsize);
+	    if ((map = lockFile(path, &mapsize, &ino, 0)) == NULL)
+		continue;	/* nothing locked until a later try works */
 	}
 	printf("New history\n");
 	fflush(stdout);
