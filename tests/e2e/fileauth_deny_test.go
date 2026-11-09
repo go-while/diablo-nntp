@@ -64,7 +64,7 @@ access 127.0.0.1 rf
 
 	skipIfInflight := func() {
 		t.Helper()
-		if strings.Contains(s.Proc.Stderr(), "descriptors in flight") {
+		if strings.Contains(s.logOutput(), "descriptors in flight") {
 			t.Skip("this user has too many descriptors in flight (other processes of the same user); the 64-descriptor limit cannot be tested here")
 		}
 	}

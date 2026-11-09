@@ -734,11 +734,11 @@ main(int ac, char **av)
 #endif
 	    listen(lfd, READER_LISTEN_BACKLOG);
 	    if (bl->bl_Host != NULL && strchr(bl->bl_Host, ':') != NULL)
-		syslog(LOG_INFO, "Listening on [%s]:%s",
+		logit(LOG_INFO, "Listening on [%s]:%s",
 					bl->bl_Host ? bl->bl_Host : "ALL",
 					bl->bl_Port);
 	    else
-		syslog(LOG_INFO, "Listening on %s:%s",
+		logit(LOG_INFO, "Listening on %s:%s",
 					bl->bl_Host ? bl->bl_Host : "ALL",
 					bl->bl_Port);
 	    AddThread("acceptor", lfd, -1, THREAD_LISTEN, -1, 0);

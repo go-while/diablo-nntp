@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -109,7 +110,9 @@ func TestDjoblogUsage(t *testing.T) {
 			t.Errorf("djoblog %q: exit status %d, want 2\n%s", args, rc, out)
 		}
 	}
-	if m, _ := filepath.Glob(filepath.Join(s.Dir, "log", "*.log")); len(m) != 0 {
+	m, _ := filepath.Glob(filepath.Join(s.Dir, "log", "*.log"))
+	m = slices.DeleteFunc(m, func(f string) bool { return filepath.Base(f) == "general.log" }) // diablo's own
+	if len(m) != 0 {
 		t.Errorf("logs written: %q", m)
 	}
 }

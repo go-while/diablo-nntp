@@ -25,12 +25,11 @@ import (
 const readerForksAutoCap = 64
 
 // readerForkPids returns the reader forks dreaderd -d reported on stdout ("forked reader
-// child process N"). That line is printed on every system; syslog reaches stderr only where
-// LOG_PERROR exists (not on illumos).
+// child process N"). That line is printed on every system.
 func readerForkPids(s *Site) map[string]bool {
 	pids := map[string]bool{}
 	re := regexp.MustCompile(`forked reader child process (\d+)`)
-	for _, m := range re.FindAllStringSubmatch(s.Proc.Stderr(), -1) {
+	for _, m := range re.FindAllStringSubmatch(s.logOutput(), -1) {
 		pids[m[1]] = true
 	}
 	return pids
@@ -45,7 +44,7 @@ func expectReaderForks(t *testing.T, s *Site, want int) {
 	time.Sleep(time.Second)
 	if n := len(readerForkPids(s)); n != want {
 		t.Errorf("%d reader forks connected to the spool, want %d; output:\n%s",
-			n, want, s.Proc.Stderr())
+			n, want, s.logOutput())
 	}
 }
 
@@ -59,15 +58,16 @@ func expectMaxConnects(t *testing.T, s *Site, want int) {
 	}
 }
 
-// autoForks returns N from the "readerforks auto: N" log line, -1 when it is missing, or
-// -2 when dreaderd's syslog does not reach stderr.
+// autoForks returns N from the "readerforks auto: N" log line, or -1 when it is missing.
+// The site logs to its general log (path_generallog), so the line is there on every
+// system, including those whose syslog has no LOG_PERROR (illumos).
 func autoForks(t *testing.T, s *Site) int {
 	t.Helper()
-	if !strings.Contains(s.Proc.Stderr(), "Waiting for connections") {
-		return -2 // syslog is not on stderr here (no LOG_PERROR)
+	if !strings.Contains(s.logOutput(), "Waiting for connections") {
+		t.Fatalf("dreaderd's log has no \"Waiting for connections\":\n%s", s.logOutput())
 	}
 	m := regexp.MustCompile(`readerforks auto: (\d+) \((\d+) CPUs available\)`).
-		FindStringSubmatch(s.Proc.Stderr())
+		FindStringSubmatch(s.logOutput())
 	if m == nil {
 		return -1
 	}
@@ -237,8 +237,8 @@ func TestReaderForksAuto(t *testing.T) {
 	_, spool := spoolStore(t)
 	s := NewReaderSite(t, ReaderOptions{Spool: spool,
 		Config: map[string]string{"readerforks": "auto", "readerfeedforks": "0"}})
-	if n := autoForks(t, s); n != -2 && n != want {
-		t.Errorf("readerforks auto log line gives %d, want %d; output:\n%s", n, want, s.Proc.Stderr())
+	if n := autoForks(t, s); n != want {
+		t.Errorf("readerforks auto log line gives %d, want %d; output:\n%s", n, want, s.logOutput())
 	}
 	expectReaderForks(t, s, want)
 	expectMaxConnects(t, s, want*4)
@@ -271,8 +271,8 @@ func TestReaderForksAutoTaskset(t *testing.T) {
 		Env: s.Env,
 		Dir: s.Dir,
 	}, s.Addr)
-	if n := autoForks(t, s); n != -2 && n != want {
-		t.Errorf("readerforks auto log line gives %d, want %d; output:\n%s", n, want, s.Proc.Stderr())
+	if n := autoForks(t, s); n != want {
+		t.Errorf("readerforks auto log line gives %d, want %d; output:\n%s", n, want, s.logOutput())
 	}
 	expectReaderForks(t, s, want)
 	expectMaxConnects(t, s, want*4)
@@ -307,8 +307,8 @@ func TestReaderForksAutoCgroupQuota(t *testing.T) {
 		Env: s.Env,
 		Dir: s.Dir,
 	}, s.Addr)
-	if n := autoForks(t, s); n != -2 && n != 2 {
-		t.Errorf("readerforks auto log line gives %d, want 2; output:\n%s", n, s.Proc.Stderr())
+	if n := autoForks(t, s); n != 2 {
+		t.Errorf("readerforks auto log line gives %d, want 2; output:\n%s", n, s.logOutput())
 	}
 	expectReaderForks(t, s, 2)
 }
@@ -350,8 +350,8 @@ func TestReaderForksAutoZone(t *testing.T) {
 	_, spool := spoolStore(t)
 	s := NewReaderSite(t, ReaderOptions{Spool: spool,
 		Config: map[string]string{"readerforks": "auto", "readerfeedforks": "0"}})
-	if n := autoForks(t, s); n != -2 && n != want {
-		t.Errorf("readerforks auto log line gives %d, want %d; output:\n%s", n, want, s.Proc.Stderr())
+	if n := autoForks(t, s); n != want {
+		t.Errorf("readerforks auto log line gives %d, want %d; output:\n%s", n, want, s.logOutput())
 	}
 	expectReaderForks(t, s, want)
 	expectMaxConnects(t, s, want*4)
@@ -396,8 +396,8 @@ func TestReaderForksNumber(t *testing.T) {
 		Config: map[string]string{"readerforks": "3", "readerfeedforks": "0"}})
 	expectReaderForks(t, s, 3)
 	expectMaxConnects(t, s, 12)
-	if strings.Contains(s.Proc.Stderr(), "readerforks auto") {
-		t.Errorf("readerforks 3 logged auto sizing; output:\n%s", s.Proc.Stderr())
+	if strings.Contains(s.logOutput(), "readerforks auto") {
+		t.Errorf("readerforks 3 logged auto sizing; output:\n%s", s.logOutput())
 	}
 }
 
