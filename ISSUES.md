@@ -1588,5 +1588,5 @@ Until then, on ZFS (from the 2026-11-08 and 2026-11-09 measurements):
 - `primarycache=all` on the spool when a reader header feed reads new articles right after
   they are written.
 
-Status: open, after v7. Requested by go-while on 2026-11-08; numbers from the archive test box
+Status: open, for v7. Requested by go-while on 2026-11-08; numbers from the archive test box
 on 2026-11-09.
