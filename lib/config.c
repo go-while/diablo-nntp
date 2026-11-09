@@ -765,12 +765,12 @@ SetCommand(FILE *fo, char *cmd, char *opt, int *cmdErr)
 	    }
 	} else if (strcasecmp(cmd, "rejectartswithnul") == 0) {
 	    if (opt) {
-		DOpts.RejectArtsWithNul = strtol(opt, NULL, 0);
+		DOpts.RejectArtsWithNul = enabled(opt);
 		optErr = 0;
 	    }
 	} else if (strcasecmp(cmd, "rejectartswithbarecr") == 0) {
 	    if (opt) {
-		DOpts.RejectArtsWithBareCR = strtol(opt, NULL, 0);
+		DOpts.RejectArtsWithBareCR = enabled(opt);
 		optErr = 0;
 	    }
 	} else if (strcasecmp(cmd, "newsmaster") == 0) {
