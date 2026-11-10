@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -54,4 +55,38 @@ func TestDeepRevXrefDuplicateGroup(t *testing.T) {
 	if strings.Count(x1, "e2e.test:") != 1 {
 		t.Logf("e2e.test is in the first Xref %d times", strings.Count(x1, "e2e.test:"))
 	}
+}
+
+// TestDeepRevXrefDuplicateGroupLongList: the same rule in a long list. From the 33rd name on
+// GenerateXRef() looks names up in a hash table instead of comparing with every name before
+// (a list of thousands of names cost a scan of the whole list per name). A repeat is found
+// whether the first one was among the first 32 names or after them.
+func TestDeepRevXrefDuplicateGroupLongList(t *testing.T) {
+	s := deepRevXrefSite(t, nil)
+	p := s.Peer(t)
+
+	ng := []string{"e2e.nogroup.a", "e2e.test"}
+	for i := 0; i < 40; i++ {
+		ng = append(ng, "e2e.nogroup.f"+strconv.Itoa(i))
+	}
+	// e2e.test again (first seen among the first 32), e2e.other twice (first seen after them)
+	ng = append(ng, "e2e.test", "e2e.other", "e2e.nogroup.f7", "e2e.other", "e2e.test")
+
+	id := msgID(t)
+	x := deepRevXref(t, p, id, newArticle(id, strings.Join(ng, ","), "long list", "body"))
+	seen := map[string]int{}
+	for _, f := range strings.Fields(x)[1:] {
+		name, _, _ := strings.Cut(f, ":")
+		seen[name]++
+	}
+	for name, n := range seen {
+		if n != 1 {
+			t.Errorf("%s is in the Xref %d times", name, n)
+		}
+	}
+	if seen["e2e.test"] != 1 || seen["e2e.other"] != 1 {
+		t.Errorf("Xref of an article with %d names in Newsgroups:, e2e.test three times and e2e.other twice: %q",
+			len(ng), x)
+	}
+	p.ExpectCmd(205, "QUIT")
 }
