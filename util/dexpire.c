@@ -1166,10 +1166,12 @@ updateHistory(void)
     History *h;
 
     /*
-     * Write expired article msgid hashes to a file if requested.
+     * Write expired article msgid hashes to a file if requested.  Not
+     * with -n: dexpireover -o would expire the overview of articles that
+     * are still in the history.
      */
 
-    if (WriteHashesToFileOpt == 1) {
+    if (WriteHashesToFileOpt == 1 && !NotForReal) {
 	const char *filename = PatDbExpand(DExpireOverListPat);
 
 	DExpOverList = PrivateFOpen(filename, "a", 0640);
