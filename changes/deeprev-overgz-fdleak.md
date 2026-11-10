@@ -1,0 +1,1 @@
+- dreaderd: a zero-length compressed overview data file leaked a temporary-file descriptor on every request.

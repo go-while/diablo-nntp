@@ -1701,6 +1701,10 @@ MakeOverHFile(OverInfo *ov, artno_t artNo, int create)
 		            gfname,
 		            strerror(errno)
 		        );
+			/* as on the other failures: the temporary file is not kept */
+			hfd = -1;
+			close(tmpfd);
+			tmpfd = -1;
 		    } else {
 		        zpos = zmap + (st.st_size >= 18 ? st.st_size - 4 : 0);
 		        zlen = st.st_size < 18 ? 0 :
