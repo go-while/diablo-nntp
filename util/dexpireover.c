@@ -165,6 +165,7 @@ static int writeActiveField(Group *group, const char *tok, const char *data);
 static int enterActiveRecord(int recOff, int recLen, int late);
 static int rescanActive(void);
 static int currentIter(char *Hash, int iter);
+static void expireOverArt(int fd, off_t pos, const hash_t *mh, int rcvd);
 int nearestPower(int n);
 void ReadDExpOverList(void);
 int expOverListCheckExpired(hash_t *hv);
@@ -706,6 +707,37 @@ rescanActive(void)
 }
 
 /*
+ * expireOverArt() - mark the index slot at pos expired, if it still holds
+ * the article we looked at (message-id hash mh, received at rcvd).  The
+ * decision was made from the shared map without a lock; dreaderd writes
+ * and cancels a slot under the exclusive lock at offset 0, so we take it,
+ * read the slot again and leave it alone when a new article has taken it
+ * meanwhile.  Writing back a copy made before would wipe that article.
+ * The caller holds the structural lock at offset 4 (ProcessOverviewFile()).
+ */
+static void
+expireOverArt(int fd, off_t pos, const hash_t *mh, int rcvd)
+{
+    OverArt cur;
+
+    if (hflock(fd, 0, XLOCK_EX) < 0) {
+	printf("overview lock failed: %s\n", strerror(errno));
+	return;
+    }
+    if (pread(fd, &cur, sizeof(cur), pos) != sizeof(cur)) {
+	printf("overview read failed: %s\n", strerror(errno));
+    } else if (OA_ARTVALID(&cur) && cur.oa_TimeRcvd == rcvd &&
+	cur.oa_MsgHash.h1 == mh->h1 && cur.oa_MsgHash.h2 == mh->h2
+    ) {
+	cur.oa_ArtNo = -2;		/* EXPIRED */
+	lseek(fd, pos, 0);
+	if (WriteAll(fd, &cur, sizeof(OverArt)) < 0)
+	    printf("overview write failed: %s\n", strerror(errno));
+    }
+    hflock(fd, 0, XLOCK_UN);
+}
+
+/*
  * groupGone() - the group's record left dactive.kp after the scan began
  * (a KP_LOCK read found none): stop working on the group and drop its
  * pending write-back.
@@ -985,11 +1017,46 @@ ProcessOverviewFile(const char *dirPath, const char *name, int type)
 	 * over. file	(fixed length file)
 	 */
 	int fd;
+	int retry = 0;
 
+again:
 	if ((fd = open(path, O_RDWR)) >= 0) {
 	    int r;
 	    int OldDataEntries=0;
-	    int fdLocked=0; /* lock cache, to avoid getting a lock twice */
+	    int fdLocked=0; /* offset 4 held exclusive (else shared) */
+	    struct stat st;
+
+	    /*
+	     * The structural lock (offset 4) first, shared, as dreaderd
+	     * takes it.  A resize or rewrite, here or in another dexpireover,
+	     * holds it exclusive while it changes the file: the header, the
+	     * map and the slot positions used below are good only while no
+	     * one does.  The slot lock (offset 0, expireOverArt()) comes
+	     * second, in dreaderd's order.  ResizeGroup() and RewriteData()
+	     * turn the shared lock into an exclusive one; fcntl() does that
+	     * in place, and when it fails we still hold the shared one.
+	     * Each wait ends after -l seconds (-l0: no limit, as before).
+	     * A file renamed over meanwhile (-R) is opened again.
+	     */
+	    nrsignal(SIGALRM, sigAlarm);
+	    alarm(LockWaitTime);
+	    if (hflock(fd, 4, XLOCK_SH|XLOCK_INTR) < 0) {
+		nrsignal(SIGALRM, SIG_IGN);
+		if (VerboseOpt)
+		    printf("over file in use, skipped grp=%s\n",
+						group->gr_GroupName);
+		close(fd);
+		return;
+	    }
+	    nrsignal(SIGALRM, SIG_IGN);
+	    if (fstat(fd, &st) != 0 || st.st_nlink == 0) {
+		close(fd);	/* drops the lock */
+		if (++retry < 10)
+		    goto again;
+		printf("over file of %s keeps being replaced, skipped\n",
+						group->gr_GroupName);
+		return;
+	    }
 
 	    r = (read(fd, &oh, sizeof(oh)) == sizeof(oh));
 	    if (oh.oh_Version > OH_VERSION ||
@@ -1020,7 +1087,7 @@ ProcessOverviewFile(const char *dirPath, const char *name, int type)
 		/*
 		 * The group left the active file after the scan began
 		 * (removed before or while we waited for its record):
-		 * leave its files alone.  No over.* lock is held yet.
+		 * leave its files alone (close() drops the shared lock).
 		 */
 		if (rec == NULL) {
 		    groupGone(group, "skipped");
@@ -1183,10 +1250,7 @@ ProcessOverviewFile(const char *dirPath, const char *name, int type)
 		    printf("   expected version %d, got version %d\n",
 						OH_VERSION, oh.oh_Version);
 	    }
-	    if (fdLocked) {
-		hflock(fd, 4, XLOCK_UN);
-		fdLocked = 0;
-	    }
+	    hflock(fd, 4, XLOCK_UN);
 	    close(fd);
 	}
     } else {
@@ -1501,21 +1565,17 @@ ExpireByDays(Group *group, int fd, OverHead *oh, int expireSecs)
 		printf("entry %lld artNo %d\n", i, artno);
 	    }
 	    if (OA_ARTVALID(oa)) {
-		int dt = (int)(t - oa->oa_TimeRcvd);
+		hash_t mh = oa->oa_MsgHash;
+		int rcvd = oa->oa_TimeRcvd;
+		int dt = (int)(t - rcvd);
 
 		expiredart = 0;
 		if (expireSecs > 0 && 
 		    (dt > expireSecs || dt < -(60 * 60 * 24))
 		) {
-		    OverArt copy = *oa;
-
 		    expiredart = 1;
-		    copy.oa_ArtNo = -2;		/* EXPIRED */
-		    if (ForReal) {
-			lseek(fd, (off_t)oh->oh_HeadSize + i * sizeof(OverArt), 0);
-			if (WriteAll(fd, &copy, sizeof(OverArt)) < 0)
-			    printf("overview write failed: %s\n", strerror(errno));
-		    }
+		    if (ForReal)
+			expireOverArt(fd, (off_t)oh->oh_HeadSize + i * sizeof(OverArt), &mh, rcvd);
 		    ++count;
 		}
 
@@ -1617,6 +1677,7 @@ ExpireBySpool(Group *group, int fd, OverHead *oh)
 
 	    if (oa && OA_ARTVALID(oa)) {
 		hash_t dh = oa->oa_MsgHash;
+		int rcvd = oa->oa_TimeRcvd;
 		History dh_lookup;
 
 		/*
@@ -1629,14 +1690,8 @@ ExpireBySpool(Group *group, int fd, OverHead *oh)
 		 */
 		if ((HistoryLookupByHash(dh, &dh_lookup) == -1) ||
 						H_EXPIRED(dh_lookup.exp)) {
-		    OverArt copy = *oa;
-
-		    copy.oa_ArtNo = -2;		/* EXPIRED */
-		    if (ForReal) {
-			lseek(fd, oh->oh_HeadSize + i * sizeof(OverArt), 0);
-			if (WriteAll(fd, &copy, sizeof(OverArt)) < 0)
-			    printf("overview write failed: %s\n", strerror(errno));
-		    }
+		    if (ForReal)
+			expireOverArt(fd, (off_t)oh->oh_HeadSize + i * sizeof(OverArt), &dh, rcvd);
 		    ++count;
 		}
 	    }
@@ -1736,24 +1791,20 @@ ExpireFromFile(Group *group, int fd, OverHead *oh, int expireSecs)
 	    const OverArt *oa = &oaBase[i];
 
 	    if (oa && OA_ARTVALID(oa)) {
-		int dt = (int)(t - oa->oa_TimeRcvd);
-		hash_t *hv = (hash_t *)(&(oa->oa_MsgHash));
+		hash_t mh = oa->oa_MsgHash;
+		int rcvd = oa->oa_TimeRcvd;
+		int dt = (int)(t - rcvd);
+		hash_t *hv = &mh;
 
 		if (VerboseOpt > 2)
-		    printf("DT %d/%d %08lx %08lx\n", dt, expireSecs, (long)t, (long)oa->oa_TimeRcvd);
+		    printf("DT %d/%d %08lx %08lx\n", dt, expireSecs, (long)t, (long)rcvd);
 
 		if ((expOverListCheckExpired(hv) == 0) ||
 		    ((expireSecs > 0) && 
 		     (dt > expireSecs || dt < -(60 * 60 * 24)))
 		) {
-		    OverArt copy = *oa;
-
-		    copy.oa_ArtNo = -2;		/* EXPIRED */
-		    if (ForReal) {
-			lseek(fd, oh->oh_HeadSize + i * sizeof(OverArt), 0);
-			if (WriteAll(fd, &copy, sizeof(OverArt)) < 0)
-			    printf("overview write failed: %s\n", strerror(errno));
-		    }
+		    if (ForReal)
+			expireOverArt(fd, (off_t)oh->oh_HeadSize + i * sizeof(OverArt), &mh, rcvd);
 		    ++count;
 		}
 	    }
@@ -1856,7 +1907,7 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
     }
 
     if (fstat(fd, &st) != 0 || st.st_nlink == 0) {
-        hflock(fd, 4, XLOCK_UN);
+        hflock(fd, 4, XLOCK_SH);	/* back to shared */
 	*fdl = 0;
         return(0);
     }
@@ -2524,7 +2575,7 @@ ResizeGroup(Group *group, int fd, OverHead *oh, int newSize, int OldDataEntries,
     }
 
     if (fstat(fd, &st) < 0 || st.st_nlink == 0) {
-        hflock(fd, 4, XLOCK_UN);
+        hflock(fd, 4, XLOCK_SH);	/* back to shared */
 	*fdl = 0;
         ++NoResizedGroups;
         if (VerboseOpt) {
@@ -2537,7 +2588,7 @@ ResizeGroup(Group *group, int fd, OverHead *oh, int newSize, int OldDataEntries,
     /* a header that promises more records than the file holds, or none */
     if (oldSize <= 0 ||
 		(st.st_size - oh->oh_HeadSize) / (long long)sizeof(OverArt) < oldSize) {
-	hflock(fd, 4, XLOCK_UN);
+	hflock(fd, 4, XLOCK_SH);	/* back to shared, for the expiry */
 	*fdl = 0;
 	++NoResizedGroups;
 	fprintf(stderr, "Over file of group %s has no article slots (damaged header?) - skipped\n", group->gr_GroupName);
