@@ -4420,7 +4420,10 @@ InstallAccessCache(void) {
 		    if (readerdef.rd_RateLimitRangeLow < 1 ||
 			readerdef.rd_RateLimitRangeLow > 200 ||
 			readerdef.rd_RateLimitRangeHigh < 1 ||
-			readerdef.rd_RateLimitRangeHigh > 200) {
+			readerdef.rd_RateLimitRangeHigh > 200 ||
+			/* MBFlush() takes random % (high - low) */
+			readerdef.rd_RateLimitRangeHigh <=
+					readerdef.rd_RateLimitRangeLow) {
 			    logit(LOG_NOTICE, "dreader.access: bad 'ratelimitrange' in line %d", linecount);
 			    readerdef.rd_RateLimitRangeLow = 0;
 			    readerdef.rd_RateLimitRangeHigh = 0;
