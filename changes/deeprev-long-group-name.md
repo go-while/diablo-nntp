@@ -1,0 +1,1 @@
+- dreaderd: a group name of more than 256 characters in Newsgroups: ended the list there, so the groups after it got no article number and no overview record for a fed article; only the over-long name is skipped now.

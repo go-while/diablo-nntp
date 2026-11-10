@@ -360,8 +360,12 @@ NNFeedOverview(Connection *conn)
 	    /*
 	     * Skip groups with names that are too long
 	     */
-	    if (ngroup - group > MAXGNAME)
+	    if (ngroup - group > MAXGNAME) {
+		*ngroup = c;
+		if (*ngroup == ',')
+		    ++ngroup;
 		continue;
+	    }
 
 	    /* Strip trailing space or tab from group name */
 	    whspptr = strpbrk(group, " \t");
@@ -409,8 +413,12 @@ NNFeedOverview(Connection *conn)
 	    /*
 	     * Skip groups with names that are too long
 	     */
-	    if (ngroup - group > MAXGNAME)
+	    if (ngroup - group > MAXGNAME) {
+		*ngroup = c;
+		if (*ngroup == ',')
+		    ++ngroup;
 		continue;
+	    }
 
 	    /* Strip trailing space or tab from group name */
 	    whspptr = strpbrk(group, " \t");
