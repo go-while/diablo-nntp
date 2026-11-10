@@ -966,7 +966,16 @@ main(int ac, char **av)
 		    if (DebugOpt > 1)
 			printf("clear watermark\n");
 		    HiWaterMark = 0;	/* reset WaterMark */
-		    if (deferbegin < deferend &&
+		    if (readretry(buf, sizeof(buf)) == 0) {
+			/*
+			 * Entries kept for a retry after a reconnect come
+			 * first: a new entry takes the slot behind the
+			 * pending ones, and that is free only once the
+			 * retries before it have been read back.  A defer
+			 * offered ahead of them went over a retry slot.
+			 */
+			bufInval = 0;
+		    } else if (deferbegin < deferend &&
 			(deferbegin || (deferend >= (MAXDEFER - 20)))) {
 			/* We are at this moment clearing the defer backlog,
 			 * or the defer buffer is full and it has to be

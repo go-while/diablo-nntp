@@ -1,0 +1,1 @@
+- dnewslink: after a reconnect, entries kept for a retry are read back before any deferred entry is offered again; a deferred entry sent first replaced one of them, which was lost.
