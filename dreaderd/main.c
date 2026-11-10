@@ -1679,7 +1679,8 @@ DoCommand(int ufd)
 				    kill(desc->d_Pid, SIGHUP);
 				break;
 			    case THREAD_LISTEN:
-				close(desc->d_Fd);
+				/* closes it, and takes it out of SFds */
+				DelThread(desc);
 				break;
 			    case THREAD_DRCMD:
 				break;

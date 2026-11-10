@@ -1,0 +1,1 @@
+- dreaderd: `drcmd exit` closed the listening sockets but left them in the select set of the main process, which then ran its loop without a pause (a full CPU) until the last reader had ended.
