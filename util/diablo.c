@@ -2335,7 +2335,7 @@ DoSession(int fd, int count)
 	} else if (strcasecmp(cmd, "whereis") == 0 && FeedWhereIs(HLabel)) {
 	    const char *msgid = MsgId(strtok(NULL, " \t\r\n"), NULL);
 	    const char *how = strtok(NULL, " \t\r\n");
-	    History h;
+	    History h = { 0 };	/* HistoryLookup() fills it only on a hit */
 
 	    if (strcmp(msgid, "<>") == 0) {
 		xfprintf(fo, "443 Bad Message-ID\r\n");
@@ -2355,12 +2355,12 @@ DoSession(int fd, int count)
 	    }
 	} else if (strcasecmp(cmd, "xrectime") == 0) {
 	    const char *msgid = MsgId(strtok(NULL, "\r\n"), NULL);
-	    History h;
+	    History h = { 0 };	/* HistoryLookup() fills it only on a hit */
 
 	    if (strcmp(msgid, "<>") == 0) {
 		xfprintf(fo, "443 Bad Message-ID\r\n");
 	    } else if (HistoryLookup(msgid, &h) == 0 && !H_EXPIRED(h.exp)) {
-		xfprintf(fo, "223 %d\r\n", h.gmt * 60);
+		xfprintf(fo, "223 %lld\r\n", (long long)h.gmt * 60);
 	    } else {
 		if (H_EXPIRED(h.exp) && h.iter != (unsigned short)-1) {
 		    xfprintf(fo, "430 Article expired\r\n");
