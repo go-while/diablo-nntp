@@ -923,6 +923,18 @@ scanDirectory(Partition *scanpart)
 		removeDirectory(scanpart->partname, den->d_name, NULL, NULL, NULL, NULL);
 		break;
 	    case 'D':
+		/*
+		 * A spool directory is D.<8 hex digits> (lib/spool.c).
+		 * Any other D.* name has no time: getAge() gave 0 for it,
+		 * the spool then looked decades old and keeptime removed
+		 * real directories that were not due, the newest included.
+		 */
+		if (strlen(den->d_name) != 10 ||
+			strspn(den->d_name + 2, "0123456789abcdef") != 8) {
+		    fprintf(stderr, "Skipping unexpected spool entry %s%s\n",
+					scanpart->partname, den->d_name);
+		    break;
+		}
 		if (entryIdx == entryMax) {
 		    entryMax = entryMax * 2;
 		    SpoolEntries = realloc(SpoolEntries, entryMax * sizeof(SpoolEnt *));
