@@ -731,7 +731,11 @@ HistoryLookup(const char *msgid, History *nh)
 	HLAlt = 0;
     }
 
-    if (r == 0 && nh != NULL)
+    /*
+     * index == 0 with r == 0: the alternate lookup above found it and has
+     * filled *nh; h is only the last record of the chain walked here.
+     */
+    if (r == 0 && nh != NULL && index != 0)
 	memcpy(nh, &h, sizeof(h));
 
     return(r);
