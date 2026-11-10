@@ -780,6 +780,11 @@ NNTerminate(Connection *conn)
 	ActiveCacheFreeMain();
 	ActiveCacheWriteUnlock();
     }
+    /*
+     * The idle and the session timeout can both end the same connection
+     * in one pass; the lock must be given back only once.
+     */
+    conn->co_ListCacheMode = ACMODE_NONE;
     MBFlush(conn, &conn->co_TMBuf);
     FD_SET(conn->co_Desc->d_Fd, &WFds);
 }

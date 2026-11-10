@@ -1,0 +1,1 @@
+- dreaderd: a connection that the idle and the session timeout end in the same pass no longer gives the group list cache lock back twice.
