@@ -254,7 +254,8 @@ ScanFile(char *fname)
 	exit(1);
     }
     while (fgets(buf, sizeof(buf), f) != NULL) {
-	buf[strlen(buf) - 1] = '\0';
+	/* a last line without a newline keeps its last character */
+	buf[strcspn(buf, "\n")] = '\0';
 	DoEntry(buf);
     }
     fclose(f);
