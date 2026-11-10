@@ -3373,9 +3373,9 @@ deleteDnsResHash(DnsRes *dres, ForkDesc *desc)
 		    logit(
 			LOG_INFO,
 #ifdef	DREADER_CLIENT_TIMING
-			"closed from %s%s%s%s%s%s (%s) groups=%u arts=%u bytes=%.0f posts=%d postbytes=%d postfail=%d vserv=%s secs=%d utime=%.3f stime=%.3f%s",
+			"closed from %s%s%s%s%s%s (%s) groups=%u arts=%u bytes=%.0f posts=%d postbytes=%.0f postfail=%d vserv=%s secs=%d utime=%.3f stime=%.3f%s",
 #else
-			"closed from %s%s%s%s%s%s (%s) groups=%u arts=%u bytes=%.0f posts=%d postbytes=%d postfail=%d vserv=%s secs=%d%s",
+			"closed from %s%s%s%s%s%s (%s) groups=%u arts=%u bytes=%.0f posts=%d postbytes=%.0f postfail=%d vserv=%s secs=%d%s",
 #endif
 			(dr->dr_Flags & DF_IGNORED_AUTH_LONG ? "!" : ""),
 			(dr->dr_AuthUser[0] ? dr->dr_AuthUser : ""),

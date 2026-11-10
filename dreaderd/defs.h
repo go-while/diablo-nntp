@@ -330,7 +330,7 @@ typedef struct DnsRes {
     int dr_Flags;			/* what options are enabled	*/
     int dr_ArtCount;			/* how many articles fetched	*/
     int dr_PostCount;			/* how many articles posted	*/
-    int dr_PostBytes;			/* how many bytes posted	*/
+    double dr_PostBytes;		/* how many bytes posted	*/
     int dr_PostFailCount;		/* how many posts failed	*/
     double dr_ByteCount;		/* how many bytes sent		*/
     int dr_GrpCount;			/* how many groups accessed	*/
