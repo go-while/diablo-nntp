@@ -1253,15 +1253,18 @@ CgReadRules(const char *addr, CgRule **prules, int *pnRules, CgLimit **plimits, 
     int nRules = 0;
     int nLimits = 0;
     int failed = 0;
+    int tooLong;
     int i;
 
-    while (fi != NULL && !failed && fgets(buf, sizeof(buf), fi) != NULL) {
+    while (fi != NULL && !failed && ConfigGets(buf, sizeof(buf), fi, &tooLong) != NULL) {
 	char *smsg;
 	char *sfrom;
 	char *sgroups;
 	char *saction;
 	int isLimit;
 
+	if (tooLong)
+	    continue;		/* ParseControl() logs it */
 	if (buf[0] == '\n' || buf[0] == '#' ||
 	    (smsg = strtok(buf, ":\n")) == NULL ||
 	    smsg[0] == '#'
@@ -1594,15 +1597,24 @@ CgLocalGroups(char **ppat)
     FILE *fi = fopen(PatLibExpand("%s/localgroups"), "r");
     char buf[256];
     int r = 0;
+    int tooLong;
+    int lineNo = 0;
 
     *ppat = NULL;
     if (fi == NULL)
 	return(0);
-    while (r == 0 && fgets(buf, sizeof(buf), fi) != NULL) {
+    while (r == 0 && ConfigGets(buf, sizeof(buf), fi, &tooLong) != NULL) {
 	char *g = strtok(buf, " \t\r\n");
 
+	++lineNo;
 	if (g == NULL || g[0] == '#')
 	    continue;
+	if (tooLong) {
+	    /* its tail must not be read as a pattern of its own */
+	    logit(LOG_ERR, "%s: line %d too long (at most %d characters), ignored",
+		PatLibExpand("%s/localgroups"), lineNo, (int)sizeof(buf) - 2);
+	    continue;
+	}
 	r = CgAppend(ppat, g);
     }
     fclose(fi);
