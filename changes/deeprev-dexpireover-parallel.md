@@ -1,0 +1,1 @@
+- dexpireover: a negative `-p` count started no worker and scanned only part of the overview directories; it is now refused.

@@ -318,6 +318,10 @@ main(int ac, char **av)
 		ParallelCount = 1;
 	    if (ParallelCount > MAX_PAR_COUNT)
 		ParallelCount = MAX_PAR_COUNT;
+	    if (ParallelCount < 0) {
+		fprintf(stderr, "Invalid number of processes for -p: %s\n", ptr);
+		exit(1);
+	    }
 	    /* Note that a parcount of 1 doesn't do anything useful. */
 	    break;
 	case 'R':
