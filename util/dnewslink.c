@@ -4536,6 +4536,8 @@ extractFeedLine(const char *buf, char *relPath, char *msgId, off_t *poff, int *p
     while ((s = strchr(s, ' ')) != NULL) {
 	while (ISWHITE(*s))
 	    ++s;
+	if (*s == 0)	/* blanks at the end: no flag, stay inside the line */
+	    break;
 	switch (*s++) {
 	    case 'D' :
 		*queuedTime = atol(s);

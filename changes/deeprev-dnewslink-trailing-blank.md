@@ -1,0 +1,1 @@
+- dnewslink: a queue line that ends in a blank no longer picks up flags (H, C, L, D) from what the line buffer held of an earlier, longer line.
