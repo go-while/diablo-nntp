@@ -1312,6 +1312,18 @@ DoAccept(int lfd)
 		int i;
 		time_t SessionCheck = SessionBeg = SessionMark = time(NULL);
 
+		/*
+		 * From here on this is a session process for the signal
+		 * handlers.  Set late (after the DNS lookups and the
+		 * XCLIENT dialogue), a SIGHUP in between ran the master's
+		 * branch of sigHup() in the child: it signalled the pids
+		 * of the copied PidAry and the child itself went on.  With
+		 * SessionFd set, sigHup() shuts the socket down, which
+		 * also ends a read that waits for the XCLIENT line.
+		 */
+		DidFork = 1;
+		SessionFd = fd;
+
 		flushFeeds(1);	/* close feed descriptors without flushing */
 		CloseIncomingLog();
 		ClosePathLog(0);
@@ -1415,7 +1427,6 @@ authenticate:
 		    exit(0);
 		}
 
-		DidFork = 1;
 		snprintf(MasterSockPath, sizeof(MasterSockPath), "%s",
 		    PatRunExpand(DiabloSocketPat));
 
