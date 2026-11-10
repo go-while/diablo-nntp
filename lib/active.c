@@ -75,6 +75,34 @@ InActive(const char *nglist)
 }
 
 /*
+ * xrefGroupSeen() - return 1 if the group name of length len at p is
+ *		     also an earlier entry of nglist.  A group listed
+ *		     twice in Newsgroups: gets one Xref entry and one
+ *		     article number, not one for each repeat.
+ */
+
+static int
+xrefGroupSeen(const char *nglist, const char *p, int len)
+{
+    const char *q = nglist;
+
+    while (q < p) {
+	int i;
+
+	while (q < p && (*q == ' ' || *q == ','))
+	    ++q;
+	for (i = 0; q + i < p && q[i] != ',' && q[i] != ' ' && q[i] != '\t'; ++i)
+	    ;
+	if (i == len && strncmp(q, p, len) == 0)
+	    return(1);
+	if (i == 0 && q < p)
+	    ++q;		/* a TAB: not an entry, step over it */
+	q += i;
+    }
+    return(0);
+}
+
+/*
  * GenerateXRef() - generate XRef: header for feeder.  Return the number
  *		    of groups that were included in the header.
  *
@@ -101,7 +129,7 @@ GenerateXRef(Buffer *b, const char *nglist, const char *npName, const char *ctl)
 	    ++p;
 	    continue;
 	}
-	if (i < sizeof(group)) {
+	if (i < sizeof(group) && xrefGroupSeen(nglist, p, i) == 0) {
 	    const char *rec;
 	    int recLen;
 

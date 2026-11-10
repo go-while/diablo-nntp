@@ -1,0 +1,1 @@
+- diablo: with `active on`, a group listed more than once in Newsgroups: got an Xref entry and a new article number for each repeat; it now gets one.
