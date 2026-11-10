@@ -485,6 +485,13 @@ ReaderTask(int fd, const char *id)
 			    (TerminatePending &&
 					!(conn->co_Flags & COF_MAYNOTCLOSE))
 			) {
+			    /*
+			     * A request of this client may still be out at
+			     * a server: take the client off it, the answer
+			     * must not be written into a freed connection.
+			     */
+			    if (desc->d_Type == THREAD_NNTP && conn->co_SReq)
+				NNTerminate(conn);
 			    DeleteConnection(conn);
 			    DelThread(desc);
 			}
