@@ -721,7 +721,10 @@ HistoryLookup(const char *msgid, History *nh)
     /*
      * On failure, try alternate hash method (for lookup only)
      */
-    if (r < 0 && DOpts.CompatHashMethod >= 0 && HLAlt == 0 && !statfailed) {
+    if (r < 0 && DOpts.CompatHashMethod >= 0 &&
+	DOpts.CompatHashMethod != DOpts.HashMethod &&
+	HLAlt == 0 && !statfailed
+    ) {
 	int save = DOpts.HashMethod;
 
 	DOpts.HashMethod = DOpts.CompatHashMethod;
