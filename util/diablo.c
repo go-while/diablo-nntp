@@ -133,7 +133,7 @@ StoreStatsType	StoreStats;
 char	*HName;
 char	HLabel[256];
 int	MaxFds = 0;
-int	PipePending = 0;	/* DoPipe() left lines in a pipe buffer */
+char	PipeMore[MAXFDS];	/* DoPipe() left lines in this pipe's buffer */
 int	NumForks = 0;
 int	ReadOnlyCount = 0;
 int	PausedCount = 0;
@@ -960,8 +960,21 @@ DiabloServer(int lfd)
 	fd_set rfds = RFds;
 	int i;
 	int n;
-	struct timeval tv = { PipePending ? 0 : 5, 0 };
+	struct timeval tv = { 5, 0 };
 	time_t t;
+
+	/*
+	 * A pipe DoPipe() left with lines in its buffer: select() cannot
+	 * see those, so do not wait for it.  The mark is per pipe and stays
+	 * until that pipe is served again: the rotor below takes ten pipes
+	 * per pass and the others must not lose it.
+	 */
+	for (i = 0; i < MaxFds; ++i) {
+	    if (PipeMore[i]) {
+		tv.tv_sec = 0;
+		break;
+	    }
+	}
 
 	if ((ReadOnlyMode || PausedCount) && (NumForks == ReadOnlyCount)) {
 	    FinishRetain(RET_PAUSE);
@@ -976,18 +989,14 @@ DiabloServer(int lfd)
 
 	n = select(MaxFds, &rfds, NULL, NULL, &tv);
 
-	if (PipePending) {
-	    /*
-	     * DoPipe() stopped after its two lines with more in its
-	     * buffer.  select() cannot see those: without this they waited
-	     * until the same session wrote again or ended.
-	     */
-	    for (i = 0; i < MaxFds; ++i) {
-		if (i != lfd && i != ufd && PipeAry[i] != NULL &&
-						bsize(PipeAry[i]) > 0)
-		    FD_SET(i, &rfds);
-	    }
-	    PipePending = 0;
+	/*
+	 * DoPipe() stopped after its two lines with more in its buffer.
+	 * Without this they waited until the same session wrote again or
+	 * ended.
+	 */
+	for (i = 0; i < MaxFds; ++i) {
+	    if (PipeMore[i] && i != lfd && i != ufd)
+		FD_SET(i, &rfds);
 	}
 
 	if (lfd != -1 && FD_ISSET(lfd, &rfds))
@@ -1616,11 +1625,17 @@ DoPipe(int fd)
 	    flushFeeds(0);
 	}
 
-	if (--maxCount == 0) {
-	    ++PipePending;	/* the buffer may hold more lines */
+	if (--maxCount == 0)
 	    break;
-	}
     }
+
+    /*
+     * Stopped at the limit: the buffer may hold more complete lines, and
+     * the main loop calls again without waiting for select().  Otherwise
+     * egets() found no complete line (or EOF) and the pipe is left to
+     * select() again, so an unfinished line does not make the loop spin.
+     */
+    PipeMore[fd] = (maxCount == 0 && ptr != NULL && ptr != (char *)-1);
 
     bextfree(PipeAry[fd]);	/* don't keep large buffers around */
 
@@ -1631,6 +1646,7 @@ DoPipe(int fd)
 	}
 	close(fd);
 	FD_CLR(fd, &RFds);
+	PipeMore[fd] = 0;
 	--NumForks;
     }
 }

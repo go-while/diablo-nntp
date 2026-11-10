@@ -116,3 +116,66 @@ func TestDeepRevSoutLinesLeftInBuffer(t *testing.T) {
 	}
 	p.ExpectCmd(205, "QUIT")
 }
+
+// TestDeepRevSoutLinesManySessions (SOL-1): the master serves at most ten session pipes per
+// pass of its main loop, two SOUT lines each. The first fix for the lines left in a pipe
+// buffer (L1-03) kept one flag for all pipes and cleared it before each pass, and DoPipe()
+// set it again only when it had handled two lines. With more than ten sessions holding
+// complete lines, a pass in which the ten served pipes had one line each left the flag
+// clear, and the lines of the pipes that were not served stayed in their buffers until those
+// sessions wrote again or ended.
+//
+// Twenty sessions, three short articles each while the master is stopped, so the three SOUT
+// lines of a session reach the master in one read; the sessions stay open and idle. All
+// sixty articles must be in the outgoing queue within 10 seconds.
+func TestDeepRevSoutLinesManySessions(t *testing.T) {
+	if runtime.GOOS == "illumos" || runtime.GOOS == "solaris" {
+		t.Skip("needs a pipe that holds several KB while the reader is stopped")
+	}
+	const sessions, perSession = 20, 3
+	s := NewSite(t, SiteOptions{Newsfeeds: OutNewsfeeds})
+	deepRevKillChildren(t, s, "diablo")
+
+	var conns []*client.Conn
+	for range sessions {
+		p := s.Peer(t)
+		p.ExpectCmd(203, "MODE STREAM")
+		conns = append(conns, p)
+	}
+	if err := s.Proc.Signal(syscall.SIGSTOP); err != nil {
+		t.Fatalf("SIGSTOP diablo: %v", err)
+	}
+	// Also on a failure below: a stopped master cannot be shut down.
+	t.Cleanup(func() { _ = s.Proc.Signal(syscall.SIGCONT) })
+
+	var ids []string
+	for i, p := range conns {
+		var b strings.Builder
+		var mine []string
+		for j := range perSession {
+			id := msgID(t)
+			mine = append(mine, id)
+			b.WriteString("TAKETHIS " + id + "\r\n")
+			b.WriteString(client.Stuff(newArticle(id, "e2e.test", fmt.Sprintf("session %d burst %d", i+1, j+1), "body")))
+		}
+		p.MustSend(b.String())
+		for _, id := range mine {
+			p.ExpectStatus(239, "TAKETHIS "+id)
+		}
+		ids = append(ids, mine...)
+	}
+	// The 239 is written after the SOUT line; a moment for the last one all the same.
+	time.Sleep(300 * time.Millisecond)
+	if err := s.Proc.Signal(syscall.SIGCONT); err != nil {
+		t.Fatalf("SIGCONT diablo: %v", err)
+	}
+
+	q := deepRevWaitQueue(t, s, OutLabel, len(ids), 10*time.Second)
+	if missing := deepRevMissing(q, ids); len(missing) > 0 {
+		t.Errorf("%d of %d accepted articles are not queued 10 s after they were accepted, while their %d sessions are open and idle: missing %q",
+			len(missing), len(ids), sessions, missing)
+	}
+	for _, p := range conns {
+		p.ExpectCmd(205, "QUIT")
+	}
+}

@@ -1,0 +1,1 @@
+- diablo: with more than ten feed sessions, feed entries already read from a session could still wait in the master until that session wrote again or ended (a gap in the earlier fix for delayed feed lines); the master now remembers this per session.
