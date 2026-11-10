@@ -1288,7 +1288,20 @@ main(int ac, char **av)
 			    clearCommandBuffer();
 			    KillFd = -1;
 			    credtime(OUR_DELAY);
-			    (void)RefilePendingStreams(NULL); /* retry */
+			    {
+				/*
+				 * The entry in buf may be one of the pending
+				 * streams.  Those come back through
+				 * readretry(): offering buf again as well put
+				 * it into slot 0, over the entry kept there
+				 * for the retry.
+				 */
+				int inStream = !bufInval && StreamHolds(msgId);
+
+				(void)RefilePendingStreams(NULL); /* retry */
+				if (inStream)
+				    bufInval = 1;
+			    }
 			    if ((cfd = connectTo(HostName, NULL, Port)) >= 0) {
 			if (ConnLife > 0 && ProcessStarted == 0)
 			    ProcessStarted = monotonicSeconds();

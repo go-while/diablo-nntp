@@ -1,0 +1,1 @@
+- dnewslink: after a remote EOF with a full stream window, the current queue line was offered again into slot 0 over an entry kept for retry, which was lost; it now comes back through the retry path only.
