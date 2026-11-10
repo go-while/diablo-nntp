@@ -1294,6 +1294,8 @@ DoAccept(int lfd)
 
 	if (ok == 0 && pipe(fds) == 0 && fds[0] < MAXFDS) {
 	    pid_t pid;
+	    sigset_t forkBlocked, forkSaved;
+	    int forkMasked;
 
 	    /*
 	     * we MUST clear our FILE stdio so a call to
@@ -1308,7 +1310,26 @@ DoAccept(int lfd)
 	    fflush(stdout);
 	    fflush(stderr);
 
-	    if ((pid = fork()) == 0) {
+	    /*
+	     * No SIGHUP/SIGINT/SIGTERM between the fork and the two
+	     * assignments below: sigHup() in a child that does not know
+	     * yet that it is one runs the master's branch, and with
+	     * SessionFd unset it cannot end a blocked read.  A signal that
+	     * comes in that window is delivered when the mask is restored.
+	     *
+	     * The master keeps them blocked until the child is in PidAry:
+	     * its sigHup() signals the children it finds there, and one
+	     * that is not entered yet would be missed.
+	     */
+	    sigemptyset(&forkBlocked);
+	    sigaddset(&forkBlocked, SIGHUP);
+	    sigaddset(&forkBlocked, SIGINT);
+	    sigaddset(&forkBlocked, SIGTERM);
+	    forkMasked = (sigprocmask(SIG_BLOCK, &forkBlocked, &forkSaved) == 0);
+
+	    pid = fork();
+
+	    if (pid == 0) {
 		int i;
 		time_t SessionCheck = SessionBeg = SessionMark = time(NULL);
 
@@ -1323,6 +1344,8 @@ DoAccept(int lfd)
 		 */
 		DidFork = 1;
 		SessionFd = fd;
+		if (forkMasked)
+		    sigprocmask(SIG_SETMASK, &forkSaved, NULL);
 
 		flushFeeds(1);	/* close feed descriptors without flushing */
 		CloseIncomingLog();
@@ -1510,7 +1533,15 @@ authenticate:
 		PidAry[fds[0]].tr_Pid = pid;
 		/* The peer address length was checked before forking. */
 		memcpy(PidAry[fds[0]].addr, addrst, strlen(addrst) + 1);
+		/*
+		 * A shutdown that began before the child was entered here
+		 * has not told it.
+		 */
+		if (Exiting)
+		    Kill(pid, SIGHUP);
 	    }
+	    if (forkMasked)
+		sigprocmask(SIG_SETMASK, &forkSaved, NULL);
 	}
 	close(fd);
 	if (fds[1] >= 0)

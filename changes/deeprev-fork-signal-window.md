@@ -1,0 +1,1 @@
+- diablo: a SIGHUP, SIGINT or SIGTERM that arrives while a session process is being forked is no longer handled as if the new process were the master.
