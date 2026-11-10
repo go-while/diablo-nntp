@@ -1,0 +1,1 @@
+- dstart: more than 253 arguments were copied past the end of a fixed array on the stack; dstart now refuses them with "too many arguments".
