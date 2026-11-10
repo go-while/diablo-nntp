@@ -1,0 +1,1 @@
+- dnewsfeeds: `throttle_delay` was stored through an int pointer into a long, so on 64-bit systems the sleep was refused or had a random length; the delay (0..999999999 ns) is now applied as set.

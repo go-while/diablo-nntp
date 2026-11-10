@@ -3024,10 +3024,17 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 	struct timespec delay;
 	int delay_counter = 0;
 	int delay_counter_max = 0;
+	int delay_nsec = 0;
 
 	delay.tv_sec = 0;
 
-	FeedGetThrottle(HLabel, (int *)&(delay.tv_nsec), &delay_counter_max);
+	/* tv_nsec is a long: not through an int pointer */
+	FeedGetThrottle(HLabel, &delay_nsec, &delay_counter_max);
+	if (delay_nsec < 0)
+	    delay_nsec = 0;
+	if (delay_nsec > 999999999)
+	    delay_nsec = 999999999;
+	delay.tv_nsec = delay_nsec;
 
 	FeedGetMaxInboundRate(HLabel, &bps);
 
