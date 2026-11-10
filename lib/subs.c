@@ -956,7 +956,27 @@ DiabHashFeedParse(MemPool **pool, char *hashconfig)
 	    return(NULL);
 	}
 	int offloc = cascade ? 4 : 0;
-	HM_ConfigNode_Sub(new, NULL, hashconfig, offloc);
+	if (HM_ConfigNode_Sub(new, NULL, hashconfig, offloc) == NULL) {
+	    /*
+	     * No range, modulus 0 or missing ("1-2"), an offset outside
+	     * 0..12, junk after a number: such an entry divided by zero
+	     * when the first article was matched.  Without it the hashfeed
+	     * would restrict nothing (all callers take NULL for "no
+	     * hashfeed"), so a typo would feed a peer everything.  The
+	     * whole hashfeed matches no article instead, as a bad address
+	     * mask does.
+	     */
+	    logit(LOG_ERR, "bad hashfeed entry \"%s\": the hashfeed matches no article",
+								hashconfig);
+	    if (ptr)
+		*ptr = sep;
+	    bzero(new, sizeof(*new));
+	    new->HM_Type = HMTYPE_MD5;
+	    new->HM_ModVal = 1;		/* hash % 1 + 1 is 1, never in 2..2 */
+	    new->HM_Start = 2;
+	    new->HM_End = 2;
+	    return(new);
+	}
 	new->HM_Cascade = cascade;
 	*cfgnext = new;
 	cfgnext = &(new->HM_Next);
