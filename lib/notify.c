@@ -206,8 +206,9 @@ OpenFeedNotify(char *l)
 	    return(-1);
     }
     if (fcntl(fd, F_SETFL, O_NONBLOCK) == -1) {
+	/* soun is not filled in yet: name the feed, not the path */
 	logit(LOG_ERR, "Unable to set notify socket as non-blocking: %s (%s)",
-						soun.sun_path, strerror(errno));
+						l, strerror(errno));
 	close(fd);
 	return(-1);
     }

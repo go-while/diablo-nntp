@@ -1,0 +1,1 @@
+- diablo: the message for a feed notify socket that cannot be set non-blocking names the feed; it printed a socket path that was not filled in yet.
