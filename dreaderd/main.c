@@ -2443,8 +2443,8 @@ ForkPipe(int *pfd, void (*task)(int fd, const char *id), const char *description
 	logit(LOG_INFO, "DNS worker IPC uses %s",
 		sockType == SOCK_SEQPACKET ? "SOCK_SEQPACKET" : "SOCK_STREAM");
     }
-    if (fds[0] > MAXFDS || fds[1] > MAXFDS) {
-	logit(LOG_ERR, "pipe desc > MAXFDS: %d/%d/%d", fds[0], fds[1], MAXFDS);
+    if (fds[0] >= MAXFDS || fds[1] >= MAXFDS) {
+	logit(LOG_ERR, "pipe desc >= MAXFDS: %d/%d/%d", fds[0], fds[1], MAXFDS);
 	close(fds[0]);
 	close(fds[1]);
 	return((pid_t)-1);

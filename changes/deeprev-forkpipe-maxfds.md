@@ -1,0 +1,1 @@
+- dreaderd: a socketpair descriptor equal to MAXFDS passed the check in ForkPipe() and ended the main process (or the new child) in AddThread(); it is now refused like the larger ones.
