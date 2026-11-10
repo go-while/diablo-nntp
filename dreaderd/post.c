@@ -723,6 +723,7 @@ NNPostBuffer(Connection *conn)
 {
     int artLen;
     int haveMsgId = 0;
+    int nMsgId = 0;		/* Message-ID headers seen, kept or not */
     int haveSubject = 0;
     int haveFrom = 0;
     int haveDate = 0;
@@ -832,6 +833,13 @@ NNPostBuffer(Connection *conn)
 	 * check against specials
 	 */
 	if (HeaderCmp(base, "Subject", &errMsg) == 0) {
+	    /*
+	     * Subject, From, Newsgroups, Date and Message-ID may each be
+	     * there once (RFC 5536 section 3).  A second one is refused:
+	     * the checks here saw the last, a reader shows the first.
+	     */
+	    if (haveSubject && errMsg == NULL)
+		errMsg = "441 More than one Subject header\r\n";
 	    haveSubject = 1;
 	} else if (HeaderCmp(base, "From", &errMsg) == 0) {
 #ifdef	POST_CKADDRESS
@@ -856,10 +864,18 @@ NNPostBuffer(Connection *conn)
 	    }
 	    zfreeStr(&conn->co_MemPool, &ptr);
 #endif
+	    if (haveFrom && errMsg == NULL)
+		errMsg = "441 More than one From header\r\n";
 	    haveFrom = 1;
 	} else if (HeaderCmp(base, "Approved", &errMsg) == 0) {
 	    haveApproved = 1;
 	} else if (HeaderCmp(base, "Newsgroups", &errMsg) == 0) {
+	    if (haveNewsgroups) {
+		if (errMsg == NULL)
+		    errMsg = "441 More than one Newsgroups header\r\n";
+		zfreeStr(&conn->co_MemPool, &newsGrps);
+		zfreeStr(&conn->co_MemPool, &newsGrps2);
+	    }
 	    haveNewsgroups = 1;
 	    newsGrps = zallocStrTrim(&conn->co_MemPool, base + 11, l - 11);
 	    newsGrps2 = zallocStrTrim2(&conn->co_MemPool, ',', base + 11, l - 11);
@@ -892,6 +908,8 @@ NNPostBuffer(Connection *conn)
 	    if (errMsg == NULL && vs->vs_Rfc5537)
 		errMsg = (char *)PostDateCheck(base, l, 14, "Injection-Date");
 	} else if (HeaderCmp(base, "Date", &errMsg) == 0) {
+	    if (haveDate && errMsg == NULL)
+		errMsg = "441 More than one Date header\r\n";
 	    haveDate = 1;
 	    if (errMsg == NULL && vs->vs_Rfc5537)
 		errMsg = (char *)PostDateCheck(base, l, 4, "Date");
@@ -942,6 +960,8 @@ NNPostBuffer(Connection *conn)
 	    }
 	    haveLines = 1;	/* RFC 5537 3.5 step 6: keep the poster's header */
 	} else if (HeaderCmp(base, "Message-ID", &errMsg) == 0) {
+	    if (nMsgId++ > 0 && errMsg == NULL)
+		errMsg = "441 More than one Message-ID header\r\n";
 #ifdef	POST_FORCEMSGID
 	    keep = 0;   /* delete */
 #else
