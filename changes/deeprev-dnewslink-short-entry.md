@@ -1,0 +1,1 @@
+- dnewslink: a spool entry shorter than the article header (damaged spool or queue line) is no longer read as if it had one.

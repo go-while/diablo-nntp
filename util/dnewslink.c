@@ -2616,7 +2616,11 @@ DumpArticle(int cfd, ArtMap *am)
 
 	artSize = size;
 
-	bcopy(base, &ah, sizeof(ah));
+	/* a short entry (damaged spool or queue line) has no header to read */
+	if (artSize >= (int)sizeof(ah))
+	    bcopy(base, &ah, sizeof(ah));
+	else
+	    bzero(&ah, sizeof(ah));
 
 	if (artSize > 24 && (uint8)ah.Magic1 == (uint8)STORE_MAGIC1 &&
 				(uint8)ah.Magic2 == (uint8)STORE_MAGIC2) {
