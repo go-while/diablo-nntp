@@ -334,14 +334,14 @@ CommitCache(Connection *conn, int closefd)
     }
     strcpy(path1, path2);
     strcat(path1, ".tmp");
-    if (rename(path1, path2) < 0) {
-	logit(LOG_ERR, "CommitCache: cannot rename %s to %s (%s)",
-	      path1, path2, strerror(errno));
-	remove(path1);
-    } else {
+    {
 	struct stat st;
 
-	/* Check the file we own, not a pathname another process may replace. */
+	/*
+	 * An article outside cachemin/cachemax is kept as an empty file
+	 * ("uncacheable").  Empty it while it still has its .tmp name: under
+	 * its final name another reader may have it mapped already.
+	 */
 	if (fstat(fd, &st) == 0 &&
 	    ((conn->co_Desc->d_CacheMax > 0 &&
 	      st.st_size > conn->co_Desc->d_CacheMax) ||
@@ -349,16 +349,20 @@ CommitCache(Connection *conn, int closefd)
 	      st.st_size < conn->co_Desc->d_CacheMin))) {
 	    if (ftruncate(fd, 0) < 0) {
 		logit(LOG_ERR, "CommitCache: cannot truncate %s (%s)",
-		      path2, strerror(errno));
+		      path1, strerror(errno));
 		/* Do not offer an out-of-policy file as a completed cache. */
-		if (stat(path2, &st) == 0) {
-		    struct stat owned;
-		    if (fstat(fd, &owned) == 0 &&
-			st.st_dev == owned.st_dev && st.st_ino == owned.st_ino)
-			remove(path2);
-		}
+		remove(path1);
+		hflock(fd, 0, XLOCK_UN);
+		if (closefd)
+		    close(fd);
+		return;
 	    }
 	}
+    }
+    if (rename(path1, path2) < 0) {
+	logit(LOG_ERR, "CommitCache: cannot rename %s to %s (%s)",
+	      path1, path2, strerror(errno));
+	remove(path1);
     }
     hflock(fd, 0, XLOCK_UN);
     if (closefd)
