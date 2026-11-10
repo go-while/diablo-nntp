@@ -81,6 +81,7 @@ typedef struct Partition {
     long		keeptime; 	/* How long to keep articles */
     int			expmethod; 	/* Sync or dirsize expire method */
     struct FileSystem	*filesys;	/* Which filesys does this lie on */
+    int			unsure;		/* an entry could not be classified */
     struct Partition	*next;
 } Partition;
 
@@ -117,6 +118,8 @@ int UnexpireOpt = 0;
 int DoCleanup = 1;
 int TestOpt = 0;
 int UpdateHistory = 0;		/* Do we run the history update */
+char **UnsureParts = NULL;	/* spools with an unclassified entry ... */
+int UnsureCount = 0;		/* ... in this run (all passes) */
 int HistoryUpdateOpt = -1;	/* Do we actually update the history entry 
 				 *	0 = No
 				 *	1 = Force
@@ -138,6 +141,7 @@ double findSize(char *pathname, char *dirname);
 void printPartition(Partition *p);
 int updateHistory(void);
 int findNode(const char *path, int createMe);
+static int unsurePart(const char *partname, int add);
 void freeNodes(void);
 void dumpNodeTable(void);
 time_t getAge(char *dirname);
@@ -416,6 +420,7 @@ CleanAllSpools(void)
 		else
 		    p->expmethod = expmethod;
 		p->spaceok = 0;
+		p->unsure = unsurePart(p->partname, 0);
 		p->filesys = findFileSys(p->partname);
 		p->next = Partitions;
 		Partitions = p;
@@ -672,7 +677,7 @@ cleanupDirectories(void)
 	int j;
 
 	part = SpoolEntries[i]->partn;
-	if (part->spaceok)
+	if (part->spaceok || part->unsure)
 	    continue;
 
 	spacefree = part->filesys->fsfree;
@@ -901,6 +906,7 @@ scanDirectory(Partition *scanpart)
 		    p->partsize = 0;
 		    p->age = 0;
 		    p->spaceok = 0;
+		    p->unsure = unsurePart(p->partname, 0);
 		    p->keeptime = scanpart->keeptime;
 		    p->maxsize = scanpart->maxsize;
 		    p->minfree = scanpart->minfree;
@@ -934,6 +940,37 @@ scanDirectory(Partition *scanpart)
 		    fprintf(stderr, "Skipping unexpected spool entry %s%s\n",
 					scanpart->partname, den->d_name);
 		    break;
+		}
+		/*
+		 * And it is a directory.  A file with such a name would
+		 * count as a directory of the spool, and as the newest one
+		 * when it sorts last: the newest real directory then lost
+		 * its protection.  stat() follows a symbolic link, as the
+		 * chdir() of the size scan and of the removal do.
+		 *
+		 * An entry that went away meanwhile (ENOENT) is skipped.  One
+		 * that cannot be stat()ed otherwise may be a real directory:
+		 * left out of the list, the history update would take its
+		 * articles as gone and expire them.  It stays in the list,
+		 * and nothing of this spool is removed in this run, as we
+		 * cannot tell which of its directories is the newest.
+		 */
+		{
+		    char dpath[PATH_MAX];
+		    struct stat dst;
+
+		    snprintf(dpath, sizeof(dpath), "%s%s", scanpart->partname,
+								den->d_name);
+		    if (stat(dpath, &dst) != 0) {
+			if (errno == ENOENT)
+			    break;
+			fprintf(stderr, "dexpire: cannot tell what spool entry %s is (%s): nothing removed from %s in this run\n",
+					dpath, strerror(errno), scanpart->partname);
+			scanpart->unsure = unsurePart(scanpart->partname, 1);
+		    } else if (!S_ISDIR(dst.st_mode)) {
+			fprintf(stderr, "Skipping spool entry %s: not a directory\n", dpath);
+			break;
+		    }
 		}
 		if (entryIdx == entryMax) {
 		    entryMax = entryMax * 2;
@@ -985,6 +1022,34 @@ scanDirectory(Partition *scanpart)
 
     }
     closedir(dir);
+}
+
+/*
+ * unsurePart() - whether a D.* entry of the spool directory partname could
+ * not be classified in this run; with add it now has one.  The partitions
+ * are made again for every pass, and a later pass whose stat() works must
+ * not remove what the first one left alone: the run said "nothing".
+ */
+static int
+unsurePart(const char *partname, int add)
+{
+    int i;
+
+    for (i = 0; i < UnsureCount; ++i) {
+	if (strcmp(UnsureParts[i], partname) == 0)
+	    return(1);
+    }
+    if (add) {
+	char **n = realloc(UnsureParts, (UnsureCount + 1) * sizeof(char *));
+
+	if (n == NULL || (n[UnsureCount] = strdup(partname)) == NULL) {
+	    fprintf(stderr, "unable to malloc in scan for queue dirs\n");
+	    exit(1);
+	}
+	UnsureParts = n;
+	++UnsureCount;
+    }
+    return(add);
 }
 
 /*
