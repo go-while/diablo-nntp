@@ -3562,8 +3562,14 @@ RenameAccessCache(void)
 {
     const char *pats[5];
     char newbuf[PATH_MAX];
+    char oldbuf[5][PATH_MAX];
+    int saved[5];
     int tfp;
     int i;
+    int r = 1;
+
+    for (i = 0; i < 5; ++i)
+	oldbuf[i][0] = 0;
 
     pats[0] = DRVserverCachePat;
     pats[1] = DRGroupCachePat;
@@ -3584,15 +3590,88 @@ RenameAccessCache(void)
 	close(tfp);
 	return(busy ? 0 : -1);
     }
-    for (i = 0; i < 5; ++i) {
+    /*
+     * The five files are one set: a reader must never load new files next
+     * to old ones (a readerdef naming a group list the old cache.groupdef
+     * does not have gets the first list).  Keep a link to each file in use
+     * as <name>.old; when a rename fails, put back the files already
+     * renamed, write no stamp, and the readers keep the set they have.
+     * Only a file that is not there needs no link: when a link cannot be
+     * made, nothing is renamed.  (A crash in the middle of the renames is
+     * not covered: that would need a journal.)
+     */
+    for (i = 0; i < 5 && r > 0; ++i) {
+	snprintf(oldbuf[i], sizeof(oldbuf[i]), "%s.old", PatDbExpand(pats[i]));
+	saved[i] = 0;
+	if (unlink(oldbuf[i]) < 0 && errno != ENOENT) {
+	    logit(LOG_CRIT, "Unable to remove %s (%s), access cache not installed",
+		oldbuf[i], strerror(errno));
+	    r = -1;
+	} else if (link(PatDbExpand(pats[i]), oldbuf[i]) == 0) {
+	    saved[i] = 1;
+	} else if (errno != ENOENT) {
+	    logit(LOG_CRIT, "Unable to link %s to %s (%s), access cache not installed",
+		PatDbExpand(pats[i]), oldbuf[i], strerror(errno));
+	    r = -1;
+	}
+    }
+    for (i = 0; i < 5 && r > 0; ++i) {
 	snprintf(newbuf, sizeof(newbuf), "%s.new", PatDbExpand(pats[i]));
-	rename(newbuf, PatDbExpand(pats[i]));
+	if (rename(newbuf, PatDbExpand(pats[i])) < 0) {
+	    /* the caller builds and installs the files again */
+	    logit(LOG_CRIT, "Unable to rename %s to %s (%s)",
+		newbuf, PatDbExpand(pats[i]), strerror(errno));
+	    r = -1;
+	    break;
+	}
+    }
+    if (r < 0 && i < 5) {
+	int bad = 0;
+	int j;
+
+	/* i: the rename that failed (or 0 when a link failed: nothing to do) */
+	for (j = 0; j < i; ++j) {
+	    /* without a link there was no file in use: remove the new one */
+	    if (saved[j] ? rename(oldbuf[j], PatDbExpand(pats[j])) < 0 :
+			(unlink(PatDbExpand(pats[j])) < 0 && errno != ENOENT)) {
+		logit(LOG_CRIT, "Unable to put back %s (%s)",
+		    PatDbExpand(pats[j]), strerror(errno));
+		bad = 1;
+	    }
+	}
+	if (bad) {
+	    /*
+	     * No set at all rather than a mixed one.  The lock file goes
+	     * first: a reader loads nothing without it, and one that waited
+	     * for our lock sees it removed.  The running processes keep
+	     * their maps, a new one refuses clients until an install works.
+	     */
+	    if (unlink(PatDbExpand(DRAccessLockPat)) < 0 && errno != ENOENT) {
+		/* an empty lock file is not loaded either (ReadAccessCache()) */
+		logit(LOG_CRIT, "Unable to remove %s (%s), emptying it",
+		    PatDbExpand(DRAccessLockPat), strerror(errno));
+		if (ftruncate(tfp, 0) < 0)
+		    logit(LOG_CRIT, "Unable to empty %s (%s): a new process may load a mixed access cache",
+			PatDbExpand(DRAccessLockPat), strerror(errno));
+	    }
+	    for (j = 0; j < 5; ++j) {
+		if (unlink(PatDbExpand(pats[j])) < 0 && errno != ENOENT)
+		    logit(LOG_CRIT, "Unable to remove %s (%s)",
+			PatDbExpand(pats[j]), strerror(errno));
+	    }
+	    logit(LOG_CRIT, "access cache files removed: they were not one set");
+	}
+    }
+    for (i = 0; i < 5; ++i) {
+	if (oldbuf[i][0])
+	    unlink(oldbuf[i]);
     }
 
-    WriteBestEffort(tfp, &tfp, 1);
+    if (r > 0)
+	WriteBestEffort(tfp, &tfp, 1);
     xflock(tfp, XLOCK_UN);
     close(tfp);
-    return(1);
+    return(r);
 }
 
 /*
@@ -3663,6 +3742,7 @@ InstallAccessCache(void) {
     AccessDef accessdef;
     int copt = OPT_NONE;
     int parseError = 0;	/* bad file content, as opposed to a transient failure */
+    int writeError = 0;	/* a cache file could not be written */
     int postTrailerWarned = 0;	/* one obsolete-option warning per file read */
     int skiptail = 0;	/* the rest of a line longer than buf */
     GroupListRef *glRefs = NULL;	/* the readerdefs' group list names */
@@ -4691,11 +4771,18 @@ InstallAccessCache(void) {
 	parseError = 1;
     }
     fclose(fp);
-    fclose(vsf);
-    fclose(grf);
-    fclose(auf);
-    fclose(rdf);
-    fclose(raf);
+    /* a short .new file (disk full) must not replace the cache in use */
+    writeError = ferror(vsf) | ferror(grf) | ferror(auf) | ferror(rdf) | ferror(raf);
+    if (fclose(vsf) != 0)
+	writeError = 1;
+    if (fclose(grf) != 0)
+	writeError = 1;
+    if (fclose(auf) != 0)
+	writeError = 1;
+    if (fclose(rdf) != 0)
+	writeError = 1;
+    if (fclose(raf) != 0)
+	writeError = 1;
     if (checkGroupListRefs(glRefs, glRefCount, grNames, grNameCount) > 0)
 	parseError = 1;
     free(glRefs);
@@ -4712,6 +4799,12 @@ InstallAccessCache(void) {
 	/* the file is settled only if it was already older than the moment we read it (seen); a same-second in-place fix reuses its mtime/size/inode, so a not-yet-settled file must be reparsed or it is skipped forever */
 	if (st.st_mtime >= seen - 1)
 	    Access_LastUpdate = 0;
+	return;
+    }
+    if (writeError) {
+	logit(LOG_CRIT, "Unable to write the new access cache files (%s etc.) - not updating",
+		vsnewbuf);
+	Access_LastUpdate = 0;
 	return;
     }
     switch (RenameAccessCache()) {
