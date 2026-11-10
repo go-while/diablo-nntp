@@ -341,6 +341,33 @@ ascToMask(const char *str)
 }
 
 /*
+ * cidrMaskBits() - the prefix length of "addr/nn": 0..max, max when there
+ *		    is no "/nn", -1 when nn is not a number in that range.
+ *
+ *	atoi() made "/abc" and "/" a /0, an IPv4 "/33" shifted by a negative
+ *	count and an IPv6 "/256" wrapped to 0 in a uint8: each of these
+ *	matched every address.
+ */
+static int
+cidrMaskBits(const char *cidr, int max)
+{
+    const char *ptr;
+    int n = 0;
+
+    if ((ptr = strchr(cidr, '/')) == NULL)
+	return(max);
+    if (*++ptr == 0)
+	return(-1);
+    for (; *ptr; ++ptr) {
+	if (*ptr < '0' || *ptr > '9')
+	    return(-1);
+	if ((n = n * 10 + (*ptr - '0')) > max)
+	    return(-1);
+    }
+    return(n);
+}
+
+/*
  * Match CIDR address - return 1 for sucess else 0
  *
  * This is really messy
@@ -351,7 +378,7 @@ CidrMatch(const char *cidr, const char *ip)
 #ifdef INET6
     char addr[256];
     char mask[256];
-    uint8 maskbits = 128;
+    int maskbits;
     char maskst[NI_MAXHOST];
     char *p;
     int i;
@@ -363,9 +390,11 @@ CidrMatch(const char *cidr, const char *ip)
 	if (strchr(cidr, ':') == NULL)	/* Don't compare against non v6 CIDR */
 	    return(0);
 	strcpy(maskst, cidr);
-	if ((p = strchr(maskst, '/')) != NULL) {
+	if ((p = strchr(maskst, '/')) != NULL)
 	    *p = '\0';
-	    maskbits = atoi(++p);
+	if ((maskbits = cidrMaskBits(cidr, 128)) < 0) {
+	    logit(LOG_ERR, "Invalid IPv6 mask: %s", cidr);
+	    return(0);
 	}
 	if (inet_pton(AF_INET6, ip, addr) != 1) {
 	    logit(LOG_ERR, "Invalid IPv6 address: %s", ip);
@@ -392,9 +421,27 @@ CidrMatch(const char *cidr, const char *ip)
 	u_long net;
 	u_long mask;
 	u_long addr;
+	const char *mp;
+	int bad;
 
 	if (strchr(cidr, ':') != NULL)	/* Don't compare against v6 CIDR */
 	    return(0);
+	/*
+	 * A mask that is no mask matches nothing.  The /xxx.xxx.xxx.xxx
+	 * form is converted by ascToMask() with inet_addr(); inet_aton()
+	 * takes the same spellings (octal, shortened forms) and says
+	 * whether it could, which inet_addr() cannot for an all-ones mask.
+	 */
+	if ((mp = strchr(cidr, '/')) != NULL && strchr(mp, '.') != NULL) {
+	    struct in_addr ia;
+
+	    bad = (inet_aton(mp + 1, &ia) == 0);
+	} else
+	    bad = (cidrMaskBits(cidr, 32) < 0);
+	if (bad) {
+	    logit(LOG_ERR, "Invalid IPv4 mask: %s", cidr);
+	    return(0);
+	}
 	addr = ascToAddr(ip);
 	net = ascToAddr(cidr);
 	mask = ascToMask(cidr);
