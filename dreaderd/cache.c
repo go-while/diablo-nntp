@@ -236,7 +236,7 @@ CreateCache(Connection *conn)
 	new = CH_LOAD(&che->che_NewArt)+conn->co_SReq->sr_endNo-CH_LOAD(&che->che_LastHi);
 	if (new < 1) new=1;
 	if ( (read / new) > conn->co_Desc->d_ReadNewRatio) {
-	    if ((hits/(uint32)readArt) > conn->co_Desc->d_CacheReadRatio) {
+	    if (((double)hits / readArt) > conn->co_Desc->d_CacheReadRatio) {
 		/* cache on */
 		if ((fd = open(tmp, O_RDWR|O_CREAT, 0644)) < 0) {
 		    return;	/* error	     */

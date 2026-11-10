@@ -1,0 +1,1 @@
+- dreaderd: the cache hit ratio of `cache=scoring(r,c)` was an integer division, so a ratio between 0 and 1 only took effect at 1.0; it is compared as a fraction now.
