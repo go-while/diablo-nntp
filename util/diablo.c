@@ -47,6 +47,7 @@ typedef struct Feed {
     int		fe_BufIdx;
     int		fe_BufMax;
     int		fe_Failed;
+    int		fe_Lost;	/* lines dropped while the queue file fails */
 } Feed;
 
 typedef struct Retain {
@@ -1692,6 +1693,7 @@ writeFeedOut(const char *label, const char *file, const char *msgid, const char 
 	    fe->fe_BufMax = bsize;
 	    fe->fe_BufIdx = 0;
 	    fe->fe_Failed = 0;
+	    fe->fe_Lost = 0;
 	    fe->fe_Delayed = IsDelayed(label);
 	    fe->fe_NotifyFd = -1;
 #if 0
@@ -1732,7 +1734,11 @@ writeFeedOut(const char *label, const char *file, const char *msgid, const char 
      * subtract it off after the actual copy operation.
      */
 
-    if (fe->fe_Fd >= 0) {
+    /*
+     * fe_Fd < 0 with a buffer: the queue file failed and flushFeeds() kept
+     * the lines that were not written; flushFeedOut() opens it again.
+     */
+    if (fe->fe_Fd >= 0 || fe->fe_Buf != NULL) {
 	/* 32: " H" and " D<time>"; 12: " L<lines>" (D-174) */
 	int l = strlen(file) + strlen(msgid) + strlen(offSize) + (3 + 32 + 12 + 1);
 
@@ -1761,6 +1767,14 @@ writeFeedOut(const char *label, const char *file, const char *msgid, const char 
 	    if (l >= fe->fe_BufMax - fe->fe_BufIdx)
 		flushFeedOut(fe);
 
+	    if (l >= fe->fe_BufMax - fe->fe_BufIdx) {
+		/*
+		 * The flush failed and the buffer keeps its lines for
+		 * the next try, so there is no room for this one.
+		 */
+		++fe->fe_Lost;
+		return;
+	    }
 	    if (fe->fe_Delayed)
 		sprintf(delayTime, " D%d", (int)time(NULL));
 	    else
@@ -1790,20 +1804,30 @@ void
 flushFeeds(int justClose)
 {
     Feed *fe;
+    Feed **pfe = &FeBase;
 
-    while ((fe = FeBase) != NULL) {
+    while ((fe = *pfe) != NULL) {
 	if (justClose == 0)
 	    flushFeedOut(fe);
-	if (fe->fe_Buf)
-	    pagefree(fe->fe_Buf, 1);
 	if (fe->fe_Fd >= 0)
 	    close(fe->fe_Fd);
 	fe->fe_Fd = -1;
 	if (fe->fe_NotifyFd >= 0)
 	    close(fe->fe_NotifyFd);
 	fe->fe_NotifyFd = -1;
+	if (justClose == 0 && fe->fe_Buf && fe->fe_BufIdx) {
+	    /*
+	     * The write failed (full disk, quota, I/O error): keep the
+	     * lines.  The next flush opens the queue file again and
+	     * writes them.
+	     */
+	    pfe = &fe->fe_Next;
+	    continue;
+	}
+	if (fe->fe_Buf)
+	    pagefree(fe->fe_Buf, 1);
 	fe->fe_Buf = NULL;
-	FeBase = fe->fe_Next;
+	*pfe = fe->fe_Next;
 	zfree(&ParProcMemPool, fe, sizeof(Feed) + strlen(fe->fe_Label) + 1);
     }
 }
@@ -1811,12 +1835,21 @@ flushFeeds(int justClose)
 void
 flushFeedOut(Feed *fe)
 {
+    /*
+     * Lines kept by flushFeeds() after a failed write: open the queue file
+     * again.  No log here, the failure is logged once below.
+     */
+    if (fe->fe_BufIdx && fe->fe_Buf && fe->fe_Fd < 0)
+	fe->fe_Fd = xopen(O_APPEND|O_RDWR|O_CREAT, 0644, "%s/%s",
+				PatExpand(DQueueHomePat), fe->fe_Label);
     if (fe->fe_BufIdx && fe->fe_Buf && fe->fe_Fd >= 0) {
 	/*
 	 * flush buffer.  If the write fails, we undo it to ensure
-	 * that we do not get garbaged feed files.
+	 * that we do not get garbaged feed files, and keep the buffer:
+	 * the next flush tries again.
 	 */
 	int n = write(fe->fe_Fd, fe->fe_Buf, fe->fe_BufIdx);
+	int werr = errno;
 	if (fe->fe_NotifyFd != -1) {
 	    if (write(fe->fe_NotifyFd, &n, 1) < 0 && errno != EAGAIN) {
 		close(fe->fe_NotifyFd);
@@ -1828,12 +1861,23 @@ flushFeedOut(Feed *fe)
 		logit(LOG_ERR, "%s: queue file truncate failed: %s",
 					fe->fe_Label, strerror(errno));
 	}
-	if (n != fe->fe_BufIdx && fe->fe_Failed == 0) {
-	    fe->fe_Failed = 1;
-	    logit(LOG_INFO, "failure writing to feed %s", fe->fe_Label);
+	if (n != fe->fe_BufIdx) {
+	    if (fe->fe_Failed == 0) {
+		fe->fe_Failed = 1;
+		logit(LOG_ERR, "failure writing to feed %s (%s), will retry",
+		    fe->fe_Label,
+		    (n < 0) ? strerror(werr) : "short write");
+	    }
+	    return;
 	}
+	if (fe->fe_Failed) {
+	    logit(LOG_NOTICE, "feed %s is written again, %d queue lines lost",
+						fe->fe_Label, fe->fe_Lost);
+	    fe->fe_Failed = 0;
+	    fe->fe_Lost = 0;
+	}
+	fe->fe_BufIdx = 0;
     }
-    fe->fe_BufIdx = 0;
 }
 
 /*

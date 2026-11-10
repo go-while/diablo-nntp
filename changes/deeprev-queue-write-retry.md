@@ -1,0 +1,1 @@
+- diablo: when writing an outgoing queue file failed (full disk, quota), the buffered queue lines were thrown away and those articles never reached that feed; the lines are now kept and written by the next flush, and the log says how many were lost if the buffer filled up meanwhile.
