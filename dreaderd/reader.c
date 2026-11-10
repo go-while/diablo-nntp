@@ -1680,8 +1680,17 @@ sigSegVReader(int sigNo)
     } else {
 	char cmdbuf[256];
 
-	if (fork())
-	   return;
+	if (fork()) {
+	    /*
+	     * The child keeps the image for the handler.  This process
+	     * must not go back into the fault: returning with the handler
+	     * still installed ran the faulting instruction again and came
+	     * back here to fork, without end.  Die of the signal instead.
+	     */
+	    signal(sigNo, SIG_DFL);
+	    raise(sigNo);
+	    return;
+	}
 	snprintf(cmdbuf, sizeof(cmdbuf), "%s %d", DOpts.ReaderCrashHandler, getpid());
 	if (system(cmdbuf) != 0)
 	    logit(LOG_ERR, "crash handler %s failed", cmdbuf);
