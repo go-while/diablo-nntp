@@ -2810,6 +2810,14 @@ StreamReload(int cfd)
 
 #endif
 
+/*
+ * The feedlog stage is still the "-" Transact() starts with (or empty):
+ * the streaming code has not named the step yet.  The test used to be for
+ * an empty string only, which the field never was, so a streaming feed
+ * logged "-" for every article.
+ */
+#define STAGE_UNSET(st)	((st) != NULL && ((st)[0] == 0 || strcmp((st), "-") == 0))
+
 int
 StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, int cSize, int lines, int defers, char *stage, char *reason, char *buf, int *sentSize)
 {
@@ -2896,7 +2904,7 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 		delMe = 1;
 		r = T_REJECTED;	/* XXX */
 		StrnCpyNull(msgId, s->st_MsgId, 1024);
-		if (stage && !*stage)
+		if (STAGE_UNSET(stage))
 		    StrnCpyNull(stage, (defers? "resend-stream": "stream"), MAXREASON);
 		StrnCpyNull(reason, ptr, MAXREASON);
 		break;
@@ -2905,7 +2913,7 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 		char cst[32];
 		delMe = 1;
 		StrnCpyNull(msgId, s->st_MsgId, 1024);
-		if (stage && !*stage)
+		if (STAGE_UNSET(stage))
 		    StrnCpyNull(stage, "stream", MAXREASON);
 		StrnCpyNull(reason, ptr, MAXREASON);
 		r = T_DEFERIT;
@@ -2943,7 +2951,7 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 		    delMe = 1;
 		    r = T_UNSENT;
 		    StrnCpyNull(msgId, s->st_MsgId, 1024);
-		    if (stage && !*stage)
+		    if (STAGE_UNSET(stage))
 			StrnCpyNull(stage, (defers? "resend-takethis": "takethis"), MAXREASON);
 		    StrnCpyNull(reason, "article not read from the spool, TAKETHIS not sent", MAXREASON);
 		    streamFlags(s, cst, sizeof(cst));
@@ -2961,7 +2969,7 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 		 */
 		s->st_State = STATE_POSTED;
 		StrnCpyNull(msgId, s->st_MsgId, 1024);
-		if (stage && !*stage)
+		if (STAGE_UNSET(stage))
 		    StrnCpyNull(stage, (defers? "resend-takethis": "takethis"), MAXREASON);
 		StrnCpyNull(reason, ptr, MAXREASON);
 	    }
@@ -2976,7 +2984,7 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 	    if ((s = LocateStream(ptr, STATE_CHECK)) != NULL) {
 		delMe = 1;
 		StrnCpyNull(msgId, s->st_MsgId, 1024);
-		if (stage && !*stage)
+		if (STAGE_UNSET(stage))
 		    StrnCpyNull(stage, (defers? "resend-stream": "stream"), MAXREASON);
 		StrnCpyNull(reason, ptr, MAXREASON);
 		r = T_REFUSED;
@@ -2992,7 +3000,7 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 	    if ((s = LocateStream(ptr, STATE_POSTED)) != NULL) {
 		delMe = 1;
 		StrnCpyNull(msgId, s->st_MsgId, 1024);
-		if (stage && !*stage)
+		if (STAGE_UNSET(stage))
 		    StrnCpyNull(stage, (defers? "resend-stream": "stream"), MAXREASON);
 		StrnCpyNull(reason, ptr, MAXREASON);
 		r = T_ACCEPTED;
@@ -3027,7 +3035,7 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 		if (sentSize)
 		    *sentSize = s->st_Size;
 		StrnCpyNull(msgId, s->st_MsgId, 1024);
-		if (stage && !*stage)
+		if (STAGE_UNSET(stage))
 		    StrnCpyNull(stage, (defers? "resend-stream": "stream"), MAXREASON);
 		StrnCpyNull(reason, ptr, MAXREASON);
 	    }
@@ -3036,13 +3044,13 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 	case ERR_ACCESS:
 	case ERR_FAULT:
 	case ERR_AUTHBAD:
-	    if (stage && !*stage)
+	    if (STAGE_UNSET(stage))
 		StrnCpyNull(stage, (defers? "resend-stream": "stream"), MAXREASON);
 	    StrnCpyNull(reason, (ptr ? ptr : "<Unexpected EOF>"), MAXREASON);
 	    r = T_FAILEDEXIT;
 	    break;
 	default:
-	    if (stage && !*stage)
+	    if (STAGE_UNSET(stage))
 		StrnCpyNull(stage, (defers? "resend-stream": "stream"), MAXREASON);
 	    StrnCpyNull(reason, (ptr ? ptr : "<Unexpected EOF>"), MAXREASON);
 	    r = T_FAILED;

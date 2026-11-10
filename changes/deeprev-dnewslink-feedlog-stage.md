@@ -1,0 +1,1 @@
+- dnewslink -A: the stage field of feedlog lines is filled in for streaming feeds (`stream`, `takethis`, `resend-stream`, `resend-takethis`); it was `-` on every line.
