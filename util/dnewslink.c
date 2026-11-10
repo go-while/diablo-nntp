@@ -3599,7 +3599,7 @@ commandResponse(int cfd, char **rptr, const char *ctl, ...)
 	    if (Bufe == sizeof(Buf) - 1) {
 		if (Bufb == 0)
 		    break;
-		memcpy(Buf, Buf + Bufb, Bufe - Bufb);
+		memmove(Buf, Buf + Bufb, Bufe - Bufb);
 		Bufe -= Bufb;
 		Bufb = 0;
 	    }
