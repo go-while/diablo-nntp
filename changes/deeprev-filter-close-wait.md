@@ -1,0 +1,1 @@
+- diablo: when closing the external filter (`feederfilter`), the wait for it to exit tested an unset status while the filter was still running, so it could be logged as exited at once and left behind; diablo now waits up to ten seconds as intended.
