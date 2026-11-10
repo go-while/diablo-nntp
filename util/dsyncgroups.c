@@ -522,6 +522,13 @@ main(int ac, char **av)
 		    continue;
 
 		/*
+		 * the name comes from the remote: it becomes a key in
+		 * dactive.kp and part of the overview file names
+		 */
+		if (ValidGroupName(group) < 0)
+		    continue;
+
+		/*
 		 * ignore group that does not match the wildcard, even though
 		 * the remote end is supposed to do this for us.
 		 */
@@ -708,6 +715,16 @@ processLine(char *cmd, char *wild, int *count, int *ok)
 
 	if (group == NULL || gend == NULL || gbeg == NULL)
 	    return;
+
+	/*
+	 * the name comes from the remote (or the -G file): it becomes a key
+	 * in dactive.kp and part of the overview file names
+	 */
+	if (ValidGroupName(group) < 0) {
+	    SanitizeString(group);
+	    printf("Invalid group name - skipping : %s\n", group);
+	    return;
+	}
 
 	/*
 	 * ignore group that does not match the wildcard, even though
