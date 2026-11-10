@@ -48,6 +48,7 @@ typedef struct Feed {
     int		fe_BufMax;
     int		fe_Failed;
     int		fe_Lost;	/* lines dropped while the queue file fails */
+    int		fe_Partial;	/* the file ends in the first part of a line */
 } Feed;
 
 typedef struct Retain {
@@ -1749,6 +1750,7 @@ writeFeedOut(const char *label, const char *file, const char *msgid, const char 
 	    fe->fe_BufIdx = 0;
 	    fe->fe_Failed = 0;
 	    fe->fe_Lost = 0;
+	    fe->fe_Partial = 0;
 	    fe->fe_Delayed = IsDelayed(label);
 	    fe->fe_NotifyFd = -1;
 #if 0
@@ -1864,9 +1866,25 @@ flushFeeds(int justClose)
     while ((fe = *pfe) != NULL) {
 	if (justClose == 0)
 	    flushFeedOut(fe);
+	/*
+	 * The file ends in the first part of a line and the rest is still
+	 * in the buffer: keep the descriptor.  dspoolout renames the queue
+	 * file before it asks for a flush; a file opened again by name
+	 * would be a new one, and the rest of the line would land there.
+	 */
+	if (justClose == 0 && fe->fe_Partial && fe->fe_Fd >= 0 &&
+	    fe->fe_Buf && fe->fe_BufIdx
+	) {
+	    if (fe->fe_NotifyFd >= 0)
+		close(fe->fe_NotifyFd);
+	    fe->fe_NotifyFd = -1;
+	    pfe = &fe->fe_Next;
+	    continue;
+	}
 	if (fe->fe_Fd >= 0)
 	    close(fe->fe_Fd);
 	fe->fe_Fd = -1;
+	fe->fe_Partial = 0;
 	if (fe->fe_NotifyFd >= 0)
 	    close(fe->fe_NotifyFd);
 	fe->fe_NotifyFd = -1;
@@ -1919,8 +1937,12 @@ flushFeedOut(Feed *fe)
 		/*
 		 * The n bytes stay in the file, so they must not be
 		 * written again: keep only the rest for the retry, which
-		 * then goes on exactly where the file ends.
+		 * then goes on exactly where the file ends.  If they end
+		 * inside a line, the rest has to go to this same file
+		 * (see flushFeeds()).
 		 */
+		if (n > 0)
+		    fe->fe_Partial = (fe->fe_Buf[n - 1] != '\n');
 		memmove(fe->fe_Buf, fe->fe_Buf + n, fe->fe_BufIdx - n);
 		fe->fe_BufIdx -= n;
 	    }
@@ -1940,6 +1962,7 @@ flushFeedOut(Feed *fe)
 	    fe->fe_Failed = 0;
 	    fe->fe_Lost = 0;
 	}
+	fe->fe_Partial = 0;
 	fe->fe_BufIdx = 0;
     }
 }
