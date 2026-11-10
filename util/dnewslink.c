@@ -3115,10 +3115,10 @@ RefilePendingStreams(FILE *fo)
 
 		streamFlags(s, cst, sizeof(cst));
 		if (s->st_Off || s->st_Size) {
-		    fprintf(fo, "%s\t%s\t%d,%d%s%s\n", 
+		    fprintf(fo, "%s\t%s\t%lld,%d%s%s\n", 
 			s->st_RelPath, 
 			s->st_MsgId,
-			(int)s->st_Off, 
+			(long long)s->st_Off, 
 			(int)s->st_Size,
 			HeaderOnlyFeed ? " H" : "",
 			cst

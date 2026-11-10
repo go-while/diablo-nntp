@@ -1,0 +1,1 @@
+- dnewslink: an entry written back to the queue file when the connection ends keeps its whole spool offset; it was cut to 32 bits.
