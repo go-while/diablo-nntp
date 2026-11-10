@@ -1412,12 +1412,16 @@ main(int ac, char **av)
 	/* Clean out the delayed closes */
 	if (NeedClosing != NULL) {
 	    PendingClose *pc;
+	    PendingClose *npc;
 	    PendingClose *ppc = NULL;
 	    time_t timenow = time(NULL);
 
-	    for (pc = NeedClosing; pc != NULL; ppc = pc, pc = pc->next) {
-		if (pc->when > timenow)
+	    for (pc = NeedClosing; pc != NULL; pc = npc) {
+		npc = pc->next;
+		if (pc->when > timenow) {
+		    ppc = pc;	/* the last entry that stays */
 		    continue;
+		}
 		WriteBestEffort(pc->fd, pc->msgbuf, strlen(pc->msgbuf));
 		close(pc->fd);
 		pc->fd = -1;
@@ -1426,9 +1430,9 @@ main(int ac, char **av)
 		    --NumActive;
 		}
 		if (pc == NeedClosing)
-		    NeedClosing = pc->next;
+		    NeedClosing = npc;
 		if (ppc != NULL)
-		    ppc->next = pc->next;
+		    ppc->next = npc;
 		zfree(&PendingMemPool, pc, sizeof(PendingClose));
 	    }
 	}
