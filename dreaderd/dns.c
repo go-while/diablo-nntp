@@ -4863,7 +4863,8 @@ ReadAccessCache(void) {
 	accessmap.GroupMapSize = st.st_size;
 
 	mapptr = accessmap.GroupMap;
-	while (*mapptr) {
+	/* the file has no terminator: its size ends the list */
+	while (mapptr < (char *)accessmap.GroupMap + st.st_size && *mapptr) {
 	    gp = zalloc(&DnsMemPool, sizeof(GroupDef));
 	    gp->gr_Groups = NULL;
 	    gp->gr_Next = NULL;

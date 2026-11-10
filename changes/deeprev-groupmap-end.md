@@ -1,0 +1,1 @@
+- dreaderd: reading the group cache (cache.groupdef) relied on a zero byte after the end of the file and read past the mapping when its size was an exact multiple of the page size.
