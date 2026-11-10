@@ -940,10 +940,10 @@ MBNormalize(MBufHead *mh, int *plen)
 	    mbuf->mb_Buf + bytes,
 	    scan->mb_Size - scan->mb_Index
 	);
+	bytes += scan->mb_Size - scan->mb_Index;
 	if (scan->mb_Buf)
 	    zfree(mh->mh_BufPool, scan->mb_Buf, scan->mb_Max);
 	zfree(mh->mh_MemPool, scan, sizeof(MBuf));
-	bytes += scan->mb_Size - scan->mb_Index;
     }
     mh->mh_MBuf = mbuf;
     return(mbuf->mb_Buf);
