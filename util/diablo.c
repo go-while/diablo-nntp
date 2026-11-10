@@ -1371,9 +1371,6 @@ DoAccept(int lfd)
 
 		OpenLog("diablo", (DebugOpt ? LOG_PERROR : 0)|LOG_PID|LOG_NDELAY);
 
-		if (HLabel[0] != 0)
-		    NiceBestEffort(FeedPriority(HLabel));
-
 		FeedFo = fdopen(fds[1], "w");
 authenticate:
 #ifdef INET6
@@ -2001,6 +1998,19 @@ DoSession(int fd, int count)
     }
 
     LoadNewsFeed(0, 1, HLabel);	/* free old memory and load only our label */
+
+    /*
+     * incomingpriority of the label.  This was done right after the fork,
+     * when the label is not known yet (Authenticate() fills it in later, in
+     * this process), so it never had an effect.  Here the label is final,
+     * XCLIENT included, and the feed table holds this label only.
+     */
+    {
+	int prio = FeedPriority(HLabel);
+
+	if (prio > 0)
+	    NiceBestEffort(prio);
+    }
 
     ConfigNewsFeedSockOpts(HLabel, nfd, fd);
 

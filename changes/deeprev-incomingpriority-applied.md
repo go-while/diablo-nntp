@@ -1,0 +1,1 @@
+- dnewsfeeds: `incomingpriority` now takes effect: the session process of the label runs with that nice value. It was applied before the label of the connection was known, so it never did anything.
