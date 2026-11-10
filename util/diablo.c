@@ -3338,6 +3338,13 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		     */
 		    if (strchr(npath, '\t') != NULL)
 			artError |= LAERR_PATHTAB;
+		    /*
+		     * An empty Path: value is an empty field of the SOUT
+		     * line, which the master's strtok() skips: every field
+		     * after it would shift by one.
+		     */
+		    if (npath[0] == 0)
+			artError |= LAERR_HEADER;
 		} else if (hch == 'x' && bytes >= 5 &&
 			   strncasecmp(p, "Xref:", 5) == 0) {
 		    hdrXref++;
