@@ -1,0 +1,1 @@
+- diablo: after a short write to a queue file that could not be taken back, the retry writes only the rest instead of the whole buffer again.

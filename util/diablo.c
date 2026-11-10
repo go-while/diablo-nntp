@@ -1908,6 +1908,7 @@ flushFeedOut(Feed *fe)
 	 */
 	int n = write(fe->fe_Fd, fe->fe_Buf, fe->fe_BufIdx);
 	int werr = errno;
+	int all = (n == fe->fe_BufIdx);
 	if (fe->fe_NotifyFd != -1) {
 	    if (write(fe->fe_NotifyFd, &n, 1) < 0 && errno != EAGAIN) {
 		close(fe->fe_NotifyFd);
@@ -1915,11 +1916,19 @@ flushFeedOut(Feed *fe)
 	    }
 	}
 	if (n >= 0 && n != fe->fe_BufIdx) {
-	    if (ftruncate(fe->fe_Fd, lseek(fe->fe_Fd, 0L, 1) - n) < 0)
+	    if (ftruncate(fe->fe_Fd, lseek(fe->fe_Fd, 0L, 1) - n) < 0) {
 		logit(LOG_ERR, "%s: queue file truncate failed: %s",
 					fe->fe_Label, strerror(errno));
+		/*
+		 * The n bytes stay in the file, so they must not be
+		 * written again: keep only the rest for the retry, which
+		 * then goes on exactly where the file ends.
+		 */
+		memmove(fe->fe_Buf, fe->fe_Buf + n, fe->fe_BufIdx - n);
+		fe->fe_BufIdx -= n;
+	    }
 	}
-	if (n != fe->fe_BufIdx) {
+	if (!all) {
 	    if (fe->fe_Failed == 0) {
 		fe->fe_Failed = 1;
 		logit(LOG_ERR, "failure writing to feed %s (%s), will retry",
