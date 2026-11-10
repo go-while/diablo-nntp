@@ -2659,7 +2659,8 @@ DumpAllFeedInfo(FILE *fo)
     NewsFeed *nf = NULL;
 
     fprintf(fo, "** GLOBAL **\n");
-    DumpFeedInfo(fo, NFGlob->nf_Label);
+    if (NFGlob != NULL)		/* NULL without a "label GLOBAL" */
+	DumpFeedInfo(fo, NFGlob->nf_Label);
     DumpFeedInfo(fo, "ISPAM");
     DumpFeedInfo(fo, "ESPAM");
     DumpFeedInfo(fo, "IFILTER");
