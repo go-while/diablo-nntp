@@ -224,8 +224,17 @@ ReaderTask(int fd, const char *id)
 	 *
 	 */
 
+	/*
+	 * Status updates are written at most once a second per slot;
+	 * write the ones held back, and come back within a second for
+	 * those that still wait.
+	 */
+	RTStatusFlush();
+
 	if (TerminatePending)
 	    NextTimeout(&tv, 50);
+	else if (RTStatusPending())
+	    NextTimeout(&tv, 1000);
 	else
 	    NextTimeout(&tv, 2 * 1000);
 
