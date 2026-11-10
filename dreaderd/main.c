@@ -1210,6 +1210,16 @@ main(int ac, char **av)
 		NumPending, DOpts.ReaderDns, 
 		NumActive, MaxConnects
 	    );
+	    /*
+	     * The status file takes one update per second.  One that was
+	     * held back is written by the update of a later pass: come back
+	     * for it within a second instead of sleeping the full timeout
+	     * with old counters in the file.
+	     */
+	    if (RTStatusPending() && tv.tv_sec >= 1) {
+		tv.tv_sec = 1;
+		tv.tv_usec = 0;
+	    }
 
 	    if (!HandbackSpareOpen()) {
 		static time_t lastLog;
