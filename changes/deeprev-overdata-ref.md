@@ -1,0 +1,1 @@
+- dreaderd: when the overview data file of a group could not be opened or created for a fed article, the group's overview stayed referenced, so its index file stayed open, mapped and locked for the life of the feed process.

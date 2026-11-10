@@ -731,6 +731,7 @@ WriteOverview(Connection *conn, ArtNumAss *an, const char *group, const char *xr
 		LogIncoming("%s - %s%s", conn->co_Auth.dr_Host, "", logbuf);
 	    MBLogPrintf(conn, &conn->co_TMBuf, "400 Error writing data\r\n");
 	    NNTerminate(conn);
+	    PutOverInfo(ov);
 	    return(1);
 	}
 
