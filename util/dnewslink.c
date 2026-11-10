@@ -1495,21 +1495,37 @@ main(int ac, char **av)
 		} else if (more || fo != NULL) {
 		    struct stat st;
 		    int writeFailed = 0;
+		    int werr = 0;	/* errno of the first failure */
 
 		    if (fo == NULL)
 			fo = rewriteBatchFile(path, PipeOpt);
 		    if (fo == NULL) {
 			writeFailed = 1;
+			werr = errno;
 		    } else {
 			if (more) {
 			    do {
 				fputs(buf, fo);
 			    } while (readline(fd, buf, sizeof(buf), TimeNow) == 0);
 			}
-			if (fflush(fo) != 0 || ferror(fo))
+			if (fflush(fo) != 0 || ferror(fo)) {
 			    writeFailed = 1;
-			if (fclose(fo) != 0)
+			    werr = errno;
+			}
+			/*
+			 * The rewrite replaces the queue by rename: have
+			 * its data on disk first, or a crash can leave the
+			 * new name with an empty file.
+			 */
+			if (PipeOpt == 0 && RealTimeOpt == 0 && !writeFailed &&
+			    fsync(fileno(fo)) != 0) {
 			    writeFailed = 1;
+			    werr = errno;
+			}
+			if (fclose(fo) != 0 && !writeFailed) {
+			    writeFailed = 1;
+			    werr = errno;
+			}
 			fo = NULL;
 		    }
 		    if (writeFailed) {
@@ -1517,7 +1533,7 @@ main(int ac, char **av)
 			 * A truncated rewrite must not replace the queue.
 			 */
 			dl_logit("Cannot write %s: %s, keeping the old queue",
-						path, strerror(errno));
+				path, werr ? strerror(werr) : "write error");
 			/* in pipe mode path is the queue itself */
 			if (PipeOpt == 0)
 			    remove(path);

@@ -1,0 +1,1 @@
+- dnewslink: the rewritten queue file is synced to disk before it replaces the queue, so a crash right after cannot leave an empty or short queue under the queue's name.
