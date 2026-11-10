@@ -164,7 +164,7 @@ main(int argc, char **argv) {
     int Opened = 0;
     int ch;
     struct stat st;
-    int PrevIno = -1;
+    ino_t PrevIno = 0;
     int Force = 0;
     int All = 0;
 
