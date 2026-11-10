@@ -4712,6 +4712,14 @@ int  FtNumCommit;
 void
 FeedRSet(FILE *fo)
 {
+    /*
+     * A second feedrset without a feedcommit: close the file of the
+     * first one, and no feedadd/feeddel/feedcommit on a NULL Ft when
+     * the open below fails.
+     */
+    if (Ft != NULL)
+	fclose(Ft);
+    FeedTableReady = 0;
     Ft = xfopen("w", "%s/%s.new", PatExpand(FeedsHomePat), HLabel);
     if (Ft != NULL) {
 	FeedTableReady = 1;
@@ -4776,12 +4784,15 @@ FeedCommit(FILE *fo)
 	    remove(path1);
 	    remove(path2);
 	} else {
-	    xfprintf(fo, "290 feed commit complete\r\n");
-	    rename(path1, path2);
+	    if (rename(path1, path2) == 0)
+		xfprintf(fo, "290 feed commit complete\r\n");
+	    else
+		xfprintf(fo, "490 file rename failed\r\n");
 	}
         TouchNewsFeed();
     }
     fclose(Ft);
+    Ft = NULL;
     FeedTableReady = 0;
 }
 
