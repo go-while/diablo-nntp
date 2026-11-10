@@ -2233,40 +2233,62 @@ static char *PAM_user;
 static char *PAM_password;
 static int PAM_error = 0;
 
+/*
+ * The messages of a conversation: Linux-PAM and OpenPAM pass a vector of
+ * num_msg pointers, Solaris/illumos PAM a pointer to one array of num_msg
+ * messages.  The two agree for a single message only.
+ */
+#ifdef __sun
+#define PAM_MSG(msg, i)	(&(*(msg))[(i)])
+#else
+#define PAM_MSG(msg, i)	((msg)[(i)])
+#endif
+
 static int PAM_conv(int num_msg, const struct pam_message **msg, struct pam_response **resp, void *appdata)
 {
     int count;
-    int replies = 0;
-    struct pam_response *reply = NULL;
-    
-    for (count = 0; count < num_msg; count++) {
-	switch (msg[count]->msg_style) {
+    int bad = 0;
+    struct pam_response *reply;
+
+    /*
+     * One answer for each message, at the index of its message: PAM reads
+     * (and frees) num_msg of them, also for a message that needs no answer.
+     */
+    if (num_msg <= 0)
+	return PAM_CONV_ERR;
+    reply = (struct pam_response *)calloc(num_msg, sizeof(struct pam_response));
+    if (reply == NULL)
+	return PAM_BUF_ERR;
+
+    for (count = 0; count < num_msg && !bad; count++) {
+	const char *answer = NULL;
+
+	switch (PAM_MSG(msg, count)->msg_style) {
 	    case PAM_PROMPT_ECHO_ON:
-		reply = (struct pam_response *)realloc(reply,
-						sizeof(struct pam_response));
-		reply[replies].resp_retcode = PAM_SUCCESS;
-		reply[replies++].resp = strdup(PAM_user);
+		answer = PAM_user;
 		break;
 	    case PAM_PROMPT_ECHO_OFF:
-		reply = (struct pam_response *)realloc(reply,
-						sizeof(struct pam_response));
-		reply[replies].resp_retcode = PAM_SUCCESS;
-		reply[replies++].resp = strdup(PAM_password);
+		answer = PAM_password;
 		break;
 	    case PAM_TEXT_INFO:
 		break;
 	    case PAM_ERROR_MSG:
 		default:
 		PAM_error = 1;
-		if (reply != NULL) {
-		    free(reply);
-		    reply = NULL;
-		}
-		return PAM_CONV_ERR;
-      }
+		bad = 1;
+		break;
+	}
+	reply[count].resp_retcode = PAM_SUCCESS;
+	if (answer != NULL && (reply[count].resp = strdup(answer)) == NULL)
+	    bad = 1;
     }
-    if (reply != NULL)
-	*resp = reply;
+    if (bad) {
+	for (count = 0; count < num_msg; count++)
+	    free(reply[count].resp);
+	free(reply);
+	return PAM_CONV_ERR;
+    }
+    *resp = reply;
     return PAM_SUCCESS;
 }
 

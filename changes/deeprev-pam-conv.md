@@ -1,0 +1,1 @@
+- dreaderd: the PAM conversation gave room for one answer whatever the number of messages and put it at the wrong index, so a PAM stack with two prompts in one call, or a text message before the prompt, wrote and read past the allocation. On Solaris/illumos the messages are read as the one array that PAM there passes.
