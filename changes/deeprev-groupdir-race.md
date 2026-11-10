@@ -1,0 +1,1 @@
+- dreaderd, dgrpctl, dcancel: when two processes created the same new overview directory at the same moment, the one that lost the race took the "File exists" of its mkdir as a failure; in dreaderd that answered the feed "400 Error writing data" and closed the header feed connection.

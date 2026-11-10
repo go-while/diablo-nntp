@@ -894,7 +894,14 @@ MakeGroupDirectory(char *path)
 	return(0);
     if (MakeGroupDirectory(dir) == -1)
 	return(-1);
-    return(mkdir(dir, 0755));
+    /*
+     * Another process may have created the directory between the stat()
+     * and here (two feed processes storing into the same new group
+     * directory): that is what we wanted, not an error.
+     */
+    if (mkdir(dir, 0755) == -1 && errno != EEXIST)
+	return(-1);
+    return(0);
 }
 
 /*
