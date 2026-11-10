@@ -1,0 +1,1 @@
+- dexpireover: a group created while it ran was not in the group list read at the start, so its new overview files were removed as stale; dexpireover now looks for groups added to dactive.kp since then before it removes a file, and leaves alone the files of a group that was removed and created again (with a new iteration) during the run.
