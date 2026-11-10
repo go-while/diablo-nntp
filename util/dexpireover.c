@@ -154,8 +154,9 @@ void ExpireByDays(Group *group, int fd, OverHead *oh, int expireSecs);
 void ExpireBySpool(Group *group, int fd, OverHead *oh);
 void ExpireFromFile(Group *group, int fd, OverHead *oh, int expireSecs);
 int RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldDataEntries, int newDataEntries, int *fdl);
-void rewriteDataFile(Group *group, const char *cacheBase, int cacheSize, const OverArt *oa, OverArt *ob, const char *dirPath, int oldDataEntriesMask, int newDataEntriesMask, artno_t artNo);
+int rewriteDataFile(Group *group, const char *cacheBase, int cacheSize, const OverArt *oa, OverArt *ob, const char *dirPath, int oldDataEntriesMask, int newDataEntriesMask, artno_t artNo);
 int ResizeGroup(Group *group, int fd, OverHead *oh, int maxArts, int OldDataEntries, int *fdl);
+static int rangeHasRecords(const OverArt *oa, long long n, artno_t base, int entries, artno_t startNo, artno_t endNo);
 #ifndef USE_ZLIB
 static int gzipOnlyData(Group *group, const char *dirPath, artno_t startNo, artno_t endNo, int dataEntries);
 #endif
@@ -196,6 +197,7 @@ int CompressedFiles = 0;
 int CompressFailed = 0;
 int CompressEligible = 0;
 int NeedZlibGroups = 0;
+int RewriteFailed = 0;		/* groups whose -R rewrite failed */
 char *Wild;
 bucket_t *dexpover_msgid_hash;
 int ParallelIdx = 0;
@@ -633,7 +635,9 @@ main(int ac, char **av)
     if (UseExpireBySpool)
 	HistoryClose();
 
-    return((CompressFailed || NeedZlibGroups) ? 1 : 0);
+    if (RewriteFailed)
+	printf("Rewrite failed for %d group(s)\n", RewriteFailed);
+    return((CompressFailed || NeedZlibGroups || RewriteFailed) ? 1 : 0);
 }
 
 /*
@@ -1706,6 +1710,8 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
     int rblt;
     long long n;
     int ok = 1;
+    char ovPath1[PATH_MAX];
+    char ovPath2[PATH_MAX];
 #ifdef USE_ZLIB
     int tmpfd;
     unsigned char *zmap, *tmpmap, *zpos;
@@ -1769,6 +1775,7 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
     oaBase = xmap(NULL, n * sizeof(OverArt), PROT_READ, MAP_SHARED, fd, oh->oh_HeadSize);
     if (oaBase == NULL) {
 	fprintf(stderr, "Unable to xmap over.* file for group %s (%lld) in RewriteData (%s)\n", group->gr_GroupName, n, strerror(errno));
+	++RewriteFailed;
 	return(0);
     }
 
@@ -1776,6 +1783,7 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
     if (oaBaseNew == NULL) {
 	fprintf(stderr, "Unable to calloc new over.* file space for group %s (%lld) in RewriteData (%s)\n", group->gr_GroupName, n, strerror(errno));
         xunmap((void *)oaBase, n * sizeof(OverArt));
+	++RewriteFailed;
 	return(0);
     }
 
@@ -1856,18 +1864,33 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
 					&DOpts.ReaderGroupHashMethod));
 		if (DebugOpt > 1)
 		    printf("Opening: %s\n", path);
-		if ((cfd = open(path, O_RDONLY)) >= 0 &&
-		    fstat(cfd, &st) == 0
-		) {
-		    cacheBase = xmap(NULL, st.st_size, PROT_READ, MAP_SHARED, cfd, 0);
-		    cacheSize = st.st_size;
-		    xadvise(cacheBase, st.st_size, XADV_WILLNEED);
-		} else {
-		    if (cfd >= 0) {
-			close(cfd);
-			cfd = -1;
+		/*
+		 * A source that is there but cannot be read (open, stat,
+		 * map or unpack fails, /tmp full included) stops the
+		 * group, like a failure to write: its records would be
+		 * left out and the original removed.  Only a data. file
+		 * that does not exist (ENOENT, plain and .gz) is a range
+		 * without data.
+		 */
+		cfd = open(path, O_RDONLY);
+		if (cfd < 0 && errno != ENOENT) {
+		    printf("Unable to open %s: %s\n", path, strerror(errno));
+		    ok = 0;
+		} else if (cfd >= 0) {
+		    if (fstat(cfd, &st) != 0) {
+			printf("Unable to stat %s: %s\n", path, strerror(errno));
+			ok = 0;
+		    } else if (st.st_size > 0) {
+			cacheBase = xmap(NULL, st.st_size, PROT_READ, MAP_SHARED, cfd, 0);
+			if (cacheBase == NULL) {
+			    printf("Unable to xmap %s: %s\n", path, strerror(errno));
+			    ok = 0;
+			} else {
+			    cacheSize = st.st_size;
+			    xadvise(cacheBase, st.st_size, XADV_WILLNEED);
+			}
 		    }
-
+		} else {
 #ifdef USE_ZLIB
 		    snprintf(path, sizeof(path), "%s/%s.gz", dirPath,
 					GFName(group->gr_GroupName,
@@ -1888,6 +1911,7 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
 		    		printf("Unable to xmap for gzcat %s: %s\n",
 					path, strerror(errno));
 				close(tmpfd);
+				ok = 0;
 			    } else {
 				zpos = zmap + (st.st_size >= 18 ? st.st_size - 4 : 0);
 				zlen = st.st_size < 18 ? 0 :
@@ -1901,6 +1925,7 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
 						(int)zlen, path);
 				    xunmap((void *)zmap, st.st_size);
 				    close(tmpfd);
+				    ok = 0;
 				} else {
 				    /* a mapping past the end of the file would fault */
 				    if (ftruncate(tmpfd, zlen) < 0)
@@ -1911,6 +1936,7 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
 					printf("Unable to xmap for gztmp %s: %s\n", tmpfile, strerror(errno));
 					xunmap((void *)zmap, st.st_size);
 					close(tmpfd);
+					ok = 0;
 				    } else {
 					// handle gzip headers
 					hl = gzHeaderLen(zmap, st.st_size);
@@ -1937,6 +1963,7 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
 					    xunmap((void *)zmap, st.st_size);
 					    xunmap((void *)tmpmap, zlen);
 					    close(tmpfd);
+					    ok = 0;
 					} else {
 					    xunmap((void *)zmap, st.st_size);
 
@@ -1955,18 +1982,26 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
 			} else {
 			    printf("Unable to open/create gztmp %s: %s\n",
 				tmpfile, strerror(errno));
+			    ok = 0;
 			}
+		    } else if (errno != ENOENT) {
+			printf("Unable to open %s: %s\n", path, strerror(errno));
+			ok = 0;
 		    }
 #endif
 		}
 		if (cfd >= 0)
 		    close(cfd);
 	    }
-	    rewriteDataFile(group, cacheBase, cacheSize, oa,
+	    if (ok == 0)
+		break;
+	    if (rewriteDataFile(group, cacheBase, cacheSize, oa,
 					&oaBaseNew[i], dirPath,
-					oldDataEntries - 1, newDataEntries - 1, artNo);
+					oldDataEntries - 1, newDataEntries - 1, artNo) < 0)
+		ok = 0;
 	}
-	rewriteDataFile(group, (char*)NULL, 0, (OverArt*)NULL, (OverArt*)NULL, (char*)NULL, 0, 0, (artno_t)0);
+	if (rewriteDataFile(group, (char*)NULL, 0, (OverArt*)NULL, (OverArt*)NULL, (char*)NULL, 0, 0, (artno_t)0) < 0)
+	    ok = 0;
 	if (cacheBase != NULL) {
 	    xunmap((void *)cacheBase, cacheSize);
 	    cacheSize = 0;
@@ -1975,9 +2010,85 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
     }
 
     /*
-     * Remove original data.* files so we can replace the over. file
-     * safely.  If we are broken after this point, portions or all of the
-     * overview information relating to this group will be lost.
+     * Write the new over. file under its temporary name first, while the
+     * original files are all still there.  If that fails, or a new data.
+     * file could not be written in full (ok is 0 already), the group stays
+     * as it was: the index we would be left with is the old one, and its
+     * offsets do not fit the rewritten data. files.
+     */
+
+    snprintf(ovPath1, sizeof(ovPath1), "%s/.%s", dirPath,
+				    GFName(group->gr_GroupName,
+				    GRPFTYPE_OVER, 0, 0,
+				    group->gr_Iter,
+				    &DOpts.ReaderGroupHashMethod));
+    snprintf(ovPath2, sizeof(ovPath2), "%s/%s", dirPath,
+				    GFName(group->gr_GroupName,
+				    GRPFTYPE_OVER, 0, 0,
+				    group->gr_Iter,
+				    &DOpts.ReaderGroupHashMethod));
+    {
+	int ovFd;
+
+	/* Make sure we are using the latest versions */
+	if (oh->oh_Version < OH_VERSION) {
+	    printf("Upgrading overinfo header version %d->%d in %s\n",
+						oh->oh_Version, OH_VERSION,
+						group->gr_GroupName);
+	    oh->oh_Version = OH_VERSION;
+	    strncpy(oh->oh_Gname, group->gr_GroupName,
+						sizeof(oh->oh_Gname) - 1);
+	    oh->oh_Gname[sizeof(oh->oh_Gname) - 1] = '\0';
+	    oh->oh_HeadSize = sizeof(OverHead);
+	}
+	oh->oh_DataEntries = newDataEntries;
+	if (DebugOpt)
+	    printf("Setting data size to %d\n", oh->oh_DataEntries);
+	if (ok == 0) {
+	    printf("Rewrite of %s data files failed, group left as it was\n",
+							group->gr_GroupName);
+	} else if ((ovFd = open(ovPath1, O_RDWR|O_CREAT|O_TRUNC, 0644)) < 0) {
+	    printf("Rewrite of %s over. file failed, group left as it was\n",
+							group->gr_GroupName);
+	    ok = 0;
+	} else {
+	    if (write(ovFd, oh, oh->oh_HeadSize) != oh->oh_HeadSize)
+		ok = 0;
+	    if (x64write(ovFd, oaBaseNew, n*sizeof(OverArt)) != n*sizeof(OverArt))
+		ok = 0;
+	    if (close(ovFd) < 0)
+		ok = 0;
+	    if (ok == 0)
+		printf("Rewrite of %s over. file failed, group left as it was\n",
+							group->gr_GroupName);
+	}
+	if (ok == 0) {
+	    ++RewriteFailed;
+	    remove(ovPath1);
+	    if (startNo <= endNo) {
+		for (artNo = (startNo & ~(newDataEntries-1)); artNo <= endNo;
+						artNo += newDataEntries) {
+		    char path1[PATH_MAX];
+
+		    snprintf(path1, sizeof(path1), "%s/.%s", dirPath,
+					GFName(group->gr_GroupName,
+					GRPFTYPE_DATA, artNo, 0,
+					group->gr_Iter,
+					&DOpts.ReaderGroupHashMethod));
+		    remove(path1);
+		}
+	    }
+	    xunmap((void *)oaBase, n * sizeof(OverArt));
+	    free(oaBaseNew);
+	    return(0);
+	}
+    }
+
+    /*
+     * Remove original data.* files so we can put the new ones and the
+     * new over. file in place.  If we are broken after this point,
+     * portions or all of the overview information relating to this group
+     * will be lost.
      */
     {
 	artno_t artNo;
@@ -2007,69 +2118,12 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
     }
 
     /*
-     * Replace the over. file.  If an error occurs we pretty much have to
-     * blow the file away because we already deleted the data. files.
-     */
-
-    {
-	char path1[PATH_MAX];
-	char path2[PATH_MAX];
-	int ovFd;
-
-	snprintf(path1, sizeof(path1), "%s/.%s", dirPath,
-					GFName(group->gr_GroupName,
-					GRPFTYPE_OVER, 0, 0,
-					group->gr_Iter,
-					&DOpts.ReaderGroupHashMethod));
-	snprintf(path2, sizeof(path2), "%s/%s", dirPath,
-					GFName(group->gr_GroupName,
-					GRPFTYPE_OVER, 0, 0,
-					group->gr_Iter,
-					&DOpts.ReaderGroupHashMethod));
-
-	/* Make sure we are using the latest versions */
-	if (oh->oh_Version < OH_VERSION) {
-	    printf("Upgrading overinfo header version %d->%d in %s\n",
-						oh->oh_Version, OH_VERSION,
-						group->gr_GroupName);
-	    oh->oh_Version = OH_VERSION;
-	    strncpy(oh->oh_Gname, group->gr_GroupName,
-						sizeof(oh->oh_Gname) - 1);
-	    oh->oh_Gname[sizeof(oh->oh_Gname) - 1] = '\0';
-	    oh->oh_HeadSize = sizeof(OverHead);
-	}
-	oh->oh_DataEntries = newDataEntries;
-	if (DebugOpt)
-	    printf("Setting data size to %d\n", oh->oh_DataEntries);
-	ovFd = open(path1, O_RDWR|O_CREAT|O_TRUNC, 0644);
-	if (ovFd >= 0) {
-	    if (write(ovFd, oh, oh->oh_HeadSize) != oh->oh_HeadSize)
-		ok = 0;
-	    if (x64write(ovFd, oaBaseNew, n*sizeof(OverArt)) != n*sizeof(OverArt))
-		ok = 0;
-	    close(ovFd);
-	    if (ok) {
-		if (DebugOpt > 1)
-		    printf("Renaming over: %s -> %s\n", path1, path2);
-		if (ForReal && rename(path1, path2) < 0) {
-		    printf("Error renaming %s -> %s (%s)\n", path1, path2,
-							strerror(errno));
-		    ok = 0;
-		}
-	    }
-	} else {
-	    ok = 0;
-	}
-	if (ok == 0) {
-	    printf("Rewrite of %s over. file failed, removing\n",
-							group->gr_GroupName);
-	    if (ForReal)
-		remove(path1);
-	}
-    }
-
-    /*
-     * Rename the temporary .data files to the real ones.
+     * Rename the temporary .data files to the real ones.  There is none
+     * for a range without a record (both renames find no file), but one
+     * the new index has records in must be there.  Any other failure
+     * loses the records of that file: say so, and go on, as the other
+     * files and the new over. file still fit together while the old
+     * over. file fits nothing that is left.
      */
     rblt = 0;
     if (startNo<=endNo) {
@@ -2077,6 +2131,7 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
 						artNo += newDataEntries) {
 	    char path1[PATH_MAX];
 	    char path2[PATH_MAX];
+	    int lost = 0;
 
 	    snprintf(path1, sizeof(path1), "%s/.%s", dirPath,
 					GFName(group->gr_GroupName,
@@ -2091,6 +2146,12 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
 	    if (DebugOpt > 1)
 		printf("Renaming data: %s -> %s\n", path1, path2);
 	    if (ForReal && rename(path1, path2) < 0) {
+		if (errno != ENOENT) {
+		    printf("Error renaming %s -> %s (%s), its records are lost\n",
+					path1, path2, strerror(errno));
+		    ok = 0;
+		    lost = 1;
+		}
 		remove(path1);
 
 		/*
@@ -2110,14 +2171,56 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
 					group->gr_Iter,
 					&DOpts.ReaderGroupHashMethod));
 		if (rename(path1, path2) < 0) {
+		    if (errno != ENOENT) {
+			printf("Error renaming %s -> %s (%s), its records are lost\n",
+					path1, path2, strerror(errno));
+			ok = 0;
+		    } else if (!lost && rangeHasRecords(oaBaseNew, n,
+				    artNo, newDataEntries, startNo, endNo)) {
+			printf("New data file of %s from article %lld is gone, its records are lost\n",
+					group->gr_GroupName, (long long)artNo);
+			ok = 0;
+		    }
 		    remove(path1);
-		    printf("Error renaming %s -> %s (%s)\n", path1, path2,
-							strerror(errno));
+		    continue;
 		}
 	    }
 	    rblt++;
 	}
     }
+
+    /*
+     * Replace the over. file, last: we hold the exclusive lock on the old
+     * one, so a dreaderd that opens the group waits on it until now and
+     * then finds the new index with all of its data. files in place.
+     *
+     * If the rename fails, the old over. file must not stay as it is: its
+     * data. files are gone and its offsets do not fit the new ones.  Write
+     * the new index into it in place instead, as ResizeGroup() does under
+     * the same lock.  The run still fails: something is wrong with the
+     * file system.
+     */
+
+    if (DebugOpt > 1)
+	printf("Renaming over: %s -> %s\n", ovPath1, ovPath2);
+    if (rename(ovPath1, ovPath2) < 0) {
+	printf("Error renaming %s -> %s (%s)\n", ovPath1, ovPath2,
+							strerror(errno));
+	ok = 0;
+	if (lseek(fd, 0L, 0) != 0 ||
+	    ftruncate(fd, oh->oh_HeadSize + n * sizeof(OverArt)) < 0 ||
+	    x64write(fd, oh, oh->oh_HeadSize) != oh->oh_HeadSize ||
+	    x64write(fd, oaBaseNew, n * sizeof(OverArt)) != n * sizeof(OverArt)) {
+	    printf("Rewrite of %s over. file failed: its overview no longer fits its data files\n",
+					group->gr_GroupName);
+	} else {
+	    printf("Rewrite of %s: new over. file written in place\n",
+					group->gr_GroupName);
+	}
+	remove(ovPath1);
+    }
+    if (ok == 0)
+	++RewriteFailed;
 
     if (VerboseOpt)
 	printf("Rebuilt %d data file(s) for %s\n", rblt, group->gr_GroupName);
@@ -2131,25 +2234,60 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
 }
 
 /*
+ * rangeHasRecords() - the new index oa (n slots) has a record in the data.
+ * file for articles base .. base + entries - 1 (within startNo .. endNo):
+ * rewriteDataFile() wrote that file, and it must be moved in.
+ */
+static int
+rangeHasRecords(const OverArt *oa, long long n, artno_t base, int entries, artno_t startNo, artno_t endNo)
+{
+    artno_t artNo;
+
+    for (artNo = (base > startNo) ? base : startNo;
+	 artNo < base + entries && artNo <= endNo; ++artNo) {
+	const OverArt *ob = &oa[(artNo & 0x7FFFFFFFFFFFFFFFLL) % n];
+
+	if (OA_ARTVALID(ob) && OA_ARTNOEQ(artNo, ob->oa_ArtNo))
+	    return(1);
+    }
+    return(0);
+}
+
+/*
  * rewriteDataFile() - rewrite the file from cacheFd/oa-params to
  *		       ob, maintaining the FileCacheList list.
+ *
+ *	Returns -1 when a new data. file could not be created, written or
+ *	closed (the failure is printed): its records would be missing from
+ *	the rewritten group, so the caller must not put the new files in
+ *	place.  The closing call (oa NULL) reports a failure of the group
+ *	once more and starts the next group afresh.
  */
 
-void
+int
 rewriteDataFile(Group *group, const char *cacheBase, int cacheSize, const OverArt *oa, OverArt *ob, const char *dirPath, int oldDataEntriesMask, int newDataEntriesMask, artno_t artNo)
 {
     artno_t oldArtBase, newArtBase;
     static FileCacheList *fc = NULL;
+    static int failed = 0;
 
     if (oa==NULL || ob==NULL) { /* end of for, closing fd */
+	int r;
+
 	if (VerboseOpt > 2)
 	    printf("End of rewrite: %s\n", group->gr_GroupName);
 	if (fc != NULL && fc->fc_Fd != -1) {
-	    close(fc->fc_Fd);
+	    if (close(fc->fc_Fd) < 0) {
+		printf("Error writing data file of %s: %s\n",
+				group->gr_GroupName, strerror(errno));
+		failed = 1;
+	    }
 	    fc->fc_Fd = -1;
 	    fc->fc_ArtBase = -1;
 	}
-	return;
+	r = failed ? -1 : 0;
+	failed = 0;
+	return(r);
     }
 
     oldArtBase = artNo & ~oldDataEntriesMask;
@@ -2160,6 +2298,11 @@ rewriteDataFile(Group *group, const char *cacheBase, int cacheSize, const OverAr
 
     if (fc == NULL) {
 	fc = calloc(1, sizeof(FileCacheList));
+	if (fc == NULL) {
+	    printf("Unable to allocate rewrite state for %s\n", group->gr_GroupName);
+	    failed = 1;
+	    return(-1);
+	}
 	fc->fc_Fd = -1;
 	fc->fc_ArtBase = -1;
     }
@@ -2167,8 +2310,11 @@ rewriteDataFile(Group *group, const char *cacheBase, int cacheSize, const OverAr
     if (fc->fc_ArtBase != newArtBase || fc->fc_Fd == -1) {
 	char path[PATH_MAX];
 
-	if (fc->fc_Fd != -1)
-	    close(fc->fc_Fd);
+	if (fc->fc_Fd != -1 && close(fc->fc_Fd) < 0) {
+	    printf("Error writing data file of %s: %s\n",
+				group->gr_GroupName, strerror(errno));
+	    failed = 1;
+	}
 
 	snprintf(path, sizeof(path), "%s/.%s", dirPath,
 					GFName(group->gr_GroupName,
@@ -2178,8 +2324,10 @@ rewriteDataFile(Group *group, const char *cacheBase, int cacheSize, const OverAr
 	if (DebugOpt > 1)
             printf("Creating: %s\n", path);
 	fc->fc_Fd = open(path, O_RDWR|O_CREAT|O_TRUNC, 0644);
-	if (fc->fc_Fd == -1)
+	if (fc->fc_Fd == -1) {
 	    printf("Error opening %s: %s\n", path, strerror(errno));
+	    failed = 1;
+	}
 	fc->fc_ArtBase = newArtBase;
     }
 
@@ -2208,6 +2356,7 @@ rewriteDataFile(Group *group, const char *cacheBase, int cacheSize, const OverAr
 	    ob->oa_SeekPos = 0;
 	    ob->oa_Bytes = 0;
 	    printf("copy failed %s:%d, write error\n", group->gr_GroupName, oa->oa_ArtNo);
+	    failed = 1;
 	}
     } else if (oa->oa_SeekPos == -1) {
 	; /* do nothing */
@@ -2236,6 +2385,7 @@ rewriteDataFile(Group *group, const char *cacheBase, int cacheSize, const OverAr
 	    "source-corrupt")
 	);
     }
+    return(failed ? -1 : 0);
 }
 
 /*
