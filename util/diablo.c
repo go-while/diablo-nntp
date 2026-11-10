@@ -3314,6 +3314,13 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		    }
 		    bwrite(buffer, ipfail, strlen(ipfail));
 		    diablo_strlcpynl(npath, p, bytes - aflen, sizeof(npath));
+		    /*
+		     * The check above lets a TAB pass when a CR or LF
+		     * follows it, and the copy drops CR and LF: test what
+		     * goes into the SOUT line (trailing TABs are trimmed).
+		     */
+		    if (strchr(npath, '\t') != NULL)
+			artError |= LAERR_PATHTAB;
 		} else if (hch == 'x' && bytes >= 5 &&
 			   strncasecmp(p, "Xref:", 5) == 0) {
 		    hdrXref++;
@@ -3332,6 +3339,9 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		    int i;
 
 		    diablo_strlcpynl(dist, p + 13, bytes - 13 - aflen, sizeof(dist));
+		    /* as for Path: a TAB before a CR survives the copy */
+		    if (strchr(dist, '\t') != NULL)
+			artError |= LAERR_DISTTAB;
 		    /*
 		     * The SOUT line uses tabs as field separators and
 		     * FeedAdd() requires every string object to be free of
