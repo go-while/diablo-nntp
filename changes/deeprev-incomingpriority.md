@@ -1,0 +1,1 @@
+- dnewsfeeds: `incomingpriority` was read as yes/no, so 10 or 15 gave nice 1 and 5 or 20 gave 0; a number 0..20 is now taken as it is.

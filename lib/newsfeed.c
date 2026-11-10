@@ -1706,7 +1706,16 @@ LoadNewsFeed(time_t t, int force, const char *hlabel)
 			}
 		    } else if (strcmp(s1, "incomingpriority") == 0) {
 			if (nf) {
-			    nf->nf_IncomingPriority = enabled(s2);
+			    int prio;
+
+			    /*
+			     * A nice value 0..20; anything else as before
+			     * (yes/on = 1, the rest 0).
+			     */
+			    if (s2 != NULL && ParseIntRange(s2, 10, 0, 20, &prio) == 0)
+				nf->nf_IncomingPriority = prio;
+			    else
+				nf->nf_IncomingPriority = enabled(s2);
 			    err = 0;
 			}
 		    } else if (strcmp(s1, "precomreject") == 0) {
