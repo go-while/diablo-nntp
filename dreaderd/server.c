@@ -488,6 +488,7 @@ AddServer(char *bindinfo, int txbufsize, int rxbufsize, const char *host, int ty
 	hints.ai_flags = AddrConfigFlag(bindinfo);
         if (getaddrinfo(bindinfo, NULL, &hints, &src) != 0) {
 	    freeaddrinfo(dst);
+	    close(fd);
 	    logit(LOG_ERR, "Unknown host for bindhost option: %s\n",
 								bindinfo);
 	    return(-1);
@@ -495,6 +496,7 @@ AddServer(char *bindinfo, int txbufsize, int rxbufsize, const char *host, int ty
 	if (bind(fd, src->ai_addr, src->ai_addrlen) < 0) {
 	    freeaddrinfo(src);
 	    freeaddrinfo(dst);
+	    close(fd);
 	    logit(LOG_ERR, "failed to bind source address %s (%s)",
 						bindinfo, strerror(errno));
 	    return(-1);
