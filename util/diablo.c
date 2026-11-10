@@ -3769,6 +3769,8 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		    zstore = (CompressLvl >= 0 && CompressLvl <= 9);
 #endif
 		    h.bsize = bsize(buffer) + sizeof(artHdr);
+		    /* all of it goes to disk, the padding too */
+		    memset(&artHdr, 0, sizeof(artHdr));
 		    artHdr.Magic1 = STORE_MAGIC1;
 		    artHdr.Magic2 = STORE_MAGIC2;
 		    artHdr.Version = STOREAPI_REVISION;
