@@ -1,0 +1,1 @@
+- diablo: BODY for a wire-format spool entry that holds no body ends the reply with its terminator instead of leaving the client waiting.

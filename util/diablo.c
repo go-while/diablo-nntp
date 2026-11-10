@@ -2909,6 +2909,15 @@ SendArticle(const char *data, int fsize, FILE *fo, int doHead, int doBody)
 	    fsize = 0;
 	if (ah.StoreType & STORETYPE_WIRE) {
 	    if (doBody) {
+		/*
+		 * Nothing left to send (a header length that takes the
+		 * whole entry): the status line is out already, so end
+		 * the reply instead of leaving the client waiting.
+		 */
+		if (fsize == 0) {
+		    xfprintf(fo, ".\r\n");
+		    return(3);
+		}
 		return(fwrite(data, 1, fsize, fo));
 	    } else {
 		int b;
