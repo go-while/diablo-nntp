@@ -189,3 +189,65 @@ func TestDeepRevQueueShortWriteAcrossRotation(t *testing.T) {
 		}
 	}
 }
+
+// TestDeepRevQueueShortWriteFileRemoved: as TestDeepRevQueueShortWriteAcrossRotation, but
+// the renamed file is removed before the retry, as dnewslink does when it is done with it.
+// The rest of the cut line written to that file reaches nobody. diablo must write the cut
+// line again as a whole, and the lines after it, to the queue file of now.
+func TestDeepRevQueueShortWriteFileRemoved(t *testing.T) {
+	so := preloadShim(t, "shortwrite", shortWriteSource)
+	s := NewSite(t, SiteOptions{Newsfeeds: OutNewsfeeds,
+		Env: []string{lockFaultEnv(so), "SHORTWRITE_FILE=/dqueue/" + OutLabel}})
+	ids := s.Inject(t, "e2e.test", 4)
+
+	limit := time.Now().Add(10 * time.Second)
+	for !strings.Contains(generalLog(s), "queue file truncate failed") {
+		if time.Now().After(limit) {
+			t.Fatalf("diablo did not log a failed truncate of dqueue/%s; the fault injector did not act", OutLabel)
+		}
+		s.Dicmd(t, "flush")
+		time.Sleep(100 * time.Millisecond)
+	}
+	live := filepath.Join(s.Dir, "dqueue", OutLabel)
+	rotated := live + ".S00001"
+	if err := os.Rename(live, rotated); err != nil {
+		t.Fatal(err)
+	}
+	old, err := os.ReadFile(rotated)
+	if err != nil || len(old) == 0 || old[len(old)-1] == '\n' {
+		t.Fatalf("the queue file does not end inside a line before the retry (%v): %q", err, old)
+	}
+	if err := os.Remove(rotated); err != nil {
+		t.Fatal(err)
+	}
+	// what a reader of the removed file got: its whole lines
+	sent := strings.Split(string(old), "\n")
+	sent = sent[:len(sent)-1]
+
+	var q []string
+	limit = time.Now().Add(10 * time.Second)
+	for {
+		q = s.queue(t, OutLabel)
+		if len(sent)+len(q) >= len(ids) || time.Now().After(limit) {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if missing := deepRevMissing(append(sent, q...), ids); len(missing) != 0 {
+		t.Errorf("%d of %d accepted articles have no whole queue entry: %q", len(missing), len(ids), missing)
+	}
+	if len(sent)+len(q) != len(ids) {
+		t.Errorf("%d whole lines in the removed file and %d in the new one, want %d in all", len(sent), len(q), len(ids))
+	}
+	for _, l := range q {
+		if f := strings.Fields(l); len(f) < 3 || strings.Count(l, "<") != 1 {
+			t.Errorf("not a whole queue entry in the new file: %q", l)
+		}
+	}
+	if !strings.Contains(generalLog(s), "queue file was removed with a line cut") {
+		t.Errorf("diablo did not log that it wrote the cut line again")
+	}
+	if t.Failed() {
+		t.Logf("removed file:\n%s\nnew file:\n%s", old, strings.Join(q, "\n"))
+	}
+}

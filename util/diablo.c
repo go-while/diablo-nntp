@@ -48,7 +48,7 @@ typedef struct Feed {
     int		fe_BufMax;
     int		fe_Failed;
     int		fe_Lost;	/* lines dropped while the queue file fails */
-    int		fe_Partial;	/* the file ends in the first part of a line */
+    int		fe_Partial;	/* bytes of the buffer's first line that the file ends in */
 } Feed;
 
 typedef struct Retain {
@@ -1912,6 +1912,24 @@ flushFeedOut(Feed *fe)
      * Lines kept by flushFeeds() after a failed write: open the queue file
      * again.  No log here, the failure is logged once below.
      */
+    /*
+     * The file ends in the first part of a line (fe_Partial bytes) and
+     * has been removed since: dspoolout renamed it and dnewslink was done
+     * with it.  Nothing reads the rest of the line there, so the line is
+     * written again as a whole, with the lines after it, to the queue file
+     * of now.
+     */
+    if (fe->fe_Partial && fe->fe_Fd >= 0) {
+	struct stat st;
+
+	if (fstat(fe->fe_Fd, &st) == 0 && st.st_nlink == 0) {
+	    logit(LOG_NOTICE, "%s: queue file was removed with a line cut, writing the line again",
+								fe->fe_Label);
+	    close(fe->fe_Fd);
+	    fe->fe_Fd = -1;
+	    fe->fe_Partial = 0;
+	}
+    }
     if (fe->fe_BufIdx && fe->fe_Buf && fe->fe_Fd < 0)
 	fe->fe_Fd = xopen(O_APPEND|O_RDWR|O_CREAT, 0644, "%s/%s",
 				PatExpand(DQueueHomePat), fe->fe_Label);
@@ -1921,30 +1939,38 @@ flushFeedOut(Feed *fe)
 	 * that we do not get garbaged feed files, and keep the buffer:
 	 * the next flush tries again.
 	 */
-	int n = write(fe->fe_Fd, fe->fe_Buf, fe->fe_BufIdx);
+	int off = fe->fe_Partial;
+	int len = fe->fe_BufIdx - off;
+	int n = write(fe->fe_Fd, fe->fe_Buf + off, len);
 	int werr = errno;
-	int all = (n == fe->fe_BufIdx);
+	int all = (n == len);
 	if (fe->fe_NotifyFd != -1) {
 	    if (write(fe->fe_NotifyFd, &n, 1) < 0 && errno != EAGAIN) {
 		close(fe->fe_NotifyFd);
 		fe->fe_NotifyFd = -1;
 	    }
 	}
-	if (n >= 0 && n != fe->fe_BufIdx) {
+	if (n >= 0 && n != len) {
 	    if (ftruncate(fe->fe_Fd, lseek(fe->fe_Fd, 0L, 1) - n) < 0) {
+		int done = off + n;	/* bytes of the buffer in the file */
+		int ls = done;		/* start of the line done is in */
+
 		logit(LOG_ERR, "%s: queue file truncate failed: %s",
 					fe->fe_Label, strerror(errno));
 		/*
 		 * The n bytes stay in the file, so they must not be
-		 * written again: keep only the rest for the retry, which
-		 * then goes on exactly where the file ends.  If they end
-		 * inside a line, the rest has to go to this same file
-		 * (see flushFeeds()).
+		 * written again.  The whole lines among them leave the
+		 * buffer.  A line they end inside stays as a whole, and
+		 * fe_Partial says how much of it the file has: the retry
+		 * goes on exactly there, in this same file (see
+		 * flushFeeds()), or writes the line again if the file is
+		 * gone by then.
 		 */
-		if (n > 0)
-		    fe->fe_Partial = (fe->fe_Buf[n - 1] != '\n');
-		memmove(fe->fe_Buf, fe->fe_Buf + n, fe->fe_BufIdx - n);
-		fe->fe_BufIdx -= n;
+		while (ls > 0 && fe->fe_Buf[ls - 1] != '\n')
+		    --ls;
+		memmove(fe->fe_Buf, fe->fe_Buf + ls, fe->fe_BufIdx - ls);
+		fe->fe_BufIdx -= ls;
+		fe->fe_Partial = done - ls;
 	    }
 	}
 	if (!all) {
