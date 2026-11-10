@@ -60,11 +60,14 @@ ftruncate(int fd, off_t len)
     return real(fd, len);
 }
 
+#ifdef __linux__
+/* glibc has it as a symbol of its own; elsewhere it is ftruncate itself */
 int
 ftruncate64(int fd, off_t len)
 {
     return ftruncate(fd, len);
 }
+#endif
 `
 
 // TestDeepRevQueueShortWriteNotRepeated: when a write to a queue file is short, diablo cuts
