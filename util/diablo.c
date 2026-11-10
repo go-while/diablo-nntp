@@ -1326,9 +1326,9 @@ DoAccept(int lfd)
 
 		for (i = 0; i < MaxFds; ++i) {
 		    if (i > 2 && i != fds[1] && i != fd && i != ZoneFd && i != BodyFilterFd && i != NphFilterFd) {
-			if (PipeAry[fd] != NULL) {
-			    bclose(PipeAry[fd], 0);
-			    PipeAry[fd] = NULL;
+			if (PipeAry[i] != NULL) {
+			    bclose(PipeAry[i], 0);
+			    PipeAry[i] = NULL;
 			}
 			close(i);
 		    }

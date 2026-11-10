@@ -1,0 +1,1 @@
+- diablo: a new session process freed the wrong entry when it dropped the pipe buffers inherited from the master (memory of that process only).
