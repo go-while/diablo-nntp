@@ -509,7 +509,7 @@ bextfree(Buffer *b)
 	if (b->bu_End - b->bu_Beg <= b->bu_BufMax) {
 	    r = 0;
 	    if (b->bu_Beg != b->bu_End)
-		bcopy(b->bu_Data, b->bu_Buf, b->bu_End - b->bu_Beg);
+		bcopy(b->bu_Data + b->bu_Beg, b->bu_Buf, b->bu_End - b->bu_Beg);
 	    b->bu_NLScan -= b->bu_Beg;
 	    b->bu_End -= b->bu_Beg;
 	    b->bu_Beg = 0;

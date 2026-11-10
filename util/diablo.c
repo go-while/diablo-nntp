@@ -132,6 +132,7 @@ StoreStatsType	StoreStats;
 char	*HName;
 char	HLabel[256];
 int	MaxFds = 0;
+int	PipePending = 0;	/* DoPipe() left lines in a pipe buffer */
 int	NumForks = 0;
 int	ReadOnlyCount = 0;
 int	PausedCount = 0;
@@ -958,7 +959,7 @@ DiabloServer(int lfd)
 	fd_set rfds = RFds;
 	int i;
 	int n;
-	struct timeval tv = { 5, 0 };
+	struct timeval tv = { PipePending ? 0 : 5, 0 };
 	time_t t;
 
 	if ((ReadOnlyMode || PausedCount) && (NumForks == ReadOnlyCount)) {
@@ -973,6 +974,20 @@ DiabloServer(int lfd)
 	    HostCachePid = LoadHostAccess(t, 0, DOpts.HostCacheRebuildTime);
 
 	n = select(MaxFds, &rfds, NULL, NULL, &tv);
+
+	if (PipePending) {
+	    /*
+	     * DoPipe() stopped after its two lines with more in its
+	     * buffer.  select() cannot see those: without this they waited
+	     * until the same session wrote again or ended.
+	     */
+	    for (i = 0; i < MaxFds; ++i) {
+		if (i != lfd && i != ufd && PipeAry[i] != NULL &&
+						bsize(PipeAry[i]) > 0)
+		    FD_SET(i, &rfds);
+	    }
+	    PipePending = 0;
+	}
 
 	if (lfd != -1 && FD_ISSET(lfd, &rfds))
 	    DoAccept(lfd);
@@ -1600,8 +1615,10 @@ DoPipe(int fd)
 	    flushFeeds(0);
 	}
 
-	if (--maxCount == 0)
+	if (--maxCount == 0) {
+	    ++PipePending;	/* the buffer may hold more lines */
 	    break;
+	}
     }
 
     bextfree(PipeAry[fd]);	/* don't keep large buffers around */
