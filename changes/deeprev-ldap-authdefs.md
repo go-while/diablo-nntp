@@ -1,0 +1,1 @@
+- dreaderd: with more than one `ldap` authdef (default LDAP code), the connection and URL of the authdef a DNS worker used first answered the logins of every other one; each authdef now gets its own server, base and filter.

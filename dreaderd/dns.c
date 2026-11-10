@@ -1493,6 +1493,9 @@ netRemoteAuthenticate(char *user, char *pass, char *conf, char *localip, char *r
 #ifdef		LDAP_ENABLED
 
 static LDAP *LdapLd = NULL;	/* the connection, kept between logins */
+#ifndef NEW_LDAP
+static char *LdapLdConf = NULL;	/* the authdef URL LdapLd was opened for */
+#endif
 
 /*
  * The time left of AuthCall()'s deadline as a timeval: -1 without a limit,
@@ -1840,6 +1843,17 @@ LDAPAuthenticate(char *user, char *pass, char *conf)
     char *dn;
 #endif
 
+    /*
+     * The connection and the parsed URL (base, scope, filter) belong to the
+     * authdef that opened them: another authdef gets its own.
+     */
+    if (LdapLd != NULL && (LdapLdConf == NULL || strcmp(LdapLdConf, conf) != 0)) {
+	ldap_unbind_s(LdapLd);
+	ldap_free_urldesc(ludp);
+	LdapLd = NULL;
+	ludp = NULL;
+    }
+
     if (LdapLd == NULL) {
 	if (ldap_is_ldap_url(conf) == 0) {
 	    logit(LOG_ERR, "No LDAP URL: %s\n", conf);
@@ -1874,6 +1888,8 @@ LDAPAuthenticate(char *user, char *pass, char *conf)
 	}
 	if (DebugOpt)
 	    printf("Connection to LDAP server established\n");
+	free(LdapLdConf);
+	LdapLdConf = strdup(conf);	/* NULL: the next login connects again */
     }
 
     /* Build the filter string and attributes */
