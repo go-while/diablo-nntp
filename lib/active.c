@@ -216,8 +216,13 @@ GenerateXRef(Buffer *b, const char *nglist, const char *npName, const char *ctl)
 	    break;
 	++p;
     }
-    if (doneHeader)
-	bwrite(b, "\n", 1);
+    if (doneHeader) {
+	/* the article is stored as it came in when wireformat is on */
+	if (DOpts.WireFormat)
+	    bwrite(b, "\r\n", 2);
+	else
+	    bwrite(b, "\n", 1);
+    }
     return(count);
 }
 

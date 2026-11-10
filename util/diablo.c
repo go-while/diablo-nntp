@@ -3114,7 +3114,8 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		}
 		aflen = 1;
 	    } else {
-		aflen = 2;
+		/* a line the peer ended with a bare LF has one byte to cut */
+		aflen = (bytes > 1 && p[bytes-2] == '\r') ? 2 : 1;
 	    }
 
 	    /*
