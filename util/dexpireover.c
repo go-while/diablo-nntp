@@ -464,8 +464,13 @@ main(int ac, char **av)
      * Open the history file if we are going to expire based on local spool
      */
 
+    /*
+     * Read-only: the history is only looked up here.  Opened read-write, a
+     * missing history was created empty, and every overview entry was then
+     * expired as "not in the history".
+     */
     if (UseExpireBySpool)
-	HistoryOpen(NULL, 0);
+	HistoryOpen(NULL, HGF_READONLY);
 
     /*
      * scan dactive.kp

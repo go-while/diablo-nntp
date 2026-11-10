@@ -1,0 +1,1 @@
+- dexpireover: `-e` opened the history read-write, so a missing history was created empty and every overview entry expired as not in the history.
