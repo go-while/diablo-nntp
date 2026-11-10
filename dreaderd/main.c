@@ -353,6 +353,12 @@ main(int ac, char **av)
 
 #ifdef DEBUG_ZALLOC
     dbg_install_sighandler();
+#else
+    /*
+     * SIGUSR2 asked a debug build for an allocation dump.  Without the
+     * tracker there is no dump; the signal must not end the reader.
+     */
+    signal(SIGUSR2, SIG_IGN);
 #endif
 
     if (strcmp(DRIncomingLogPat, "NONE") == 0)

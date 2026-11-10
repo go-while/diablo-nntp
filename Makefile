@@ -28,7 +28,13 @@ include build-version.mk
 
 # Compiler settings
 CPPFLAGS += -I. -DVERS=\"$(VERS)\" -DSUBREV=\"$(SUBREV)\"
-CPPFLAGS += -DDEBUG_ZALLOC -DDEBUG_MBUF
+# The allocation tracker of lib/zalloc.c and the caller notes of the mbuf
+# calls are for debugging and cost time on every allocation; off unless
+# asked for:  make DEBUG_ALLOC="-DDEBUG_ZALLOC -DDEBUG_MBUF"
+# Both flags together, and from a clean tree ("make clean" first, also when
+# switching back): the objects do not depend on the flags, and a MemPool
+# built with DEBUG_ZALLOC is laid out differently.
+CPPFLAGS += $(DEBUG_ALLOC)
 
 CFLAGS ?= -O2 -g -Wall -Wstrict-prototypes -fno-common
 CFLAGS += -MMD -MP
