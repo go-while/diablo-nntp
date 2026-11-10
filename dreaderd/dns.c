@@ -5127,6 +5127,13 @@ UpdateAuthDetails(ForkDesc *desc)
 
     if (DebugOpt)
 	printf("Updating auth details\n");
+    /*
+     * A link to a spool or post server is not a client: AddServer() leaves
+     * its dr_ReaderDef NULL so that no client limit (idletimeout,
+     * sessiontimeout, ratelimit) applies to it.
+     */
+    if (desc->d_Type == THREAD_SPOOL || desc->d_Type == THREAD_POST)
+	return;
     if (conn && !conn->co_Auth.dr_StaticAuth)
 	SetAuthDetails(&conn->co_Auth, conn->co_Auth.dr_ReaderName);
 }
