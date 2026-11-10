@@ -1,0 +1,1 @@
+- diablo: a session that was still authenticating or waiting for the XCLIENT line of a proxy ignored the stop signal of the master (and signalled other processes instead), so `dicmd exit` and SIGTERM could wait on it forever; it now ends like any other session.

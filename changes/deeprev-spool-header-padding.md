@@ -1,0 +1,1 @@
+- diablo: the padding bytes of the header written in front of every spool article were never set, so stack contents went to disk; they are now zero.

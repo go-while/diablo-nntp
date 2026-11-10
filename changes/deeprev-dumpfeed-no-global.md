@@ -1,0 +1,1 @@
+- diablo: `dicmd dumpfeed` without a label crashed the master when dnewsfeeds has no `label GLOBAL`.

@@ -1,0 +1,1 @@
+- dnewsfeeds: `arttypes none` and an unknown type name matched every article; they now match none, as documented.

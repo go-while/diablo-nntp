@@ -1,0 +1,1 @@
+- diablo: each repeated `feedrset` leaked a descriptor of the session, and once the open failed the next `feedadd` or `feedcommit` crashed the session; `feedcommit` also answered 290 when the rename failed.

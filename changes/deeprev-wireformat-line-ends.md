@@ -1,0 +1,1 @@
+- diablo: with `wireformat on`, the generated Xref: line ended with a bare LF among CRLF headers, and a header line the peer ended with a bare LF lost its last character (a wrong group name in Xref and in the feed match).

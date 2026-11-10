@@ -1,0 +1,1 @@
+- diablo: finding a repeated group in a long Newsgroups: line no longer compares each name with every name before it.

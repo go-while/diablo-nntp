@@ -75,6 +75,102 @@ InActive(const char *nglist)
 }
 
 /*
+ * A group listed twice in Newsgroups: gets one Xref entry and one article
+ * number, not one for each repeat.  The first entries of a list are
+ * compared with the ones before them; from XREF_SEEN_LINEAR entries on,
+ * the names seen so far are kept in a hash table, so a list of thousands
+ * of names costs one lookup per name instead of a scan of the whole list.
+ * The table holds offsets into nglist (+1, 0 is an empty slot); a list is
+ * at most MAXLINE long, so at most MAXLINE/2 names go into it.
+ */
+
+#define XREF_SEEN_LINEAR	32
+#define XREF_SEEN_SLOTS		16384		/* power of 2, >= MAXLINE */
+
+static unsigned short XrefSeenTab[XREF_SEEN_SLOTS];
+
+static int
+xrefNameLen(const char *q, const char *end)
+{
+    int i;
+
+    for (i = 0; (end == NULL || q + i < end) && q[i] && q[i] != ',' && q[i] != ' ' && q[i] != '\t'; ++i)
+	;
+    return(i);
+}
+
+/*
+ * xrefGroupSeen() - return 1 if the group name of length len at p is
+ *		     also an earlier entry of nglist.
+ */
+
+static int
+xrefGroupSeen(const char *nglist, const char *p, int len)
+{
+    const char *q = nglist;
+
+    while (q < p) {
+	int i;
+
+	while (q < p && (*q == ' ' || *q == ','))
+	    ++q;
+	i = xrefNameLen(q, p);
+	if (i == len && strncmp(q, p, len) == 0)
+	    return(1);
+	if (i == 0 && q < p)
+	    ++q;		/* a TAB: not an entry, step over it */
+	q += i;
+    }
+    return(0);
+}
+
+/*
+ * xrefHashSeen() - return 1 if the name of length len at p is in the
+ *		    table already, otherwise enter it and return 0.
+ */
+
+static int
+xrefHashSeen(const char *nglist, const char *p, int len)
+{
+    unsigned int h = 2166136261U;
+    int i;
+
+    for (i = 0; i < len; ++i)
+	h = (h ^ (unsigned char)p[i]) * 16777619U;
+    for (h &= XREF_SEEN_SLOTS - 1; XrefSeenTab[h]; h = (h + 1) & (XREF_SEEN_SLOTS - 1)) {
+	const char *q = nglist + XrefSeenTab[h] - 1;
+
+	if (xrefNameLen(q, NULL) == len && strncmp(q, p, len) == 0)
+	    return(1);
+    }
+    XrefSeenTab[h] = (unsigned short)(p - nglist + 1);
+    return(0);
+}
+
+/*
+ * xrefHashStart() - enter the names of nglist before p into the table.
+ */
+
+static void
+xrefHashStart(const char *nglist, const char *p)
+{
+    const char *q = nglist;
+
+    memset(XrefSeenTab, 0, sizeof(XrefSeenTab));
+    while (q < p) {
+	int i;
+
+	while (q < p && (*q == ' ' || *q == ','))
+	    ++q;
+	if ((i = xrefNameLen(q, p)) > 0)
+	    (void)xrefHashSeen(nglist, q, i);
+	else if (q < p)
+	    ++q;
+	q += i;
+    }
+}
+
+/*
  * GenerateXRef() - generate XRef: header for feeder.  Return the number
  *		    of groups that were included in the header.
  *
@@ -89,9 +185,12 @@ GenerateXRef(Buffer *b, const char *nglist, const char *npName, const char *ctl)
     char group[MAXGNAME];
     int count = 0;
     int doneHeader = 0;
+    int ntok = 0;
+    int useHash = 0;
 
     while (*p) {
 	int i;
+	int seen;
 	while (*p == ' ')
 	    ++p;
 	for (i = 0; p[i] && p[i] != ',' && p[i] != ' ' && p[i] != '\t'; ++i)
@@ -101,7 +200,21 @@ GenerateXRef(Buffer *b, const char *nglist, const char *npName, const char *ctl)
 	    ++p;
 	    continue;
 	}
-	if (i < sizeof(group)) {
+	/*
+	 * Seen before in this list?  The table is only used for a list
+	 * that fits its 16-bit offsets, which every list from LoadArticle()
+	 * does.
+	 */
+	if (ntok == XREF_SEEN_LINEAR && strlen(nglist) < XREF_SEEN_SLOTS) {
+	    xrefHashStart(nglist, p);
+	    useHash = 1;
+	}
+	++ntok;
+	if (useHash)
+	    seen = xrefHashSeen(nglist, p, i);
+	else
+	    seen = xrefGroupSeen(nglist, p, i);
+	if (i < sizeof(group) && seen == 0) {
 	    const char *rec;
 	    int recLen;
 
@@ -188,8 +301,13 @@ GenerateXRef(Buffer *b, const char *nglist, const char *npName, const char *ctl)
 	    break;
 	++p;
     }
-    if (doneHeader)
-	bwrite(b, "\n", 1);
+    if (doneHeader) {
+	/* the article is stored as it came in when wireformat is on */
+	if (DOpts.WireFormat)
+	    bwrite(b, "\r\n", 2);
+	else
+	    bwrite(b, "\n", 1);
+    }
     return(count);
 }
 

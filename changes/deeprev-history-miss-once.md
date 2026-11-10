@@ -1,0 +1,1 @@
+- history: a lookup that misses no longer walks the same hash chain a second time when `hash` and its compat method are the same (the default).

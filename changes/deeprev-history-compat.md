@@ -1,0 +1,1 @@
+- history: with a compat hash method (`hash a/b`), HistoryLookup() overwrote the record found through the alternate hash, so STAT/HEAD/ARTICLE by Message-ID failed for articles stored under the old method.

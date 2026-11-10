@@ -1,0 +1,1 @@
+- dspool.ctl: `maxcross N` was read as a size in KB (N*1024) and never applied; it is a count of newsgroups.

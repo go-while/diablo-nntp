@@ -721,7 +721,10 @@ HistoryLookup(const char *msgid, History *nh)
     /*
      * On failure, try alternate hash method (for lookup only)
      */
-    if (r < 0 && DOpts.CompatHashMethod >= 0 && HLAlt == 0 && !statfailed) {
+    if (r < 0 && DOpts.CompatHashMethod >= 0 &&
+	DOpts.CompatHashMethod != DOpts.HashMethod &&
+	HLAlt == 0 && !statfailed
+    ) {
 	int save = DOpts.HashMethod;
 
 	DOpts.HashMethod = DOpts.CompatHashMethod;
@@ -731,7 +734,11 @@ HistoryLookup(const char *msgid, History *nh)
 	HLAlt = 0;
     }
 
-    if (r == 0 && nh != NULL)
+    /*
+     * index == 0 with r == 0: the alternate lookup above found it and has
+     * filled *nh; h is only the last record of the chain walked here.
+     */
+    if (r == 0 && nh != NULL && index != 0)
 	memcpy(nh, &h, sizeof(h));
 
     return(r);

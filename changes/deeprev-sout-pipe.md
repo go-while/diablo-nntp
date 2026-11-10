@@ -1,0 +1,1 @@
+- diablo: bextfree() copied the unread rest of a pipe buffer from the wrong offset, so feed entries behind a line over about 4 KB were dropped; DoPipe() also left complete lines in its buffer until the session wrote again. Both fixed.

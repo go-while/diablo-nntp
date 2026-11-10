@@ -1,0 +1,1 @@
+- diablo: a TAB followed by CR or LF passed the TAB check on Path: and Distribution: and reached the internal feed line, where it shifted the fields; such articles are now refused like any other TAB.

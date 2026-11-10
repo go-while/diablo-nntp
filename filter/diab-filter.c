@@ -129,6 +129,11 @@ DiabFilterClose(int dowait)
 				filter_pid = 0;
 				return;
 			}
+			if (rval == 0) {
+				/* still running: status is not set */
+				sleep(1);
+				continue;
+			}
 			if (WIFEXITED(status)) {
 				if (WEXITSTATUS(status)) {
 					logit(LOG_ERR, "External filter returned exit %d", WEXITSTATUS(status));

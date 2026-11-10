@@ -1,0 +1,1 @@
+- diablo: `whereis` and `xrectime` for a Message-ID that is not in the history tested an uninitialised record and could answer "430 Article expired"; they now answer "430 Article not found". `xrectime` also printed the time through a signed int.

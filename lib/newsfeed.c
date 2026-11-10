@@ -832,7 +832,12 @@ CommonElmMatches(const char *common, const char *p, int bytes)
 	    --bytes;
 	    ++p;
 	}
-	if (bytes && *p == '!') {
+	/*
+	 * A CR or LF inside the value ends an element as '!' does.  It
+	 * stopped the scan above but was never stepped over: the loop
+	 * stood on it for good.
+	 */
+	if (bytes && (*p == '!' || *p == '\r' || *p == '\n')) {
 	    --bytes;
 	    ++p;
 	}
@@ -1701,7 +1706,16 @@ LoadNewsFeed(time_t t, int force, const char *hlabel)
 			}
 		    } else if (strcmp(s1, "incomingpriority") == 0) {
 			if (nf) {
-			    nf->nf_IncomingPriority = enabled(s2);
+			    int prio;
+
+			    /*
+			     * A nice value 0..20; anything else as before
+			     * (yes/on = 1, the rest 0).
+			     */
+			    if (s2 != NULL && ParseIntRange(s2, 10, 0, 20, &prio) == 0)
+				nf->nf_IncomingPriority = prio;
+			    else
+				nf->nf_IncomingPriority = enabled(s2);
 			    err = 0;
 			}
 		    } else if (strcmp(s1, "precomreject") == 0) {
@@ -2654,7 +2668,8 @@ DumpAllFeedInfo(FILE *fo)
     NewsFeed *nf = NULL;
 
     fprintf(fo, "** GLOBAL **\n");
-    DumpFeedInfo(fo, NFGlob->nf_Label);
+    if (NFGlob != NULL)		/* NULL without a "label GLOBAL" */
+	DumpFeedInfo(fo, NFGlob->nf_Label);
     DumpFeedInfo(fo, "ISPAM");
     DumpFeedInfo(fo, "ESPAM");
     DumpFeedInfo(fo, "IFILTER");

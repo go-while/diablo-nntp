@@ -47,6 +47,8 @@ typedef struct Feed {
     int		fe_BufIdx;
     int		fe_BufMax;
     int		fe_Failed;
+    int		fe_Lost;	/* lines dropped while the queue file fails */
+    int		fe_Partial;	/* bytes of the buffer's first line that the file ends in */
 } Feed;
 
 typedef struct Retain {
@@ -132,6 +134,7 @@ StoreStatsType	StoreStats;
 char	*HName;
 char	HLabel[256];
 int	MaxFds = 0;
+char	PipeMore[MAXFDS];	/* DoPipe() left lines in this pipe's buffer */
 int	NumForks = 0;
 int	ReadOnlyCount = 0;
 int	PausedCount = 0;
@@ -961,6 +964,19 @@ DiabloServer(int lfd)
 	struct timeval tv = { 5, 0 };
 	time_t t;
 
+	/*
+	 * A pipe DoPipe() left with lines in its buffer: select() cannot
+	 * see those, so do not wait for it.  The mark is per pipe and stays
+	 * until that pipe is served again: the rotor below takes ten pipes
+	 * per pass and the others must not lose it.
+	 */
+	for (i = 0; i < MaxFds; ++i) {
+	    if (PipeMore[i]) {
+		tv.tv_sec = 0;
+		break;
+	    }
+	}
+
 	if ((ReadOnlyMode || PausedCount) && (NumForks == ReadOnlyCount)) {
 	    FinishRetain(RET_PAUSE);
 	}
@@ -973,6 +989,16 @@ DiabloServer(int lfd)
 	    HostCachePid = LoadHostAccess(t, 0, DOpts.HostCacheRebuildTime);
 
 	n = select(MaxFds, &rfds, NULL, NULL, &tv);
+
+	/*
+	 * DoPipe() stopped after its two lines with more in its buffer.
+	 * Without this they waited until the same session wrote again or
+	 * ended.
+	 */
+	for (i = 0; i < MaxFds; ++i) {
+	    if (PipeMore[i] && i != lfd && i != ufd)
+		FD_SET(i, &rfds);
+	}
 
 	if (lfd != -1 && FD_ISSET(lfd, &rfds))
 	    DoAccept(lfd);
@@ -1269,6 +1295,8 @@ DoAccept(int lfd)
 
 	if (ok == 0 && pipe(fds) == 0 && fds[0] < MAXFDS) {
 	    pid_t pid;
+	    sigset_t forkBlocked, forkSaved;
+	    int forkMasked;
 
 	    /*
 	     * we MUST clear our FILE stdio so a call to
@@ -1283,9 +1311,42 @@ DoAccept(int lfd)
 	    fflush(stdout);
 	    fflush(stderr);
 
-	    if ((pid = fork()) == 0) {
+	    /*
+	     * No SIGHUP/SIGINT/SIGTERM between the fork and the two
+	     * assignments below: sigHup() in a child that does not know
+	     * yet that it is one runs the master's branch, and with
+	     * SessionFd unset it cannot end a blocked read.  A signal that
+	     * comes in that window is delivered when the mask is restored.
+	     *
+	     * The master keeps them blocked until the child is in PidAry:
+	     * its sigHup() signals the children it finds there, and one
+	     * that is not entered yet would be missed.
+	     */
+	    sigemptyset(&forkBlocked);
+	    sigaddset(&forkBlocked, SIGHUP);
+	    sigaddset(&forkBlocked, SIGINT);
+	    sigaddset(&forkBlocked, SIGTERM);
+	    forkMasked = (sigprocmask(SIG_BLOCK, &forkBlocked, &forkSaved) == 0);
+
+	    pid = fork();
+
+	    if (pid == 0) {
 		int i;
 		time_t SessionCheck = SessionBeg = SessionMark = time(NULL);
+
+		/*
+		 * From here on this is a session process for the signal
+		 * handlers.  Set late (after the DNS lookups and the
+		 * XCLIENT dialogue), a SIGHUP in between ran the master's
+		 * branch of sigHup() in the child: it signalled the pids
+		 * of the copied PidAry and the child itself went on.  With
+		 * SessionFd set, sigHup() shuts the socket down, which
+		 * also ends a read that waits for the XCLIENT line.
+		 */
+		DidFork = 1;
+		SessionFd = fd;
+		if (forkMasked)
+		    sigprocmask(SIG_SETMASK, &forkSaved, NULL);
 
 		flushFeeds(1);	/* close feed descriptors without flushing */
 		CloseIncomingLog();
@@ -1301,18 +1362,15 @@ DoAccept(int lfd)
 
 		for (i = 0; i < MaxFds; ++i) {
 		    if (i > 2 && i != fds[1] && i != fd && i != ZoneFd && i != BodyFilterFd && i != NphFilterFd) {
-			if (PipeAry[fd] != NULL) {
-			    bclose(PipeAry[fd], 0);
-			    PipeAry[fd] = NULL;
+			if (PipeAry[i] != NULL) {
+			    bclose(PipeAry[i], 0);
+			    PipeAry[i] = NULL;
 			}
 			close(i);
 		    }
 		}
 
 		OpenLog("diablo", (DebugOpt ? LOG_PERROR : 0)|LOG_PID|LOG_NDELAY);
-
-		if (HLabel[0] != 0)
-		    NiceBestEffort(FeedPriority(HLabel));
 
 		FeedFo = fdopen(fds[1], "w");
 authenticate:
@@ -1390,7 +1448,6 @@ authenticate:
 		    exit(0);
 		}
 
-		DidFork = 1;
 		snprintf(MasterSockPath, sizeof(MasterSockPath), "%s",
 		    PatRunExpand(DiabloSocketPat));
 
@@ -1474,7 +1531,15 @@ authenticate:
 		PidAry[fds[0]].tr_Pid = pid;
 		/* The peer address length was checked before forking. */
 		memcpy(PidAry[fds[0]].addr, addrst, strlen(addrst) + 1);
+		/*
+		 * A shutdown that began before the child was entered here
+		 * has not told it.
+		 */
+		if (Exiting)
+		    Kill(pid, SIGHUP);
 	    }
+	    if (forkMasked)
+		sigprocmask(SIG_SETMASK, &forkSaved, NULL);
 	}
 	close(fd);
 	if (fds[1] >= 0)
@@ -1604,6 +1669,14 @@ DoPipe(int fd)
 	    break;
     }
 
+    /*
+     * Stopped at the limit: the buffer may hold more complete lines, and
+     * the main loop calls again without waiting for select().  Otherwise
+     * egets() found no complete line (or EOF) and the pipe is left to
+     * select() again, so an unfinished line does not make the loop spin.
+     */
+    PipeMore[fd] = (maxCount == 0 && ptr != NULL && ptr != (char *)-1);
+
     bextfree(PipeAry[fd]);	/* don't keep large buffers around */
 
     if (ptr == (void *)-1) {
@@ -1613,6 +1686,7 @@ DoPipe(int fd)
 	}
 	close(fd);
 	FD_CLR(fd, &RFds);
+	PipeMore[fd] = 0;
 	--NumForks;
     }
 }
@@ -1675,6 +1749,8 @@ writeFeedOut(const char *label, const char *file, const char *msgid, const char 
 	    fe->fe_BufMax = bsize;
 	    fe->fe_BufIdx = 0;
 	    fe->fe_Failed = 0;
+	    fe->fe_Lost = 0;
+	    fe->fe_Partial = 0;
 	    fe->fe_Delayed = IsDelayed(label);
 	    fe->fe_NotifyFd = -1;
 #if 0
@@ -1715,7 +1791,11 @@ writeFeedOut(const char *label, const char *file, const char *msgid, const char 
      * subtract it off after the actual copy operation.
      */
 
-    if (fe->fe_Fd >= 0) {
+    /*
+     * fe_Fd < 0 with a buffer: the queue file failed and flushFeeds() kept
+     * the lines that were not written; flushFeedOut() opens it again.
+     */
+    if (fe->fe_Fd >= 0 || fe->fe_Buf != NULL) {
 	/* 32: " H" and " D<time>"; 12: " L<lines>" (D-174) */
 	int l = strlen(file) + strlen(msgid) + strlen(offSize) + (3 + 32 + 12 + 1);
 
@@ -1744,6 +1824,14 @@ writeFeedOut(const char *label, const char *file, const char *msgid, const char 
 	    if (l >= fe->fe_BufMax - fe->fe_BufIdx)
 		flushFeedOut(fe);
 
+	    if (l >= fe->fe_BufMax - fe->fe_BufIdx) {
+		/*
+		 * The flush failed and the buffer keeps its lines for
+		 * the next try, so there is no room for this one.
+		 */
+		++fe->fe_Lost;
+		return;
+	    }
 	    if (fe->fe_Delayed)
 		sprintf(delayTime, " D%d", (int)time(NULL));
 	    else
@@ -1773,20 +1861,46 @@ void
 flushFeeds(int justClose)
 {
     Feed *fe;
+    Feed **pfe = &FeBase;
 
-    while ((fe = FeBase) != NULL) {
+    while ((fe = *pfe) != NULL) {
 	if (justClose == 0)
 	    flushFeedOut(fe);
-	if (fe->fe_Buf)
-	    pagefree(fe->fe_Buf, 1);
+	/*
+	 * The file ends in the first part of a line and the rest is still
+	 * in the buffer: keep the descriptor.  dspoolout renames the queue
+	 * file before it asks for a flush; a file opened again by name
+	 * would be a new one, and the rest of the line would land there.
+	 */
+	if (justClose == 0 && fe->fe_Partial && fe->fe_Fd >= 0 &&
+	    fe->fe_Buf && fe->fe_BufIdx
+	) {
+	    if (fe->fe_NotifyFd >= 0)
+		close(fe->fe_NotifyFd);
+	    fe->fe_NotifyFd = -1;
+	    pfe = &fe->fe_Next;
+	    continue;
+	}
 	if (fe->fe_Fd >= 0)
 	    close(fe->fe_Fd);
 	fe->fe_Fd = -1;
+	fe->fe_Partial = 0;
 	if (fe->fe_NotifyFd >= 0)
 	    close(fe->fe_NotifyFd);
 	fe->fe_NotifyFd = -1;
+	if (justClose == 0 && fe->fe_Buf && fe->fe_BufIdx) {
+	    /*
+	     * The write failed (full disk, quota, I/O error): keep the
+	     * lines.  The next flush opens the queue file again and
+	     * writes them.
+	     */
+	    pfe = &fe->fe_Next;
+	    continue;
+	}
+	if (fe->fe_Buf)
+	    pagefree(fe->fe_Buf, 1);
 	fe->fe_Buf = NULL;
-	FeBase = fe->fe_Next;
+	*pfe = fe->fe_Next;
 	zfree(&ParProcMemPool, fe, sizeof(Feed) + strlen(fe->fe_Label) + 1);
     }
 }
@@ -1794,29 +1908,89 @@ flushFeeds(int justClose)
 void
 flushFeedOut(Feed *fe)
 {
+    /*
+     * Lines kept by flushFeeds() after a failed write: open the queue file
+     * again.  No log here, the failure is logged once below.
+     */
+    /*
+     * The file ends in the first part of a line (fe_Partial bytes) and
+     * has been removed since: dspoolout renamed it and dnewslink was done
+     * with it.  Nothing reads the rest of the line there, so the line is
+     * written again as a whole, with the lines after it, to the queue file
+     * of now.
+     */
+    if (fe->fe_Partial && fe->fe_Fd >= 0) {
+	struct stat st;
+
+	if (fstat(fe->fe_Fd, &st) == 0 && st.st_nlink == 0) {
+	    logit(LOG_NOTICE, "%s: queue file was removed with a line cut, writing the line again",
+								fe->fe_Label);
+	    close(fe->fe_Fd);
+	    fe->fe_Fd = -1;
+	    fe->fe_Partial = 0;
+	}
+    }
+    if (fe->fe_BufIdx && fe->fe_Buf && fe->fe_Fd < 0)
+	fe->fe_Fd = xopen(O_APPEND|O_RDWR|O_CREAT, 0644, "%s/%s",
+				PatExpand(DQueueHomePat), fe->fe_Label);
     if (fe->fe_BufIdx && fe->fe_Buf && fe->fe_Fd >= 0) {
 	/*
 	 * flush buffer.  If the write fails, we undo it to ensure
-	 * that we do not get garbaged feed files.
+	 * that we do not get garbaged feed files, and keep the buffer:
+	 * the next flush tries again.
 	 */
-	int n = write(fe->fe_Fd, fe->fe_Buf, fe->fe_BufIdx);
+	int off = fe->fe_Partial;
+	int len = fe->fe_BufIdx - off;
+	int n = write(fe->fe_Fd, fe->fe_Buf + off, len);
+	int werr = errno;
+	int all = (n == len);
 	if (fe->fe_NotifyFd != -1) {
 	    if (write(fe->fe_NotifyFd, &n, 1) < 0 && errno != EAGAIN) {
 		close(fe->fe_NotifyFd);
 		fe->fe_NotifyFd = -1;
 	    }
 	}
-	if (n >= 0 && n != fe->fe_BufIdx) {
-	    if (ftruncate(fe->fe_Fd, lseek(fe->fe_Fd, 0L, 1) - n) < 0)
+	if (n >= 0 && n != len) {
+	    if (ftruncate(fe->fe_Fd, lseek(fe->fe_Fd, 0L, 1) - n) < 0) {
+		int done = off + n;	/* bytes of the buffer in the file */
+		int ls = done;		/* start of the line done is in */
+
 		logit(LOG_ERR, "%s: queue file truncate failed: %s",
 					fe->fe_Label, strerror(errno));
+		/*
+		 * The n bytes stay in the file, so they must not be
+		 * written again.  The whole lines among them leave the
+		 * buffer.  A line they end inside stays as a whole, and
+		 * fe_Partial says how much of it the file has: the retry
+		 * goes on exactly there, in this same file (see
+		 * flushFeeds()), or writes the line again if the file is
+		 * gone by then.
+		 */
+		while (ls > 0 && fe->fe_Buf[ls - 1] != '\n')
+		    --ls;
+		memmove(fe->fe_Buf, fe->fe_Buf + ls, fe->fe_BufIdx - ls);
+		fe->fe_BufIdx -= ls;
+		fe->fe_Partial = done - ls;
+	    }
 	}
-	if (n != fe->fe_BufIdx && fe->fe_Failed == 0) {
-	    fe->fe_Failed = 1;
-	    logit(LOG_INFO, "failure writing to feed %s", fe->fe_Label);
+	if (!all) {
+	    if (fe->fe_Failed == 0) {
+		fe->fe_Failed = 1;
+		logit(LOG_ERR, "failure writing to feed %s (%s), will retry",
+		    fe->fe_Label,
+		    (n < 0) ? strerror(werr) : "short write");
+	    }
+	    return;
 	}
+	if (fe->fe_Failed) {
+	    logit(LOG_NOTICE, "feed %s is written again, %d queue lines lost",
+						fe->fe_Label, fe->fe_Lost);
+	    fe->fe_Failed = 0;
+	    fe->fe_Lost = 0;
+	}
+	fe->fe_Partial = 0;
+	fe->fe_BufIdx = 0;
     }
-    fe->fe_BufIdx = 0;
 }
 
 /*
@@ -1873,6 +2047,19 @@ DoSession(int fd, int count)
     }
 
     LoadNewsFeed(0, 1, HLabel);	/* free old memory and load only our label */
+
+    /*
+     * incomingpriority of the label.  This was done right after the fork,
+     * when the label is not known yet (Authenticate() fills it in later, in
+     * this process), so it never had an effect.  Here the label is final,
+     * XCLIENT included, and the feed table holds this label only.
+     */
+    {
+	int prio = FeedPriority(HLabel);
+
+	if (prio > 0)
+	    NiceBestEffort(prio);
+    }
 
     ConfigNewsFeedSockOpts(HLabel, nfd, fd);
 
@@ -2274,7 +2461,7 @@ DoSession(int fd, int count)
 	} else if (strcasecmp(cmd, "whereis") == 0 && FeedWhereIs(HLabel)) {
 	    const char *msgid = MsgId(strtok(NULL, " \t\r\n"), NULL);
 	    const char *how = strtok(NULL, " \t\r\n");
-	    History h;
+	    History h = { 0 };	/* HistoryLookup() fills it only on a hit */
 
 	    if (strcmp(msgid, "<>") == 0) {
 		xfprintf(fo, "443 Bad Message-ID\r\n");
@@ -2294,12 +2481,12 @@ DoSession(int fd, int count)
 	    }
 	} else if (strcasecmp(cmd, "xrectime") == 0) {
 	    const char *msgid = MsgId(strtok(NULL, "\r\n"), NULL);
-	    History h;
+	    History h = { 0 };	/* HistoryLookup() fills it only on a hit */
 
 	    if (strcmp(msgid, "<>") == 0) {
 		xfprintf(fo, "443 Bad Message-ID\r\n");
 	    } else if (HistoryLookup(msgid, &h) == 0 && !H_EXPIRED(h.exp)) {
-		xfprintf(fo, "223 %d\r\n", h.gmt * 60);
+		xfprintf(fo, "223 %lld\r\n", (long long)h.gmt * 60);
 	    } else {
 		if (H_EXPIRED(h.exp) && h.iter != (unsigned short)-1) {
 		    xfprintf(fo, "430 Article expired\r\n");
@@ -2756,9 +2943,10 @@ SendArticle(const char *data, int fsize, FILE *fo, int doHead, int doBody)
     int i;
     int inHeader = 1;
     int bytes = 0;
-    SpoolArtHdr ah;
+    SpoolArtHdr ah = { 0 };
 
-    bcopy(data, &ah, sizeof(ah));
+    if (fsize >= (int)sizeof(ah))
+	bcopy(data, &ah, sizeof(ah));
 
     if (fsize > 24 && (uint8)ah.Magic1 == STORE_MAGIC1 &&
 				(uint8)ah.Magic2 == STORE_MAGIC2) {
@@ -2776,8 +2964,19 @@ SendArticle(const char *data, int fsize, FILE *fo, int doHead, int doBody)
 		fsize -= 2;
 	    }
 	}
+	if (fsize < 0)		/* a header that does not fit the article */
+	    fsize = 0;
 	if (ah.StoreType & STORETYPE_WIRE) {
 	    if (doBody) {
+		/*
+		 * Nothing left to send (a header length that takes the
+		 * whole entry): the status line is out already, so end
+		 * the reply instead of leaving the client waiting.
+		 */
+		if (fsize == 0) {
+		    xfprintf(fo, ".\r\n");
+		    return(3);
+		}
 		return(fwrite(data, 1, fsize, fo));
 	    } else {
 		int b;
@@ -2963,10 +3162,17 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 	struct timespec delay;
 	int delay_counter = 0;
 	int delay_counter_max = 0;
+	int delay_nsec = 0;
 
 	delay.tv_sec = 0;
 
-	FeedGetThrottle(HLabel, (int *)&(delay.tv_nsec), &delay_counter_max);
+	/* tv_nsec is a long: not through an int pointer */
+	FeedGetThrottle(HLabel, &delay_nsec, &delay_counter_max);
+	if (delay_nsec < 0)
+	    delay_nsec = 0;
+	if (delay_nsec > 999999999)
+	    delay_nsec = 999999999;
+	delay.tv_nsec = delay_nsec;
 
 	FeedGetMaxInboundRate(HLabel, &bps);
 
@@ -3053,7 +3259,8 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		}
 		aflen = 1;
 	    } else {
-		aflen = 2;
+		/* a line the peer ended with a bare LF has one byte to cut */
+		aflen = (bytes > 1 && p[bytes-2] == '\r') ? 2 : 1;
 	    }
 
 	    /*
@@ -3314,6 +3521,20 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		    }
 		    bwrite(buffer, ipfail, strlen(ipfail));
 		    diablo_strlcpynl(npath, p, bytes - aflen, sizeof(npath));
+		    /*
+		     * The check above lets a TAB pass when a CR or LF
+		     * follows it, and the copy drops CR and LF: test what
+		     * goes into the SOUT line (trailing TABs are trimmed).
+		     */
+		    if (strchr(npath, '\t') != NULL)
+			artError |= LAERR_PATHTAB;
+		    /*
+		     * An empty Path: value is an empty field of the SOUT
+		     * line, which the master's strtok() skips: every field
+		     * after it would shift by one.
+		     */
+		    if (npath[0] == 0)
+			artError |= LAERR_HEADER;
 		} else if (hch == 'x' && bytes >= 5 &&
 			   strncasecmp(p, "Xref:", 5) == 0) {
 		    hdrXref++;
@@ -3332,6 +3553,9 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		    int i;
 
 		    diablo_strlcpynl(dist, p + 13, bytes - 13 - aflen, sizeof(dist));
+		    /* as for Path: a TAB before a CR survives the copy */
+		    if (strchr(dist, '\t') != NULL)
+			artError |= LAERR_DISTTAB;
 		    /*
 		     * The SOUT line uses tabs as field separators and
 		     * FeedAdd() requires every string object to be free of
@@ -3664,6 +3888,8 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		    zstore = (CompressLvl >= 0 && CompressLvl <= 9);
 #endif
 		    h.bsize = bsize(buffer) + sizeof(artHdr);
+		    /* all of it goes to disk, the padding too */
+		    memset(&artHdr, 0, sizeof(artHdr));
 		    artHdr.Magic1 = STORE_MAGIC1;
 		    artHdr.Magic2 = STORE_MAGIC2;
 		    artHdr.Version = STOREAPI_REVISION;
@@ -4610,6 +4836,14 @@ int  FtNumCommit;
 void
 FeedRSet(FILE *fo)
 {
+    /*
+     * A second feedrset without a feedcommit: close the file of the
+     * first one, and no feedadd/feeddel/feedcommit on a NULL Ft when
+     * the open below fails.
+     */
+    if (Ft != NULL)
+	fclose(Ft);
+    FeedTableReady = 0;
     Ft = xfopen("w", "%s/%s.new", PatExpand(FeedsHomePat), HLabel);
     if (Ft != NULL) {
 	FeedTableReady = 1;
@@ -4674,12 +4908,15 @@ FeedCommit(FILE *fo)
 	    remove(path1);
 	    remove(path2);
 	} else {
-	    xfprintf(fo, "290 feed commit complete\r\n");
-	    rename(path1, path2);
+	    if (rename(path1, path2) == 0)
+		xfprintf(fo, "290 feed commit complete\r\n");
+	    else
+		xfprintf(fo, "490 file rename failed\r\n");
 	}
         TouchNewsFeed();
     }
     fclose(Ft);
+    Ft = NULL;
     FeedTableReady = 0;
 }
 
@@ -5292,6 +5529,22 @@ MapArticle(int fd, char *fname, char **base, History *h, int *extra, int *artSiz
         logit(LOG_ERR, "Article was stored compressed and compression support has not been enabled\n");
 #endif
     } else {
+	    /*
+	     * The spool header is data from disk: SendArticle() steps
+	     * over HeadLen and ArtHdrLen bytes of the mapping.  (An
+	     * article stored without a header has no magic.)
+	     */
+	    if ((uint8)tah.Magic1 == STORE_MAGIC1 &&
+		(uint8)tah.Magic2 == STORE_MAGIC2 &&
+		(h->bsize < (int32)sizeof(SpoolArtHdr) ||
+		 tah.HeadLen < 8 || tah.HeadLen > sizeof(SpoolArtHdr) ||
+		 tah.ArtHdrLen > (uint32)h->bsize - tah.HeadLen)
+	    ) {
+		logit(LOG_ERR, "corrupt spool header in %s@%d: headlen %d arthdrlen %u, history size %d\n",
+		    fname, (int)h->boffset, (int)tah.HeadLen,
+		    (unsigned int)tah.ArtHdrLen, (int)h->bsize);
+		return(-1);
+	    }
 	    *base = xmap(
 		NULL, 
 		h->bsize + 1, 

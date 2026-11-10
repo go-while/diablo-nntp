@@ -784,7 +784,8 @@ loadSpoolCtl(FILE *fi)
 		metaSpool->ms_MaxSize = bsizektod(arg);
 		continue;
 	    } else if (strcmp(cmd, "maxcross") == 0) {
-		metaSpool->ms_MaxCross = bsizektod(arg);
+		/* a number of newsgroups, not a size in KB */
+		metaSpool->ms_MaxCross = (int)strtol(arg, NULL, 10);
 		continue;
 	    } else if (strcmp(cmd, "keeptime") == 0) {
 		metaSpool->ms_KeepTime = btimetol(arg);

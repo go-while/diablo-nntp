@@ -1,0 +1,1 @@
+- diablo: with `commonpath`/`-c`, a bare CR or LF inside the Path: value made CommonElmMatches() loop forever in the session process; it now ends the element as `!` does.

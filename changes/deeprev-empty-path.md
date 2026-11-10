@@ -1,0 +1,1 @@
+- diablo: an article whose Path: header has no value was accepted and shifted the fields of the internal feed line, so it was queued as header-only and never sent on; it is now refused (MissingHeader).
