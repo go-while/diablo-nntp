@@ -1,0 +1,1 @@
+- dreaderd: a connection's line in `dreaderd.status` is now written at most once a second instead of twice per client command; the last state still reaches the file within about a second.

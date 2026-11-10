@@ -34,6 +34,8 @@ Prototype void RTStatusOpen(const char *fileName, int slotBase, int numSlots);
 Prototype void RTStatusBase(int slot, const char *ctl, ...);
 Prototype void RTStatusUpdate(int slot, const char *ctl, ...);
 Prototype void RTStatusClose(void);
+Prototype void RTStatusFlush(void);
+Prototype int RTStatusPending(void);
 
 #define RTLINESIZE	140
 
@@ -75,6 +77,35 @@ int RTSFd = -1;
 int RTSlotBase;
 int RTBaseLen;
 
+/*
+ * RTStatusUpdate() is called for every client command.  One pwrite() per
+ * command is a real cost on a busy reader, and nobody reads the file that
+ * often, so the update part of a slot goes to the file at most once per
+ * second.  An update that is held back stays here and is written by
+ * RTStatusFlush() once the second is over, so the file is never behind
+ * for longer than about a second.
+ */
+typedef struct RTPend {
+    time_t	rp_Last;	/* second of the last write for this slot */
+    off_t	rp_Off;
+    int		rp_Len;		/* > 0: an update is held back */
+    char	rp_Buf[RTLINESIZE];
+} RTPend;
+
+static RTPend *RTPendAry;
+static int RTNumSlots;
+static int RTNumPending;
+
+static void
+RTWritePending(RTPend *rp, time_t now)
+{
+    if (RTWriteAt(RTSFd, rp->rp_Buf, rp->rp_Len, rp->rp_Off) < 0)
+	RTWriteError("slot update");
+    rp->rp_Len = 0;
+    rp->rp_Last = now;
+    --RTNumPending;
+}
+
 void
 RTStatusOpen(const char *fileName, int slotBase, int numSlots)
 {
@@ -93,6 +124,16 @@ RTStatusOpen(const char *fileName, int slotBase, int numSlots)
 
     RTSlotBase = slotBase;
 
+    /*
+     * A forked reader inherits the parent's held-back updates; they belong
+     * to the parent's slots, so start clean.
+     */
+    if (RTPendAry != NULL)
+	free(RTPendAry);
+    RTPendAry = (numSlots > 0) ? calloc(numSlots, sizeof(RTPend)) : NULL;
+    RTNumSlots = (RTPendAry != NULL) ? numSlots : 0;
+    RTNumPending = 0;
+
     if (RTSFd >= 0) {
 	int i;
 
@@ -105,8 +146,41 @@ RTStatusOpen(const char *fileName, int slotBase, int numSlots)
 void
 RTStatusClose(void)
 {
-    if (RTSFd >= 0)
+    if (RTSFd >= 0) {
+	int i;
+
+	for (i = 0; RTNumPending > 0 && i < RTNumSlots; ++i) {
+	    if (RTPendAry[i].rp_Len > 0)
+		RTWritePending(&RTPendAry[i], 0);
+	}
 	close(RTSFd);
+    }
+}
+
+/*
+ * Write the held-back updates whose second is over.  Cheap when nothing
+ * is held back.
+ */
+void
+RTStatusFlush(void)
+{
+    if (RTNumPending > 0 && RTSFd >= 0) {
+	time_t now = time(NULL);
+	int i;
+
+	for (i = 0; RTNumPending > 0 && i < RTNumSlots; ++i) {
+	    RTPend *rp = &RTPendAry[i];
+
+	    if (rp->rp_Len > 0 && rp->rp_Last != now)
+		RTWritePending(rp, now);
+	}
+    }
+}
+
+int
+RTStatusPending(void)
+{
+    return(RTNumPending);
 }
 
 void
@@ -126,6 +200,20 @@ RTStatusBase(int slot, const char *ctl, ...)
 	va_start(va, ctl);
 	vsnprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), ctl, va);
 	va_end(va);
+
+	/*
+	 * The base line rewrites the whole slot: an update still held back
+	 * for it belongs to the previous state and must not land on top.
+	 */
+	if (slot < RTNumSlots) {
+	    RTPend *rp = &RTPendAry[slot];
+
+	    if (rp->rp_Len > 0) {
+		rp->rp_Len = 0;
+		--RTNumPending;
+	    }
+	    rp->rp_Last = 0;
+	}
 
 	RTBaseLen = strlen(buf);
 	if (RTBaseLen > RTLINESIZE/2)
@@ -155,9 +243,21 @@ RTStatusUpdate(int slot, const char *ctl, ...)
 	len = strlen(buf);
 	memset(buf + len, ' ', ulineSize - len);
 	buf[ulineSize-1] = '\n';
-	if (RTWriteAt(RTSFd, buf, ulineSize,
-                      (off_t)(RTSlotBase + slot) * RTLINESIZE + RTBaseLen) < 0)
+	if (slot < RTNumSlots) {
+	    RTPend *rp = &RTPendAry[slot];
+	    time_t now = time(NULL);
+
+	    if (rp->rp_Len == 0)
+		++RTNumPending;
+	    memcpy(rp->rp_Buf, buf, ulineSize);
+	    rp->rp_Len = ulineSize;
+	    rp->rp_Off = (off_t)(RTSlotBase + slot) * RTLINESIZE + RTBaseLen;
+	    if (rp->rp_Last != now)
+		RTWritePending(rp, now);
+	} else if (RTWriteAt(RTSFd, buf, ulineSize,
+                      (off_t)(RTSlotBase + slot) * RTLINESIZE + RTBaseLen) < 0) {
             RTWriteError("slot update");
+	}
     }
 }
 
