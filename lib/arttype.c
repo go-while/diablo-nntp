@@ -627,6 +627,14 @@ ArtTypeMatch(int articletype, ArtTypeList *acctypes)
     if (acctypes->negate)
 	res = 1;
     while (acctypes != NULL) {
+	/*
+	 * "none" (and an unknown name, which ArtTypeConv() logs) is 0:
+	 * the test below is true for every article with it.
+	 */
+	if (acctypes->arttype == ARTTYPE_NONE) {
+	    acctypes = acctypes->next;
+	    continue;
+	}
 	if ((articletype & acctypes->arttype) == acctypes->arttype ||
 					acctypes->arttype == ARTTYPE_ALL)
 		res = !acctypes->negate;
