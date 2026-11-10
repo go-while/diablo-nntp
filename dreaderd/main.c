@@ -2887,7 +2887,12 @@ HandleDnsThread(ForkDesc *desc)
 			dres.dr_Lookup & DL_MASK, dres.dr_RevHost,
 			dres.dr_CacheGen);
 
-    if (isdigit((unsigned char)dres.dr_ReaderName[0]) && isdigit((unsigned char)dres.dr_ReaderName[1]) && isdigit((unsigned char)dres.dr_ReaderName[2])) {
+    /*
+     * "NNN text" is a refusal from an authentication backend.  A readerdef
+     * name has no blank in it, so one that starts with three digits
+     * ("100mbit", "404") is not taken for a refusal.
+     */
+    if (isdigit((unsigned char)dres.dr_ReaderName[0]) && isdigit((unsigned char)dres.dr_ReaderName[1]) && isdigit((unsigned char)dres.dr_ReaderName[2]) && dres.dr_ReaderName[3] == ' ') {
 	p = dres.dr_ReaderName;
 	if (! strncmp(p, "600 ", 4)) {
 	    /* 

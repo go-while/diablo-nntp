@@ -1,0 +1,1 @@
+- dreaderd: a readerdef whose name starts with three digits (`100mbit`, `404`) was taken for a refusal from an authentication backend and its name was sent to the client as the greeting; a refusal is now three digits followed by a blank.
