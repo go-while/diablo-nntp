@@ -34,6 +34,7 @@
 
 #include "defs.h"
 #include <sys/resource.h>
+#include <poll.h>	/* lib/defs.h includes it only when USE_POLL is set */
 
 #ifdef __linux__
 #include <sched.h>
@@ -1573,6 +1574,67 @@ DoListen(ForkDesc *desc, time_t t)
  * DOCOMMAND() - handles a control connection
  */
 
+#define DRCMD_READ_TIMEOUT	2	/* seconds to wait for the command line */
+
+/*
+ * The command line of a drcmd client, read within DRCMD_READ_TIMEOUT
+ * seconds in all: counted from the start, not per read, so a client that
+ * sends its line a byte at a time cannot hold the main loop longer either.
+ * Returns its length, 0 for nothing to run: EOF before any byte, the time
+ * ran out, a read error, or a line whose text (without the newline) does
+ * not fit in buf (logged).  A last line without a newline at EOF is run,
+ * as fgets() did; when buf is full, one more byte tells EOF or a newline
+ * (the line fits) from more text (it does not).
+ */
+static int
+DrcmdReadLine(int fd, char *buf, int size)
+{
+    double end = MonoMs() + DRCMD_READ_TIMEOUT * 1000.0;
+    int n = 0;
+
+    for (;;) {
+	struct pollfd pfd;
+	double left = end - MonoMs();
+	char extra;
+	char *nl;
+	int r;
+
+	if (left <= 0)
+	    return(0);
+	pfd.fd = fd;
+	pfd.events = POLLIN;
+	pfd.revents = 0;
+	r = poll(&pfd, 1, (int)left + 1);
+	if (r < 0 && errno == EINTR)
+	    continue;
+	if (r <= 0)
+	    return(0);
+	if (n < size - 1)
+	    r = read(fd, buf + n, size - 1 - n);
+	else
+	    r = read(fd, &extra, 1);
+	if (r < 0 && errno == EINTR)
+	    continue;
+	if (r < 0)
+	    return(0);
+	if (r == 0)
+	    break;		/* EOF: a last line without a newline is run */
+	if (n >= size - 1) {
+	    if (extra == '\n')
+		break;		/* the text fills buf exactly */
+	    logit(LOG_ERR, "drcmd: command line longer than %d bytes, not run", size - 1);
+	    return(0);
+	}
+	if ((nl = memchr(buf + n, '\n', r)) != NULL) {
+	    n = nl + 1 - buf;
+	    break;
+	}
+	n += r;
+    }
+    buf[n] = 0;
+    return(n);
+}
+
 void
 DoCommand(int ufd)
 {
@@ -1601,7 +1663,12 @@ DoCommand(int ufd)
 	if (fi && fo) {
 	    char buf[MAXLINE];
 
-	    while (fgets(buf, sizeof(buf), fi) != NULL) {
+	    /*
+	     * drcmd sends its one command line at once.  This is the main
+	     * loop: do not wait without end for a client that sends nothing
+	     * or half a line; the connection is then closed.
+	     */
+	    while (DrcmdReadLine(fd, buf, sizeof(buf)) > 0) {
 		char *s1;
 		char *s2;
 
