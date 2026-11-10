@@ -1774,6 +1774,9 @@ LDAPAuthenticate(char *user, char *pass, char *realm, char *conf)
      */
     if ((rcode = LDAPSearch(LdapLd, ludp->lud_dn, ludp->lud_scope, ludp->lud_filter, ludp->lud_attrs, &res)) != LDAP_SUCCESS) {
 	logit(LOG_ERR,"LDAP search for %s failed: %s\n", url, ldap_err2string(rcode));
+	/* a failed search can still hand back a result: it is ours to free */
+	if (res != NULL)
+	    ldap_msgfree(res);
 	free(confst);
 	ldap_unbind_s(LdapLd);
 	ldap_free_urldesc(ludp);
@@ -1940,10 +1943,14 @@ LDAPAuthenticate(char *user, char *pass, char *conf)
 	/* Search failed - fail auth attempt */
 	logit(LOG_INFO, "LDAP search failed (%s): %s\n",
 						user, ldap_err2string(rcode));
+	/* a failed search can still hand back a result: it is ours to free */
+	if (res != NULL)
+	    ldap_msgfree(res);
 	free(filter);
 	ldap_unbind_s(LdapLd);
 	ldap_free_urldesc(ludp);
 	LdapLd = NULL;
+	ludp = NULL;
 	return(NULL);
     }
 
@@ -2009,6 +2016,8 @@ LDAPAuthenticate(char *user, char *pass, char *conf)
     if (bv_val != NULL)
 	ldap_value_free(bv_val);
 #endif
+    free(filter);
+    ldap_msgfree(res);
     return(r);
 }
 #endif	/* NEW_LDAP */

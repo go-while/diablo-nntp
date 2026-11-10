@@ -1,0 +1,1 @@
+- dreaderd: the default LDAP code leaked the search filter and the search result on every login that reached the password compare, and the result of a failed search.
