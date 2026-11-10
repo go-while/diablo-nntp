@@ -1287,24 +1287,32 @@ SetCacheDirs(const char *opt, CacheDirType *cachedir)
 {
     int v;
     const char *p;
+    CacheDirType cd;
 
-    cachedir->dt_dirlvl = 0;
+    /*
+     * Parse into a copy: a value that is refused must leave the setting
+     * in use as it was.
+     */
+    cd.dt_dirlvl = 0;
     v = atoi(opt);
     if (v < 1)
 	return(1);
-    cachedir->dt_dirinfo[cachedir->dt_dirlvl] = v;
-    cachedir->dt_dirlvl++;
+    cd.dt_dirinfo[cd.dt_dirlvl] = v;
+    cd.dt_dirlvl++;
     while ((p = strchr(opt, '/')) != NULL) {
 	p++;
 	opt = p;
 	v = atoi(p);
 	if (v < 1)
 	    return(1);
-	cachedir->dt_dirinfo[cachedir->dt_dirlvl] = v;
-	cachedir->dt_dirlvl++;
-	if (cachedir->dt_dirlvl > 9)
+	cd.dt_dirinfo[cd.dt_dirlvl] = v;
+	cd.dt_dirlvl++;
+	if (cd.dt_dirlvl > 9)
 	    break;
     }
+    cachedir->dt_dirlvl = cd.dt_dirlvl;
+    for (v = 0; v < cd.dt_dirlvl; ++v)
+	cachedir->dt_dirinfo[v] = cd.dt_dirinfo[v];
     return(0);
 }
 

@@ -1,0 +1,1 @@
+- dreaderd: a refused `drcmd config readercachedirs` value (`512/0`, `abc`) still changed the setting of the running server, so cache files were no longer found; a refused value now changes nothing.
