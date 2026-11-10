@@ -832,7 +832,12 @@ CommonElmMatches(const char *common, const char *p, int bytes)
 	    --bytes;
 	    ++p;
 	}
-	if (bytes && *p == '!') {
+	/*
+	 * A CR or LF inside the value ends an element as '!' does.  It
+	 * stopped the scan above but was never stepped over: the loop
+	 * stood on it for good.
+	 */
+	if (bytes && (*p == '!' || *p == '\r' || *p == '\n')) {
 	    --bytes;
 	    ++p;
 	}
