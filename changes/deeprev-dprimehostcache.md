@@ -1,0 +1,1 @@
+- dprimehostcache: with both a cache and a hosts path given, the hosts path was also taken as the cache path and diablo.hosts was overwritten.
