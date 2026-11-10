@@ -1662,6 +1662,8 @@ main(int ac, char **av)
 	    char binPath[1024];
 	    long fdLimit = sysconf(_SC_OPEN_MAX);
 	    long inheritedFd;
+	    DIR *fdDir;
+	    int listed = 0;
 	    int n;
 
 	    /* P2 re-execs dspoolout from this long-lived worker.  Without
@@ -1670,10 +1672,35 @@ main(int ac, char **av)
 	     * numbers to grow on every connlife cycle.  Keep stdio, which
 	     * dspoolout uses for its configured cron-style output log.
 	     */
-	    if (fdLimit < 0)
-		fdLimit = 1024;
-	    for (inheritedFd = 3; inheritedFd < fdLimit; ++inheritedFd)
-		close((int)inheritedFd);
+	    /*
+	     * Where the system lists our descriptors, close those: the
+	     * limit can be a million and more (systemd units, containers),
+	     * and a close() for each number delays the replacement.
+	     */
+	    if ((fdDir = opendir("/proc/self/fd")) != NULL) {
+		den_t *den;
+
+		errno = 0;
+		while ((den = readdir(fdDir)) != NULL) {
+		    char *end;
+
+		    inheritedFd = strtol(den->d_name, &end, 10);
+		    if (end == den->d_name || *end != 0)
+			continue;
+		    if (inheritedFd >= 3 && inheritedFd != dirfd(fdDir))
+			close((int)inheritedFd);
+		    errno = 0;
+		}
+		/* readdir() returns NULL at the end and on an error */
+		listed = (errno == 0);
+		closedir(fdDir);
+	    }
+	    if (!listed) {
+		if (fdLimit < 0)
+		    fdLimit = 1024;
+		for (inheritedFd = 3; inheritedFd < fdLimit; ++inheritedFd)
+		    close((int)inheritedFd);
+	    }
 
 	    n = snprintf(binPath, sizeof(binPath),
 		"%s/dbin/dspoolout", NewsHome);

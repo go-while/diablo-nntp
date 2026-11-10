@@ -1,0 +1,1 @@
+- dnewslink: the connlife replacement closes the descriptors it has (from /proc/self/fd where that exists) and no longer one number after the other up to the descriptor limit, which took long with a limit of a million or more.
