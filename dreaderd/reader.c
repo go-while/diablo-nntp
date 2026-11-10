@@ -516,6 +516,7 @@ HandleReaderMsg(ForkDesc *desc)
 	     * Tell the main server that we are done with the connection
 	     */
 	    SendMsg(TFd, recv_fd, &dres);
+	    close(recv_fd);	/* the main server has its own copy */
 	} else if (recv_fd == RECV_FD_LOST) {
 	    /*
 	     * The connection's descriptor was dropped on the way: hand the
