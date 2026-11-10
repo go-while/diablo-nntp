@@ -1,0 +1,1 @@
+- dexpireover -z: the compressed overview data file, and then its directory, are now synced to disk before the original is removed; when either sync fails the original stays and no .gz is left.
