@@ -1,0 +1,1 @@
+- logging: the inode of an open log file was kept in an int; on a filesystem with inode numbers above 32 bits the log file was closed and opened again at every 10-second check.
