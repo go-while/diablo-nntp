@@ -15,11 +15,11 @@ typedef struct Group {
     struct Group *gr_Next;
     int		gr_State;
     artno_t	gr_StartNo;
-    int		gr_StartDiff;
+    artno_t	gr_StartDiff;
     artno_t	gr_EndNo;
-    int		gr_EndDiff;
+    artno_t	gr_EndDiff;	/* article numbers are 64 bit: so is a difference */
     artno_t	gr_SynNo;
-    int		gr_SynDiff;
+    artno_t	gr_SynDiff;
     int		gr_NoCTS;
     int		gr_NoLMTS;
     char	*gr_GroupName;
@@ -633,7 +633,7 @@ main(int ac, char **av)
 			if (ForReal)
 			    KPDBWriteEncode(KDBActive, group->gr_GroupName, "NB", startBuf, 0);
 			if (VerboseOpt)
-			    printf(" NB=%s(%+d)", startBuf, group->gr_StartDiff);
+			    printf(" NB=%s(%+lld)", startBuf, group->gr_StartDiff);
 		    }
 		    if (group->gr_State & (GRF_ENDNO | GRF_NEW)) {
 			char endBuf[16];
@@ -641,7 +641,7 @@ main(int ac, char **av)
 			if (ForReal)
 			    KPDBWriteEncode(KDBActive, group->gr_GroupName, "NE", endBuf, 0);
 			if (VerboseOpt)
-			    printf(" NE=%s(%+d)", endBuf, group->gr_EndDiff);
+			    printf(" NE=%s(%+lld)", endBuf, group->gr_EndDiff);
 		    }
 		    if (group->gr_State & (GRF_SYNNO | GRF_NEW)) {
 			char synBuf[16];
@@ -649,7 +649,7 @@ main(int ac, char **av)
 			if (ForReal)
 			    KPDBWriteEncode(KDBActive, group->gr_GroupName, "NX", synBuf, 0);
 			if (VerboseOpt)
-			    printf(" NX=%s(%+d)", synBuf, group->gr_SynDiff);
+			    printf(" NX=%s(%+lld)", synBuf, group->gr_SynDiff);
 		    }
 		    if (group->gr_State & GRF_CTS) {
 			char ctsBuf[16];
@@ -797,7 +797,7 @@ EnterGroup(int pass, const char *groupName, artno_t begNo, artno_t endNo, artno_
 	    group->gr_State |= GRF_SYNNO;
 	    if (group->gr_SynNo != synNo) {
 		if (SyncArtNumbersSynOpt != 2 || synNo > group->gr_SynNo) {
-		    int perc;
+		    artno_t perc;
 		    if (group->gr_SynNo == 0)
 			group->gr_SynNo = 1;
 		    group->gr_SynDiff = (synNo + SyncArtNumbersAddition) -
@@ -824,7 +824,7 @@ EnterGroup(int pass, const char *groupName, artno_t begNo, artno_t endNo, artno_
 	    group->gr_State |= GRF_ENDNO;
 	    if (group->gr_EndNo != endNo) {
 		if (SyncArtNumbersEndOpt != 2 || endNo > group->gr_EndNo) {
-		    int perc;
+		    artno_t perc;
 		    if (group->gr_EndNo == 0)
 			group->gr_EndNo = 1;
 		    group->gr_EndDiff = (synNo + SyncArtNumbersAddition) -
