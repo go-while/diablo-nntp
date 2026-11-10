@@ -1,0 +1,1 @@
+- diablo: HEAD, BODY and ARTICLE trusted the lengths in the spool header of an uncompressed article; a damaged header could send data from the wrong place or crash the session. Such an article is now answered 430 and logged.

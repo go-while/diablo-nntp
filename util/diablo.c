@@ -2833,9 +2833,10 @@ SendArticle(const char *data, int fsize, FILE *fo, int doHead, int doBody)
     int i;
     int inHeader = 1;
     int bytes = 0;
-    SpoolArtHdr ah;
+    SpoolArtHdr ah = { 0 };
 
-    bcopy(data, &ah, sizeof(ah));
+    if (fsize >= (int)sizeof(ah))
+	bcopy(data, &ah, sizeof(ah));
 
     if (fsize > 24 && (uint8)ah.Magic1 == STORE_MAGIC1 &&
 				(uint8)ah.Magic2 == STORE_MAGIC2) {
@@ -2853,6 +2854,8 @@ SendArticle(const char *data, int fsize, FILE *fo, int doHead, int doBody)
 		fsize -= 2;
 	    }
 	}
+	if (fsize < 0)		/* a header that does not fit the article */
+	    fsize = 0;
 	if (ah.StoreType & STORETYPE_WIRE) {
 	    if (doBody) {
 		return(fwrite(data, 1, fsize, fo));
@@ -5405,6 +5408,22 @@ MapArticle(int fd, char *fname, char **base, History *h, int *extra, int *artSiz
         logit(LOG_ERR, "Article was stored compressed and compression support has not been enabled\n");
 #endif
     } else {
+	    /*
+	     * The spool header is data from disk: SendArticle() steps
+	     * over HeadLen and ArtHdrLen bytes of the mapping.  (An
+	     * article stored without a header has no magic.)
+	     */
+	    if ((uint8)tah.Magic1 == STORE_MAGIC1 &&
+		(uint8)tah.Magic2 == STORE_MAGIC2 &&
+		(h->bsize < (int32)sizeof(SpoolArtHdr) ||
+		 tah.HeadLen < 8 || tah.HeadLen > sizeof(SpoolArtHdr) ||
+		 tah.ArtHdrLen > (uint32)h->bsize - tah.HeadLen)
+	    ) {
+		logit(LOG_ERR, "corrupt spool header in %s@%d: headlen %d arthdrlen %u, history size %d\n",
+		    fname, (int)h->boffset, (int)tah.HeadLen,
+		    (unsigned int)tah.ArtHdrLen, (int)h->bsize);
+		return(-1);
+	    }
 	    *base = xmap(
 		NULL, 
 		h->bsize + 1, 
