@@ -871,6 +871,7 @@ MBReadLine(MBufHead *mh, char **pptr)
 	    mbuf->mb_Buf[mbuf->mb_NLScan] = 0;	/* do not replace last char */
 	else
 	    mbuf->mb_Buf[mbuf->mb_NLScan-1] = 0;/* replace nl	*/
+	mh->mh_NoNL = nonl;	/* the caller may need to know which */
 	*pptr = mbuf->mb_Buf + mbuf->mb_Index;
 	mh->mh_Bytes -= r;
 	mbuf->mb_Index = mbuf->mb_NLScan;

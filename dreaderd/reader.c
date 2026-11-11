@@ -1237,6 +1237,7 @@ NNCommand2(Connection *conn)
     char *buf;
     Command *scan;
     int len;
+    int nul;
 
     conn->co_Func = NNCommand2;
     conn->co_State = "waitcmd";
@@ -1291,6 +1292,21 @@ NNCommand2(Connection *conn)
     }
 
     /*
+     * a NUL byte in the line, seen before the line is used as a C string;
+     * MBReadLine() put a NUL in the place of the newline (a last line at
+     * EOF has none: its NUL is behind the len bytes, which are all data)
+     */
+    {
+	int clen = len;
+
+	if (!conn->co_RMBuf.mh_NoNL && clen > 0 && buf[clen - 1] == '\0')
+	    --clen;
+	if (clen > 0 && buf[clen - 1] == '\r')
+	    --clen;
+	nul = (memchr(buf, 0, clen) != NULL);
+    }
+
+    /*
      * strip CR LF
      */
 
@@ -1339,8 +1355,8 @@ NNCommand2(Connection *conn)
         proto = NULL;
       }
 
-      /* an empty first line has no word: cmd is NULL */
-      if (cmd != NULL && strcmp(cmd, "PROXY") == 0 && proto &&
+      /* an empty first line has no word: cmd is NULL; no NUL in it */
+      if (!nul && cmd != NULL && strcmp(cmd, "PROXY") == 0 && proto &&
           srcaddr && srcport && dstaddr && dstport) {
         memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_UNSPEC;
@@ -1372,7 +1388,7 @@ NNCommand2(Connection *conn)
       struct sockaddr_in sin;
       char *pt = NULL;
 
-      if (strncasecmp(ptr, "proxied ", 8) || ! ((pt = strrchr(ptr, ':')))) {
+      if (nul || strncasecmp(ptr, "proxied ", 8) || ! ((pt = strrchr(ptr, ':')))) {
           MBLogPrintf(conn,
               &conn->co_TMBuf,
               "400 %s: Proxy authentication failure.\r\n",
@@ -1402,6 +1418,18 @@ NNCommand2(Connection *conn)
       conn->co_Auth.dr_Flags |= DF_ISPROXIED;
       conn->co_Auth.dr_ResultFlags = DR_REQUIRE_DNS;
       return;
+    }
+
+    /*
+     * A command line cannot hold a NUL byte (RFC 3977 9.2 and 9.8: keywords
+     * and tokens have none) and must not be cut and then interpreted (3.2.1):
+     * 501.  Without this check the line was cut at the NUL: "ARTICLE <id>"
+     * NUL junk was served, and a line starting with NUL got no answer.
+     */
+    if (nul) {
+	MBLogPrintf(conn, &conn->co_TMBuf, "501 Syntax error: NUL byte in the command line\r\n");
+	NNCommand(conn);
+	return;
     }
 
     /*

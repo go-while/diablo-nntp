@@ -2007,6 +2007,7 @@ DoSession(int fd, int count)
     int syntax = 0;
     int unimp = 0;
     int nfd;
+    int bytes;
 
     /*
      * reinitialize random generator
@@ -2162,12 +2163,26 @@ DoSession(int fd, int count)
 	    break;
 	}
 	ArticleFileIdle(bi);
-	if ((buf = bgets(bi, NULL)) == NULL || buf == (char *)-1)
+	/* with its length, so a NUL byte in the line can be seen */
+	if ((buf = bgets(bi, &bytes)) == NULL || buf == (char *)-1)
 	    break;
+	if (bytes <= 0 || buf[bytes - 1] != '\n') {
+	    /* the buffer is full without a newline */
+	    logit(LOG_ERR, "Line buffer overflow fd %d", nfd);
+	    break;
+	}
+	buf[bytes - 1] = 0;
 
 
 	if (DebugOpt > 2) {
 	    ddprintf("%d << %s", (int)getpid(), buf);
+	}
+
+	/* a NUL byte in the command line: 501, not cut there (RFC 3977 3.2.1) */
+	if (memchr(buf, 0, bytes - 1) != NULL) {
+	    xfprintf(fo, "501 Syntax error: NUL byte in the command line\r\n");
+	    fflush(fo);
+	    continue;
 	}
 
 	cmd = strtok(buf, " \t\r\n");

@@ -421,6 +421,7 @@ typedef struct MBufHead {
     char	mh_SkipLong;	/* caller wants a long line skipped, not EOF */
     char	mh_Skip;	/* dropping the rest of a long line */
     char	mh_LongLine;	/* MBReadLine() dropped a long line */
+    char	mh_NoNL;	/* its last line ended at EOF, not with a newline */
 } MBufHead;
 
 /*
