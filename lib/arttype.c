@@ -65,6 +65,7 @@ int UUencode = 0;
 int BinHex = 0;
 int Base64 = 0;
 int PGPMime = 0;	/* in a PGP/MIME encrypted article: its octet-stream part is not a binary */
+static int CTArmorPGP = 0;	/* ASCII-armored PGP signature/key MIME part */
 int CTText = 0;	/* the part's Content-Type is text/ */
 int CTEBase64 = 0;	/* a base64 Content-Transfer-Encoding is waiting for the end of its header block */
 int Armor = 0;	/* lines left, negative PGP armor state, or 0 outside armor */
@@ -556,6 +557,7 @@ InitArticleType(void)
     Armor = 0;
     PGPMime = 0;
     CTText = 0;
+    CTArmorPGP = 0;
     CTEBase64 = 0;
     CTSeen = 0;
     B64Part = 0;
@@ -785,6 +787,16 @@ ctFinish(void)
     CTCont = 0;
     p = mimeSkip(p, e);
     CTText = (e - p >= 5 && strncasecmp(p, "text/", 5) == 0);
+    /* RFC 3156 sections 2, 5 and 7: these MIME bodies contain ASCII armor.
+     * Decode their transfer encoding before applying the armor checks.
+     * Match the complete media type, not a similarly named subtype.
+     */
+    a = p;
+    while (a < e && *a != ';' && *a != ' ' && *a != '\t' && *a != '\r' && *a != '(')
+	++a;
+    CTArmorPGP = ((a - p == 25 && strncasecmp(p, "application/pgp-signature", 25) == 0) ||
+	(a - p == 20 && strncasecmp(p, "application/pgp-keys", 20) == 0));
+
     if (CTTrunc || e - p < 10 || strncasecmp(p, "multipart/", 10) != 0)
 	return;
     for (;;) {
@@ -1056,6 +1068,9 @@ bodyLineTypes(char *ptr, int len, int *uu, int *bh, int *b64, int *armor)
      * the tail of the same message as a separate base64 binary. A line
      * outside armor syntax ends that exemption too.
      */
+    /* A clear-signed preamble must not swallow its signature BEGIN. */
+    if (*armor > 0 && linePrefix(ptr, len, "-----BEGIN PGP SIGNATURE-----"))
+	*armor = 0;
     if (*armor < 0 && !pgpMessageLine(ptr, len, armor))
 	*armor = 0;
     if (*armor != 0) {
@@ -1279,6 +1294,7 @@ partReset(void)
 	b64End();
     Armor = 0;
     CTText = 0;
+    CTArmorPGP = 0;
     CTSeen = 0;
     CTEBase64 = 0;
     CTEQP = 0;
@@ -1351,7 +1367,7 @@ articleType(char *line, int len, int inheader)
 	if (CTCont)
 	    ctFinish();
 	if (HdrBlock && CTEBase64) {
-	    if (CTText || (!CTSeen && B64_NOCTYPE_IS_TEXT)) {
+	    if (CTText || CTArmorPGP || (!CTSeen && B64_NOCTYPE_IS_TEXT)) {
 		/* a text part: decode it (b64Decode) */
 		b64Start();
 	    } else {

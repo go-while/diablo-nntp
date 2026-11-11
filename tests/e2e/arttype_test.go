@@ -1037,3 +1037,53 @@ func TestLongPgpKeyAndSignature(t *testing.T) {
 		})
 	}
 }
+
+func TestPgpSignatureWithinSignedMessage(t *testing.T) {
+	s := NewSite(t, SiteOptions{Newsfeeds: DefaultNewsfeeds + "label IFILTER\n    addgroup *\n    arttypes binary\nend\n"})
+	for _, n := range []int{20, 90, 100, 120} {
+		t.Run(fmt.Sprint(n), func(t *testing.T) {
+			body := []string{"-----BEGIN PGP SIGNED MESSAGE-----", "Hash: SHA256", ""}
+			for i := 0; i < n; i++ {
+				body = append(body, "Ordinary signed text.")
+			}
+			body = append(body, pgp("SIGNATURE", 120)...)
+			if got := artTypeOf(t, s, atArticle(nil, body)); got != atPGP {
+				t.Errorf("ArtType=%06x, want %06x", got, atPGP)
+			}
+			if line := offerGroupsBody(t, s, "alt.anonymous.messages", body); !strings.HasPrefix(line, "235") {
+				t.Errorf("signed message: %q, want 235", line)
+			}
+			body = append(body, atLines(12, 64, b64Alphabet, "")...)
+			if line := offerGroupsBody(t, s, "alt.anonymous.messages", body); !strings.HasPrefix(line, "437") {
+				t.Errorf("binary after signature: %q, want 437", line)
+			}
+		})
+	}
+}
+
+func TestBase64PgpArmorMime(t *testing.T) {
+	s := NewSite(t, SiteOptions{Newsfeeds: DefaultNewsfeeds + "label IFILTER\n    addgroup *\n    arttypes binary\nend\n"})
+	for _, c := range []struct{ media, label string }{{"application/pgp-signature", "SIGNATURE"}, {"application/pgp-keys", "PUBLIC KEY BLOCK"}} {
+		t.Run(c.media, func(t *testing.T) {
+			body := b64Wrap(joined(pgp(c.label, 120)), 76)
+			for _, hdr := range [][]string{hdr64(c.media), {"Content-Transfer-Encoding: base64", "Content-Type: " + c.media}} {
+				if got := artTypeOf(t, s, atArticle(hdr, body)); got != atMIME|atPGP {
+					t.Errorf("ArtType=%06x, want %06x", got, atMIME|atPGP)
+				}
+			}
+			if line := offerHeaders(t, s, "alt.anonymous.messages", hdr64(c.media), body); !strings.HasPrefix(line, "235") {
+				t.Errorf("MIME PGP: %q, want 235", line)
+			}
+			bad := b64Wrap(randBytes(1140, 12), 76)
+			if line := offerHeaders(t, s, "alt.anonymous.messages", hdr64(c.media), bad); !strings.HasPrefix(line, "437") {
+				t.Errorf("binary labeled PGP: %q, want 437", line)
+			}
+			multi := []string{"--pgp-test", "Content-Type: " + c.media, "Content-Transfer-Encoding: base64", ""}
+			multi = append(multi, body...)
+			multi = append(multi, "--pgp-test", "Content-Type: application/octet-stream", "Content-Transfer-Encoding: base64", "", "AAECAwQ=", "--pgp-test--")
+			if got := artTypeOf(t, s, atArticle([]string{"Content-Type: multipart/mixed; boundary=pgp-test"}, multi)); got&atBinary == 0 {
+				t.Errorf("binary sibling ArtType=%06x, want binary", got)
+			}
+		})
+	}
+}
