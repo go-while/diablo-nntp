@@ -1115,3 +1115,42 @@ func TestPaddedBase64GatewayFooter(t *testing.T) {
 		})
 	}
 }
+func TestUnpaddedBase64GatewayFooter(t *testing.T) {
+	s := NewSite(t, SiteOptions{Newsfeeds: DefaultNewsfeeds + "label IFILTER\n    addgroup *\n    arttypes binary\nend\n"})
+	hdr := hdr64("text/plain; charset=UTF-8")
+	for _, text := range []string{"Hello\n"} {
+		t.Run(text, func(t *testing.T) {
+			body := append(b64Wrap([]byte(text), 76), "", "--", "Posted automatically by a mail-to-news gateway.")
+			if got := artTypeOf(t, s, atArticle(hdr, body)); got != atMIME {
+				t.Errorf("ArtType=%06x, want %06x", got, atMIME)
+			}
+			wire := atArticle(hdr, body)
+			for i := range wire {
+				wire[i] += "\r"
+			}
+			if got := artTypeOf(t, s, wire); got != atMIME {
+				t.Errorf("CRLF ArtType=%06x, want %06x", got, atMIME)
+			}
+			if line := offerHeaders(t, s, "alt.test", hdr, body); !strings.HasPrefix(line, "235") {
+				t.Errorf("gateway footer: %q, want 235", line)
+			}
+			for _, tail := range [][]string{atLines(12, 64, b64Alphabet, ""), append([]string{"begin 644 file.bin"}, atLines(12, 60, uuAlphabet, "M")...)} {
+				if line := offerHeaders(t, s, "alt.test", hdr, append(append([]string{}, body...), tail...)); !strings.HasPrefix(line, "437") {
+					t.Errorf("binary after footer: %q, want 437", line)
+				}
+			}
+		})
+	}
+}
+
+func TestBase64IncompleteGatewaySeparator(t *testing.T) {
+	s := NewSite(t, SiteOptions{})
+	for _, body := range [][]string{
+		{"SG", "", "--", "VsbG8KAA=="},
+		{"SGVs", "--", "bG8KAA=="},
+	} {
+		if got := artTypeOf(t, s, atArticle(hdr64("text/plain"), body)); got&atBinary == 0 {
+			t.Errorf("body %q: ArtType=%06x, want binary", body, got)
+		}
+	}
+}

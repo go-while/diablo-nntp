@@ -133,6 +133,7 @@ static int CTCont = 0;	/* gathering a Content-Type header */
 static char Bnd[BND_NUM][BND_MAX];
 static int BndLen[BND_NUM];
 static int BndTop = 0;	/* entries in use */
+static int B64Blank = 0;	/* previous whole body line was blank after complete base64 data */
 static int B64Part = 0;	/* in the body of a base64 text part */
 static int B64Bits;	/* bits of the current group not yet decoded */
 static int B64NBits;	/* how many */
@@ -561,6 +562,7 @@ InitArticleType(void)
     CTEBase64 = 0;
     CTSeen = 0;
     B64Part = 0;
+    B64Blank = 0;
     CTEQP = 0;
     QPPart = 0;
     HdrBlock = 1;
@@ -1177,6 +1179,7 @@ b64Start(void)
 	B64ValSet = 1;
     }
     B64Part = 1;
+    B64Blank = 0;
     B64Bits = B64NBits = B64Quad = B64Pad = 0;
     DLineLen = 0;
     DLineCR = 0;
@@ -1189,6 +1192,7 @@ b64End(void)
     if (B64Part && DLineLen > 0 && !(Type & ARTTYPE_BINARY))
 	(void)decodedLineTypes(DLine, DLineLen);
     B64Part = 0;
+    B64Blank = 0;
 }
 
 /*
@@ -1350,6 +1354,9 @@ articleType(char *line, int len, int inheader)
 {
     static char *ptr;
     static char first;
+    int b64blank = B64Blank;
+
+    B64Blank = 0;
 
     /* a new line: no escape is cut at its start */
     if (!PieceMore)
@@ -1364,6 +1371,8 @@ articleType(char *line, int len, int inheader)
      * way).  The two headers can come in either order.
      */
     if (len == 0 || (len == 1 && *line == '\r')) {
+	if (!HdrBlock && B64Part && !PieceMore && B64Quad == 0 && B64NBits == 0)
+	    B64Blank = 1;
 	if (CTCont)
 	    ctFinish();
 	if (HdrBlock && CTEBase64) {
@@ -1519,14 +1528,15 @@ articleType(char *line, int len, int inheader)
 	     * A signature separator ("-- ") after base64 text: base64 has no
 	     * '-', so the encoded text is over, and the signature is checked
 	     * as it is, not decoded. Gateways sometimes strip that trailing
-	     * space: accept bare "--" only after complete base64 padding.
+	     * space: accept bare "--" after complete base64 padding, or
+	     * after a blank body line following a complete base64 group.
 	     * Midstream "--" and other '-' lines are still decoded on.
 	     */
 	    while (k < len && (ptr[k] == ' ' || ptr[k] == '\t' || ptr[k] == '\r'))
 		++k;
 	    if (len >= 2 && ptr[0] == '-' && ptr[1] == '-' &&
 		((len >= 3 && ptr[2] == ' ' && k == len) ||
-		 (bare && B64Pad == 2))) {
+		 (bare && (B64Pad == 2 || b64blank)))) {
 		b64End();
 		if (Type & ARTTYPE_BINARY)
 		    return(Type);

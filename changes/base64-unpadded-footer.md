@@ -1,0 +1,1 @@
+Recognize a gateway-stripped bare -- signature separator after a blank line following a complete unpadded base64 group. This also permits gateway footers for text whose encoding requires no padding. Separators within incomplete base64 groups, or without the preceding blank line, keep the existing decoding behavior.
