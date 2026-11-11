@@ -449,6 +449,8 @@ func TestArticleTypes(t *testing.T) {
 		{"pgp message large", nil, pgp("MESSAGE", 4096), atPGP, ""},
 		{"pgp message part long", nil, pgp("MESSAGE, PART 01/02", 120), atPGP, ""},
 		{"base64 binary after a long pgp message", nil, append(pgp("MESSAGE", 120), atLines(12, 64, b64Alphabet, "")...), atPGP | atBinary | atBase64, "the exemption ends with the armor"},
+		{"unclosed pgp message before another MIME part", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=XX"},
+			append(append([]string{"--XX", "Content-Type: text/plain", "", "-----BEGIN PGP MESSAGE-----", "", "--XX", "Content-Type: text/plain", ""}, atLines(12, 64, b64Alphabet, "")...), "--XX--"), atMIME | atMultipart | atPGP | atBinary | atBase64, "armor state ends at the MIME boundary"},
 		{"pgp message part", nil, append([]string{"-----BEGIN PGP MESSAGE, PART 01/02-----", "Version: 2.6.3i", "", "Part 1"}, pgp("MESSAGE", 4)[3:]...), atPGP, ""},
 		{"pgp signed message", nil, append([]string{"-----BEGIN PGP SIGNED MESSAGE-----", "Hash: SHA256", "", "Signed text."}, pgp("SIGNATURE", 4)...), atPGP, ""},
 		{"pgp signed message long signature", nil, append([]string{"-----BEGIN PGP SIGNED MESSAGE-----", "Hash: SHA512", "", "Signed text."}, pgp("SIGNATURE", 12)...), atPGP, ""},
@@ -693,6 +695,12 @@ func TestLongPgpMessageNotRejectedAsBinary(t *testing.T) {
 	body := append(pgp("MESSAGE", 120), atLines(12, 64, b64Alphabet, "")...)
 	if line := offerGroupsBody(t, s, "alt.anonymous.messages", body); !strings.HasPrefix(line, "437") {
 		t.Errorf("IHAVE with binary data after PGP armor: %q, want 437", line)
+	}
+	// An unmatched marker cannot exempt non-armor data for the rest of the
+	// article. Raw base64 remains indistinguishable from encrypted PGP data.
+	body = append([]string{"-----BEGIN PGP MESSAGE-----", "Version: Test", "", "begin 644 file.bin"}, atLines(12, 60, uuAlphabet, "M")...)
+	if line := offerGroupsBody(t, s, "alt.anonymous.messages", body); !strings.HasPrefix(line, "437") {
+		t.Errorf("IHAVE with uuencoded data after unmatched PGP marker: %q, want 437", line)
 	}
 }
 
