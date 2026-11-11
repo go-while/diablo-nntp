@@ -1,0 +1,1 @@
+Article type detection recognizes Content-Type and Content-Transfer-Encoding fields only in article or MIME-part headers. Quoting these fields in ordinary body text no longer sets binary, HTML, PGP or other MIME type flags (RFC 5536 section 2; RFC 2045 section 3).

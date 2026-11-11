@@ -799,6 +799,8 @@ func TestBase64TextNotRejectedAsBinary(t *testing.T) {
 		{"base64 text, no Content-Type", []string{"Mime-Version: 1.0", "Content-Transfer-Encoding: base64"}, b64Text(30), "235"},
 		{"base64 text part in multipart", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=XX"},
 			append(append([]string{"--XX", "Content-Type: text/x-patch", "Content-Transfer-Encoding: base64", ""}, b64Text(30)...), "--XX--"), "235"},
+		{"text quoting an octet-stream header", []string{"Content-Type: text/plain"}, []string{"An example header:", "Content-Type: application/octet-stream", "", "Ordinary text."}, "235"},
+		{"real octet-stream header", []string{"Content-Type: application/octet-stream"}, []string{"payload"}, "437"},
 		{"base64 image", image, atLines(3, 40, b64Alphabet, ""), "437"},
 		{"base64 random data in text/plain", text, b64Wrap(randBytes(1140, 9), 76), "437"},
 		{"base64 random data in text/plain, one long line", text, b64Wrap(randBytes(12000, 10), 20000), "437"},
@@ -958,5 +960,36 @@ func TestChecksumListNotRejectedAsBinary(t *testing.T) {
 	// A real base64 binary to the same group is still refused.
 	if line := offer(atLines(12, 64, b64Alphabet, "")); !strings.HasPrefix(line, "437") {
 		t.Errorf("IHAVE with base64 lines to a text group: %q, want 437", line)
+	}
+}
+
+// Header-looking text is body data (RFC 5536 section 2; RFC 2045 section 3).
+func TestArticleTypeBodyMimeLiterals(t *testing.T) {
+	s := NewSite(t, SiteOptions{Newsfeeds: GlobalLabel, NoStart: true})
+	for _, field := range []string{
+		"Content-Type: application/octet-stream",
+		"Content-Type: text/html",
+		"Content-Type: multipart/encrypted; protocol=application/pgp-encrypted",
+		"Content-Type: application/pgp-encrypted",
+		"Content-Type: application/postscript",
+		"Content-Type: message/partial",
+		"Content-Transfer-Encoding: X-Bommanews",
+		"Content-Transfer-Encoding: X-UnidataEncoding",
+	} {
+		t.Run(field, func(t *testing.T) {
+			for _, multipart := range []bool{false, true} {
+				extra := []string{"Content-Type: text/plain"}
+				body := []string{"An example header follows:", field, "", "This is ordinary text."}
+				want := atMIME
+				if multipart {
+					extra = []string{"Content-Type: multipart/mixed; boundary=XX"}
+					body = append(append([]string{"--XX", "Content-Type: text/plain", ""}, body...), "--XX--")
+					want |= atMultipart
+				}
+				if got := artTypeOf(t, s, atArticle(extra, body)); got != want {
+					t.Errorf("multipart=%v: ArtType=%06x, want %06x", multipart, got, want)
+				}
+			}
+		})
 	}
 }

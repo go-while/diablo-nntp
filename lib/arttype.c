@@ -1381,10 +1381,12 @@ articleType(char *line, int len, int inheader)
     }
 
     /*
-     * Do some checks that could apply to headers and or body
+     * MIME fields belong to article or part headers, not header-like body text.
+     * RFC 5536 section 2 and RFC 2045 section 3.
      */
     first = tolower((unsigned char)*ptr);
-    if (len >= 2 && first == 'c' && tolower((unsigned char)ptr[1]) == 'o') {
+    if (HdrBlock && len >= 2 && first == 'c' &&
+	    tolower((unsigned char)ptr[1]) == 'o') {
 	const char *cv = NULL;	/* the value of a Content-Type: header */
 	const char *ce = NULL;	/* the value of a Content-Transfer-Encoding: header */
 
