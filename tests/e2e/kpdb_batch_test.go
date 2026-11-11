@@ -19,10 +19,10 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -144,22 +144,18 @@ func TestKPDBTooLarge(t *testing.T) {
 		out, err := exec.CommandContext(ctx, dkp, args...).CombinedOutput()
 		return string(out), err
 	}
-	mk := func(t *testing.T, size int64, scan bool) string {
+	// mk makes a KP file of size bytes from a one-record database.  With records
+	// set, it lays a sorted database over the whole file instead of one hole: dkp
+	// looks a key up before it appends, and a lookup in a file that is one line of
+	// zero bytes walks every byte of it, several times (the binary search finds no
+	// offset to follow and falls back to both halves, the search of the unsorted
+	// tail walks the 2 GB line back, and the first miss remaps and searches
+	// again).  That took 45 s with the file in memory and 125 s on a 1 GB test VM,
+	// which faults every page of the map in again on each pass; a file of real
+	// records, as a KP file near 2 GB would be, is looked up in a few pages.
+	mk := func(t *testing.T, size int64, records bool) string {
 		t.Helper()
 		dir := t.TempDir()
-		// tmpfs backs every page of the sparse file that dkp reads through its map
-		// (a read fault on a hole allocates there), so the scan needs that much
-		// free space, or the kernel kills dkp with SIGBUS.
-		if out, err := exec.Command("df", "-Pk", dir).Output(); scan && err == nil {
-			if l := strings.Split(strings.TrimSpace(string(out)), "\n"); len(l) == 2 {
-				if f := strings.Fields(l[1]); len(f) >= 4 {
-					if kb, err := strconv.ParseInt(f[3], 10, 64); err == nil && kb*1024 < size {
-						t.Skipf("%s has %d MB free, the %d MB sparse file needs that much on tmpfs",
-							dir, kb>>10, size>>20)
-					}
-				}
-			}
-		}
 		db := filepath.Join(dir, "kp.db")
 		if out, err := run("-w", db, "aa", "x=1"); err != nil {
 			t.Fatalf("dkp -w: %v\n%s", err, out)
@@ -169,11 +165,53 @@ func TestKPDBTooLarge(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer f.Close()
+		head := make([]byte, 64)
+		n, err := f.ReadAt(head, 0)
+		if err != nil && n == 0 {
+			t.Fatal(err)
+		}
+		head = head[:n]
 		if err := f.Truncate(size); err != nil {
 			t.Skipf("cannot make a sparse file of %d bytes: %v", size, err)
 		}
 		if _, err := f.WriteAt([]byte("\n"), size-1); err != nil {
 			t.Skipf("cannot write into the sparse file: %v", err)
+		}
+		if !records {
+			return db
+		}
+		// "$V00.00 aaaaaaaa mmmmmmmm cccccccc\n+00000000.0000:aa x=1\n"
+		hl := strings.IndexByte(string(head), '\n') + 1
+		end := hl + strings.IndexByte(string(head[hl:]), '\n') + 1
+		if hl <= 0 || end <= hl || head[hl] != '+' {
+			t.Fatalf("unexpected KP file from dkp -w: %q", head)
+		}
+		// Records aa, f00000, f00001, ... in key order, each about 4 MB (its value
+		// is the hole), each carrying its own offset: the offset table of a sorted
+		// file.  Only the first bytes of each record and the newline before it are
+		// written, so the file stays sparse.
+		w := func(b []byte, off int64) {
+			if _, err := f.WriteAt(b, off); err != nil {
+				t.Skipf("cannot write into the sparse file: %v", err)
+			}
+		}
+		w([]byte(fmt.Sprintf("%08x", hl)), int64(hl)+1)
+		const recLen = 4 << 20
+		for k, off := 0, int64(end); off+recLen < size; k, off = k+1, off+recLen {
+			if k > 0 {
+				w([]byte("\n"), off-1)
+			}
+			w([]byte(fmt.Sprintf("+%08x.0000:f%05d x=", off, k)), off)
+		}
+		// Sorted as of now: the open sorts only a file modified after the time
+		// in its header (more than a second), and that sort would walk it all.
+		now := time.Now().Truncate(time.Second)
+		w([]byte(fmt.Sprintf("%08x", uint32(now.Unix()))), 17)
+		if err := f.Sync(); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(db, now, now); err != nil {
+			t.Fatal(err)
 		}
 		return db
 	}
@@ -185,10 +223,6 @@ func TestKPDBTooLarge(t *testing.T) {
 		}
 	})
 	t.Run("append", func(t *testing.T) {
-		// about 15 s: the lookup before the append scans the 2 GB of zero bytes
-		if testing.Short() {
-			t.Skip("slow: scans a 2 GB sparse file")
-		}
 		const size = 1<<31 - 10
 		db := mk(t, size, true)
 		out, err := run("-w", db, "bb", "x=1")
