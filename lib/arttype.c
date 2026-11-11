@@ -49,7 +49,9 @@ Prototype int ArticleType(char *line, int len, int inheader);
 Prototype int ArticleTypePiece(char *line, int len, int inheader);
 Prototype int ArticleTypeEnd(void);
 
-#define	ARMOR_MAX	100	/* lines of one armored block (PGP, PEM) that are not counted */
+#define	ARMOR_MAX	100	/* lines of signature/key/PEM armor that are not counted */
+#define	ARMOR_PGP_HEADERS -1	/* encrypted PGP message armor headers */
+#define	ARMOR_PGP_DATA	-2	/* encrypted PGP message radix-64 data */
 
 static int lineHas(const char *line, int len, const char *needle);
 int isBinHexLine(char *line, int len, int firstline);
@@ -65,7 +67,7 @@ int Base64 = 0;
 int PGPMime = 0;	/* in a PGP/MIME encrypted article: its octet-stream part is not a binary */
 int CTText = 0;	/* the part's Content-Type is text/ */
 int CTEBase64 = 0;	/* a base64 Content-Transfer-Encoding is waiting for the end of its header block */
-int Armor = 0;	/* lines left to skip in an ASCII-armored block (PGP, PEM), 0 = not in one */
+int Armor = 0;	/* lines left, negative PGP armor state, or 0 outside armor */
 
 /*
  * A base64 part with no Content-Type in its header block.  RFC 2045 makes
@@ -970,6 +972,46 @@ yencLine(const char *ptr, int len)
 }
 
 /*
+ * Only armor-shaped lines retain the unbounded PGP MESSAGE exemption.
+ * A missing END must not hide a following uuencoded file or other text.
+ */
+static int
+pgpMessageLine(const char *p, int len, int *armor)
+{
+    int i;
+
+    if (len > 0 && p[len - 1] == '\r')
+	--len;
+    if (linePrefix(p, len, "-----END "))
+	return(1);
+    if (len == 0) {
+	*armor = ARMOR_PGP_DATA;
+	return(1);
+    }
+    if (*armor == ARMOR_PGP_HEADERS) {
+	for (i = 0; i < len; ++i) {
+	    unsigned char c = p[i];
+	    if (c == ':' && i > 0)
+		return(1);
+	    if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+		(c >= '0' && c <= '9') || c == '-'))
+		break;
+	}
+	*armor = ARMOR_PGP_DATA;
+    }
+    /* Radix-64 data and its optional =XXXX CRC line. */
+    if (len > 76)
+	return(0);
+    for (i = 0; i < len; ++i) {
+	unsigned char c = p[i];
+	if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+	    (c >= '0' && c <= '9') || c == '+' || c == '/' || c == '='))
+	    return(0);
+    }
+    return(1);
+}
+
+/*
  * The per-line checks of a body line: runs of uuencode, BinHex and base64
  * lines, with ASCII-armored blocks not counted.  The counters are passed in
  * so that the decoded lines of a base64 text part are counted apart from
@@ -1005,13 +1047,18 @@ bodyLineTypes(char *ptr, int len, int *uu, int *bh, int *b64, int *armor)
      * do not count them as base64 or the other encodings.  The signature of
      * an RSA-4096 key has 12 lines and a certificate more, so a signed text
      * article or a post with a certificate was taken for a binary.  The
-     * skipping is bounded by ARMOR_MAX lines so that a long binary can't
-     * hide behind a "BEGIN" line.
+     * Signature/key/PEM skipping is bounded by ARMOR_MAX lines. Encrypted
+     * PGP MESSAGE armor is already encoded data, and legitimate remailer
+     * messages exceed that limit: skip it until END rather than marking
+     * the tail of the same message as a separate base64 binary. A line
+     * outside armor syntax ends that exemption too.
      */
-    if (*armor > 0) {
+    if (*armor < 0 && !pgpMessageLine(ptr, len, armor))
+	*armor = 0;
+    if (*armor != 0) {
 	if (linePrefix(ptr, len, "-----END "))
 	    *armor = 0;
-	else
+	else if (*armor > 0)
 	    --*armor;
 	linetype = 0;
     } else {
@@ -1031,6 +1078,9 @@ bodyLineTypes(char *ptr, int len, int *uu, int *bh, int *b64, int *armor)
 	    if (linePrefix(ptr + 11, len - 11, "PGP "))
 		Type |= ARTTYPE_PGPMESSAGE;
 	    *armor = ARMOR_MAX;
+	    if (linePrefix(ptr + 11, len - 11, "PGP MESSAGE-----") ||
+		linePrefix(ptr + 11, len - 11, "PGP MESSAGE, PART "))
+		*armor = ARMOR_PGP_HEADERS;
 	}
     }
 
@@ -1221,6 +1271,7 @@ partReset(void)
 {
     if (B64Part)
 	b64End();
+    Armor = 0;
     CTText = 0;
     CTSeen = 0;
     CTEBase64 = 0;

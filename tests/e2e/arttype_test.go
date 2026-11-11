@@ -445,7 +445,12 @@ func TestArticleTypes(t *testing.T) {
 		// (12 lines of 64 characters, which more than 8 in a row make a base64 binary).
 		{"pgp message", nil, pgp("MESSAGE", 4), atPGP, ""},
 		{"pgp message long", nil, pgp("MESSAGE", 12), atPGP, ""},
-		{"pgp message beyond the armor limit", nil, pgp("MESSAGE", 120), atPGP | atBinary | atBase64, "by design: only the first 100 lines of an armored block are not counted, so a long binary can't hide behind a BEGIN PGP line"},
+		{"pgp message beyond the armor limit", nil, pgp("MESSAGE", 120), atPGP, "encrypted PGP messages can exceed 100 armor lines"},
+		{"pgp message large", nil, pgp("MESSAGE", 4096), atPGP, ""},
+		{"pgp message part long", nil, pgp("MESSAGE, PART 01/02", 120), atPGP, ""},
+		{"base64 binary after a long pgp message", nil, append(pgp("MESSAGE", 120), atLines(12, 64, b64Alphabet, "")...), atPGP | atBinary | atBase64, "the exemption ends with the armor"},
+		{"unclosed pgp message before another MIME part", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=XX"},
+			append(append([]string{"--XX", "Content-Type: text/plain", "", "-----BEGIN PGP MESSAGE-----", "", "--XX", "Content-Type: text/plain", ""}, atLines(12, 64, b64Alphabet, "")...), "--XX--"), atMIME | atMultipart | atPGP | atBinary | atBase64, "armor state ends at the MIME boundary"},
 		{"pgp message part", nil, append([]string{"-----BEGIN PGP MESSAGE, PART 01/02-----", "Version: 2.6.3i", "", "Part 1"}, pgp("MESSAGE", 4)[3:]...), atPGP, ""},
 		{"pgp signed message", nil, append([]string{"-----BEGIN PGP SIGNED MESSAGE-----", "Hash: SHA256", "", "Signed text."}, pgp("SIGNATURE", 4)...), atPGP, ""},
 		{"pgp signed message long signature", nil, append([]string{"-----BEGIN PGP SIGNED MESSAGE-----", "Hash: SHA512", "", "Signed text."}, pgp("SIGNATURE", 12)...), atPGP, ""},
@@ -670,6 +675,32 @@ func TestSignedArticleNotRejectedAsBinary(t *testing.T) {
 	yenc := append([]string{"=ybegin line=128 size=384 name=a.bin"}, atLines(3, 128, b64Alphabet, "")...)
 	if line := offerGroupsBody(t, s, "news.lists.filters", append(yenc, "=yend size=384")); !strings.HasPrefix(line, "437") {
 		t.Errorf("IHAVE with a yEnc article to a text group: %q, want 437", line)
+	}
+}
+
+// A remailer PGP MESSAGE with 110 data lines was refused as 020a00: the old
+// 100-line armor limit exposed its payload tail to binary detection.
+func TestLongPgpMessageNotRejectedAsBinary(t *testing.T) {
+	s := NewSite(t, SiteOptions{
+		Newsfeeds: DefaultNewsfeeds + "label IFILTER\n    addgroup *\n    delgroup *.bina*\n    arttypes binary\nend\n",
+	})
+	for _, n := range []int{99, 100, 110, 120, 4096} {
+		t.Run(strconv.Itoa(n), func(t *testing.T) {
+			body := append([]string{"**"}, pgp("MESSAGE", n)...)
+			if line := offerGroupsBody(t, s, "alt.anonymous.messages", body); !strings.HasPrefix(line, "235") {
+				t.Errorf("IHAVE with %d PGP data lines: %q, want 235", n, line)
+			}
+		})
+	}
+	body := append(pgp("MESSAGE", 120), atLines(12, 64, b64Alphabet, "")...)
+	if line := offerGroupsBody(t, s, "alt.anonymous.messages", body); !strings.HasPrefix(line, "437") {
+		t.Errorf("IHAVE with binary data after PGP armor: %q, want 437", line)
+	}
+	// An unmatched marker cannot exempt non-armor data for the rest of the
+	// article. Raw base64 remains indistinguishable from encrypted PGP data.
+	body = append([]string{"-----BEGIN PGP MESSAGE-----", "Version: Test", "", "begin 644 file.bin"}, atLines(12, 60, uuAlphabet, "M")...)
+	if line := offerGroupsBody(t, s, "alt.anonymous.messages", body); !strings.HasPrefix(line, "437") {
+		t.Errorf("IHAVE with uuencoded data after unmatched PGP marker: %q, want 437", line)
 	}
 }
 
