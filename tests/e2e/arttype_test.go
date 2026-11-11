@@ -1014,3 +1014,26 @@ func TestPgpArmorTrailingWhitespace(t *testing.T) {
 		})
 	}
 }
+
+func TestLongPgpKeyAndSignature(t *testing.T) {
+	s := NewSite(t, SiteOptions{Newsfeeds: DefaultNewsfeeds + "label IFILTER\n    addgroup *\n    arttypes binary\nend\n"})
+	for _, label := range []string{"PUBLIC KEY BLOCK", "PRIVATE KEY BLOCK", "SIGNATURE"} {
+		t.Run(label, func(t *testing.T) {
+			body := pgp(label, 120)
+			if got := artTypeOf(t, s, atArticle(nil, body)); got != atPGP {
+				t.Errorf("ArtType=%06x, want %06x", got, atPGP)
+			}
+			if line := offerGroupsBody(t, s, "alt.anonymous.messages", body); !strings.HasPrefix(line, "235") {
+				t.Errorf("long PGP armor: %q, want 235", line)
+			}
+			for _, tail := range [][]string{
+				append(append([]string{}, body...), atLines(12, 64, b64Alphabet, "")...),
+				append(append([]string{}, body[:4]...), append([]string{"not armor!"}, atLines(12, 64, b64Alphabet, "")...)...),
+			} {
+				if line := offerGroupsBody(t, s, "alt.anonymous.messages", tail); !strings.HasPrefix(line, "437") {
+					t.Errorf("binary after END or malformed armor: %q, want 437", line)
+				}
+			}
+		})
+	}
+}

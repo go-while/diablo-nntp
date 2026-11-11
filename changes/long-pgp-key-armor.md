@@ -1,0 +1,1 @@
+PGP public/private keys and detached signatures no longer become binary postings after 100 armor lines. As for PGP messages, only armor-shaped data retains the exemption; invalid lines and data after END are checked normally.

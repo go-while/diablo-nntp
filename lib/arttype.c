@@ -49,7 +49,7 @@ Prototype int ArticleType(char *line, int len, int inheader);
 Prototype int ArticleTypePiece(char *line, int len, int inheader);
 Prototype int ArticleTypeEnd(void);
 
-#define	ARMOR_MAX	100	/* lines of signature/key/PEM armor that are not counted */
+#define	ARMOR_MAX	100	/* lines of other armor that are not counted */
 #define	ARMOR_PGP_HEADERS -1	/* encrypted PGP message armor headers */
 #define	ARMOR_PGP_DATA	-2	/* encrypted PGP message radix-64 data */
 
@@ -972,7 +972,7 @@ yencLine(const char *ptr, int len)
 }
 
 /*
- * Only armor-shaped lines retain the unbounded PGP MESSAGE exemption.
+ * Only armor-shaped lines retain the unbounded PGP data exemption.
  * A missing END must not hide a following uuencoded file or other text.
  */
 static int
@@ -1050,9 +1050,9 @@ bodyLineTypes(char *ptr, int len, int *uu, int *bh, int *b64, int *armor)
      * do not count them as base64 or the other encodings.  The signature of
      * an RSA-4096 key has 12 lines and a certificate more, so a signed text
      * article or a post with a certificate was taken for a binary.  The
-     * Signature/key/PEM skipping is bounded by ARMOR_MAX lines. Encrypted
-     * PGP MESSAGE armor is already encoded data, and legitimate remailer
-     * messages exceed that limit: skip it until END rather than marking
+     * Other armor skipping is bounded by ARMOR_MAX lines. Encoded
+     * PGP message/key/signature armor is already encoded data; legitimate
+     * blocks exceed that limit: skip them until END rather than marking
      * the tail of the same message as a separate base64 binary. A line
      * outside armor syntax ends that exemption too.
      */
@@ -1082,7 +1082,10 @@ bodyLineTypes(char *ptr, int len, int *uu, int *bh, int *b64, int *armor)
 		Type |= ARTTYPE_PGPMESSAGE;
 	    *armor = ARMOR_MAX;
 	    if (linePrefix(ptr + 11, len - 11, "PGP MESSAGE-----") ||
-		linePrefix(ptr + 11, len - 11, "PGP MESSAGE, PART "))
+		linePrefix(ptr + 11, len - 11, "PGP MESSAGE, PART ") ||
+		linePrefix(ptr + 11, len - 11, "PGP PUBLIC KEY BLOCK-----") ||
+		linePrefix(ptr + 11, len - 11, "PGP PRIVATE KEY BLOCK-----") ||
+		linePrefix(ptr + 11, len - 11, "PGP SIGNATURE-----"))
 		*armor = ARMOR_PGP_HEADERS;
 	}
     }
