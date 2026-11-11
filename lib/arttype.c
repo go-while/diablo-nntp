@@ -65,6 +65,8 @@ int UUencode = 0;
 int BinHex = 0;
 int Base64 = 0;
 int PGPMime = 0;	/* in a PGP/MIME encrypted article: its octet-stream part is not a binary */
+static int CTMessage = 0;	/* next body is an encapsulated message header block */
+static int CTEIdentity = 1;	/* absent, 7bit, 8bit or binary transfer encoding */
 static int CTArmorPGP = 0;	/* ASCII-armored PGP signature/key MIME part */
 int CTText = 0;	/* the part's Content-Type is text/ */
 int CTEBase64 = 0;	/* a base64 Content-Transfer-Encoding is waiting for the end of its header block */
@@ -559,6 +561,8 @@ InitArticleType(void)
     PGPMime = 0;
     CTText = 0;
     CTArmorPGP = 0;
+    CTMessage = 0;
+    CTEIdentity = 1;
     CTEBase64 = 0;
     CTSeen = 0;
     B64Part = 0;
@@ -796,6 +800,7 @@ ctFinish(void)
     a = p;
     while (a < e && *a != ';' && *a != ' ' && *a != '\t' && *a != '\r' && *a != '(')
 	++a;
+    CTMessage = (a - p == 14 && strncasecmp(p, "message/rfc822", 14) == 0);
     CTArmorPGP = ((a - p == 25 && strncasecmp(p, "application/pgp-signature", 25) == 0) ||
 	(a - p == 20 && strncasecmp(p, "application/pgp-keys", 20) == 0));
 
@@ -1299,6 +1304,8 @@ partReset(void)
     Armor = 0;
     CTText = 0;
     CTArmorPGP = 0;
+    CTMessage = 0;
+    CTEIdentity = 1;
     CTSeen = 0;
     CTEBase64 = 0;
     CTEQP = 0;
@@ -1383,6 +1390,15 @@ articleType(char *line, int len, int inheader)
 		Type |= ARTTYPE_BASE64 | ARTTYPE_BINARY;
 		Type &= ~ARTTYPE_DEFAULT;
 	    }
+	}
+	/* RFC 2046 section 5.2.1: the identity-encoded body starts
+	 * with the encapsulated message's own headers. Keep the outer
+	 * multipart boundary stack so a sibling still ends this message.
+	 */
+	if (HdrBlock && CTMessage && CTEIdentity) {
+	    partReset();
+	    HdrBlock = 1;
+	    return(Type);
 	}
 	/* the same for a quoted-printable one (qpLine) */
 	if (HdrBlock && CTEQP)
@@ -1478,6 +1494,13 @@ articleType(char *line, int len, int inheader)
 	}
 	if (ce != NULL) {
 	    int celen = len - (int)(ce - ptr);
+
+	    int elen = celen;
+	    while (elen > 0 && (ce[elen - 1] == ' ' || ce[elen - 1] == '\t' || ce[elen - 1] == '\r'))
+		--elen;
+	    CTEIdentity = ((elen == 4 && (strncasecmp(ce, "7bit", 4) == 0 ||
+		strncasecmp(ce, "8bit", 4) == 0)) ||
+		(elen == 6 && strncasecmp(ce, "binary", 6) == 0));
 
 	    /* a part's encoding is in its header block, not in its text */
 	    if (HdrBlock && hdrPrefix(ce, celen, "base64"))

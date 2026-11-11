@@ -1158,3 +1158,63 @@ func TestBase64IncompleteGatewaySeparator(t *testing.T) {
 		}
 	}
 }
+
+func TestNestedMessageArticleTypes(t *testing.T) {
+	s := NewSite(t, SiteOptions{Newsfeeds: DefaultNewsfeeds + "label IFILTER\n    addgroup *\n    arttypes binary\nend\n"})
+	for _, outer := range []bool{false, true} {
+		for _, binary := range []bool{false, true} {
+			name := fmt.Sprintf("multipart=%v/binary=%v", outer, binary)
+			t.Run(name, func(t *testing.T) {
+				hdr := []string{"Content-Type: message/rfc822", "Content-Transfer-Encoding: 7bit"}
+				inner := append([]string{"From: author@example.test", "Subject: forwarded text", "Content-Type: text/plain", "Content-Transfer-Encoding: base64", ""}, b64Text(30)...)
+				if binary {
+					inner = append([]string{"From: author@example.test", "Content-Type: application/octet-stream", "Content-Transfer-Encoding: base64", ""}, b64Wrap(randBytes(1140, 12), 76)...)
+				}
+				body := inner
+				if outer {
+					hdr = []string{"Content-Type: multipart/mixed; boundary=outer"}
+					body = append([]string{"--outer", "Content-Type: message/rfc822", "Content-Transfer-Encoding: 7bit", ""}, inner...)
+					body = append(body, "--outer", "Content-Type: text/plain", "", "Content-Type: application/octet-stream", "--outer--")
+				}
+				got := artTypeOf(t, s, atArticle(hdr, body))
+				if (got&atBinary != 0) != binary {
+					t.Errorf("ArtType=%06x, want binary=%v", got, binary)
+				}
+				want := "235"
+				if binary {
+					want = "437"
+				}
+				if line := offerHeaders(t, s, "alt.test", hdr, body); !strings.HasPrefix(line, want) {
+					t.Errorf("%q, want %s", line, want)
+				}
+			})
+		}
+	}
+}
+
+func TestNestedMessageHeaderScope(t *testing.T) {
+	s := NewSite(t, SiteOptions{})
+	for _, enc := range []string{"", "7bit", "8bit", "binary"} {
+		hdr := []string{"Content-Type: message/rfc822"}
+		if enc != "" {
+			hdr = append(hdr, "Content-Transfer-Encoding: "+enc)
+		}
+		// Two successive encapsulations exercise state reset without recursion.
+		inner := append([]string{"Subject: text", "Content-Type: text/plain", "Content-Transfer-Encoding: base64", ""}, b64Text(30)...)
+		body := append([]string{"Subject: forwarded", "Content-Type: message/rfc822", ""}, inner...)
+		if got := artTypeOf(t, s, atArticle(hdr, body)); got&atBinary != 0 {
+			t.Errorf("encoding %q: ArtType=%06x, want text", enc, got)
+		}
+	}
+	for _, media := range []string{"message/rfc822-extra", "message/partial"} {
+		body := append([]string{"Subject: text", "Content-Type: text/plain", "Content-Transfer-Encoding: base64", ""}, b64Text(30)...)
+		if got := artTypeOf(t, s, atArticle([]string{"Content-Type: " + media}, body)); got&atBinary == 0 {
+			t.Errorf("media %q: ArtType=%06x, want binary", media, got)
+		}
+	}
+	body := append([]string{"--outer", "Content-Type: message/rfc822", "", "Subject: forwarded", "Content-Type: text/plain", "Content-Transfer-Encoding: base64", ""}, b64Text(30)...)
+	body = append(body, "--outer", "Content-Type: application/octet-stream", "", "binary attachment", "--outer--")
+	if got := artTypeOf(t, s, atArticle([]string{"Content-Type: multipart/mixed; boundary=outer"}, body)); got&atBinary == 0 {
+		t.Errorf("outer binary sibling: ArtType=%06x, want binary", got)
+	}
+}
