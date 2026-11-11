@@ -286,11 +286,12 @@ HM_CheckForMatch_PC(HashFeed_MatchList *hf, mid_t mid, unsigned char *res)
 
 /*
  * hmNumber() - a decimal number of a hashfeed entry, followed by the end
- *		of the entry or by one of its separators - / :.  Returns 0
- *		for anything else.
+ *		of the entry or by one of the separators in seps ("-/:" for
+ *		the first number, "/:" for the others: "1-2-3/4" and "1/4-2"
+ *		are errors).  Returns 0 for anything else.
  */
 static int
-hmNumber(const char *s, long *v)
+hmNumber(const char *s, const char *seps, long *v)
 {
 	char *e;
 
@@ -298,7 +299,7 @@ hmNumber(const char *s, long *v)
 	*v = strtol(s, &e, 10);
 	if (e == s || errno != 0 || *v < 0)
 		return(0);
-	return(*e == '\0' || *e == '-' || *e == '/' || *e == ':');
+	return(*e == '\0' || strchr(seps, *e) != NULL);
 }
 
 HashFeed_MatchList * 
@@ -328,26 +329,26 @@ HM_ConfigNode_Sub(HashFeed_MatchList *hf, HashFeed_MatchList *next, char *conf, 
 		long v;
 
 		if ((ptr = strchr(conf, '-'))) {
-			if (!hmNumber(conf, &v) || v > 0xffffffffL)
+			if (!hmNumber(conf, "-/:", &v) || v > 0xffffffffL)
 				return(NULL);
 			hf->HM_Start = (hashint_t)v;
-			if (!hmNumber(++ptr, &v) || v > 0xffffffffL)
+			if (!hmNumber(++ptr, "/:", &v) || v > 0xffffffffL)
 				return(NULL);
 			hf->HM_End = (hashint_t)v;
 		} else {
-			if (!hmNumber(conf, &v) || v > 0xffffffffL)
+			if (!hmNumber(conf, "/:", &v) || v > 0xffffffffL)
 				return(NULL);
 			hf->HM_Start = hf->HM_End = (hashint_t)v;
 		}
 		if ((ptr = strchr(conf, ':'))) {
-			if (!hmNumber(++ptr, &v) || v < 0 || v > 12)
+			if (!hmNumber(++ptr, "/:", &v) || v < 0 || v > 12)
 				return(NULL);
 			hf->HM_Offset = (char)v;
 		} else {
 			hf->HM_Offset = offset;
 		}
 		if ((ptr = strchr(conf, '/'))) {
-			if (!hmNumber(++ptr, &v) || v > 0xffffffffL)
+			if (!hmNumber(++ptr, "/:", &v) || v > 0xffffffffL)
 				return(NULL);
 			hf->HM_ModVal = (hashint_t)v;
 		}

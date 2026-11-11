@@ -816,9 +816,10 @@ loadSpoolCtl(FILE *fi)
 		}
 		continue;
 	    } else if (strcmp(cmd, "hashfeed") == 0) {
-	        if (! ((metaSpool->ms_HashFeed = DiabHashFeedParse(&SPMemPool, arg)))) {
-			logit(LOG_ERR, "%s: Unknown hashfeed in line %d\n",
-				PatLibExpand(DSpoolCtlPat), line);
+	        metaSpool->ms_HashFeed = DiabHashFeedParse(&SPMemPool, arg);
+	        if (metaSpool->ms_HashFeed == NULL || DiabHashFeedBad(metaSpool->ms_HashFeed)) {
+			logit(LOG_CRIT, "%s: bad hashfeed %s in line %d: the metaspool takes no article\n",
+				PatLibExpand(DSpoolCtlPat), arg, line);
 		}
 		continue;
 	    } else if (strcmp(cmd, "rejectarts") == 0) {

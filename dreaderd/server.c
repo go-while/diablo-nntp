@@ -558,8 +558,8 @@ AddServer(char *bindinfo, int txbufsize, int rxbufsize, const char *host, int ty
     conn->co_Retention = retention;
     conn->co_GroupDef = makeGroupList(conn, groupdef);
     conn->co_RequestHash = DiabHashFeedParse(&conn->co_MemPool, hashfeed);
-    if (hashfeed && conn->co_RequestHash == NULL)
-      logit(LOG_ERR, "error parsing hash=%s\n", hashfeed);
+    if (hashfeed && (conn->co_RequestHash == NULL || DiabHashFeedBad(conn->co_RequestHash)))
+      logit(LOG_CRIT, "error parsing hash=%s: no article is asked from this server\n", hashfeed);
     if (localspool != NULL)
 	desc->d_LocalSpool = zallocStr(&conn->co_MemPool, localspool);
     desc->d_Cache = cache;

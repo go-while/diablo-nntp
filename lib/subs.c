@@ -49,6 +49,7 @@ Prototype void WriteBestEffort(int fd, const void *buf, size_t bytes);
 Prototype void NiceBestEffort(int inc);
 Prototype int enabled(char *st);
 Prototype HashFeed_MatchList *DiabHashFeedParse(MemPool **mp, char *hashconfig);
+Prototype int DiabHashFeedBad(const HashFeed_MatchList *hf);
 Prototype int MoveFile(char *from, char *to);
 Prototype int TimeSpec(char *t, char *def);
 Prototype int ParseIntRange(const char *str, int base, long min, long max, int *out);
@@ -341,6 +342,29 @@ ascToMask(const char *str)
 }
 
 /*
+ * cidrBadOnce() - 1 the first time this process sees the bad pattern cidr.
+ *		    CidrMatch() runs for every client and every rule: a bad
+ *		    pattern is logged once, not at each match.  The first 32
+ *		    patterns are remembered; past that each one is logged.
+ */
+static int
+cidrBadOnce(const char *cidr)
+{
+    static char seen[32][64];
+    static int nseen;
+    int i;
+
+    for (i = 0; i < nseen; ++i) {
+	if (strncmp(seen[i], cidr, sizeof(seen[i]) - 1) == 0 &&
+					strlen(cidr) < sizeof(seen[i]))
+	    return(0);
+    }
+    if (nseen < 32 && strlen(cidr) < sizeof(seen[0]))
+	snprintf(seen[nseen++], sizeof(seen[0]), "%s", cidr);
+    return(1);
+}
+
+/*
  * cidrMaskBits() - the prefix length of "addr/nn": 0..max, max when there
  *		    is no "/nn", -1 when nn is not a number in that range.
  *
@@ -393,7 +417,8 @@ CidrMatch(const char *cidr, const char *ip)
 	if ((p = strchr(maskst, '/')) != NULL)
 	    *p = '\0';
 	if ((maskbits = cidrMaskBits(cidr, 128)) < 0) {
-	    logit(LOG_ERR, "Invalid IPv6 mask: %s", cidr);
+	    if (cidrBadOnce(cidr))
+		logit(LOG_ERR, "Invalid IPv6 mask: %s", cidr);
 	    return(0);
 	}
 	if (inet_pton(AF_INET6, ip, addr) != 1) {
@@ -439,7 +464,8 @@ CidrMatch(const char *cidr, const char *ip)
 	} else
 	    bad = (cidrMaskBits(cidr, 32) < 0);
 	if (bad) {
-	    logit(LOG_ERR, "Invalid IPv4 mask: %s", cidr);
+	    if (cidrBadOnce(cidr))
+		logit(LOG_ERR, "Invalid IPv4 mask: %s", cidr);
 	    return(0);
 	}
 	addr = ascToAddr(ip);
@@ -987,6 +1013,18 @@ enabled(char *st)
 	return(1);
     else
 	return(0);
+}
+
+/*
+ * DiabHashFeedBad() - the list DiabHashFeedParse() returns for a hashfeed
+ *		it could not read (one entry that matches nothing), so that
+ *		the caller can name its file and line.
+ */
+int
+DiabHashFeedBad(const HashFeed_MatchList *hf)
+{
+    return(hf != NULL && hf->HM_Next == NULL && hf->HM_Type == HMTYPE_MD5 &&
+	hf->HM_ModVal == 1 && hf->HM_Start == 2 && hf->HM_End == 2);
 }
 
 HashFeed_MatchList *

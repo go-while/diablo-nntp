@@ -30,7 +30,10 @@ access ` + pattern + ` rp
 `
 	}
 	greeting := func(t *testing.T, pattern string) (*Site, string) {
-		s := NewReaderSite(t, ReaderOptions{SpoolAddr: "127.0.0.1:1", Access: access(pattern), NoStart: true})
+		// one DNS worker: the access rules are matched there, and each worker logs a bad
+		// pattern once, so with one the log has it exactly once
+		s := NewReaderSite(t, ReaderOptions{SpoolAddr: "127.0.0.1:1", Access: access(pattern), NoStart: true,
+			Config: map[string]string{"readerdns": "1"}})
 		startReaderNoWait(t, s)
 		var g string
 		testkit.WaitFor(t, 10*time.Second, "dreaderd to answer a client", func() bool {
@@ -41,14 +44,25 @@ access ` + pattern + ` rp
 	}
 
 	// The test's client comes from 127.0.0.1, which is not in 10.9.9.0/anything but /0.
-	for _, pattern := range []string{"10.9.9.0/33", "10.9.9.0/64", "10.9.9.0/", "10.9.9.0/255.255.255.256"} {
+	// The IPv6 forms (/129, /256) are not reached here: CidrMatch() takes the IPv6 branch
+	// only for an IPv6 client, and the test's dreaderd listens on 127.0.0.1.
+	for _, pattern := range []string{"10.9.9.0/33", "10.9.9.0/64", "10.9.9.0/", "10.9.9.0/abc", "10.9.9.0/255.255.255.256"} {
 		t.Run("bad_"+strings.ReplaceAll(pattern, "/", "_"), func(t *testing.T) {
 			s, g := greeting(t, pattern)
 			if strings.HasPrefix(g, "200") || strings.HasPrefix(g, "201") {
 				t.Errorf("access %s gave service to 127.0.0.1: %q, want a refusal", pattern, g)
 			}
-			if log := generalLog(s); !strings.Contains(log, "Invalid IPv4 mask: "+pattern) {
-				t.Errorf("access %s: no \"Invalid IPv4 mask\" line in the log:\n%s", pattern, log)
+			// a second client: still refused, and the pattern is logged once, not per match
+			if g2 := strings.TrimSpace(readerGreeting(s.Addr)); strings.HasPrefix(g2, "200") || strings.HasPrefix(g2, "201") {
+				t.Errorf("access %s gave service to a second client: %q", pattern, g2)
+			}
+			// "/abc" makes dreaderd take the whole pattern for a host name (it has
+			// letters), so it never reaches CidrMatch(): refused, but not logged as a mask
+			if strings.HasSuffix(pattern, "/abc") {
+				return
+			}
+			if n := strings.Count(generalLog(s), "Invalid IPv4 mask: "+pattern+"\n"); n != 1 {
+				t.Errorf("access %s: %d \"Invalid IPv4 mask\" lines in the log, want 1:\n%s", pattern, n, generalLog(s))
 			}
 		})
 	}
