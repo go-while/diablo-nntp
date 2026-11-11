@@ -1144,13 +1144,17 @@ func TestUnpaddedBase64GatewayFooter(t *testing.T) {
 }
 
 func TestBase64IncompleteGatewaySeparator(t *testing.T) {
-	s := NewSite(t, SiteOptions{})
+	s := NewSite(t, SiteOptions{Newsfeeds: DefaultNewsfeeds + "label IFILTER\n    addgroup *\n    arttypes binary\nend\n"})
 	for _, body := range [][]string{
+		{"AAEC", "", "--", "AwQF"},
 		{"SG", "", "--", "VsbG8KAA=="},
 		{"SGVs", "--", "bG8KAA=="},
 	} {
 		if got := artTypeOf(t, s, atArticle(hdr64("text/plain"), body)); got&atBinary == 0 {
 			t.Errorf("body %q: ArtType=%06x, want binary", body, got)
+		}
+		if line := offerHeaders(t, s, "alt.test", hdr64("text/plain"), body); !strings.HasPrefix(line, "437") {
+			t.Errorf("body %q: %q, want 437", body, line)
 		}
 	}
 }
