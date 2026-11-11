@@ -2,4 +2,4 @@ module github.com/jrehmer/diablo-nntp/tests/e2e
 
 go 1.26.0
 
-require github.com/go-while/nntp-testkit v0.11.2
+require github.com/go-while/nntp-testkit v0.12.0
