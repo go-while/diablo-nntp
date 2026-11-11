@@ -1,0 +1,1 @@
+- dnewslink: the peer's response buffer is left-justified with memmove; source and destination overlap.

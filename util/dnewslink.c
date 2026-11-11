@@ -966,7 +966,16 @@ main(int ac, char **av)
 		    if (DebugOpt > 1)
 			printf("clear watermark\n");
 		    HiWaterMark = 0;	/* reset WaterMark */
-		    if (deferbegin < deferend &&
+		    if (readretry(buf, sizeof(buf)) == 0) {
+			/*
+			 * Entries kept for a retry after a reconnect come
+			 * first: a new entry takes the slot behind the
+			 * pending ones, and that is free only once the
+			 * retries before it have been read back.  A defer
+			 * offered ahead of them went over a retry slot.
+			 */
+			bufInval = 0;
+		    } else if (deferbegin < deferend &&
 			(deferbegin || (deferend >= (MAXDEFER - 20)))) {
 			/* We are at this moment clearing the defer backlog,
 			 * or the defer buffer is full and it has to be
@@ -1288,7 +1297,20 @@ main(int ac, char **av)
 			    clearCommandBuffer();
 			    KillFd = -1;
 			    credtime(OUR_DELAY);
-			    (void)RefilePendingStreams(NULL); /* retry */
+			    {
+				/*
+				 * The entry in buf may be one of the pending
+				 * streams.  Those come back through
+				 * readretry(): offering buf again as well put
+				 * it into slot 0, over the entry kept there
+				 * for the retry.
+				 */
+				int inStream = !bufInval && StreamHolds(msgId);
+
+				(void)RefilePendingStreams(NULL); /* retry */
+				if (inStream)
+				    bufInval = 1;
+			    }
 			    if ((cfd = connectTo(HostName, NULL, Port)) >= 0) {
 			if (ConnLife > 0 && ProcessStarted == 0)
 			    ProcessStarted = monotonicSeconds();
@@ -1473,21 +1495,37 @@ main(int ac, char **av)
 		} else if (more || fo != NULL) {
 		    struct stat st;
 		    int writeFailed = 0;
+		    int werr = 0;	/* errno of the first failure */
 
 		    if (fo == NULL)
 			fo = rewriteBatchFile(path, PipeOpt);
 		    if (fo == NULL) {
 			writeFailed = 1;
+			werr = errno;
 		    } else {
 			if (more) {
 			    do {
 				fputs(buf, fo);
 			    } while (readline(fd, buf, sizeof(buf), TimeNow) == 0);
 			}
-			if (fflush(fo) != 0 || ferror(fo))
+			if (fflush(fo) != 0 || ferror(fo)) {
 			    writeFailed = 1;
-			if (fclose(fo) != 0)
+			    werr = errno;
+			}
+			/*
+			 * The rewrite replaces the queue by rename: have
+			 * its data on disk first, or a crash can leave the
+			 * new name with an empty file.
+			 */
+			if (PipeOpt == 0 && RealTimeOpt == 0 && !writeFailed &&
+			    fsync(fileno(fo)) != 0) {
 			    writeFailed = 1;
+			    werr = errno;
+			}
+			if (fclose(fo) != 0 && !writeFailed) {
+			    writeFailed = 1;
+			    werr = errno;
+			}
 			fo = NULL;
 		    }
 		    if (writeFailed) {
@@ -1495,7 +1533,7 @@ main(int ac, char **av)
 			 * A truncated rewrite must not replace the queue.
 			 */
 			dl_logit("Cannot write %s: %s, keeping the old queue",
-						path, strerror(errno));
+				path, werr ? strerror(werr) : "write error");
 			/* in pipe mode path is the queue itself */
 			if (PipeOpt == 0)
 			    remove(path);
@@ -1640,6 +1678,8 @@ main(int ac, char **av)
 	    char binPath[1024];
 	    long fdLimit = sysconf(_SC_OPEN_MAX);
 	    long inheritedFd;
+	    DIR *fdDir;
+	    int listed = 0;
 	    int n;
 
 	    /* P2 re-execs dspoolout from this long-lived worker.  Without
@@ -1648,10 +1688,35 @@ main(int ac, char **av)
 	     * numbers to grow on every connlife cycle.  Keep stdio, which
 	     * dspoolout uses for its configured cron-style output log.
 	     */
-	    if (fdLimit < 0)
-		fdLimit = 1024;
-	    for (inheritedFd = 3; inheritedFd < fdLimit; ++inheritedFd)
-		close((int)inheritedFd);
+	    /*
+	     * Where the system lists our descriptors, close those: the
+	     * limit can be a million and more (systemd units, containers),
+	     * and a close() for each number delays the replacement.
+	     */
+	    if ((fdDir = opendir("/proc/self/fd")) != NULL) {
+		den_t *den;
+
+		errno = 0;
+		while ((den = readdir(fdDir)) != NULL) {
+		    char *end;
+
+		    inheritedFd = strtol(den->d_name, &end, 10);
+		    if (end == den->d_name || *end != 0)
+			continue;
+		    if (inheritedFd >= 3 && inheritedFd != dirfd(fdDir))
+			close((int)inheritedFd);
+		    errno = 0;
+		}
+		/* readdir() returns NULL at the end and on an error */
+		listed = (errno == 0);
+		closedir(fdDir);
+	    }
+	    if (!listed) {
+		if (fdLimit < 0)
+		    fdLimit = 1024;
+		for (inheritedFd = 3; inheritedFd < fdLimit; ++inheritedFd)
+		    close((int)inheritedFd);
+	    }
 
 	    n = snprintf(binPath, sizeof(binPath),
 		"%s/dbin/dspoolout", NewsHome);
@@ -2551,7 +2616,11 @@ DumpArticle(int cfd, ArtMap *am)
 
 	artSize = size;
 
-	bcopy(base, &ah, sizeof(ah));
+	/* a short entry (damaged spool or queue line) has no header to read */
+	if (artSize >= (int)sizeof(ah))
+	    bcopy(base, &ah, sizeof(ah));
+	else
+	    bzero(&ah, sizeof(ah));
 
 	if (artSize > 24 && (uint8)ah.Magic1 == (uint8)STORE_MAGIC1 &&
 				(uint8)ah.Magic2 == (uint8)STORE_MAGIC2) {
@@ -2741,6 +2810,14 @@ StreamReload(int cfd)
 
 #endif
 
+/*
+ * The feedlog stage is still the "-" Transact() starts with (or empty):
+ * the streaming code has not named the step yet.  The test used to be for
+ * an empty string only, which the field never was, so a streaming feed
+ * logged "-" for every article.
+ */
+#define STAGE_UNSET(st)	((st) != NULL && ((st)[0] == 0 || strcmp((st), "-") == 0))
+
 int
 StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, int cSize, int lines, int defers, char *stage, char *reason, char *buf, int *sentSize)
 {
@@ -2827,7 +2904,7 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 		delMe = 1;
 		r = T_REJECTED;	/* XXX */
 		StrnCpyNull(msgId, s->st_MsgId, 1024);
-		if (stage && !*stage)
+		if (STAGE_UNSET(stage))
 		    StrnCpyNull(stage, (defers? "resend-stream": "stream"), MAXREASON);
 		StrnCpyNull(reason, ptr, MAXREASON);
 		break;
@@ -2836,7 +2913,7 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 		char cst[32];
 		delMe = 1;
 		StrnCpyNull(msgId, s->st_MsgId, 1024);
-		if (stage && !*stage)
+		if (STAGE_UNSET(stage))
 		    StrnCpyNull(stage, "stream", MAXREASON);
 		StrnCpyNull(reason, ptr, MAXREASON);
 		r = T_DEFERIT;
@@ -2874,7 +2951,7 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 		    delMe = 1;
 		    r = T_UNSENT;
 		    StrnCpyNull(msgId, s->st_MsgId, 1024);
-		    if (stage && !*stage)
+		    if (STAGE_UNSET(stage))
 			StrnCpyNull(stage, (defers? "resend-takethis": "takethis"), MAXREASON);
 		    StrnCpyNull(reason, "article not read from the spool, TAKETHIS not sent", MAXREASON);
 		    streamFlags(s, cst, sizeof(cst));
@@ -2892,7 +2969,7 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 		 */
 		s->st_State = STATE_POSTED;
 		StrnCpyNull(msgId, s->st_MsgId, 1024);
-		if (stage && !*stage)
+		if (STAGE_UNSET(stage))
 		    StrnCpyNull(stage, (defers? "resend-takethis": "takethis"), MAXREASON);
 		StrnCpyNull(reason, ptr, MAXREASON);
 	    }
@@ -2907,7 +2984,7 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 	    if ((s = LocateStream(ptr, STATE_CHECK)) != NULL) {
 		delMe = 1;
 		StrnCpyNull(msgId, s->st_MsgId, 1024);
-		if (stage && !*stage)
+		if (STAGE_UNSET(stage))
 		    StrnCpyNull(stage, (defers? "resend-stream": "stream"), MAXREASON);
 		StrnCpyNull(reason, ptr, MAXREASON);
 		r = T_REFUSED;
@@ -2923,7 +3000,7 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 	    if ((s = LocateStream(ptr, STATE_POSTED)) != NULL) {
 		delMe = 1;
 		StrnCpyNull(msgId, s->st_MsgId, 1024);
-		if (stage && !*stage)
+		if (STAGE_UNSET(stage))
 		    StrnCpyNull(stage, (defers? "resend-stream": "stream"), MAXREASON);
 		StrnCpyNull(reason, ptr, MAXREASON);
 		r = T_ACCEPTED;
@@ -2958,7 +3035,7 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 		if (sentSize)
 		    *sentSize = s->st_Size;
 		StrnCpyNull(msgId, s->st_MsgId, 1024);
-		if (stage && !*stage)
+		if (STAGE_UNSET(stage))
 		    StrnCpyNull(stage, (defers? "resend-stream": "stream"), MAXREASON);
 		StrnCpyNull(reason, ptr, MAXREASON);
 	    }
@@ -2967,13 +3044,13 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 	case ERR_ACCESS:
 	case ERR_FAULT:
 	case ERR_AUTHBAD:
-	    if (stage && !*stage)
+	    if (STAGE_UNSET(stage))
 		StrnCpyNull(stage, (defers? "resend-stream": "stream"), MAXREASON);
 	    StrnCpyNull(reason, (ptr ? ptr : "<Unexpected EOF>"), MAXREASON);
 	    r = T_FAILEDEXIT;
 	    break;
 	default:
-	    if (stage && !*stage)
+	    if (STAGE_UNSET(stage))
 		StrnCpyNull(stage, (defers? "resend-stream": "stream"), MAXREASON);
 	    StrnCpyNull(reason, (ptr ? ptr : "<Unexpected EOF>"), MAXREASON);
 	    r = T_FAILED;
@@ -3093,10 +3170,10 @@ RefilePendingStreams(FILE *fo)
 
 		streamFlags(s, cst, sizeof(cst));
 		if (s->st_Off || s->st_Size) {
-		    fprintf(fo, "%s\t%s\t%d,%d%s%s\n", 
+		    fprintf(fo, "%s\t%s\t%lld,%d%s%s\n", 
 			s->st_RelPath, 
 			s->st_MsgId,
-			(int)s->st_Off, 
+			(long long)s->st_Off, 
 			(int)s->st_Size,
 			HeaderOnlyFeed ? " H" : "",
 			cst
@@ -3577,7 +3654,7 @@ commandResponse(int cfd, char **rptr, const char *ctl, ...)
 	    if (Bufe == sizeof(Buf) - 1) {
 		if (Bufb == 0)
 		    break;
-		memcpy(Buf, Buf + Bufb, Bufe - Bufb);
+		memmove(Buf, Buf + Bufb, Bufe - Bufb);
 		Bufe -= Bufb;
 		Bufb = 0;
 	    }
@@ -4514,6 +4591,8 @@ extractFeedLine(const char *buf, char *relPath, char *msgId, off_t *poff, int *p
     while ((s = strchr(s, ' ')) != NULL) {
 	while (ISWHITE(*s))
 	    ++s;
+	if (*s == 0)	/* blanks at the end: no flag, stay inside the line */
+	    break;
 	switch (*s++) {
 	    case 'D' :
 		*queuedTime = atol(s);

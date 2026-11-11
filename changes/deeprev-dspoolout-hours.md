@@ -1,0 +1,1 @@
+- dspoolout: `hours` with several intervals was cut by strtok() in pass 1, so pass 2 saw only the first interval and started no dnewslink in the others.

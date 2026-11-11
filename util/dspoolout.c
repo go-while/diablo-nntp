@@ -235,8 +235,14 @@ processDnewsfeeds(const char *qFile)
 		int hourend;
 		char *hourinterval;
 		char *minus;
+		/*
+		 * strtok() cuts the string it is given, and li_Hours is
+		 * read again in pass 2 (and by every label that shares it):
+		 * split a copy.
+		 */
+		char *hours = strdup(li->li_Hours);
 
-		if ((hourinterval=strtok(li->li_Hours,",")) != NULL) {
+		if (hours != NULL && (hourinterval=strtok(hours,",")) != NULL) {
 		    while (hourinterval != NULL) {
 			hourbegin=strtol(hourinterval,NULL,0);
 			if ((minus=strstr(hourinterval,"-")) != NULL)
@@ -253,6 +259,7 @@ processDnewsfeeds(const char *qFile)
 			hourinterval=strtok(NULL,",");
 		    }
 		}
+		free(hours);
 		if (found == 0)
 		    continue;
 	    }
