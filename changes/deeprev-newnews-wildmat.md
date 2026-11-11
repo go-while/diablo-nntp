@@ -1,0 +1,1 @@
+- dreaderd: the NEWNEWS group list is a wildmat as in RFC 3977: `!pattern` excludes groups (it was taken as a group name, so the groups were listed), the last matching pattern decides, and a group matched by several patterns is listed once (its message-ids were printed once per pattern).

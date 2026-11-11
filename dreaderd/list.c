@@ -907,69 +907,84 @@ ActiveCacheInsert(activeCacheEnt **acp, char *newGroup, int newCts)
 }
 
 /*
- * Return a list of all newsgroups matching a pattern
+ * Return a list of all newsgroups matching a wildmat (RFC 3977 4.2): the
+ * comma-separated patterns are tried in order, the last one that matches a
+ * group decides, and a pattern with a leading '!' excludes the groups it
+ * matches.  Each group is listed once.  A list of plain group names (no '*',
+ * '?' or '!') is taken as it is, without a scan of the active file.
  *
  * NOTE that the returned list is not in the same order as the
  * comma-separated pattern
  */
+static void
+listCacheAdd(Connection *conn, const char *group)
+{
+    GroupList *tgl;
+
+    tgl = zalloc(&conn->co_MemPool, sizeof(GroupList));
+    tgl->group = zallocStr(&conn->co_MemPool, group);
+    tgl->next = conn->co_ListCacheGroups;
+    conn->co_ListCacheGroups = tgl;
+}
+
 GroupList *
 ListActiveGroups(Connection *conn, char *pat)
 {
     int recLen;
     int recOff;
     GroupList *patlist = NULL;
+    GroupList **patend = &patlist;
     GroupList *gl = NULL;
     GroupList *allowedgroups = conn->co_Auth.dr_GroupDef->gr_Groups;
     char *ng;
+    int wild = 0;
  
     /*
-     * Create a list of the patterns
+     * Create a list of the patterns, in their order: GroupFindWild() lets
+     * the last matching one decide
      */
     for (ng = strtok(pat, ","); ng; ng = strtok(NULL, ",")) {
 	GroupList *tgl;
-	int wild = (strchr(ng, '*') || strchr(ng, '?'));
 
-	if (allowedgroups != NULL && !wild &&
-					GroupFindWild(ng, allowedgroups) == 0)
-	    continue;
-
+	if (*ng == '!' || strchr(ng, '*') || strchr(ng, '?'))
+	    wild = 1;
 	tgl = zalloc(&conn->co_MemPool, sizeof(GroupList));
 	tgl->group = zallocStr(&conn->co_MemPool, ng);
 	tgl->next = NULL;
-	if (wild) {
-	    tgl->next = patlist;
-	    patlist = tgl;
-	} else {
-	    tgl->next = conn->co_ListCacheGroups;
-	    conn->co_ListCacheGroups = tgl;
-	}
+	*patend = tgl;
+	patend = &tgl->next;
     }
-    for (recOff = KPDBScanFirst(KDBActive, 0, &recLen);
-	recOff;
-	recOff = KPDBScanNext(KDBActive, recOff, 0, &recLen)
-    ) {
-	int groupLen; 
-	char grpbuf[MAXGNAME];
-	const char *rec = KPDBReadRecordAt(KDBActive, recOff, 0, NULL);
-	const char *group = KPDBGetField(rec, recLen, NULL, &groupLen, NULL);
-	if (group && groupLen < MAXGNAME) {
-	    bcopy(group, grpbuf, groupLen);
-	    grpbuf[groupLen] = 0;
-	    for (gl = patlist; gl; gl = gl->next) {
-		if (WildCmp(gl->group, grpbuf) == 0) {
-		    GroupList *tgl;
+    if (!wild) {
+	/* plain names: each one that is allowed, once */
+	for (gl = patlist; gl; gl = gl->next) {
+	    GroupList *pgl;
 
-		    if (allowedgroups != NULL &&
-				GroupFindWild(grpbuf, allowedgroups) == 0) {
-			continue;
-		    }
+	    if (allowedgroups != NULL &&
+				GroupFindWild(gl->group, allowedgroups) == 0)
+		continue;
+	    for (pgl = patlist; pgl != gl; pgl = pgl->next)
+		if (strcmp(pgl->group, gl->group) == 0)
+		    break;
+	    if (pgl == gl)
+		listCacheAdd(conn, gl->group);
+	}
+    } else {
+	for (recOff = KPDBScanFirst(KDBActive, 0, &recLen);
+	    recOff;
+	    recOff = KPDBScanNext(KDBActive, recOff, 0, &recLen)
+	) {
+	    int groupLen; 
+	    char grpbuf[MAXGNAME];
+	    const char *rec = KPDBReadRecordAt(KDBActive, recOff, 0, NULL);
+	    const char *group = KPDBGetField(rec, recLen, NULL, &groupLen, NULL);
 
-		    tgl = zalloc(&conn->co_MemPool, sizeof(GroupList));
-		    tgl->group = zallocStr(&conn->co_MemPool, grpbuf);
-		    tgl->next = NULL;
-		    tgl->next = conn->co_ListCacheGroups;
-		    conn->co_ListCacheGroups = tgl;
-		}
+	    if (group && groupLen < MAXGNAME) {
+		bcopy(group, grpbuf, groupLen);
+		grpbuf[groupLen] = 0;
+		if (GroupFindWild(grpbuf, patlist) &&
+			(allowedgroups == NULL ||
+			 GroupFindWild(grpbuf, allowedgroups)))
+		    listCacheAdd(conn, grpbuf);
 	    }
 	}
     }
