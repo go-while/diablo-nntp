@@ -113,7 +113,51 @@ MemPool	*DnsMemPool;
 time_t Access_LastUpdate = 0;
 static off_t Access_LastSize = -1;	/* with the mtime: which dreader.access */
 static ino_t Access_LastIno = 0;	/* the cache was built from */
-time_t Cache_LastUpdate = 0;
+
+/*
+ * The access lock file's stamp when this process last loaded the cache.
+ * RenameAccessCache() writes the lock file after each install, so any change
+ * of the stamp means a new cache, also an older time (clock stepped back, a VM
+ * restored) and a second install within the same second (nanoseconds where
+ * struct stat has them).
+ */
+typedef struct CacheStamp {
+    time_t cs_Sec;
+    long cs_Nsec;
+    off_t cs_Size;
+    ino_t cs_Ino;
+    dev_t cs_Dev;
+} CacheStamp;
+
+static int Cache_Loaded = 0;
+static CacheStamp Cache_Stamp;
+
+/* POSIX.1-2008 st_mtim; macOS spells it st_mtimespec */
+#if defined(__APPLE__)
+#define ST_MTIME_NSEC(st)	((long)(st)->st_mtimespec.tv_nsec)
+#elif defined(DIABLO_NO_ST_MTIM)
+#define ST_MTIME_NSEC(st)	0L
+#else
+#define ST_MTIME_NSEC(st)	((long)(st)->st_mtim.tv_nsec)
+#endif
+
+static void
+cacheStampOf(const struct stat *st, CacheStamp *cs)
+{
+    cs->cs_Sec = st->st_mtime;
+    cs->cs_Nsec = ST_MTIME_NSEC(st);
+    cs->cs_Size = st->st_size;
+    cs->cs_Ino = st->st_ino;
+    cs->cs_Dev = st->st_dev;
+}
+
+static int
+cacheStampSame(const CacheStamp *a, const CacheStamp *b)
+{
+    return(a->cs_Sec == b->cs_Sec && a->cs_Nsec == b->cs_Nsec &&
+		a->cs_Size == b->cs_Size && a->cs_Ino == b->cs_Ino &&
+		a->cs_Dev == b->cs_Dev);
+}
 
 AccessMap accessmap;
 AccessMap oldaccessmap;
@@ -4884,19 +4928,35 @@ ReadAccessCache(void) {
     int tfp;
     struct stat st;
     int i;
-    time_t lastmod;
+    CacheStamp stamp;
     int fail;
 
     if (DebugOpt > 1)
 	printf("Checking access cache\n");
 
-    if (stat(PatDbExpand(DRAccessLockPat), &st) != 0 ||
-		st.st_mtime <= Cache_LastUpdate) {
+    /*
+     * Load when the lock file's stamp differs from the one of the last load,
+     * not only when it is later: after a clock step back every new install
+     * has an older time.
+     */
+    if (stat(PatDbExpand(DRAccessLockPat), &st) != 0) {
 	if (DebugOpt)
 	    printf("No lock or not changed\n");
 	return(0);
     }
-    lastmod = st.st_mtime;
+    cacheStampOf(&st, &stamp);
+    if (Cache_Loaded && cacheStampSame(&stamp, &Cache_Stamp)) {
+	if (DebugOpt)
+	    printf("No lock or not changed\n");
+	return(0);
+    }
+    /*
+     * Only a completed install writes the lock file (one byte, its stamp);
+     * an empty one was created by an install that has not finished, or
+     * emptied by one that left no consistent set: load nothing.
+     */
+    if (st.st_size == 0)
+	return(0);
 
     /* Obtain a lock so that we know it won't disappear from under us */
 
@@ -4911,6 +4971,16 @@ ReadAccessCache(void) {
 	close(tfp);
 	return(0);
     }
+    /*
+     * The stamp of the files opened below: an install may have come in
+     * between.  A lock file that is gone (no link left) or empty now, or
+     * that cannot be looked at, means no consistent set: load nothing.
+     */
+    if (fstat(tfp, &st) != 0 || st.st_nlink == 0 || st.st_size == 0) {
+	close(tfp);
+	return(0);
+    }
+    cacheStampOf(&st, &stamp);
 
     if (DebugOpt)
 	printf("Loading access cache\n");
@@ -5049,7 +5119,8 @@ ReadAccessCache(void) {
     accessmap.AccessCount = st.st_size / sizeof(AccessDef);
     close(raf);
 
-    Cache_LastUpdate = lastmod;
+    Cache_Stamp = stamp;
+    Cache_Loaded = 1;
     return(1);
 }
 
