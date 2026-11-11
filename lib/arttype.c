@@ -49,7 +49,7 @@ Prototype int ArticleType(char *line, int len, int inheader);
 Prototype int ArticleTypePiece(char *line, int len, int inheader);
 Prototype int ArticleTypeEnd(void);
 
-#define	ARMOR_MAX	100	/* lines of signature/key/PEM armor that are not counted */
+#define	ARMOR_MAX	100	/* lines of other armor that are not counted */
 #define	ARMOR_PGP_HEADERS -1	/* encrypted PGP message armor headers */
 #define	ARMOR_PGP_DATA	-2	/* encrypted PGP message radix-64 data */
 
@@ -65,6 +65,9 @@ int UUencode = 0;
 int BinHex = 0;
 int Base64 = 0;
 int PGPMime = 0;	/* in a PGP/MIME encrypted article: its octet-stream part is not a binary */
+static int CTMessage = 0;	/* next body is an encapsulated message header block */
+static int CTEIdentity = 1;	/* absent, 7bit, 8bit or binary transfer encoding */
+static int CTArmorPGP = 0;	/* ASCII-armored PGP signature/key MIME part */
 int CTText = 0;	/* the part's Content-Type is text/ */
 int CTEBase64 = 0;	/* a base64 Content-Transfer-Encoding is waiting for the end of its header block */
 int Armor = 0;	/* lines left, negative PGP armor state, or 0 outside armor */
@@ -132,6 +135,7 @@ static int CTCont = 0;	/* gathering a Content-Type header */
 static char Bnd[BND_NUM][BND_MAX];
 static int BndLen[BND_NUM];
 static int BndTop = 0;	/* entries in use */
+static int B64Blank = 0;	/* previous whole body line was blank after complete base64 data */
 static int B64Part = 0;	/* in the body of a base64 text part */
 static int B64Bits;	/* bits of the current group not yet decoded */
 static int B64NBits;	/* how many */
@@ -556,9 +560,13 @@ InitArticleType(void)
     Armor = 0;
     PGPMime = 0;
     CTText = 0;
+    CTArmorPGP = 0;
+    CTMessage = 0;
+    CTEIdentity = 1;
     CTEBase64 = 0;
     CTSeen = 0;
     B64Part = 0;
+    B64Blank = 0;
     CTEQP = 0;
     QPPart = 0;
     HdrBlock = 1;
@@ -785,6 +793,17 @@ ctFinish(void)
     CTCont = 0;
     p = mimeSkip(p, e);
     CTText = (e - p >= 5 && strncasecmp(p, "text/", 5) == 0);
+    /* RFC 3156 sections 2, 5 and 7: these MIME bodies contain ASCII armor.
+     * Decode their transfer encoding before applying the armor checks.
+     * Match the complete media type, not a similarly named subtype.
+     */
+    a = p;
+    while (a < e && *a != ';' && *a != ' ' && *a != '\t' && *a != '\r' && *a != '(')
+	++a;
+    CTMessage = (a - p == 14 && strncasecmp(p, "message/rfc822", 14) == 0);
+    CTArmorPGP = ((a - p == 25 && strncasecmp(p, "application/pgp-signature", 25) == 0) ||
+	(a - p == 20 && strncasecmp(p, "application/pgp-keys", 20) == 0));
+
     if (CTTrunc || e - p < 10 || strncasecmp(p, "multipart/", 10) != 0)
 	return;
     for (;;) {
@@ -972,7 +991,7 @@ yencLine(const char *ptr, int len)
 }
 
 /*
- * Only armor-shaped lines retain the unbounded PGP MESSAGE exemption.
+ * Only armor-shaped lines retain the unbounded PGP data exemption.
  * A missing END must not hide a following uuencoded file or other text.
  */
 static int
@@ -981,6 +1000,9 @@ pgpMessageLine(const char *p, int len, int *armor)
     int i;
 
     if (len > 0 && p[len - 1] == '\r')
+	--len;
+    /* Transport-added trailing SP/TAB is not Radix-64 data. */
+    while (len > 0 && (p[len - 1] == ' ' || p[len - 1] == '\t'))
 	--len;
     if (linePrefix(p, len, "-----END "))
 	return(1);
@@ -1047,12 +1069,15 @@ bodyLineTypes(char *ptr, int len, int *uu, int *bh, int *b64, int *armor)
      * do not count them as base64 or the other encodings.  The signature of
      * an RSA-4096 key has 12 lines and a certificate more, so a signed text
      * article or a post with a certificate was taken for a binary.  The
-     * Signature/key/PEM skipping is bounded by ARMOR_MAX lines. Encrypted
-     * PGP MESSAGE armor is already encoded data, and legitimate remailer
-     * messages exceed that limit: skip it until END rather than marking
+     * Other armor skipping is bounded by ARMOR_MAX lines. Encoded
+     * PGP message/key/signature armor is already encoded data; legitimate
+     * blocks exceed that limit: skip them until END rather than marking
      * the tail of the same message as a separate base64 binary. A line
      * outside armor syntax ends that exemption too.
      */
+    /* A clear-signed preamble must not swallow its signature BEGIN. */
+    if (*armor > 0 && linePrefix(ptr, len, "-----BEGIN PGP SIGNATURE-----"))
+	*armor = 0;
     if (*armor < 0 && !pgpMessageLine(ptr, len, armor))
 	*armor = 0;
     if (*armor != 0) {
@@ -1079,7 +1104,10 @@ bodyLineTypes(char *ptr, int len, int *uu, int *bh, int *b64, int *armor)
 		Type |= ARTTYPE_PGPMESSAGE;
 	    *armor = ARMOR_MAX;
 	    if (linePrefix(ptr + 11, len - 11, "PGP MESSAGE-----") ||
-		linePrefix(ptr + 11, len - 11, "PGP MESSAGE, PART "))
+		linePrefix(ptr + 11, len - 11, "PGP MESSAGE, PART ") ||
+		linePrefix(ptr + 11, len - 11, "PGP PUBLIC KEY BLOCK-----") ||
+		linePrefix(ptr + 11, len - 11, "PGP PRIVATE KEY BLOCK-----") ||
+		linePrefix(ptr + 11, len - 11, "PGP SIGNATURE-----"))
 		*armor = ARMOR_PGP_HEADERS;
 	}
     }
@@ -1156,6 +1184,7 @@ b64Start(void)
 	B64ValSet = 1;
     }
     B64Part = 1;
+    B64Blank = 0;
     B64Bits = B64NBits = B64Quad = B64Pad = 0;
     DLineLen = 0;
     DLineCR = 0;
@@ -1168,6 +1197,7 @@ b64End(void)
     if (B64Part && DLineLen > 0 && !(Type & ARTTYPE_BINARY))
 	(void)decodedLineTypes(DLine, DLineLen);
     B64Part = 0;
+    B64Blank = 0;
 }
 
 /*
@@ -1273,6 +1303,9 @@ partReset(void)
 	b64End();
     Armor = 0;
     CTText = 0;
+    CTArmorPGP = 0;
+    CTMessage = 0;
+    CTEIdentity = 1;
     CTSeen = 0;
     CTEBase64 = 0;
     CTEQP = 0;
@@ -1328,6 +1361,9 @@ articleType(char *line, int len, int inheader)
 {
     static char *ptr;
     static char first;
+    int b64blank = B64Blank;
+
+    B64Blank = 0;
 
     /* a new line: no escape is cut at its start */
     if (!PieceMore)
@@ -1342,16 +1378,27 @@ articleType(char *line, int len, int inheader)
      * way).  The two headers can come in either order.
      */
     if (len == 0 || (len == 1 && *line == '\r')) {
+	if (!HdrBlock && B64Part && !PieceMore && B64Quad == 0 && B64NBits == 0)
+	    B64Blank = 1;
 	if (CTCont)
 	    ctFinish();
 	if (HdrBlock && CTEBase64) {
-	    if (CTText || (!CTSeen && B64_NOCTYPE_IS_TEXT)) {
+	    if (CTText || CTArmorPGP || (!CTSeen && B64_NOCTYPE_IS_TEXT)) {
 		/* a text part: decode it (b64Decode) */
 		b64Start();
 	    } else {
 		Type |= ARTTYPE_BASE64 | ARTTYPE_BINARY;
 		Type &= ~ARTTYPE_DEFAULT;
 	    }
+	}
+	/* RFC 2046 section 5.2.1: the identity-encoded body starts
+	 * with the encapsulated message's own headers. Keep the outer
+	 * multipart boundary stack so a sibling still ends this message.
+	 */
+	if (HdrBlock && CTMessage && CTEIdentity) {
+	    partReset();
+	    HdrBlock = 1;
+	    return(Type);
 	}
 	/* the same for a quoted-printable one (qpLine) */
 	if (HdrBlock && CTEQP)
@@ -1381,10 +1428,12 @@ articleType(char *line, int len, int inheader)
     }
 
     /*
-     * Do some checks that could apply to headers and or body
+     * MIME fields belong to article or part headers, not header-like body text.
+     * RFC 5536 section 2 and RFC 2045 section 3.
      */
     first = tolower((unsigned char)*ptr);
-    if (len >= 2 && first == 'c' && tolower((unsigned char)ptr[1]) == 'o') {
+    if (HdrBlock && len >= 2 && first == 'c' &&
+	    tolower((unsigned char)ptr[1]) == 'o') {
 	const char *cv = NULL;	/* the value of a Content-Type: header */
 	const char *ce = NULL;	/* the value of a Content-Transfer-Encoding: header */
 
@@ -1446,6 +1495,13 @@ articleType(char *line, int len, int inheader)
 	if (ce != NULL) {
 	    int celen = len - (int)(ce - ptr);
 
+	    int elen = celen;
+	    while (elen > 0 && (ce[elen - 1] == ' ' || ce[elen - 1] == '\t' || ce[elen - 1] == '\r'))
+		--elen;
+	    CTEIdentity = ((elen == 4 && (strncasecmp(ce, "7bit", 4) == 0 ||
+		strncasecmp(ce, "8bit", 4) == 0)) ||
+		(elen == 6 && strncasecmp(ce, "binary", 6) == 0));
+
 	    /* a part's encoding is in its header block, not in its text */
 	    if (HdrBlock && hdrPrefix(ce, celen, "base64"))
 		CTEBase64 = 1;
@@ -1489,17 +1545,21 @@ articleType(char *line, int len, int inheader)
 		return(Type);
 	} else if (B64Part) {
 	    int k = 3;
+	    int bare = (len == 2 || (len == 3 && ptr[2] == '\r'));
 
 	    /*
 	     * A signature separator ("-- ") after base64 text: base64 has no
 	     * '-', so the encoded text is over, and the signature is checked
-	     * as it is, not decoded.  Any other line with '-' (a bare "--",
-	     * "---") is decoded on, its '-' skipped as decoders do.
+	     * as it is, not decoded. Gateways sometimes strip that trailing
+	     * space: accept bare "--" after complete base64 padding, or
+	     * after a blank body line following a complete base64 group.
+	     * Midstream "--" and other '-' lines are still decoded on.
 	     */
 	    while (k < len && (ptr[k] == ' ' || ptr[k] == '\t' || ptr[k] == '\r'))
 		++k;
-	    if (len >= 3 && ptr[0] == '-' && ptr[1] == '-' && ptr[2] == ' ' &&
-								k == len) {
+	    if (len >= 2 && ptr[0] == '-' && ptr[1] == '-' &&
+		((len >= 3 && ptr[2] == ' ' && k == len) ||
+		 (bare && (B64Pad == 2 || b64blank)))) {
 		b64End();
 		if (Type & ARTTYPE_BINARY)
 		    return(Type);

@@ -1,0 +1,1 @@
+Recognize a PGP signature BEGIN inside a clear-signed preamble, so the old preamble counter cannot expose the signature tail as binary. Decode base64 application/pgp-signature and application/pgp-keys parts before checking their ASCII armor (RFC 3156 sections 2, 5 and 7); malformed decoded binary and separate binary attachments remain subject to filtering.

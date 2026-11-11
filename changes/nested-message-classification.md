@@ -1,0 +1,1 @@
+Classify the embedded headers of declared message/rfc822 bodies with absent, 7bit, 8bit or binary transfer encoding (RFC 2046 section 5.2.1). Base64 text inside a forwarded message can now be decoded as text instead of rejected as raw binary. Embedded binary attachments and subsequent outer MIME siblings remain classified normally.

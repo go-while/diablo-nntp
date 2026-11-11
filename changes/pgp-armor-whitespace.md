@@ -1,0 +1,1 @@
+Article type detection tolerates trailing spaces and tabs on encrypted PGP armor lines. A gateway-added blank no longer ends the PGP exemption and causes a false binary rejection. The 76-character data limit and detection of binary data after the armor remain in effect.

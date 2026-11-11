@@ -799,6 +799,8 @@ func TestBase64TextNotRejectedAsBinary(t *testing.T) {
 		{"base64 text, no Content-Type", []string{"Mime-Version: 1.0", "Content-Transfer-Encoding: base64"}, b64Text(30), "235"},
 		{"base64 text part in multipart", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=XX"},
 			append(append([]string{"--XX", "Content-Type: text/x-patch", "Content-Transfer-Encoding: base64", ""}, b64Text(30)...), "--XX--"), "235"},
+		{"text quoting an octet-stream header", []string{"Content-Type: text/plain"}, []string{"An example header:", "Content-Type: application/octet-stream", "", "Ordinary text."}, "235"},
+		{"real octet-stream header", []string{"Content-Type: application/octet-stream"}, []string{"payload"}, "437"},
 		{"base64 image", image, atLines(3, 40, b64Alphabet, ""), "437"},
 		{"base64 random data in text/plain", text, b64Wrap(randBytes(1140, 9), 76), "437"},
 		{"base64 random data in text/plain, one long line", text, b64Wrap(randBytes(12000, 10), 20000), "437"},
@@ -958,5 +960,261 @@ func TestChecksumListNotRejectedAsBinary(t *testing.T) {
 	// A real base64 binary to the same group is still refused.
 	if line := offer(atLines(12, 64, b64Alphabet, "")); !strings.HasPrefix(line, "437") {
 		t.Errorf("IHAVE with base64 lines to a text group: %q, want 437", line)
+	}
+}
+
+// Header-looking text is body data (RFC 5536 section 2; RFC 2045 section 3).
+func TestArticleTypeBodyMimeLiterals(t *testing.T) {
+	s := NewSite(t, SiteOptions{Newsfeeds: GlobalLabel, NoStart: true})
+	for _, field := range []string{
+		"Content-Type: application/octet-stream",
+		"Content-Type: text/html",
+		"Content-Type: multipart/encrypted; protocol=application/pgp-encrypted",
+		"Content-Type: application/pgp-encrypted",
+		"Content-Type: application/postscript",
+		"Content-Type: message/partial",
+		"Content-Transfer-Encoding: X-Bommanews",
+		"Content-Transfer-Encoding: X-UnidataEncoding",
+	} {
+		t.Run(field, func(t *testing.T) {
+			for _, multipart := range []bool{false, true} {
+				extra := []string{"Content-Type: text/plain"}
+				body := []string{"An example header follows:", field, "", "This is ordinary text."}
+				want := atMIME
+				if multipart {
+					extra = []string{"Content-Type: multipart/mixed; boundary=XX"}
+					body = append(append([]string{"--XX", "Content-Type: text/plain", ""}, body...), "--XX--")
+					want |= atMultipart
+				}
+				if got := artTypeOf(t, s, atArticle(extra, body)); got != want {
+					t.Errorf("multipart=%v: ArtType=%06x, want %06x", multipart, got, want)
+				}
+			}
+		})
+	}
+}
+
+func TestPgpArmorTrailingWhitespace(t *testing.T) {
+	s := NewSite(t, SiteOptions{Newsfeeds: DefaultNewsfeeds + "label IFILTER\n    addgroup *\n    arttypes binary\nend\n"})
+	for _, suffix := range []string{" ", "\t", " \t "} {
+		t.Run(fmt.Sprintf("suffix-%q", suffix), func(t *testing.T) {
+			body := pgp("MESSAGE", 120)
+			// One gateway-modified data line must not end the armor exemption.
+			body[4] += suffix
+			if got := artTypeOf(t, s, atArticle(nil, body)); got != atPGP {
+				t.Errorf("ArtType=%06x, want %06x", got, atPGP)
+			}
+			if line := offerGroupsBody(t, s, "alt.anonymous.messages", body); !strings.HasPrefix(line, "235") {
+				t.Errorf("PGP with trailing whitespace: %q, want 235", line)
+			}
+			body = append(body, atLines(12, 64, b64Alphabet, "")...)
+			if line := offerGroupsBody(t, s, "alt.anonymous.messages", body); !strings.HasPrefix(line, "437") {
+				t.Errorf("binary after PGP: %q, want 437", line)
+			}
+		})
+	}
+}
+
+func TestLongPgpKeyAndSignature(t *testing.T) {
+	s := NewSite(t, SiteOptions{Newsfeeds: DefaultNewsfeeds + "label IFILTER\n    addgroup *\n    arttypes binary\nend\n"})
+	for _, label := range []string{"PUBLIC KEY BLOCK", "PRIVATE KEY BLOCK", "SIGNATURE"} {
+		t.Run(label, func(t *testing.T) {
+			body := pgp(label, 120)
+			if got := artTypeOf(t, s, atArticle(nil, body)); got != atPGP {
+				t.Errorf("ArtType=%06x, want %06x", got, atPGP)
+			}
+			if line := offerGroupsBody(t, s, "alt.anonymous.messages", body); !strings.HasPrefix(line, "235") {
+				t.Errorf("long PGP armor: %q, want 235", line)
+			}
+			for _, tail := range [][]string{
+				append(append([]string{}, body...), atLines(12, 64, b64Alphabet, "")...),
+				append(append([]string{}, body[:4]...), append([]string{"not armor!"}, atLines(12, 64, b64Alphabet, "")...)...),
+			} {
+				if line := offerGroupsBody(t, s, "alt.anonymous.messages", tail); !strings.HasPrefix(line, "437") {
+					t.Errorf("binary after END or malformed armor: %q, want 437", line)
+				}
+			}
+		})
+	}
+}
+
+func TestPgpSignatureWithinSignedMessage(t *testing.T) {
+	s := NewSite(t, SiteOptions{Newsfeeds: DefaultNewsfeeds + "label IFILTER\n    addgroup *\n    arttypes binary\nend\n"})
+	for _, n := range []int{20, 90, 100, 120} {
+		t.Run(fmt.Sprint(n), func(t *testing.T) {
+			body := []string{"-----BEGIN PGP SIGNED MESSAGE-----", "Hash: SHA256", ""}
+			for i := 0; i < n; i++ {
+				body = append(body, "Ordinary signed text.")
+			}
+			body = append(body, pgp("SIGNATURE", 120)...)
+			if got := artTypeOf(t, s, atArticle(nil, body)); got != atPGP {
+				t.Errorf("ArtType=%06x, want %06x", got, atPGP)
+			}
+			if line := offerGroupsBody(t, s, "alt.anonymous.messages", body); !strings.HasPrefix(line, "235") {
+				t.Errorf("signed message: %q, want 235", line)
+			}
+			body = append(body, atLines(12, 64, b64Alphabet, "")...)
+			if line := offerGroupsBody(t, s, "alt.anonymous.messages", body); !strings.HasPrefix(line, "437") {
+				t.Errorf("binary after signature: %q, want 437", line)
+			}
+		})
+	}
+}
+
+func TestBase64PgpArmorMime(t *testing.T) {
+	s := NewSite(t, SiteOptions{Newsfeeds: DefaultNewsfeeds + "label IFILTER\n    addgroup *\n    arttypes binary\nend\n"})
+	for _, c := range []struct{ media, label string }{{"application/pgp-signature", "SIGNATURE"}, {"application/pgp-keys", "PUBLIC KEY BLOCK"}} {
+		t.Run(c.media, func(t *testing.T) {
+			body := b64Wrap(joined(pgp(c.label, 120)), 76)
+			for _, hdr := range [][]string{hdr64(c.media), {"Content-Transfer-Encoding: base64", "Content-Type: " + c.media}} {
+				if got := artTypeOf(t, s, atArticle(hdr, body)); got != atMIME|atPGP {
+					t.Errorf("ArtType=%06x, want %06x", got, atMIME|atPGP)
+				}
+			}
+			if line := offerHeaders(t, s, "alt.anonymous.messages", hdr64(c.media), body); !strings.HasPrefix(line, "235") {
+				t.Errorf("MIME PGP: %q, want 235", line)
+			}
+			bad := b64Wrap(randBytes(1140, 12), 76)
+			if line := offerHeaders(t, s, "alt.anonymous.messages", hdr64(c.media), bad); !strings.HasPrefix(line, "437") {
+				t.Errorf("binary labeled PGP: %q, want 437", line)
+			}
+			multi := []string{"--pgp-test", "Content-Type: " + c.media, "Content-Transfer-Encoding: base64", ""}
+			multi = append(multi, body...)
+			multi = append(multi, "--pgp-test", "Content-Type: application/octet-stream", "Content-Transfer-Encoding: base64", "", "AAECAwQ=", "--pgp-test--")
+			if got := artTypeOf(t, s, atArticle([]string{"Content-Type: multipart/mixed; boundary=pgp-test"}, multi)); got&atBinary == 0 {
+				t.Errorf("binary sibling ArtType=%06x, want binary", got)
+			}
+		})
+	}
+}
+
+func TestPaddedBase64GatewayFooter(t *testing.T) {
+	s := NewSite(t, SiteOptions{Newsfeeds: DefaultNewsfeeds + "label IFILTER\n    addgroup *\n    arttypes binary\nend\n"})
+	hdr := hdr64("text/plain; charset=UTF-8")
+	for _, text := range []string{"Hello.\n", "Hello!!\n"} {
+		t.Run(text, func(t *testing.T) {
+			body := append(b64Wrap([]byte(text), 76), "", "--", "Posted automatically by a mail-to-news gateway.")
+			if got := artTypeOf(t, s, atArticle(hdr, body)); got != atMIME {
+				t.Errorf("ArtType=%06x, want %06x", got, atMIME)
+			}
+			wire := atArticle(hdr, body)
+			for i := range wire {
+				wire[i] += "\r"
+			}
+			if got := artTypeOf(t, s, wire); got != atMIME {
+				t.Errorf("CRLF ArtType=%06x, want %06x", got, atMIME)
+			}
+			if line := offerHeaders(t, s, "alt.test", hdr, body); !strings.HasPrefix(line, "235") {
+				t.Errorf("gateway footer: %q, want 235", line)
+			}
+			for _, tail := range [][]string{atLines(12, 64, b64Alphabet, ""), append([]string{"begin 644 file.bin"}, atLines(12, 60, uuAlphabet, "M")...)} {
+				if line := offerHeaders(t, s, "alt.test", hdr, append(append([]string{}, body...), tail...)); !strings.HasPrefix(line, "437") {
+					t.Errorf("binary after footer: %q, want 437", line)
+				}
+			}
+		})
+	}
+}
+func TestUnpaddedBase64GatewayFooter(t *testing.T) {
+	s := NewSite(t, SiteOptions{Newsfeeds: DefaultNewsfeeds + "label IFILTER\n    addgroup *\n    arttypes binary\nend\n"})
+	hdr := hdr64("text/plain; charset=UTF-8")
+	for _, text := range []string{"Hello\n"} {
+		t.Run(text, func(t *testing.T) {
+			body := append(b64Wrap([]byte(text), 76), "", "--", "Posted automatically by a mail-to-news gateway.")
+			if got := artTypeOf(t, s, atArticle(hdr, body)); got != atMIME {
+				t.Errorf("ArtType=%06x, want %06x", got, atMIME)
+			}
+			wire := atArticle(hdr, body)
+			for i := range wire {
+				wire[i] += "\r"
+			}
+			if got := artTypeOf(t, s, wire); got != atMIME {
+				t.Errorf("CRLF ArtType=%06x, want %06x", got, atMIME)
+			}
+			if line := offerHeaders(t, s, "alt.test", hdr, body); !strings.HasPrefix(line, "235") {
+				t.Errorf("gateway footer: %q, want 235", line)
+			}
+			for _, tail := range [][]string{atLines(12, 64, b64Alphabet, ""), append([]string{"begin 644 file.bin"}, atLines(12, 60, uuAlphabet, "M")...)} {
+				if line := offerHeaders(t, s, "alt.test", hdr, append(append([]string{}, body...), tail...)); !strings.HasPrefix(line, "437") {
+					t.Errorf("binary after footer: %q, want 437", line)
+				}
+			}
+		})
+	}
+}
+
+func TestBase64IncompleteGatewaySeparator(t *testing.T) {
+	s := NewSite(t, SiteOptions{Newsfeeds: DefaultNewsfeeds + "label IFILTER\n    addgroup *\n    arttypes binary\nend\n"})
+	for _, body := range [][]string{
+		{"AAEC", "", "--", "AwQF"},
+		{"SG", "", "--", "VsbG8KAA=="},
+		{"SGVs", "--", "bG8KAA=="},
+	} {
+		if got := artTypeOf(t, s, atArticle(hdr64("text/plain"), body)); got&atBinary == 0 {
+			t.Errorf("body %q: ArtType=%06x, want binary", body, got)
+		}
+		if line := offerHeaders(t, s, "alt.test", hdr64("text/plain"), body); !strings.HasPrefix(line, "437") {
+			t.Errorf("body %q: %q, want 437", body, line)
+		}
+	}
+}
+
+func TestNestedMessageArticleTypes(t *testing.T) {
+	s := NewSite(t, SiteOptions{Newsfeeds: DefaultNewsfeeds + "label IFILTER\n    addgroup *\n    arttypes binary\nend\n"})
+	for _, outer := range []bool{false, true} {
+		for _, binary := range []bool{false, true} {
+			name := fmt.Sprintf("multipart=%v/binary=%v", outer, binary)
+			t.Run(name, func(t *testing.T) {
+				hdr := []string{"Content-Type: message/rfc822", "Content-Transfer-Encoding: 7bit"}
+				inner := append([]string{"From: author@example.test", "Subject: forwarded text", "Content-Type: text/plain", "Content-Transfer-Encoding: base64", ""}, b64Text(30)...)
+				if binary {
+					inner = append([]string{"From: author@example.test", "Content-Type: application/octet-stream", "Content-Transfer-Encoding: base64", ""}, b64Wrap(randBytes(1140, 12), 76)...)
+				}
+				body := inner
+				if outer {
+					hdr = []string{"Content-Type: multipart/mixed; boundary=outer"}
+					body = append([]string{"--outer", "Content-Type: message/rfc822", "Content-Transfer-Encoding: 7bit", ""}, inner...)
+					body = append(body, "--outer", "Content-Type: text/plain", "", "Content-Type: application/octet-stream", "--outer--")
+				}
+				got := artTypeOf(t, s, atArticle(hdr, body))
+				if (got&atBinary != 0) != binary {
+					t.Errorf("ArtType=%06x, want binary=%v", got, binary)
+				}
+				want := "235"
+				if binary {
+					want = "437"
+				}
+				if line := offerHeaders(t, s, "alt.test", hdr, body); !strings.HasPrefix(line, want) {
+					t.Errorf("%q, want %s", line, want)
+				}
+			})
+		}
+	}
+}
+
+func TestNestedMessageHeaderScope(t *testing.T) {
+	s := NewSite(t, SiteOptions{})
+	for _, enc := range []string{"", "7bit", "8bit", "binary"} {
+		hdr := []string{"Content-Type: message/rfc822"}
+		if enc != "" {
+			hdr = append(hdr, "Content-Transfer-Encoding: "+enc)
+		}
+		// Two successive encapsulations exercise state reset without recursion.
+		inner := append([]string{"Subject: text", "Content-Type: text/plain", "Content-Transfer-Encoding: base64", ""}, b64Text(30)...)
+		body := append([]string{"Subject: forwarded", "Content-Type: message/rfc822", ""}, inner...)
+		if got := artTypeOf(t, s, atArticle(hdr, body)); got&atBinary != 0 {
+			t.Errorf("encoding %q: ArtType=%06x, want text", enc, got)
+		}
+	}
+	for _, media := range []string{"message/rfc822-extra", "message/partial"} {
+		body := append([]string{"Subject: text", "Content-Type: text/plain", "Content-Transfer-Encoding: base64", ""}, b64Text(30)...)
+		if got := artTypeOf(t, s, atArticle([]string{"Content-Type: " + media}, body)); got&atBinary == 0 {
+			t.Errorf("media %q: ArtType=%06x, want binary", media, got)
+		}
+	}
+	body := append([]string{"--outer", "Content-Type: message/rfc822", "", "Subject: forwarded", "Content-Type: text/plain", "Content-Transfer-Encoding: base64", ""}, b64Text(30)...)
+	body = append(body, "--outer", "Content-Type: application/octet-stream", "", "binary attachment", "--outer--")
+	if got := artTypeOf(t, s, atArticle([]string{"Content-Type: multipart/mixed; boundary=outer"}, body)); got&atBinary == 0 {
+		t.Errorf("outer binary sibling: ArtType=%06x, want binary", got)
 	}
 }
