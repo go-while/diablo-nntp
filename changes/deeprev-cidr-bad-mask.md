@@ -1,0 +1,1 @@
+- dreader.access, diablo.hosts, dnewsfeeds: an address pattern with a mask that is no mask (`10.9.9.0/33`, `10.9.9.0/`, an IPv6 `/129` or `/256`) matched every address; it now matches none and is logged as "Invalid IPv4 mask" or "Invalid IPv6 mask". Dotted masks keep the spellings inet_addr() takes, such as `0377.0377.0377.0377`.

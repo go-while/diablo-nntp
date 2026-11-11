@@ -37,6 +37,15 @@ main(int ac, char **av)
 	exit(1);
     }
 
+    /*
+     * argv[] below takes the program, "-b<fd>", av[2..ac-1] and a NULL.
+     */
+    if (ac >= (int)arysize(argv)) {
+	fprintf(stderr, "%s: too many arguments (%d, at most %d)\n",
+		av[0], ac - 1, (int)arysize(argv) - 2);
+	exit(1);
+    }
+
     LoadDiabloConfig(ac, av);
 
     /*

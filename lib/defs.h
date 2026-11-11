@@ -874,7 +874,7 @@ typedef struct LogInfo {
     time_t		NextCheck;
     int			UseSyslog;
     int			Disabled;
-    int			LastInode;
+    ino_t		LastInode;
     int			Pid;
     char		Fname[PATH_MAX];
 } LogInfo;

@@ -10,7 +10,7 @@
 .set DLIB	"$(BD)obj/libdiablo.a"
 .set FLIB	"$(BD)obj/libfilter.a"
 .set RLIB	"$(BD)obj/libdreader.a"
-.set CDEFINES	'-DVERS="$(VERS)"' '-DSUBREV="$(SUBREV)"' '-DDEBUG_ZALLOC' '-DDEBUG_MBUF'
+.set CDEFINES	'-DVERS="$(VERS)"' '-DSUBREV="$(SUBREV)"'
 #if __GNUC__
 .set CFLAGS	-g -O2 -Wall -Wstrict-prototypes "-I$(BD)" $(CDEFINES)
 .set LSTATIC

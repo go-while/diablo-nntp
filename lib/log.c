@@ -38,32 +38,72 @@ vsyslog(int priority, const char *ctl, va_list va)
 }
 #endif
 
+/*
+ * openProg() - start the program of a "|prog" log and write to it through
+ *		a pipe.
+ *
+ *	When that fails the log falls back to syslog until openLog() tries
+ *	again: with LI->Fd left NULL and nothing else set, VLog() wrote to a
+ *	NULL FILE, and for the general log the report of the failure came
+ *	back here through logit() without end.  So the failure is reported
+ *	with syslog() itself, as for a log file that cannot be opened.
+ *	A program that cannot be started (dup2() or execl() fails in the
+ *	child) counts as a failure too: the child reports it through a
+ *	second pipe, and the parent reaps it and falls back.
+ */
 void
 openProg(LogInfo *LI, const char *prog)
 {
     int fds[2];
+    int st[2];		/* the child's report: errno of a failed start */
+    int cerr = 0;
+    ssize_t n;
 
     if (pipe(fds) < 0) {
-	logit(LOG_ERR, "log unable to pipe(): %s", strerror(errno));
+	syslog(LOG_ERR, "log unable to pipe(): %s", strerror(errno));
+	LI->UseSyslog = 1;
 	return;
     }
-    if ((LI->Pid = fork()) < 0) {
-	logit(LOG_ERR, "log unable to fork(): %s", strerror(errno));
+    /*
+     * The child writes the errno of a failed dup2() or execl() into st[1].
+     * st[1] is closed at a successful exec, so the parent reads end of file
+     * then.  Without this the parent took a child that could not start for
+     * a running program and wrote the log into a pipe nobody reads.
+     */
+    if (pipe(st) < 0) {
+	syslog(LOG_ERR, "log unable to pipe(): %s", strerror(errno));
 	close(fds[0]);
 	close(fds[1]);
+	LI->UseSyslog = 1;
+	return;
+    }
+    (void)fcntl(st[1], F_SETFD, FD_CLOEXEC);
+    if ((LI->Pid = fork()) < 0) {
+	syslog(LOG_ERR, "log unable to fork(): %s", strerror(errno));
+	close(fds[0]);
+	close(fds[1]);
+	close(st[0]);
+	close(st[1]);
+	LI->UseSyslog = 1;
 	return;
     }
     if (!LI->Pid) {
+	/*
+	 * The child must never return into the daemon's code.
+	 */
+	close(st[0]);
 	if (dup2(fds[0], fileno(stdin)) < 0) {
-	    logit(LOG_ERR, "log unable to dup2(): %s", strerror(errno));
-	    close(fds[0]);
-	    close(fds[1]);
-	    return;
+	    cerr = errno;
+	    syslog(LOG_ERR, "log unable to dup2(): %s", strerror(cerr));
+	    (void)write(st[1], &cerr, sizeof(cerr));
+	    _exit(1);
 	}
 	close(fds[0]);
 	close(fds[1]);
 	execl(prog, prog, NULL);
-	logit(LOG_ERR, "log unable to execl(%s): %s", prog, strerror(errno));
+	cerr = errno;
+	syslog(LOG_ERR, "log unable to execl(%s): %s", prog, strerror(cerr));
+	(void)write(st[1], &cerr, sizeof(cerr));
 	close(fileno(stdin));
 	_exit(1);
     }
@@ -71,9 +111,48 @@ openProg(LogInfo *LI, const char *prog)
      * Only parent should reach here
      */
     close(fds[0]);
+    close(st[1]);
+    do {
+	n = read(st[0], &cerr, sizeof(cerr));
+    } while (n < 0 && errno == EINTR);
+    close(st[0]);
+    if (n > 0) {
+	/* the program did not start: the child is gone, reap it here */
+	close(fds[1]);
+	while (waitpid(LI->Pid, NULL, 0) < 0 && errno == EINTR)
+	    ;
+	LI->Pid = -1;
+	LI->UseSyslog = 1;
+	return;
+    }
     if (fcntl(fds[1], F_SETFD, 1) < 0)
-	logit(LOG_ERR, "log unable to fcntl(): %s", strerror(errno));
-    LI->Fd = fdopen(fds[1], "a");
+	syslog(LOG_ERR, "log unable to fcntl(): %s", strerror(errno));
+    if ((LI->Fd = fdopen(fds[1], "a")) == NULL) {
+	syslog(LOG_ERR, "log unable to fdopen(): %s", strerror(errno));
+	/*
+	 * The program runs but gets no lines: stop it and reap it, so that
+	 * the next try does not leave it behind under a forgotten pid.
+	 */
+	close(fds[1]);
+	kill(LI->Pid, SIGTERM);
+	for (n = 0; n < 50; ++n) {
+	    pid_t w = waitpid(LI->Pid, NULL, WNOHANG);
+
+	    if (w != 0 && !(w < 0 && errno == EINTR))
+		break;
+	    usleep(10000);
+	}
+	if (n == 50) {
+	    /* it does not stop on SIGTERM within half a second */
+	    kill(LI->Pid, SIGKILL);
+	    while (waitpid(LI->Pid, NULL, 0) < 0 && errno == EINTR)
+		;
+	}
+	LI->Pid = -1;
+	LI->UseSyslog = 1;
+	return;
+    }
+    LI->UseSyslog = 0;
 }
 
 void

@@ -83,6 +83,7 @@
 #include <strings.h>
 #include <stdlib.h>
 #include <limits.h>
+#include <errno.h>
 #include <netinet/in.h>
 
 
@@ -283,6 +284,23 @@ HM_CheckForMatch_PC(HashFeed_MatchList *hf, mid_t mid, unsigned char *res)
  * structures as we go.
  */
 
+/*
+ * hmNumber() - a decimal number of a hashfeed entry, followed by the end
+ *		of the entry or by one of its separators - / :.  Returns 0
+ *		for anything else.
+ */
+static int
+hmNumber(const char *s, long *v)
+{
+	char *e;
+
+	errno = 0;
+	*v = strtol(s, &e, 10);
+	if (e == s || errno != 0 || *v < 0)
+		return(0);
+	return(*e == '\0' || *e == '-' || *e == '/' || *e == ':');
+}
+
 HashFeed_MatchList * 
 HM_ConfigNode_Sub(HashFeed_MatchList *hf, HashFeed_MatchList *next, char *conf, int offset)
 {
@@ -301,19 +319,38 @@ HM_ConfigNode_Sub(HashFeed_MatchList *hf, HashFeed_MatchList *next, char *conf, 
 		conf++;
 		hf->HM_Type = HMTYPE_OLD;
 	}
-	if ((ptr = strchr(conf, '-'))) {
-		hf->HM_Start = strtol(conf, NULL, 10);
-		hf->HM_End   = strtol(++ptr, NULL, 10);
-	} else {
-		hf->HM_Start = hf->HM_End = strtol(conf, NULL, 10);
-	}
-	if ((ptr = strchr(conf, ':'))) {
-		hf->HM_Offset = strtol(++ptr, NULL, 10);
-	} else {
-		hf->HM_Offset = offset;
-	}
-	if ((ptr = strchr(conf, '/'))) {
-		hf->HM_ModVal = strtol(++ptr, NULL, 10);
+	/*
+	 * Each number is read whole into a long and checked before it is
+	 * stored: HM_Offset is a char (256 became 0) and the others are
+	 * 32 bits, and junk after a number ("1x/2") is an error.
+	 */
+	{
+		long v;
+
+		if ((ptr = strchr(conf, '-'))) {
+			if (!hmNumber(conf, &v) || v > 0xffffffffL)
+				return(NULL);
+			hf->HM_Start = (hashint_t)v;
+			if (!hmNumber(++ptr, &v) || v > 0xffffffffL)
+				return(NULL);
+			hf->HM_End = (hashint_t)v;
+		} else {
+			if (!hmNumber(conf, &v) || v > 0xffffffffL)
+				return(NULL);
+			hf->HM_Start = hf->HM_End = (hashint_t)v;
+		}
+		if ((ptr = strchr(conf, ':'))) {
+			if (!hmNumber(++ptr, &v) || v < 0 || v > 12)
+				return(NULL);
+			hf->HM_Offset = (char)v;
+		} else {
+			hf->HM_Offset = offset;
+		}
+		if ((ptr = strchr(conf, '/'))) {
+			if (!hmNumber(++ptr, &v) || v > 0xffffffffL)
+				return(NULL);
+			hf->HM_ModVal = (hashint_t)v;
+		}
 	}
 
 	if (! hf->HM_Start || ! hf->HM_End || ! hf->HM_ModVal || (hf->HM_Offset < 0 || hf->HM_Offset > 12)) {

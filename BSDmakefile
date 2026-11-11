@@ -4,7 +4,10 @@
 CC ?= clang
 # Shared release version defaults; command-line values take precedence.
 .include "build-version.mk"
-CPPFLAGS += -I. -DVERS=\"${VERS}\" -DSUBREV=\"${SUBREV}\" -DDEBUG_ZALLOC -DDEBUG_MBUF
+CPPFLAGS += -I. -DVERS=\"${VERS}\" -DSUBREV=\"${SUBREV}\"
+# Allocation tracker and mbuf caller notes, for debugging only (see Makefile):
+#   make clean && make DEBUG_ALLOC="-DDEBUG_ZALLOC -DDEBUG_MBUF"
+CPPFLAGS += ${DEBUG_ALLOC}
 CFLAGS += -O2 -pipe -Wall -Wstrict-prototypes -fno-common -MMD -MP
 LDFLAGS += -Lobj
 LDLIBS += -lfilter -ldiablo -lm -lmd -lcrypto

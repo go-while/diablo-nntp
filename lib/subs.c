@@ -341,6 +341,33 @@ ascToMask(const char *str)
 }
 
 /*
+ * cidrMaskBits() - the prefix length of "addr/nn": 0..max, max when there
+ *		    is no "/nn", -1 when nn is not a number in that range.
+ *
+ *	atoi() made "/abc" and "/" a /0, an IPv4 "/33" shifted by a negative
+ *	count and an IPv6 "/256" wrapped to 0 in a uint8: each of these
+ *	matched every address.
+ */
+static int
+cidrMaskBits(const char *cidr, int max)
+{
+    const char *ptr;
+    int n = 0;
+
+    if ((ptr = strchr(cidr, '/')) == NULL)
+	return(max);
+    if (*++ptr == 0)
+	return(-1);
+    for (; *ptr; ++ptr) {
+	if (*ptr < '0' || *ptr > '9')
+	    return(-1);
+	if ((n = n * 10 + (*ptr - '0')) > max)
+	    return(-1);
+    }
+    return(n);
+}
+
+/*
  * Match CIDR address - return 1 for sucess else 0
  *
  * This is really messy
@@ -351,7 +378,7 @@ CidrMatch(const char *cidr, const char *ip)
 #ifdef INET6
     char addr[256];
     char mask[256];
-    uint8 maskbits = 128;
+    int maskbits;
     char maskst[NI_MAXHOST];
     char *p;
     int i;
@@ -363,9 +390,11 @@ CidrMatch(const char *cidr, const char *ip)
 	if (strchr(cidr, ':') == NULL)	/* Don't compare against non v6 CIDR */
 	    return(0);
 	strcpy(maskst, cidr);
-	if ((p = strchr(maskst, '/')) != NULL) {
+	if ((p = strchr(maskst, '/')) != NULL)
 	    *p = '\0';
-	    maskbits = atoi(++p);
+	if ((maskbits = cidrMaskBits(cidr, 128)) < 0) {
+	    logit(LOG_ERR, "Invalid IPv6 mask: %s", cidr);
+	    return(0);
 	}
 	if (inet_pton(AF_INET6, ip, addr) != 1) {
 	    logit(LOG_ERR, "Invalid IPv6 address: %s", ip);
@@ -392,9 +421,27 @@ CidrMatch(const char *cidr, const char *ip)
 	u_long net;
 	u_long mask;
 	u_long addr;
+	const char *mp;
+	int bad;
 
 	if (strchr(cidr, ':') != NULL)	/* Don't compare against v6 CIDR */
 	    return(0);
+	/*
+	 * A mask that is no mask matches nothing.  The /xxx.xxx.xxx.xxx
+	 * form is converted by ascToMask() with inet_addr(); inet_aton()
+	 * takes the same spellings (octal, shortened forms) and says
+	 * whether it could, which inet_addr() cannot for an all-ones mask.
+	 */
+	if ((mp = strchr(cidr, '/')) != NULL && strchr(mp, '.') != NULL) {
+	    struct in_addr ia;
+
+	    bad = (inet_aton(mp + 1, &ia) == 0);
+	} else
+	    bad = (cidrMaskBits(cidr, 32) < 0);
+	if (bad) {
+	    logit(LOG_ERR, "Invalid IPv4 mask: %s", cidr);
+	    return(0);
+	}
 	addr = ascToAddr(ip);
 	net = ascToAddr(cidr);
 	mask = ascToMask(cidr);
@@ -894,7 +941,14 @@ MakeGroupDirectory(char *path)
 	return(0);
     if (MakeGroupDirectory(dir) == -1)
 	return(-1);
-    return(mkdir(dir, 0755));
+    /*
+     * Another process may have created the directory between the stat()
+     * and here (two feed processes storing into the same new group
+     * directory): that is what we wanted, not an error.
+     */
+    if (mkdir(dir, 0755) == -1 && errno != EEXIST)
+	return(-1);
+    return(0);
 }
 
 /*
@@ -956,7 +1010,27 @@ DiabHashFeedParse(MemPool **pool, char *hashconfig)
 	    return(NULL);
 	}
 	int offloc = cascade ? 4 : 0;
-	HM_ConfigNode_Sub(new, NULL, hashconfig, offloc);
+	if (HM_ConfigNode_Sub(new, NULL, hashconfig, offloc) == NULL) {
+	    /*
+	     * No range, modulus 0 or missing ("1-2"), an offset outside
+	     * 0..12, junk after a number: such an entry divided by zero
+	     * when the first article was matched.  Without it the hashfeed
+	     * would restrict nothing (all callers take NULL for "no
+	     * hashfeed"), so a typo would feed a peer everything.  The
+	     * whole hashfeed matches no article instead, as a bad address
+	     * mask does.
+	     */
+	    logit(LOG_ERR, "bad hashfeed entry \"%s\": the hashfeed matches no article",
+								hashconfig);
+	    if (ptr)
+		*ptr = sep;
+	    bzero(new, sizeof(*new));
+	    new->HM_Type = HMTYPE_MD5;
+	    new->HM_ModVal = 1;		/* hash % 1 + 1 is 1, never in 2..2 */
+	    new->HM_Start = 2;
+	    new->HM_End = 2;
+	    return(new);
+	}
 	new->HM_Cascade = cascade;
 	*cfgnext = new;
 	cfgnext = &(new->HM_Next);
