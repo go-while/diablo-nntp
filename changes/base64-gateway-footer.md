@@ -1,0 +1,1 @@
+A bare -- separator after completed, padded base64 text now ends transfer decoding, allowing plain mail-to-news gateway footers whose signature separator lost its trailing space. A bare separator within encoded data keeps the existing decoding behavior; footer content continues to be checked for binary encodings.

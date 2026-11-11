@@ -1513,17 +1513,20 @@ articleType(char *line, int len, int inheader)
 		return(Type);
 	} else if (B64Part) {
 	    int k = 3;
+	    int bare = (len == 2 || (len == 3 && ptr[2] == '\r'));
 
 	    /*
 	     * A signature separator ("-- ") after base64 text: base64 has no
 	     * '-', so the encoded text is over, and the signature is checked
-	     * as it is, not decoded.  Any other line with '-' (a bare "--",
-	     * "---") is decoded on, its '-' skipped as decoders do.
+	     * as it is, not decoded. Gateways sometimes strip that trailing
+	     * space: accept bare "--" only after complete base64 padding.
+	     * Midstream "--" and other '-' lines are still decoded on.
 	     */
 	    while (k < len && (ptr[k] == ' ' || ptr[k] == '\t' || ptr[k] == '\r'))
 		++k;
-	    if (len >= 3 && ptr[0] == '-' && ptr[1] == '-' && ptr[2] == ' ' &&
-								k == len) {
+	    if (len >= 2 && ptr[0] == '-' && ptr[1] == '-' &&
+		((len >= 3 && ptr[2] == ' ' && k == len) ||
+		 (bare && B64Pad == 2))) {
 		b64End();
 		if (Type & ARTTYPE_BINARY)
 		    return(Type);
