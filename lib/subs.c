@@ -49,6 +49,7 @@ Prototype void WriteBestEffort(int fd, const void *buf, size_t bytes);
 Prototype void NiceBestEffort(int inc);
 Prototype int enabled(char *st);
 Prototype HashFeed_MatchList *DiabHashFeedParse(MemPool **mp, char *hashconfig);
+Prototype int DiabHashFeedBad(const HashFeed_MatchList *hf);
 Prototype int MoveFile(char *from, char *to);
 Prototype int TimeSpec(char *t, char *def);
 Prototype int ParseIntRange(const char *str, int base, long min, long max, int *out);
@@ -987,6 +988,18 @@ enabled(char *st)
 	return(1);
     else
 	return(0);
+}
+
+/*
+ * DiabHashFeedBad() - the list DiabHashFeedParse() returns for a hashfeed
+ *		it could not read (one entry that matches nothing), so that
+ *		the caller can name its file and line.
+ */
+int
+DiabHashFeedBad(const HashFeed_MatchList *hf)
+{
+    return(hf != NULL && hf->HM_Next == NULL && hf->HM_Type == HMTYPE_MD5 &&
+	hf->HM_ModVal == 1 && hf->HM_Start == 2 && hf->HM_End == 2);
 }
 
 HashFeed_MatchList *

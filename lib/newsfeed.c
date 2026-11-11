@@ -1930,10 +1930,11 @@ LoadNewsFeed(time_t t, int force, const char *hlabel)
 		    } else if (strcmp(s1, "hashfeed") == 0) {
 			if (nf && s2) {
 			    err = 0;
-			    if (! ((nf->nf_HashFeed = DiabHashFeedParse(&NFMemPool, s2)))) {
+			    nf->nf_HashFeed = DiabHashFeedParse(&NFMemPool, s2);
+			    if (nf->nf_HashFeed == NULL || DiabHashFeedBad(nf->nf_HashFeed)) {
 			        logit(LOG_CRIT,
-			           "Newsfeed config line %d, hash parse error!\n", 
-				    lineNo
+			           "Newsfeed config line %d, label %s, hash parse error: hashfeed %s matches no article\n",
+				    lineNo, nf->nf_Label, s2
 			        );
 			    }
 			}

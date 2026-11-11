@@ -19,7 +19,7 @@ import (
 // second review: a NULL list means "no hashfeed" to every caller, so a typo fed the peer
 // everything). "1/1" is the control: it matches every article.
 func TestDeepRevHashfeedBadValue(t *testing.T) {
-	for _, value := range []string{"1-2", "1-2/0", "abc", "1x/2", "1/2,1-2", "1/1"} {
+	for _, value := range []string{"1-2", "1-2/0", "abc", "1x/2", "1/2,1-2", "1-2-3/4", "1/4-2", "1/1"} {
 		t.Run(strings.ReplaceAll(value, "/", "_"), func(t *testing.T) {
 			feeds := GlobalLabel + `label peer
     inhost ` + PeerIP + `
@@ -53,6 +53,10 @@ end
 			}
 			if got := strings.Contains(s.logOutput(), "bad hashfeed entry"); got != bad {
 				t.Errorf("hashfeed %s: \"bad hashfeed entry\" in the log: %v, want %v:\n%s", value, got, bad, s.logOutput())
+			}
+			// the caller names the line and the label
+			if got := strings.Contains(s.logOutput(), "label "+OutLabel+", hash parse error"); got != bad {
+				t.Errorf("hashfeed %s: \"label %s, hash parse error\" in the log: %v, want %v:\n%s", value, OutLabel, got, bad, s.logOutput())
 			}
 			q := s.queue(t, OutLabel)
 			if got := len(deepRevMissing(q, ids)) == 0; got == bad {
