@@ -993,3 +993,24 @@ func TestArticleTypeBodyMimeLiterals(t *testing.T) {
 		})
 	}
 }
+
+func TestPgpArmorTrailingWhitespace(t *testing.T) {
+	s := NewSite(t, SiteOptions{Newsfeeds: DefaultNewsfeeds + "label IFILTER\n    addgroup *\n    arttypes binary\nend\n"})
+	for _, suffix := range []string{" ", "\t", " \t "} {
+		t.Run(fmt.Sprintf("suffix-%q", suffix), func(t *testing.T) {
+			body := pgp("MESSAGE", 120)
+			// One gateway-modified data line must not end the armor exemption.
+			body[4] += suffix
+			if got := artTypeOf(t, s, atArticle(nil, body)); got != atPGP {
+				t.Errorf("ArtType=%06x, want %06x", got, atPGP)
+			}
+			if line := offerGroupsBody(t, s, "alt.anonymous.messages", body); !strings.HasPrefix(line, "235") {
+				t.Errorf("PGP with trailing whitespace: %q, want 235", line)
+			}
+			body = append(body, atLines(12, 64, b64Alphabet, "")...)
+			if line := offerGroupsBody(t, s, "alt.anonymous.messages", body); !strings.HasPrefix(line, "437") {
+				t.Errorf("binary after PGP: %q, want 437", line)
+			}
+		})
+	}
+}

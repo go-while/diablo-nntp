@@ -982,6 +982,9 @@ pgpMessageLine(const char *p, int len, int *armor)
 
     if (len > 0 && p[len - 1] == '\r')
 	--len;
+    /* Transport-added trailing SP/TAB is not Radix-64 data. */
+    while (len > 0 && (p[len - 1] == ' ' || p[len - 1] == '\t'))
+	--len;
     if (linePrefix(p, len, "-----END "))
 	return(1);
     if (len == 0) {
