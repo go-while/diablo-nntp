@@ -94,27 +94,35 @@ func TestDeepRevDrcmdDrippingClient(t *testing.T) {
 }
 
 // drcmdSend sends raw on a new control connection, closes the sending side and returns what
-// came back and whether the connection was closed. For a line that is to be refused
-// (refused), dreaderd closes the connection as soon as the byte past the buffer shows the
-// line too long, so the rest of the write may fail with EPIPE or ECONNRESET: that counts as
-// the close. For any other line the whole write must go through.
-func drcmdSend(t *testing.T, sock, raw string, refused bool) (string, bool) {
+// came back and whether the connection was closed (EOF or reset, not the read deadline). For
+// a line that is to be refused (refused), dreaderd closes the connection as soon as the byte
+// past the buffer shows the line too long, so the rest of the write may fail with EPIPE or
+// ECONNRESET once at least drcmdMaxLine bytes went out; then what follows is still read, and
+// broke tells that the write broke off. For any other line the whole write must go through.
+// sndbuf > 0 sets the client's send buffer (a small one makes the write break off).
+func drcmdSend(t *testing.T, sock, raw string, refused bool, sndbuf int) (text string, closed, broke bool) {
 	t.Helper()
 	c, err := net.DialTimeout("unix", sock, 10*time.Second)
 	if err != nil {
 		t.Fatalf("connect to the control socket: %v", err)
 	}
 	defer c.Close()
+	if sndbuf > 0 {
+		if err := c.(*net.UnixConn).SetWriteBuffer(sndbuf); err != nil {
+			t.Fatal(err)
+		}
+	}
 	c.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	if n, err := c.Write([]byte(raw)); err != nil {
 		if refused && n >= drcmdMaxLine && (errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET)) {
-			text, _ := readToEOF(c, 8*time.Second)
-			return text, true
+			text, closed = readToEOF(c, 8*time.Second)
+			return text, closed, true
 		}
 		t.Fatalf("write (%d of %d bytes): %v", n, len(raw), err)
 	}
 	c.(*net.UnixConn).CloseWrite()
-	return readToEOF(c, 8*time.Second)
+	text, closed = readToEOF(c, 8*time.Second)
+	return text, closed, false
 }
 
 // drcmdMaxLine is the buffer of a control command line, its NUL included (MAXLINE, lib/defs.h).
@@ -129,7 +137,7 @@ func TestDeepRevDrcmdLongLineAndEOF(t *testing.T) {
 	sock := filepath.Join(s.Dir, "run", ".dreadersock")
 
 	t.Run("longer than the buffer", func(t *testing.T) {
-		text, eof := drcmdSend(t, sock, "status "+strings.Repeat("x", 20000), true)
+		text, eof, _ := drcmdSend(t, sock, "status "+strings.Repeat("x", 20000), true, 0)
 		if !eof || text != "" {
 			t.Errorf("a command line of 20007 bytes without a newline: got %q (closed: %v), want nothing and the close", text, eof)
 		}
@@ -137,8 +145,23 @@ func TestDeepRevDrcmdLongLineAndEOF(t *testing.T) {
 			t.Errorf("the refused long line is not in the log")
 		}
 	})
+	// a send buffer of 2 KB and 200000 bytes: the write cannot be done when dreaderd closes,
+	// so this takes the branch for a write that broke off (as on FreeBSD), on any system
+	t.Run("longer than the buffer, the write breaks off", func(t *testing.T) {
+		refusals := strings.Count(generalLog(s), "drcmd: command line longer than")
+		text, closed, broke := drcmdSend(t, sock, "status "+strings.Repeat("x", 200000), true, 2048)
+		if !broke {
+			t.Fatalf("the write of 200000 bytes with a 2 KB send buffer went through: the branch for a broken-off write was not taken")
+		}
+		if !closed || text != "" {
+			t.Errorf("a command line of 200007 bytes, write broken off: got %q (closed: %v), want nothing and the close", text, closed)
+		}
+		testkit.WaitFor(t, 5*time.Second, "the refusal in the log", func() bool {
+			return strings.Count(generalLog(s), "drcmd: command line longer than") > refusals
+		})
+	})
 	t.Run("last line at EOF", func(t *testing.T) {
-		if text, _ := drcmdSend(t, sock, "status", false); !strings.Contains(text, "Connect=") {
+		if text, _, _ := drcmdSend(t, sock, "status", false, 0); !strings.Contains(text, "Connect=") {
 			t.Errorf("\"status\" without a newline, then EOF: got %q, want the status line", text)
 		}
 	})
@@ -165,7 +188,7 @@ func TestDeepRevDrcmdLineBoundary(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			refusals := strings.Count(generalLog(s), "drcmd: command line longer than")
-			text, closed := drcmdSend(t, sock, tc.raw, !tc.run)
+			text, closed, _ := drcmdSend(t, sock, tc.raw, !tc.run, 0)
 			if ran := strings.Contains(text, "Connect="); ran != tc.run {
 				t.Errorf("%s: answer %q, run %v, want %v", tc.name, text, ran, tc.run)
 			}
