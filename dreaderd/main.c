@@ -2037,8 +2037,9 @@ DnsRefuseText(int r, char *buf, size_t len)
  * "Go away", and "502" with the CR or LF of a backend that ends its
  * answer with a line end), also when a readerdef has that name: a
  * readerdef name of just three digits is not usable.  Three digits
- * followed by anything else ("100mbit") are a readerdef name.  Returns 1
- * for a refusal.
+ * followed by anything else ("100mbit") may be a readerdef name: they are
+ * when that readerdef exists, and a refusal when it does not (see
+ * HandleDnsThread()).  Returns 1 for a refusal in the first form.
  */
 static int
 IsAuthRefusal(const char *s)
@@ -2967,6 +2968,7 @@ HandleDnsThread(ForkDesc *desc)
     const char *error1 = NULL;
     const char *error2 = NULL;
     const char *vsname = "-";	/* only known once SetAuthDetails() ran */
+    int BadAuthName = 0;	/* backend answer: no refusal, no readerdef */
     char errbuf[1024], *p;
     int r;
 #ifdef READER_BAN_LISTS
@@ -3091,7 +3093,24 @@ HandleDnsThread(ForkDesc *desc)
         if (r == 1)
 	    ClearOldAccessMap();
 
-        if (dres.dr_Code == 0 && dres.dr_AuthUser[0] && dres.dr_AuthPass[0]) {
+	/*
+	 * A name that starts with three digits is a readerdef ("100mbit")
+	 * only when this readerdef exists.  Anything else is a backend
+	 * answer that is no refusal in the form IsAuthRefusal() knows
+	 * ("502-Go away", "502:x", "123abc"): SetAuthDetails() took the
+	 * first readerdef for it, so refuse the client instead.
+	 */
+	if (isdigit((unsigned char)dres.dr_ReaderName[0]) &&
+		isdigit((unsigned char)dres.dr_ReaderName[1]) &&
+		isdigit((unsigned char)dres.dr_ReaderName[2]) &&
+		strcmp(dres.dr_ReaderDef->rd_Name, dres.dr_ReaderName) != 0) {
+	    logit(LOG_ERR, "authentication from %s: the answer of the backend starts with three digits and is no readerdef, login refused",
+		    NetAddrToSt(0, (struct sockaddr *)&dres.dr_Addr, 1, 0, 0));
+	    AuthRefusalLine(errbuf, sizeof(errbuf), "");
+	    error1 = errbuf;
+	    error2 = errbuf + 4;
+	    BadAuthName = 1;
+        } else if (dres.dr_Code == 0 && dres.dr_AuthUser[0] && dres.dr_AuthPass[0]) {
 	    /* AUTHINFO USER/PASS that no access entry accepts (RFC 4643) */
 	    snprintf(errbuf, sizeof(errbuf), "481 Authentication failed\r\n");
 	    error1 = errbuf;
@@ -3105,7 +3124,7 @@ HandleDnsThread(ForkDesc *desc)
 	    error2 = "Unauthorized";
         }
 
-        if (dres.dr_Flags & DF_STATUS) {
+        if (!BadAuthName && (dres.dr_Flags & DF_STATUS)) {
             snprintf(errbuf, sizeof(errbuf), "180 %s status: connect=%d failed=%d dns=%d/%d act=%d/%d\r\n", dres.dr_VServerDef->vs_HostName,
 		    ConnectCount, FailCount, 
 		    NumPending, DOpts.ReaderDns,

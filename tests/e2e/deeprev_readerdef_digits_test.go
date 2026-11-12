@@ -294,3 +294,55 @@ func TestDeepRevReaderdefDigitsLineEndPerl(t *testing.T) {
 	checkLineEndRefusals(t, s, cases)
 	checkLineEndLogin(t, s)
 }
+
+// TestDeepRevReaderdefDigitsNotARefusalForm: a backend answer "110 NNN-text", "110 NNN,text"
+// or "110 NNN:text" is no refusal in the form the main process knows (three digits, then the
+// end or white space), and a name such as "123abc" is no readerdef of the site. The main
+// process gave all of them to SetAuthDetails() as a readerdef name; a name it does not find
+// is replaced there by the first readerdef (the admin's DEFAULT, which grants read access), so
+// the user got 281 and the groups. At 4e8828c every name with three leading digits was a
+// refusal. A name with three leading digits is refused when no readerdef has it; "100mbit",
+// which exists, still logs in with that readerdef. Each refused user gets one well-formed
+// line, "502 Access denied", and the close.
+func TestDeepRevReaderdefDigitsNotARefusalForm(t *testing.T) {
+	s := refusalSite(t, "dash:pw:502-Go away\ncomma:pw:502,x\nunk:pw:123abc\nmb:pw:100mbit\n")
+	checkLineEndRefusals(t, s, []lineEndCase{
+		{"dash", "502-Go away", "502 Access denied"},
+		{"comma", "502,x", "502 Access denied"},
+		{"unk", "123abc", "502 Access denied"},
+	})
+	checkLineEndLogin(t, s)
+}
+
+// TestDeepRevReaderdefDigitsNotARefusalFormPerl: the same through the Perl backend, which
+// can also answer "502:x" (the file backend ends a name at a colon). Skipped when dreaderd
+// is built without Perl support.
+func TestDeepRevReaderdefDigitsNotARefusalFormPerl(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join(bin(t), "dreaderd"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(b, []byte("PERL auth request")) {
+		t.Skip("dreaderd is built without Perl support (PERL_ENABLED)")
+	}
+	cases := []lineEndCase{
+		{"dash", "502-Go away", "502 Access denied"},
+		{"colon", "502:x", "502 Access denied"},
+		{"comma", "502,x", "502 Access denied"},
+		{"unk", "123abc", "502 Access denied"},
+	}
+	var m strings.Builder
+	for _, tc := range append(cases, lineEndCase{"mb", "100mbit", ""}) {
+		fmt.Fprintf(&m, "    \"%s\" => \"110 %s\",\n", tc.user, tc.answer)
+	}
+	script := "my %ans = (\n" + m.String() + ");\n" + `sub checkuser {
+    my ($user, $pass) = @_;
+    return "0" unless $pass eq "pw" && exists $ans{$user};
+    return $ans{$user};
+}
+1;
+`
+	s := refusalSiteWith(t, map[string]string{"auth.pl": script}, "perl", "auth.pl")
+	checkLineEndRefusals(t, s, cases)
+	checkLineEndLogin(t, s)
+}
