@@ -55,9 +55,9 @@ write(int fd, const void *buf, size_t n)
 // empty and the readers (rightly) loaded nothing, so every client got 502 until dreader.access
 // was changed or dreaderd restarted.
 //
-// A fresh site starts while a preloaded write() refuses writes to .accesslock (ENOSPC): no
-// client may be served from an unannounced set. Once the fault is gone, the next try must
-// install it: a client is served within 10 s.
+// A fresh site starts while a preloaded write() refuses writes to .accesslock (ENOSPC): the
+// client must get the 502 refusal and the lock file must stay empty. Once the fault is gone,
+// the next try must install it: a client is served within 10 s.
 func TestDeepRevAccessCacheStampWriteFails(t *testing.T) {
 	so := preloadShim(t, "stampfail", withMark(withFdPath(stampWriteFailSource)))
 	dir := t.TempDir()
@@ -87,8 +87,11 @@ func TestDeepRevAccessCacheStampWriteFails(t *testing.T) {
 	if len(shimMarked(mark, "refused write")) == 0 {
 		t.Fatalf("the stamp of the lock file was not written through the injector")
 	}
-	if strings.HasPrefix(g, "20") {
-		t.Fatalf("with the stamp unwritten a client was served (%q): an unannounced access cache was loaded", strings.TrimSpace(g))
+	if !strings.HasPrefix(g, "502 ") {
+		t.Fatalf("with the stamp unwritten the client got %q, want the 502 refusal (no access cache loaded)", strings.TrimSpace(g))
+	}
+	if fi, err := os.Stat(filepath.Join(s.Dir, ".accesslock")); err != nil || fi.Size() != 0 {
+		t.Fatalf("during the fault the lock file must exist and be empty (no stamp): %v %v", fi, err)
 	}
 
 	if err := os.Remove(flag); err != nil {
@@ -110,6 +113,70 @@ func TestDeepRevAccessCacheStampWriteFails(t *testing.T) {
 	} else if fi.Size() == 0 {
 		t.Errorf("the lock file has no stamp (0 bytes) after the fault")
 	}
+}
+
+// TestDeepRevAccessCacheStampWriteFailsLater: the stamp write fails on a later install, when
+// the lock file has the stamp of an earlier one. The running processes do not see a new
+// stamp, so they keep the set they have; the install must be retried, and the lock file must
+// keep its old stamp (size and time) while the fault lasts. What this test asserts: every
+// LIST ACTIVE during the fault shows one whole set, A's [e2e.test] or B's [e2e.other], never
+// both groups; the install is repeated; the stamp is unchanged; once the fault is gone, B is
+// in use. (Both sets use the readerdef name rp; it does not check every kind of change.)
+func TestDeepRevAccessCacheStampWriteFailsLater(t *testing.T) {
+	so := preloadShim(t, "stampfail", withMark(withFdPath(stampWriteFailSource)))
+	dir := t.TempDir()
+	flag := filepath.Join(dir, "fail")
+	mark := filepath.Join(dir, "mark")
+	_, spool := spoolStore(t)
+	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: accessSetA, NoStart: true})
+	s.Env = append(s.Env, lockFaultEnv(so), "SHIM_MARK="+mark, "STAMPFAIL_FLAG="+flag)
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("general.log:\n%s\nmarks:\n%s", generalLog(s), strings.Join(shimMarks(mark), "\n"))
+		}
+	})
+	startReader(t, s, "[127.0.0.1]:"+strings.TrimPrefix(s.Addr, "127.0.0.1:"))
+	list := func() []string {
+		t.Helper()
+		c := s.Reader(t)
+		defer c.Close()
+		c.ExpectCmd(215, "LIST ACTIVE")
+		names := activeNames(c.ReadDotLines())
+		c.ExpectCmd(205, "QUIT")
+		return names
+	}
+	if got := list(); !slices.Equal(got, []string{"e2e.test"}) {
+		t.Fatalf("with dreader.access A: groups %q, want [e2e.test]", got)
+	}
+	lock := filepath.Join(s.Dir, ".accesslock")
+	fi0, err := os.Stat(lock)
+	if err != nil || fi0.Size() == 0 {
+		t.Fatalf("the lock file has no stamp after the first install: %v %v", fi0, err)
+	}
+
+	if err := os.WriteFile(flag, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.WriteFile(t, "dreader.access", accessSetB)
+	testkit.WaitFor(t, 20*time.Second, "a refused stamp write of the later install", func() bool {
+		return len(shimMarked(mark, "refused write")) > 0
+	})
+	installs := func() int { return strings.Count(generalLog(s), "Installing access cache") }
+	n0 := installs()
+	for i := 0; i < 5; i++ {
+		got := list()
+		if !slices.Equal(got, []string{"e2e.test"}) && !slices.Equal(got, []string{"e2e.other"}) {
+			t.Errorf("during the fault: groups %q, want one whole set (A's [e2e.test] or B's [e2e.other])", got)
+		}
+		time.Sleep(time.Second)
+	}
+	if n := installs(); n <= n0 {
+		t.Errorf("the install was not tried again during 5 s of the fault")
+	}
+	if fi1, err := os.Stat(lock); err != nil || fi1.Size() != fi0.Size() || !fi1.ModTime().Equal(fi0.ModTime()) {
+		t.Errorf("the lock file's stamp changed during the fault: before %v, now %v %v", fi0.ModTime(), fi1, err)
+	}
+	waitB(t, flag, list)
 }
 
 // closeFailSource makes close() of the descriptor of .accesslock that was opened for writing
