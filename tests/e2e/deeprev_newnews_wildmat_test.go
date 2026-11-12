@@ -73,11 +73,14 @@ func TestReaderNewnewsWildmat(t *testing.T) {
 // reader process (readerforks 1 here) from one loop. bbabbf8 dropped the duplicates by
 // comparing each name with all the names before it: one such NEWNEWS took about 48 s on the
 // test VMs, and another client's DATE waited as long. Before bbabbf8 (no duplicate check) the
-// NEWNEWS took 0.5 s and the DATE under 1 ms.
+// whole NEWNEWS ended within the 0.5 s the test waits before it sends the DATE, and the DATE
+// was answered in under 1 ms.
 //
-// Bounds: the NEWNEWS must end within 10 s (20 times the 0.5 s of the linear code, for a
-// slow or busy host; the quadratic check takes about 5 times as long) and the DATE must be
-// answered within 5 s of being sent (at worst it waits for the whole 0.5 s NEWNEWS).
+// Bounds: the NEWNEWS time runs from sending the line to the final "." and includes that
+// 0.5 s wait; it must be at most 10 s (the work itself takes a few ms with a linear check, so
+// a slow or busy host has a wide margin, and the quadratic check takes about 5 times the
+// bound). The DATE must be answered within 5 s of being sent (at worst it waits for the work
+// of the NEWNEWS line; the quadratic check makes it wait about 50 s).
 func TestReaderNewnewsManyPlainNames(t *testing.T) {
 	const (
 		nNames      = 110000
