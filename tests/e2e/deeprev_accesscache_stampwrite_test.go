@@ -1,10 +1,12 @@
 package e2e
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -13,7 +15,8 @@ import (
 )
 
 // stampWriteFailSource makes write() to a file whose name ends in "/.accesslock" fail with
-// ENOSPC while the file STAMPFAIL_FLAG exists, and marks each refused write.
+// ENOSPC while the file STAMPFAIL_FLAG exists, and marks each refused write with the time of
+// CLOCK_MONOTONIC in seconds ("refused write to <path> at <s>.<ms>", refusedWriteTimes()).
 const stampWriteFailSource = `#define _GNU_SOURCE
 #define __EXTENSIONS__
 #include <dlfcn.h>
@@ -22,6 +25,7 @@ const stampWriteFailSource = `#define _GNU_SOURCE
 #include <stdio.h>
 #include <string.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 /*FDPATH*/
 /*MARK*/
@@ -40,7 +44,10 @@ write(int fd, const void *buf, size_t n)
 	fdpath(fd, path, sizeof(path));
 	l = strlen(path);
 	if (l >= 12 && strcmp(path + l - 12, "/.accesslock") == 0) {
-	    shim_mark("refused write to %s", path);
+	    struct timespec ts;
+
+	    clock_gettime(CLOCK_MONOTONIC, &ts);
+	    shim_mark("refused write to %s at %ld.%03ld", path, (long)ts.tv_sec, (long)(ts.tv_nsec / 1000000));
 	    errno = ENOSPC;
 	    return -1;
 	}
@@ -48,6 +55,39 @@ write(int fd, const void *buf, size_t n)
     return real(fd, buf, n);
 }
 `
+
+// refusedWriteTimes returns the times (seconds of CLOCK_MONOTONIC, as the injector took them)
+// of the stamp writes stampWriteFailSource refused, in the order of the mark file, and the
+// marks of refused writes without a time it could read.
+func refusedWriteTimes(mark string) (at []float64, untimed []string) {
+	for _, l := range shimMarked(mark, "refused write") {
+		i := strings.LastIndex(l, " at ")
+		v, err := 0.0, errors.New("no time")
+		if i >= 0 {
+			v, err = strconv.ParseFloat(l[i+4:], 64)
+		}
+		if err != nil {
+			untimed = append(untimed, l)
+			continue
+		}
+		at = append(at, v)
+	}
+	return at, untimed
+}
+
+// retryGaps returns the intervals in seconds between the times at, each rounded to the
+// millisecond, for the log: the first 12, then how many more there are.
+func retryGaps(at []float64) []string {
+	var g []string
+	for i := 1; i < len(at); i++ {
+		if len(g) == 12 {
+			g = append(g, "and "+strconv.Itoa(len(at)-i)+" more")
+			break
+		}
+		g = append(g, strconv.FormatFloat(at[i]-at[i-1], 'f', 3, 64))
+	}
+	return g
+}
 
 // TestDeepRevAccessCacheStampWriteFails: the install of the access cache announces the new
 // set by writing the lock file's stamp. That write was not checked: when it failed (a full
@@ -184,11 +224,17 @@ func TestDeepRevAccessCacheStampWriteFailsLater(t *testing.T) {
 // while the cause lasted (a full disk) the main process read dreader.access, wrote the five
 // cache files, renamed them and logged a LOG_CRIT line for every client: about 2600 installs
 // in 4 s, and it accepted about 7 times fewer connections. A failed install is now tried
-// again after 5 s.
+// again after 5 s (ACCESS_RETRY_MS).
 //
 // While a preloaded write() refuses the stamp of the lock file (ENOSPC), dreader.access A is
-// replaced by B and clients connect without a pause for 4 s: at most 3 installs may come in
-// that time. Once the fault is gone, B must be installed.
+// replaced by B and clients connect without a pause for 11 s. The injector notes the time of
+// each refused stamp write (one per install): no two may be less than 4.5 s apart, and at
+// least one retry must come in the 11 s. AccessInstallFailed() sets the 5 s wait right after
+// the refused write, and the next try writes its stamp only after it has built the five
+// files, so a late or slow pass makes an interval longer, never shorter; the 0.5 s below 5 s
+// leave room for the few calls between the refused write and AccessInstallFailed(). Every
+// install must reach the stamp: no more "Installing access cache" lines than refused writes
+// (plus one under way). Once the fault is gone, B must be installed.
 func TestDeepRevAccessCacheRetryPaced(t *testing.T) {
 	so := preloadShim(t, "stampfail", withMark(withFdPath(stampWriteFailSource)))
 	dir := t.TempDir()
@@ -228,19 +274,40 @@ func TestDeepRevAccessCacheRetryPaced(t *testing.T) {
 		return len(shimMarked(mark, "refused write")) > 0
 	})
 	installs := func() int { return strings.Count(generalLog(s), "Installing access cache") }
-	i0, m0 := installs(), len(shimMarked(mark, "refused write"))
+	at, _ := refusedWriteTimes(mark)
+	i0, m0 := installs(), len(at)
 	n := 0
-	for start := time.Now(); time.Since(start) < 4*time.Second; n++ {
+	for start := time.Now(); time.Since(start) < 11*time.Second; n++ {
 		readerGreeting(s.Addr)
 	}
-	i1, m1 := installs(), len(shimMarked(mark, "refused write"))
-	t.Logf("%d connections in 4 s of the fault: %d installs, %d refused stamp writes", n, i1-i0, m1-m0)
+	at, untimed := refusedWriteTimes(mark)
+	i1 := installs()
+	t.Logf("%d connections in 11 s of the fault: %d installs, %d refused stamp writes, intervals %v s",
+		n, i1-i0, len(at)-m0, retryGaps(at))
 	if n < 20 {
-		t.Fatalf("only %d connections in 4 s: too few passes of the main loop for the test to mean anything", n)
+		t.Fatalf("only %d connections in 11 s: too few passes of the main loop for the test to mean anything", n)
 	}
-	if i1-i0 > 3 || m1-m0 > 3 {
-		t.Errorf("the failed install is repeated without a pause: %d installs and %d refused stamp writes in 4 s with %d connections, want at most 3",
-			i1-i0, m1-m0, n)
+	if len(untimed) > 0 {
+		t.Fatalf("refused stamp writes without their time: %q", untimed)
+	}
+	short, least := 0, 0.0
+	for i := 1; i < len(at); i++ {
+		if d := at[i] - at[i-1]; d < 4.5 {
+			if short == 0 || d < least {
+				least = d
+			}
+			short++
+		}
+	}
+	if short > 0 {
+		t.Errorf("the failed install is tried again too early: %d of %d intervals between refused stamp writes under %.1f s, the shortest %.3f s (want 5 s)",
+			short, len(at)-1, 4.5, least)
+	}
+	if len(at) == m0 {
+		t.Errorf("the failed install was not tried again in 11 s of the fault with %d connections (want a try every 5 s)", n)
+	}
+	if i1-i0 > len(at)-m0+1 {
+		t.Errorf("%d installs but %d refused stamp writes in 11 s: installs that did not reach the stamp", i1-i0, len(at)-m0)
 	}
 	waitB(t, flag, list)
 }
