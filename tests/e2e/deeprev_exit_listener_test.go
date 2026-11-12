@@ -97,7 +97,11 @@ func TestDeepRevExitListenerSpin(t *testing.T) {
 //
 // dreaderd -b 7 and -b 8 (between the descriptors dreaderd opens itself), three times each,
 // with clients connecting in a loop so that the listener is readable when the exit command
-// comes: the main process must end without that fatal().
+// comes: the main process must end without that fatal(), drcmd exit must succeed with the
+// replies "211" (exiting) and then "200" (the shutdown is complete), and dreaderd must end
+// with exit status 0. Whether the listener is readable in the very pass of the exit command
+// is left to chance (the clients make it likely, not certain): the old code failed most of
+// the subtests, not all.
 func TestDeepRevExitPassedListener(t *testing.T) {
 	for _, fd := range []int{7, 8} {
 		for run := 1; run <= 3; run++ {
@@ -164,10 +168,12 @@ func exitPassedListener(t *testing.T, fd int) {
 		}()
 	}
 	time.Sleep(300 * time.Millisecond)
-	exitOut, _ := s.TryRun("drcmd", "exit")
+	exitOut, exitErr := s.TryRun("drcmd", "exit")
 	var werr error
+	ended := false
 	select {
 	case werr = <-done:
+		ended = true
 	case <-time.After(30 * time.Second):
 		t.Errorf("dreaderd still runs 30 s after drcmd exit")
 	}
@@ -175,7 +181,7 @@ func exitPassedListener(t *testing.T, fd int) {
 	wg.Wait()
 	b, _ := os.ReadFile(filepath.Join(s.Dir, "stderr.txt"))
 	logs := string(b) + generalLog(s)
-	t.Logf("drcmd exit: %q; dreaderd ended: %v", strings.TrimSpace(exitOut), werr)
+	t.Logf("drcmd exit: %q (%v); dreaderd ended: %v %v", strings.TrimSpace(exitOut), exitErr, ended, werr)
 	if strings.Contains(logs, "select returned unknown descriptor") {
 		var lines []string
 		for _, ln := range strings.Split(logs, "\n") {
@@ -184,5 +190,17 @@ func exitPassedListener(t *testing.T, fd int) {
 			}
 		}
 		t.Errorf("the main process ended in fatal() during drcmd exit (status %v): %s", werr, strings.Join(lines, "\n"))
+	}
+	// drcmd exits 0 only when the command's answer ends with its "." line, which dreaderd
+	// writes after "200 Operation Complete" at the end of an orderly shutdown (FinishRetain()).
+	if exitErr != nil {
+		t.Errorf("drcmd exit failed: %v; output %q", exitErr, exitOut)
+	}
+	if replies := strings.Split(strings.TrimRight(exitOut, "\n"), "\n"); len(replies) != 2 ||
+		!strings.HasPrefix(replies[0], "211 ") || !strings.HasPrefix(replies[1], "200 ") {
+		t.Errorf("drcmd exit answered %q, want \"211 Exiting\" and then \"200 Operation Complete\"", exitOut)
+	}
+	if ended && werr != nil {
+		t.Errorf("dreaderd ended with %v after drcmd exit, want exit status 0", werr)
 	}
 }
