@@ -82,7 +82,7 @@ link(const char *from, const char *to)
 	real = (int (*)(const char *, const char *))dlsym(RTLD_NEXT, "link");
     if (active("ACFAULT_LINK", from, "ACFAULT_LINKFLAG")) {
 	shim_mark("refused link of %s", from);
-	errno = EIO;
+	errno = getenv("ACFAULT_LINK_EPERM") != NULL ? EPERM : EIO;
 	return -1;
     }
     return real(from, to);
@@ -303,6 +303,34 @@ func TestDeepRevAccessCacheSetKept(t *testing.T) {
 	}
 }
 
+// TestDeepRevAccessCacheLinkNotSupported: every install after the first keeps a hard link
+// to each access cache file in use. On a file system without hard links (FAT, some SMB and
+// FUSE mounts: link() fails with EPERM) no later install can work; the log must say so,
+// rather than only "Operation not permitted".
+//
+// A preloaded link() fails with EPERM for cache.readerdef: the log names the cause, the client
+// keeps A; once link() works again, B is installed.
+func TestDeepRevAccessCacheLinkNotSupported(t *testing.T) {
+	s, flag, mark, list := accessFaultSite(t, "ACFAULT_LINK=/cache.readerdef", "ACFAULT_LINK_EPERM=1")
+	if err := os.WriteFile(flag, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.WriteFile(t, "dreader.access", accessSetB)
+	testkit.WaitFor(t, 15*time.Second, "the install of B with the link of cache.readerdef refused", func() bool {
+		return len(shimMarked(mark, "refused link")) > 0
+	})
+	testkit.WaitFor(t, 5*time.Second, "the refused link in the log", func() bool {
+		return strings.Contains(generalLog(s), "Unable to link ")
+	})
+	if want := "the db directory must be on a file system with hard links"; !strings.Contains(generalLog(s), want) {
+		t.Errorf("the log of a link() refused with EPERM does not say %q", want)
+	}
+	if got := list(); !slices.Equal(got, []string{"e2e.test"}) {
+		t.Errorf("after the failed install: groups %q, want A's [e2e.test]", got)
+	}
+	waitB(t, flag, list)
+}
+
 // TestDeepRevAccessCacheLinkFailure (third review): before the renames each access cache file
 // in use gets a hard link <name>.old, to put it back when a later rename fails. A link that
 // failed for any reason was taken as "there was no such file", and the put-back then removed
@@ -333,6 +361,9 @@ func TestDeepRevAccessCacheLinkFailure(t *testing.T) {
 	}
 	if !strings.Contains(generalLog(s), "Unable to link ") {
 		t.Errorf("the refused link is not in the log")
+	}
+	if strings.Contains(generalLog(s), "file system with hard links") {
+		t.Errorf("a link() that failed with EIO is logged as a file system without hard links")
 	}
 	if got := list(); !slices.Equal(got, []string{"e2e.test"}) {
 		t.Errorf("after the failed install: groups %q, want A's [e2e.test]", got)

@@ -3738,8 +3738,16 @@ RenameAccessCache(void)
 	} else if (link(PatDbExpand(pats[i]), oldbuf[i]) == 0) {
 	    saved[i] = 1;
 	} else if (errno != ENOENT) {
-	    logit(LOG_CRIT, "Unable to link %s to %s (%s), access cache not installed",
-		PatDbExpand(pats[i]), oldbuf[i], strerror(errno));
+	    int e = errno;
+	    int nolinks = (e == EPERM || e == EOPNOTSUPP);
+
+#ifdef ENOTSUP
+	    nolinks = nolinks || e == ENOTSUP;
+#endif
+	    /* every install after the first needs hard links (FAT, some SMB/FUSE mounts have none) */
+	    logit(LOG_CRIT, "Unable to link %s to %s (%s), access cache not installed%s",
+		PatDbExpand(pats[i]), oldbuf[i], strerror(e),
+		nolinks ? ": the db directory must be on a file system with hard links" : "");
 	    r = -1;
 	}
     }
