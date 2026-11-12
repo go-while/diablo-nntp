@@ -3629,7 +3629,10 @@ accessValue(char *dst, size_t size, const char *val, const char *opt, int lineco
  * The renames are done under an exclusive lock: ReadAccessCache() opens
  * the five files under a shared one, so it gets all old or all new files.
  * While a reader holds it, the caller tries again on its next pass rather
- * than wait.  Returns 1 when done, 0 when the lock is busy, -1 on error.
+ * than wait.  Before the renames each file in use is kept as <name>.old,
+ * a hard link, or a copy (CopyAccessCacheOld()) where link() says the file
+ * cannot be linked there (linkRefused()), so that a failed rename can be
+ * put back.  Returns 1 when done, 0 when the lock is busy, -1 on error.
  */
 static int AccessRenamePending = 0;
 static time_t AccessRenameSince = 0;	/* when the renames were first put off */
@@ -3685,6 +3688,115 @@ AccessRetryMs(int maxMs)
     return((left < maxMs) ? (int)left + 1 : maxMs);
 }
 
+/*
+ * linkRefused() - did link() fail because this file cannot get a hard link
+ * here, rather than for a passing reason: a file system without hard links
+ * (EPERM, EOPNOTSUPP or ENOTSUP, which may be the same), a file the process
+ * may not link (Linux fs.protected_hardlinks for a file of another user, an
+ * immutable file: EPERM), a cache file that is a mount point or on another
+ * mount than its directory entry says (EXDEV), too many links (EMLINK).
+ * RenameAccessCache() then copies the file instead.
+ */
+static int
+linkRefused(int e)
+{
+#ifdef EPERM
+    if (e == EPERM)
+	return(1);
+#endif
+#ifdef EOPNOTSUPP
+    if (e == EOPNOTSUPP)
+	return(1);
+#endif
+#ifdef ENOTSUP
+    if (e == ENOTSUP)
+	return(1);
+#endif
+#ifdef EXDEV
+    if (e == EXDEV)
+	return(1);
+#endif
+#ifdef EMLINK
+    if (e == EMLINK)
+	return(1);
+#endif
+    return(0);
+}
+
+/*
+ * CopyAccessCacheOld() - keep the cache file path as old by copying it,
+ * where it cannot be hard linked: the copy is written to old.tmp in the
+ * same directory (mode 0600, as the cache files, see CreateAccessCache())
+ * and renamed to old when it is whole.  Returns 0 when done; -1 with errno
+ * set on any failure (also when path is not a regular file), and then
+ * old.tmp is removed and old is not there.
+ * The caller holds the exclusive access lock and has removed old.
+ */
+static int
+CopyAccessCacheOld(const char *path, const char *old)
+{
+    char tmp[PATH_MAX];
+    char buf[8192];
+    struct stat st;
+    int in;
+    int out = -1;
+    int made = 0;
+    int e;
+
+    if (snprintf(tmp, sizeof(tmp), "%s.tmp", old) >= (int)sizeof(tmp)) {
+	errno = ENAMETOOLONG;
+	return(-1);
+    }
+    if ((in = open(path, O_RDONLY)) < 0)
+	return(-1);
+    if (fstat(in, &st) < 0)
+	goto failed;
+    if (!S_ISREG(st.st_mode)) {
+	errno = S_ISDIR(st.st_mode) ? EISDIR : EINVAL;	/* not a cache file */
+	goto failed;
+    }
+    /* a temporary left by a crash would stop O_EXCL */
+    if (unlink(tmp) < 0 && errno != ENOENT)
+	goto failed;
+    if ((out = open(tmp, O_WRONLY|O_CREAT|O_EXCL, 0600)) < 0)
+	goto failed;
+    made = 1;
+    if (fchmod(out, 0600) < 0)
+	goto failed;
+    for (;;) {
+	ssize_t n = read(in, buf, sizeof(buf));
+
+	if (n < 0) {
+	    if (errno == EINTR)
+		continue;
+	    goto failed;
+	}
+	if (n == 0)
+	    break;
+	if (WriteAll(out, buf, n) < 0)
+	    goto failed;
+    }
+    e = close(out);
+    out = -1;
+    if (e < 0)
+	goto failed;
+    close(in);
+    in = -1;
+    if (rename(tmp, old) < 0)
+	goto failed;
+    return(0);
+failed:
+    e = errno;
+    if (out >= 0)
+	close(out);
+    if (in >= 0)
+	close(in);
+    if (made)
+	unlink(tmp);
+    errno = e;
+    return(-1);
+}
+
 static int
 RenameAccessCache(void)
 {
@@ -3692,6 +3804,9 @@ RenameAccessCache(void)
     char newbuf[PATH_MAX];
     char oldbuf[5][PATH_MAX];
     int saved[5];
+    int copied = 0;			/* <name>.old copies made, not links */
+    int copiedIdx = 0;			/* the first of them (pats[]) */
+    int copiedErr = 0;			/* its link() error */
     int tfp;
     int i;
     int r = 1;
@@ -3721,12 +3836,16 @@ RenameAccessCache(void)
     /*
      * The five files are one set: a reader must never load new files next
      * to old ones (a readerdef naming a group list the old cache.groupdef
-     * does not have gets the first list).  Keep a link to each file in use
-     * as <name>.old; when a rename fails, put back the files already
-     * renamed, write no stamp, and the readers keep the set they have.
-     * Only a file that is not there needs no link: when a link cannot be
-     * made, nothing is renamed.  (A crash in the middle of the renames is
-     * not covered: that would need a journal.)
+     * does not have gets the first list).  Keep each file in use as
+     * <name>.old, a hard link or, where link() says the file cannot be
+     * linked there (linkRefused()), a copy; when a rename fails, put back
+     * the files already renamed, write no stamp, and the readers keep the
+     * set they have.  The put-back renames <name>.old over the name either
+     * way; a copy has another inode, which nothing compares (a process
+     * that has the file open or mapped keeps the old inode).  Only a file
+     * that is not there needs no <name>.old: when one cannot be made,
+     * nothing is renamed.  (A crash in the middle of the renames is not
+     * covered: that would need a journal.)
      */
     for (i = 0; i < 5 && r > 0; ++i) {
 	snprintf(oldbuf[i], sizeof(oldbuf[i]), "%s.old", PatDbExpand(pats[i]));
@@ -3739,18 +3858,36 @@ RenameAccessCache(void)
 	    saved[i] = 1;
 	} else if (errno != ENOENT) {
 	    int e = errno;
-	    int nolinks = (e == EPERM || e == EOPNOTSUPP);
+	    int nolinks = 0;
 
+	    if (linkRefused(e)) {
+		if (CopyAccessCacheOld(PatDbExpand(pats[i]), oldbuf[i]) == 0) {
+		    saved[i] = 1;
+		    if (copied++ == 0) {
+			copiedIdx = i;
+			copiedErr = e;
+		    }
+		    continue;
+		}
+		logit(LOG_CRIT, "Unable to copy %s to %s (%s)",
+		    PatDbExpand(pats[i]), oldbuf[i], strerror(errno));
+	    }
+#ifdef EPERM
+	    nolinks = nolinks || e == EPERM;
+#endif
+#ifdef EOPNOTSUPP
+	    nolinks = nolinks || e == EOPNOTSUPP;
+#endif
 #ifdef ENOTSUP
 	    nolinks = nolinks || e == ENOTSUP;
 #endif
 	    /*
-	     * every install after the first needs hard links.  EPERM and
-	     * EOPNOTSUPP have more than one cause: a file system without
-	     * hard links (FAT, some SMB/FUSE mounts), a cache file the
-	     * process may not link (Linux fs.protected_hardlinks for a file
-	     * of another user, an immutable file), a directory in the place
-	     * of a cache file; the hint names what to check, not one cause.
+	     * neither a link nor a copy.  EPERM and EOPNOTSUPP have more
+	     * than one cause: a file system without hard links (FAT, some
+	     * SMB/FUSE mounts), a cache file the process may not link (Linux
+	     * fs.protected_hardlinks for a file of another user, an
+	     * immutable file), a directory in the place of a cache file; the
+	     * hint names what to check, not one cause.
 	     */
 	    logit(LOG_CRIT, "Unable to link %s to %s (%s), access cache not installed%s",
 		PatDbExpand(pats[i]), oldbuf[i], strerror(e),
@@ -3758,6 +3895,12 @@ RenameAccessCache(void)
 		    " (check that the file system supports hard links and that the ownership, permissions and attributes of the cache files allow them)" : "");
 	    r = -1;
 	}
+    }
+    if (copied > 0) {
+	/* once per install: on a file system without hard links, every one */
+	logit(LOG_NOTICE, "Copied %s to %s, it cannot be hard linked (%s)%s",
+	    PatDbExpand(pats[copiedIdx]), oldbuf[copiedIdx], strerror(copiedErr),
+	    (copied > 1) ? ", and other access cache files the same way" : "");
     }
     for (i = 0; i < 5 && r > 0; ++i) {
 	snprintf(newbuf, sizeof(newbuf), "%s.new", PatDbExpand(pats[i]));

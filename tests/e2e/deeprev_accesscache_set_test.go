@@ -16,8 +16,10 @@ import (
 // accessFaultSource makes file calls of the access cache install fail with EIO while the
 // file ACFAULT_FLAG exists: rename() of a name ending in one of the comma-separated suffixes
 // in ACFAULT_RENAME, unlink() of one in ACFAULT_UNLINK; link() from one in ACFAULT_LINK while
-// the file ACFAULT_LINKFLAG exists (ACFAULT_FLAG when unset); fstat() of a descriptor whose
-// file name ends in one in ACFAULT_FSTAT while ACFAULT_FSTATFLAG exists. Each refused call is
+// the file ACFAULT_LINKFLAG exists (ACFAULT_FLAG when unset), with the errno named by
+// ACFAULT_LINK_ERRNO (EPERM, ENOTSUP, EXDEV, EMLINK; EIO when unset); fstat() of a descriptor
+// whose file name ends in one in ACFAULT_FSTAT while ACFAULT_FSTATFLAG exists; write() to a
+// descriptor whose file name ends in one in ACFAULT_WRITE (ENOSPC). Each refused call is
 // marked.
 const accessFaultSource = `#define _GNU_SOURCE
 #define __EXTENSIONS__
@@ -73,6 +75,24 @@ rename(const char *from, const char *to)
     return real(from, to);
 }
 
+static int
+link_errno(void)
+{
+    const char *e = getenv("ACFAULT_LINK_ERRNO");
+
+    if (e == NULL)
+	return EIO;
+    if (strcmp(e, "EPERM") == 0)
+	return EPERM;
+    if (strcmp(e, "ENOTSUP") == 0)
+	return ENOTSUP;
+    if (strcmp(e, "EXDEV") == 0)
+	return EXDEV;
+    if (strcmp(e, "EMLINK") == 0)
+	return EMLINK;
+    return EIO;
+}
+
 int
 link(const char *from, const char *to)
 {
@@ -82,7 +102,7 @@ link(const char *from, const char *to)
 	real = (int (*)(const char *, const char *))dlsym(RTLD_NEXT, "link");
     if (active("ACFAULT_LINK", from, "ACFAULT_LINKFLAG")) {
 	shim_mark("refused link of %s", from);
-	errno = getenv("ACFAULT_LINK_EPERM") != NULL ? EPERM : EIO;
+	errno = link_errno();
 	return -1;
     }
     return real(from, to);
@@ -117,6 +137,25 @@ fstat_refused(int fd)
 	return 1;
     }
     return 0;
+}
+
+ssize_t
+write(int fd, const void *buf, size_t n)
+{
+    static ssize_t (*real)(int, const void *, size_t);
+    char path[4096];
+
+    if (real == NULL)
+	real = (ssize_t (*)(int, const void *, size_t))dlsym(RTLD_NEXT, "write");
+    if (getenv("ACFAULT_WRITE") != NULL) {
+	fdpath(fd, path, sizeof(path));
+	if (path[0] && active("ACFAULT_WRITE", path, "ACFAULT_FLAG")) {
+	    shim_mark("refused write of %s", path);
+	    errno = ENOSPC;
+	    return -1;
+	}
+    }
+    return real(fd, buf, n);
 }
 
 /*
@@ -303,33 +342,171 @@ func TestDeepRevAccessCacheSetKept(t *testing.T) {
 	}
 }
 
-// TestDeepRevAccessCacheLinkNotSupported: every install after the first keeps a hard link
-// to each access cache file in use. On a file system without hard links (FAT, some SMB and
-// FUSE mounts: link() fails with EPERM), or where the ownership, permissions or attributes of
-// a cache file forbid the link (also EPERM), no later install can work; the log must say what
-// to check, rather than only "Operation not permitted".
+// TestDeepRevAccessCacheLinkNotSupported: every install after the first keeps each access
+// cache file in use as <name>.old, to put it back when a later rename fails. On a file system
+// without hard links (FAT, some SMB and FUSE mounts: link() fails with EPERM or ENOTSUP), or
+// where the ownership, permissions or attributes of a cache file forbid the link (EPERM, for
+// example Linux fs.protected_hardlinks and a cache file of another user), link() can never
+// work; EXDEV and EMLINK neither. The install then refused every change of dreader.access for
+// as long as the cause lasted (before the put-back copies, it renamed over the file). Now the
+// file is copied to <name>.old instead, logged once per install.
 //
-// A preloaded link() fails with EPERM for cache.readerdef: the log names the need and both
-// kinds of cause, the client keeps A; once link() works again, B is installed.
+// A preloaded link() fails with the errno of the subtest for every cache file: B must be
+// installed while it still fails, the copies logged, and no <name>.old nor temporary left.
+// (Until the copy, this test expected the refusal with the hint; the refusal is now
+// TestDeepRevAccessCacheCopyFailure's case.)
 func TestDeepRevAccessCacheLinkNotSupported(t *testing.T) {
-	s, flag, mark, list := accessFaultSite(t, "ACFAULT_LINK=/cache.readerdef", "ACFAULT_LINK_EPERM=1")
+	links := "ACFAULT_LINK=/" + strings.Join(accessCacheFiles, ",/")
+	for _, e := range []string{"EPERM", "EXDEV", "ENOTSUP"} {
+		t.Run(e, func(t *testing.T) {
+			s, flag, mark, list := accessFaultSite(t, links, "ACFAULT_LINK_ERRNO="+e)
+			if err := os.WriteFile(flag, nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			s.WriteFile(t, "dreader.access", accessSetB)
+			var got []string
+			testkit.WaitFor(t, 15*time.Second, "B installed while link() fails with "+e, func() bool {
+				got = list()
+				return slices.Equal(got, []string{"e2e.other"})
+			})
+			if n := len(shimMarked(mark, "refused link")); n < len(accessCacheFiles) {
+				t.Errorf("%d refused links, want one for each of the %d cache files", n, len(accessCacheFiles))
+			}
+			log := generalLog(s)
+			if want := "it cannot be hard linked"; !strings.Contains(log, "Copied ") || !strings.Contains(log, want) {
+				t.Errorf("the copy in the place of the link is not logged (no \"Copied ... %s\")", want)
+			}
+			if strings.Contains(log, "access cache not installed") {
+				t.Errorf("an install whose links could be copied was refused")
+			}
+			for _, f := range accessCacheFiles {
+				for _, x := range []string{".old", ".old.tmp"} {
+					if _, err := os.Stat(filepath.Join(s.Dir, f+x)); err == nil {
+						t.Errorf("%s%s left behind", f, x)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestDeepRevAccessCacheCopyFailure: where link() cannot work (EPERM) and the copy to
+// <name>.old fails too (here a write to the temporary fails with ENOSPC, or its rename to
+// <name>.old fails), nothing may be renamed: the install is refused with the hint of what to
+// check, retried, and the temporary removed; once the faults are gone, B is installed.
+func TestDeepRevAccessCacheCopyFailure(t *testing.T) {
+	for _, c := range []struct{ name, env, mark string }{
+		{"write", "ACFAULT_WRITE=/cache.readerdef.old.tmp", "refused write"},
+		{"rename", "ACFAULT_RENAME=/cache.readerdef.old.tmp", "refused rename"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s, flag, mark, list := accessFaultSite(t, "ACFAULT_LINK=/cache.readerdef", "ACFAULT_LINK_ERRNO=EPERM", c.env)
+			files := append(slices.Clone(accessCacheFiles), ".accesslock")
+			before := fileIds(t, s.Dir, files...)
+			if err := os.WriteFile(flag, nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			s.WriteFile(t, "dreader.access", accessSetB)
+			testkit.WaitFor(t, 20*time.Second, "two tries of the install of B, the copy of cache.readerdef failed", func() bool {
+				return len(shimMarked(mark, c.mark)) >= 2 &&
+					strings.Count(generalLog(s), "Unable to copy ") >= 2
+			})
+			log := generalLog(s)
+			if want := "every install after the first needs a hard link to each cache file in the db directory (check that the file system supports hard links and that the ownership, permissions and attributes of the cache files allow them)"; !strings.Contains(log, want) {
+				t.Errorf("the log of a link() refused with EPERM and a failed copy does not say %q", want)
+			}
+			if strings.Contains(log, "Copied ") {
+				t.Errorf("a failed copy is logged as done")
+			}
+			after := fileIds(t, s.Dir, files...)
+			for _, f := range files {
+				if after[f] != before[f] {
+					t.Errorf("%s changed in an install that could keep cache.readerdef neither as a link nor as a copy: %s, was %s", f, after[f], before[f])
+				}
+			}
+			for _, x := range []string{".old", ".old.tmp"} {
+				if _, err := os.Stat(filepath.Join(s.Dir, "cache.readerdef"+x)); err == nil {
+					t.Errorf("cache.readerdef%s left behind by the failed copy", x)
+				}
+			}
+			if got := list(); !slices.Equal(got, []string{"e2e.test"}) {
+				t.Errorf("after the failed install: groups %q, want A's [e2e.test]", got)
+			}
+			waitB(t, flag, list)
+		})
+	}
+}
+
+// TestDeepRevAccessCacheCopyPutBack: a put-back copy must do what a link does. link() fails
+// with EPERM for every cache file, so each <name>.old is a copy, and rename() refuses
+// cache.readeraccess.new, the last of the five: the four files already renamed must be put
+// back from their copies (same contents, the copy's inode), cache.readeraccess and the lock
+// file untouched, the client keeps A; once the faults are gone, B is installed and no
+// <name>.old is left.
+func TestDeepRevAccessCacheCopyPutBack(t *testing.T) {
+	links := "ACFAULT_LINK=/" + strings.Join(accessCacheFiles, ",/")
+	s, flag, mark, list := accessFaultSite(t, links, "ACFAULT_LINK_ERRNO=EPERM", "ACFAULT_RENAME=/cache.readeraccess.new")
+	files := append(slices.Clone(accessCacheFiles), ".accesslock")
+	before := fileIds(t, s.Dir, files...)
+	content := map[string][]byte{}
+	for _, f := range accessCacheFiles {
+		b, err := os.ReadFile(filepath.Join(s.Dir, f))
+		if err != nil {
+			t.Fatal(err)
+		}
+		content[f] = b
+	}
 	if err := os.WriteFile(flag, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	s.WriteFile(t, "dreader.access", accessSetB)
-	testkit.WaitFor(t, 15*time.Second, "the install of B with the link of cache.readerdef refused", func() bool {
-		return len(shimMarked(mark, "refused link")) > 0
+	testkit.WaitFor(t, 15*time.Second, "the install of B with the rename of cache.readeraccess refused", func() bool {
+		return len(shimMarked(mark, "refused rename")) > 0 &&
+			strings.Contains(generalLog(s), "Unable to rename ")
 	})
-	testkit.WaitFor(t, 5*time.Second, "the refused link in the log", func() bool {
-		return strings.Contains(generalLog(s), "Unable to link ")
-	})
-	if want := "every install after the first needs a hard link to each cache file in the db directory (check that the file system supports hard links and that the ownership, permissions and attributes of the cache files allow them)"; !strings.Contains(generalLog(s), want) {
-		t.Errorf("the log of a link() refused with EPERM does not say %q", want)
+	time.Sleep(time.Second)
+	log := generalLog(s)
+	if !strings.Contains(log, "Copied ") {
+		t.Errorf("the copies in the place of the links are not logged")
 	}
-	if got := list(); !slices.Equal(got, []string{"e2e.test"}) {
-		t.Errorf("after the failed install: groups %q, want A's [e2e.test]", got)
+	if strings.Contains(log, "Unable to put back") || strings.Contains(log, "not one set") {
+		t.Errorf("the put-back from the copies failed")
+	}
+	after := fileIds(t, s.Dir, files...)
+	for _, f := range accessCacheFiles {
+		b, err := os.ReadFile(filepath.Join(s.Dir, f))
+		if err != nil {
+			t.Errorf("%s after the put-back: %v", f, err)
+			continue
+		}
+		if string(b) != string(content[f]) {
+			t.Errorf("%s after the put-back does not hold A's cache (%d bytes, was %d)", f, len(b), len(content[f]))
+		}
+		ino := func(id string) string { return strings.SplitN(id, "/", 2)[0] }
+		if f == "cache.readeraccess" {
+			if after[f] != before[f] {
+				t.Errorf("%s, whose rename failed, changed: %s, was %s", f, after[f], before[f])
+			}
+		} else if ino(after[f]) == ino(before[f]) {
+			t.Errorf("%s has its old inode %s: it was not renamed and put back from its copy", f, ino(after[f]))
+		}
+	}
+	if after[".accesslock"] != before[".accesslock"] {
+		t.Errorf("the lock file's stamp changed in a failed install: %s, was %s", after[".accesslock"], before[".accesslock"])
+	}
+	for i := 0; i < 3; i++ { // the reader and the DNS worker both load the cache
+		if got := list(); !slices.Equal(got, []string{"e2e.test"}) {
+			t.Fatalf("after the put-back from the copies: groups %q, want A's [e2e.test]", got)
+		}
 	}
 	waitB(t, flag, list)
+	for _, f := range accessCacheFiles {
+		for _, x := range []string{".old", ".old.tmp"} {
+			if _, err := os.Stat(filepath.Join(s.Dir, f+x)); err == nil {
+				t.Errorf("%s%s left behind", f, x)
+			}
+		}
+	}
 }
 
 // TestDeepRevAccessCacheLinkFailure (third review): before the renames each access cache file
