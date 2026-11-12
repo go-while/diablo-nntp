@@ -1,0 +1,1 @@
+- dexpire: `-o` with `-n` (or without `-a`) still wrote the hashes of the articles it would have expired to the dexpover list, which the next `dexpireover -o` then expired from the overview; a dry run no longer opens the list.

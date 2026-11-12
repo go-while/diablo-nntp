@@ -80,6 +80,8 @@ SpoolGunzip(int fd, off_t off, char *buf, int len)
 
 #else
 
+static int syncDirOf(const char *path);
+
 int
 dominigzip(int ifd, int ofd, const char *outbase, uint32_t mtime, off_t *osizep)
 {
@@ -226,11 +228,6 @@ diablo_minigzip(char *file)
 	off_t osize;
 	struct timeval tv[2];
 
-	/* Input file error - do not proceed */
-	if (stat(file, &isb)) {
-		return(-1);
-	}
-
 	/* Final output file filename */
 	n = snprintf(outname, sizeof(outname), "%s.gz", file);
 	if (n < 0 || (size_t)n >= sizeof(outname))
@@ -256,20 +253,21 @@ diablo_minigzip(char *file)
 	if (n < 0 || (size_t)n >= sizeof(outbase))
 		return(-1);
 
-	/* Output tmp file exists - do not proceed */
-	if (! stat(outtmp, &sb)) {
-		return(-1);
-	}
-
 	/* Output file exists - do not proceed */
 	if (! stat(outname, &sb)) {
 		return(-1);
 	}
 
+	/* Input file error - do not proceed; its stat() from the open file */
 	if ((ifd = open(file, O_RDONLY)) < 0) {
 		return(-1);
 	}
+	if (fstat(ifd, &isb) < 0) {
+		close(ifd);
+		return(-1);
+	}
 
+	/* Output tmp file exists (O_EXCL) - do not proceed */
 	if ((ofd = open(outtmp, O_WRONLY | O_CREAT | O_EXCL, 0600)) < 0) {
 		close(ifd);
 		return(-1);
@@ -284,7 +282,7 @@ diablo_minigzip(char *file)
 
 	close(ifd);
 
-	if (stat(outtmp, &sb)) {
+	if (fstat(ofd, &sb)) {
 		close(ofd);
 		unlink(outtmp);
 		return(-1);
@@ -314,10 +312,34 @@ diablo_minigzip(char *file)
 		unlink(outtmp);
 		return(-1);
 	}
-	close(ofd);
+	/*
+	 * The original is removed below: the compressed copy has to be on
+	 * disk first, or a crash leaves neither.
+	 */
+	if (fsync(ofd) < 0) {
+		close(ofd);
+		unlink(outtmp);
+		return(-1);
+	}
+	if (close(ofd) < 0) {
+		unlink(outtmp);
+		return(-1);
+	}
 
 	if (rename(outtmp, outname)) {
 		unlink(outtmp);
+		return(-1);
+	}
+
+	/*
+	 * And the new name too, before the old file goes: after a crash
+	 * the directory could have the unlink and not the rename.  If it
+	 * cannot be synced, the .gz goes again and the original stays.  A
+	 * file system that cannot sync a directory (EINVAL) has nothing
+	 * to wait for.
+	 */
+	if (syncDirOf(outname) < 0) {
+		unlink(outname);
 		return(-1);
 	}
 
@@ -325,6 +347,33 @@ diablo_minigzip(char *file)
 		return(-1);
 
 	return(0);
+}
+
+/*
+ * syncDirOf() - fsync the directory that holds path.  Returns -1 on
+ * failure; EINVAL (no sync for directories there) is not a failure.
+ */
+static int
+syncDirOf(const char *path)
+{
+	char dir[PATH_MAX + 1];
+	char *p;
+	int dfd, r;
+
+	snprintf(dir, sizeof(dir), "%s", path);
+	if ((p = strrchr(dir, '/')) == NULL)
+		snprintf(dir, sizeof(dir), ".");
+	else if (p == dir)
+		p[1] = '\0';
+	else
+		*p = '\0';
+	if ((dfd = open(dir, O_RDONLY)) < 0)
+		return(-1);
+	r = fsync(dfd);
+	if (r < 0 && errno == EINVAL)
+		r = 0;
+	close(dfd);
+	return(r);
 }
 
 /*

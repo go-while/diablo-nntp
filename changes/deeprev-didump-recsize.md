@@ -1,0 +1,1 @@
+- didump: the record size in the history header was not checked (nothing or pieces of records dumped with a small size, a stack overwrite with `-t` and a large one); such a history is now refused as corrupted.

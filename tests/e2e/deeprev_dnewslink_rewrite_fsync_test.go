@@ -13,6 +13,7 @@ import (
 
 // fsyncFailSource makes fsync() of a file whose path holds FSYNCFAIL_FILE fail with EIO, and
 // then appends that path to the file FSYNCFAIL_MARK: the test sees that the fault was hit.
+// With FSYNCFAIL_DIRONLY set only the fsync() of a directory fails.
 const fsyncFailSource = `#define _GNU_SOURCE
 #define __EXTENSIONS__
 #include <dlfcn.h>
@@ -21,6 +22,7 @@ const fsyncFailSource = `#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 /*FDPATH*/
 int
@@ -36,7 +38,12 @@ fsync(int fd)
     fdpath(fd, path, sizeof(path));
     if (only != NULL && path[0] != 0 && strstr(path, only) != NULL) {
 	const char *mark = getenv("FSYNCFAIL_MARK");
+	struct stat st;
 	int mfd;
+
+	if (getenv("FSYNCFAIL_DIRONLY") != NULL &&
+	    (fstat(fd, &st) != 0 || !S_ISDIR(st.st_mode)))
+	    return real(fd);
 
 	if (mark != NULL && (mfd = open(mark, O_WRONLY|O_CREAT|O_APPEND, 0644)) >= 0) {
 	    (void)write(mfd, path, strlen(path));

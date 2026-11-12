@@ -1,0 +1,1 @@
+- dexpire: a stray `D.<not 8 hex digits>` name in a spool object made the spool look decades old, and a `keeptime` spool then lost directories that were not due.
