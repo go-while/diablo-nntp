@@ -17,10 +17,10 @@ import (
 // file ACFAULT_FLAG exists: rename() of a name ending in one of the comma-separated suffixes
 // in ACFAULT_RENAME, unlink() of one in ACFAULT_UNLINK; link() from one in ACFAULT_LINK while
 // the file ACFAULT_LINKFLAG exists (ACFAULT_FLAG when unset), with the errno named by
-// ACFAULT_LINK_ERRNO (EPERM, ENOTSUP, EXDEV, EMLINK; EIO when unset); fstat() of a descriptor
-// whose file name ends in one in ACFAULT_FSTAT while ACFAULT_FSTATFLAG exists; write() to a
-// descriptor whose file name ends in one in ACFAULT_WRITE (ENOSPC). Each refused call is
-// marked.
+// ACFAULT_LINK_ERRNO (EPERM, ENOTSUP, EXDEV, EMLINK; EIO for any other name or none);
+// fstat() of a descriptor whose file name ends in one in ACFAULT_FSTAT while
+// ACFAULT_FSTATFLAG exists; write() to a descriptor whose file name ends in one in
+// ACFAULT_WRITE (ENOSPC). Each refused call is marked.
 const accessFaultSource = `#define _GNU_SOURCE
 #define __EXTENSIONS__
 #include <dlfcn.h>
@@ -347,9 +347,9 @@ func TestDeepRevAccessCacheSetKept(t *testing.T) {
 // without hard links (FAT, some SMB and FUSE mounts: link() fails with EPERM or ENOTSUP), or
 // where the ownership, permissions or attributes of a cache file forbid the link (EPERM, for
 // example Linux fs.protected_hardlinks and a cache file of another user), link() can never
-// work; EXDEV and EMLINK neither. The install then refused every change of dreader.access for
-// as long as the cause lasted (before the put-back copies, it renamed over the file). Now the
-// file is copied to <name>.old instead, logged once per install.
+// work; EXDEV and EMLINK neither. Base 4e8828c renamed over the file; e9dc06b then refused
+// every change of dreader.access for as long as the cause lasted. Now the file is copied to
+// <name>.old instead, logged once per install.
 //
 // A preloaded link() fails with the errno of the subtest for every cache file: B must be
 // installed while it still fails, the copies logged, and no <name>.old nor temporary left.
@@ -473,6 +473,7 @@ func TestDeepRevAccessCacheCopyPutBack(t *testing.T) {
 		t.Errorf("the put-back from the copies failed")
 	}
 	after := fileIds(t, s.Dir, files...)
+	ino := func(id string) string { return strings.SplitN(id, "/", 2)[0] }
 	for _, f := range accessCacheFiles {
 		b, err := os.ReadFile(filepath.Join(s.Dir, f))
 		if err != nil {
@@ -482,7 +483,6 @@ func TestDeepRevAccessCacheCopyPutBack(t *testing.T) {
 		if string(b) != string(content[f]) {
 			t.Errorf("%s after the put-back does not hold A's cache (%d bytes, was %d)", f, len(b), len(content[f]))
 		}
-		ino := func(id string) string { return strings.SplitN(id, "/", 2)[0] }
 		if f == "cache.readeraccess" {
 			if after[f] != before[f] {
 				t.Errorf("%s, whose rename failed, changed: %s, was %s", f, after[f], before[f])

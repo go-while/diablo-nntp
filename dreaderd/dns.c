@@ -3693,8 +3693,8 @@ AccessRetryMs(int maxMs)
  * here, rather than for a passing reason: a file system without hard links
  * (EPERM, EOPNOTSUPP or ENOTSUP, which may be the same), a file the process
  * may not link (Linux fs.protected_hardlinks for a file of another user, an
- * immutable file: EPERM), a cache file that is a mount point or on another
- * mount than its directory entry says (EXDEV), too many links (EMLINK).
+ * immutable file: EPERM), the two names on different mounts (EXDEV, as
+ * for a cache file that is a bind mount), too many links (EMLINK).
  * RenameAccessCache() then copies the file instead.
  */
 static int
@@ -3861,6 +3861,8 @@ RenameAccessCache(void)
 	    int nolinks = 0;
 
 	    if (linkRefused(e)) {
+		int ce;
+
 		if (CopyAccessCacheOld(PatDbExpand(pats[i]), oldbuf[i]) == 0) {
 		    saved[i] = 1;
 		    if (copied++ == 0) {
@@ -3869,8 +3871,9 @@ RenameAccessCache(void)
 		    }
 		    continue;
 		}
+		ce = errno;	/* before the arguments are evaluated */
 		logit(LOG_CRIT, "Unable to copy %s to %s (%s)",
-		    PatDbExpand(pats[i]), oldbuf[i], strerror(errno));
+		    PatDbExpand(pats[i]), oldbuf[i], strerror(ce));
 	    }
 #ifdef EPERM
 	    nolinks = nolinks || e == EPERM;
@@ -3882,12 +3885,13 @@ RenameAccessCache(void)
 	    nolinks = nolinks || e == ENOTSUP;
 #endif
 	    /*
-	     * neither a link nor a copy.  EPERM and EOPNOTSUPP have more
-	     * than one cause: a file system without hard links (FAT, some
-	     * SMB/FUSE mounts), a cache file the process may not link (Linux
-	     * fs.protected_hardlinks for a file of another user, an
-	     * immutable file), a directory in the place of a cache file; the
-	     * hint names what to check, not one cause.
+	     * no link, and no copy (tried only after linkRefused() errors:
+	     * any other, such as EIO, may be passing).  EPERM and EOPNOTSUPP
+	     * have more than one cause: a file system without hard links
+	     * (FAT, some SMB/FUSE mounts), a cache file the process may not
+	     * link (Linux fs.protected_hardlinks for a file of another user,
+	     * an immutable file), a directory in the place of a cache file;
+	     * the hint names what to check, not one cause.
 	     */
 	    logit(LOG_CRIT, "Unable to link %s to %s (%s), access cache not installed%s",
 		PatDbExpand(pats[i]), oldbuf[i], strerror(e),
@@ -3918,7 +3922,7 @@ RenameAccessCache(void)
 
 	/* i: the rename that failed (or 0 when a link failed: nothing to do) */
 	for (j = 0; j < i; ++j) {
-	    /* without a link there was no file in use: remove the new one */
+	    /* without a <name>.old there was no file in use: remove the new one */
 	    if (saved[j] ? rename(oldbuf[j], PatDbExpand(pats[j])) < 0 :
 			(unlink(PatDbExpand(pats[j])) < 0 && errno != ENOENT)) {
 		logit(LOG_CRIT, "Unable to put back %s (%s)",
