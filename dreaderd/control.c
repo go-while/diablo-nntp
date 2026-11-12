@@ -470,8 +470,9 @@ ParseControl(Connection *conn, const char *cmd, const char *from, const char *ne
 	++lineNo;
 	if (tooLong) {
 	    /* its tail must not be read as a line of its own (D-94) */
+	    /* ConfigGets() takes sizeof(buf) - 1 characters before the newline */
 	    logit(LOG_ERR, "%s: line %d too long (at most %d characters), ignored",
-		PatLibExpand(DControlCtlPat), lineNo, (int)sizeof(buf) - 2);
+		PatLibExpand(DControlCtlPat), lineNo, (int)sizeof(buf) - 1);
 	    continue;
 	}
 	char *smsg;
@@ -1611,8 +1612,9 @@ CgLocalGroups(char **ppat)
 	    continue;
 	if (tooLong) {
 	    /* its tail must not be read as a pattern of its own */
+	    /* ConfigGets() takes sizeof(buf) - 1 characters before the newline */
 	    logit(LOG_ERR, "%s: line %d too long (at most %d characters), ignored",
-		PatLibExpand("%s/localgroups"), lineNo, (int)sizeof(buf) - 2);
+		PatLibExpand("%s/localgroups"), lineNo, (int)sizeof(buf) - 1);
 	    continue;
 	}
 	r = CgAppend(ppat, g);

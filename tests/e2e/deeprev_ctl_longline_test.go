@@ -60,4 +60,26 @@ func TestDeepRevCheckgroupsLongLines(t *testing.T) {
 			t.Errorf("e2e.obsolete was not removed by the checkgroups: the end of a comment line of localgroups longer than the buffer was read as the pattern \"e2e.obsolete\"")
 		}
 	})
+
+	// the log names the real limit: a line of 255 characters is read, one of 256 is not
+	t.Run("localgroups limit", func(t *testing.T) {
+		fits := "zz.fits." + strings.Repeat("x", 247)
+		over := "zz.over." + strings.Repeat("x", 248)
+		s := cgSiteWith(t, []string{"e2e.test", "e2e.obsolete"},
+			map[string]string{"dcontrol.ctl": "checkgroups:*:*:doit\n" + cgGroupLines, "localgroups": fits + "\n" + over + "\n"},
+			nil,
+			"e2e.test\tThe test group.")
+		want := "localgroups: line 2 too long (at most 255 characters), ignored"
+		limit := time.Now().Add(15 * time.Second)
+		for time.Now().Before(limit) && !strings.Contains(generalLog(s), want) {
+			time.Sleep(200 * time.Millisecond)
+		}
+		log := generalLog(s)
+		if !strings.Contains(log, want) {
+			t.Errorf("general.log does not say %q for the localgroups line of 256 characters:\n%s", want, log)
+		}
+		if strings.Contains(log, "localgroups: line 1 too long") {
+			t.Errorf("the localgroups line of 255 characters was refused as too long")
+		}
+	})
 }
