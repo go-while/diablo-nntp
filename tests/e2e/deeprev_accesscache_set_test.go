@@ -122,7 +122,9 @@ fstat_refused(int fd)
 /*
  * NetBSD's <sys/stat.h> renames fstat() to __fstat50 (the struct stat of today), so this
  * definition is __fstat50 there, and the libc symbol "fstat" is the old one for old binaries
- * with another struct stat: look up the same name.
+ * with another struct stat: look up the same name. Not handled: 32-bit musl with 64-bit
+ * time_t (_REDIR_TIME64), where "fstat" may name an old-layout symbol (the lookup then does
+ * not fail).
  */
 #ifdef __NetBSD__
 #define FSTAT_NAME "__fstat50"

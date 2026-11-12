@@ -29,6 +29,8 @@ const timeShiftSource = `#define _GNU_SOURCE
 /*
  * NetBSD's <time.h> renames time() to __time50 (64-bit time_t), so this definition is
  * __time50 there, and the libc symbol "time" is the old one: look up the same name.
+ * Not handled: 32-bit musl with 64-bit time_t (_REDIR_TIME64), where the header renames
+ * this definition but "time" may name a compatible old symbol (the lookup then does not fail).
  */
 #ifdef __NetBSD__
 #define TIME_NAME "__time50"

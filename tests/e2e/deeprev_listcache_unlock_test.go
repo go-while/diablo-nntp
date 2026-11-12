@@ -2,11 +2,14 @@ package e2e
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -90,11 +93,19 @@ GTOD(struct timeval *tv, void *tz)
 //
 // The cache answers NEWGROUPS in the order of creation time (groups of the same second in
 // the reverse order), a scan of the group list in its own order: that tells the answers
-// apart. With idletimeout and sessiontimeout 600 (no timeout during the setup), a client
-// sends NEWGROUPS and does not read, so it stays in the middle of its answer from the cache;
-// then a preloaded gettimeofday() moves the reader's clock an hour on, past both limits, and
-// the reader's next check of all descriptors ends the client by both timeouts in one pass.
-// Then a new group: the second NEWGROUPS after it must come from the rebuilt cache again.
+// apart. With idletimeout and sessiontimeout 600 (no timeout during the setup), a client from
+// an address of its own (its timeout lines are its own) sends NEWGROUPS, reads the answer up
+// to the first group where the cache order and the scan order differ (so the answer comes
+// from the cache and the connection holds the read lock), then stops reading; on Linux the
+// server side of the connection must show unsent bytes. Then a preloaded gettimeofday()
+// moves the reader's clock an hour on, past both limits, the reader's next check of all
+// descriptors must end the client by both timeouts in one pass, and the client must see the
+// connection closed (not a read timeout) before the end of the answer. Then a new group: the
+// second NEWGROUPS after it must come from the rebuilt cache again.
+//
+// The test needs LD_PRELOAD (it is skipped where preloadShim cannot build or load the
+// injector, e.g. OpenBSD). On 32-bit musl with 64-bit time_t (_REDIR_TIME64) the program
+// calls __gettimeofday_time64, which the injector does not define: no mark, the test fails.
 func TestDeepRevListCacheUnlockOnce(t *testing.T) {
 	so := preloadShim(t, "clockjump", withMark(clockJumpSource))
 	dir := t.TempDir()
@@ -115,6 +126,7 @@ readerdef rp
     txbufsize 512
 end
 access 127.0.0.1 rp
+access 127.0.0.6 rp
 `
 	_, spool := spoolStore(t)
 	s := NewReaderSite(t, ReaderOptions{Spool: spool, Groups: groups, Access: access, NoStart: true})
@@ -145,23 +157,64 @@ access 127.0.0.1 rp
 			len(scan), slices.Equal(scan, cached))
 	}
 
-	// a client that asks and does not read: it stays in the middle of the answer from the cache
-	count := func(what string) int { return strings.Count(generalLog(s), "timeout "+what+" 127.0.0.1") }
-	idle, session := count("idle"), count("session")
-	d := net.Dialer{Timeout: 10 * time.Second, Control: func(_, _ string, rc syscall.RawConn) error {
-		var err error
-		rc.Control(func(fd uintptr) { err = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_RCVBUF, 1024) })
-		return err
-	}}
+	// A client, from an address of its own so that its timeout lines are its own, asks and
+	// reads only a little: it stays in the middle of the answer from the cache.
+	const client = "127.0.0.6"
+	count := func(what string) int { return strings.Count(generalLog(s), "timeout "+what+" "+client) }
+	d := net.Dialer{Timeout: 10 * time.Second, LocalAddr: &net.TCPAddr{IP: net.ParseIP(client)},
+		Control: func(_, _ string, rc syscall.RawConn) error {
+			var err error
+			rc.Control(func(fd uintptr) { err = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_RCVBUF, 1024) })
+			return err
+		}}
 	v, err := d.Dial("tcp", s.Addr)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer v.Close()
+	r := bufio.NewReader(v)
+	v.SetReadDeadline(time.Now().Add(10 * time.Second))
+	if g, err := r.ReadString('\n'); err != nil || !strings.HasPrefix(g, "20") {
+		t.Fatalf("greeting from %s: %q %v", client, g, err)
+	}
 	if _, err := fmt.Fprintf(v, "NEWGROUPS 000101 000000 GMT\r\n"); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(time.Second) // the reader has filled the buffers and waits to write
+	// Barrier before the jump: the client reads the answer up to the first group where the
+	// order of the cache and that of the scan differ, so the answer comes from the cache (the
+	// connection holds the read lock), then stops reading.
+	k := 0
+	for k < len(cached) && k < len(scan) && cached[k] == scan[k] {
+		k++
+	}
+	k++
+	if k > len(groups)/2 {
+		t.Fatalf("the scenario did not develop: the cache and the scan order agree for the first %d groups", k-1)
+	}
+	if l, err := r.ReadString('\n'); err != nil || !strings.HasPrefix(l, "231 ") {
+		t.Fatalf("NEWGROUPS from %s: %q %v", client, l, err)
+	}
+	for i := 0; i < k; i++ {
+		l, err := r.ReadString('\n')
+		if err != nil {
+			t.Fatalf("NEWGROUPS from %s: group %d: %v", client, i+1, err)
+		}
+		if f := strings.Fields(l); len(f) == 0 || f[0] != cached[i] {
+			t.Fatalf("the scenario did not develop: group %d of the answer is %q, want %s of the cache order", i+1, l, cached[i])
+		}
+	}
+	// ... and the reader has more to write than the buffers take: the rest of the answer (about
+	// 200 bytes a group) is far more than the socket buffers (txbufsize 512, a client buffer
+	// of 1 KB, a few KB of slack) and dreaderd's output buffer (7 KB) can hold. On Linux the
+	// server side of the connection must show unsent bytes.
+	if runtime.GOOS == "linux" {
+		lp := v.LocalAddr().(*net.TCPAddr).Port
+		sp := v.RemoteAddr().(*net.TCPAddr).Port
+		testkit.WaitFor(t, 10*time.Second, "unsent bytes on the server side of the client's connection", func() bool {
+			return tcpTxQueue(sp, lp) > 0
+		})
+	}
+	got := k
 
 	// both limits are past at once
 	if err := os.WriteFile(jump, []byte("3600"), 0o644); err != nil {
@@ -173,29 +226,33 @@ access 127.0.0.1 rp
 	busy := s.Reader(t)
 	testkit.WaitFor(t, 60*time.Second, "the timeouts of the client that does not read", func() bool {
 		busy.TryCmd("DATE")
-		return count("idle") > idle || count("session") > session
+		return count("idle") > 0 || count("session") > 0
 	})
 	busy.Close()
 	time.Sleep(time.Second)
 	if len(shimMarked(mark, "gettimeofday shifted by 3600")) == 0 {
 		t.Fatalf("no process saw the clock moved on through the injector")
 	}
-	if count("idle") != idle+1 || count("session") != session+1 {
+	if count("idle") != 1 || count("session") != 1 {
 		t.Fatalf("the scenario did not develop: the idle timeout fired %d and the session timeout %d times for the client, want both once in one pass",
-			count("idle")-idle, count("session")-session)
+			count("idle"), count("session"))
 	}
-	// the client did get part of the answer: it was ended in the middle of it
-	v.SetReadDeadline(time.Now().Add(5 * time.Second))
-	r := bufio.NewReader(v)
-	got := 0
+	// the client is closed (EOF, not a read timeout), in the middle of the answer
+	v.SetReadDeadline(time.Now().Add(10 * time.Second))
+	closed := false
 	for {
 		l, err := r.ReadString('\n')
 		if err != nil {
+			var ne net.Error
+			closed = !(errors.As(err, &ne) && ne.Timeout())
 			break
 		}
 		if strings.HasPrefix(l, "e2e.lc") {
 			got++
 		}
+	}
+	if !closed {
+		t.Fatalf("the client was not closed after its timeouts (the read ran into its deadline)")
 	}
 	if got >= len(groups) {
 		t.Fatalf("the scenario did not develop: the client that did not read got all %d groups", got)
@@ -216,4 +273,33 @@ access 127.0.0.1 rp
 			t.Errorf("NEWGROUPS after the new group, the second time: %d groups, neither in the order of the cache nor of the scan", len(got))
 		}
 	}
+}
+
+// tcpTxQueue returns the bytes queued for sending on the IPv4 TCP connection from local port
+// lport to remote port rport (Linux, /proc/net/tcp), -1 when it is not found.
+func tcpTxQueue(lport, rport int) int {
+	b, err := os.ReadFile("/proc/net/tcp")
+	if err != nil {
+		return -1
+	}
+	for _, line := range strings.Split(string(b), "\n")[1:] {
+		f := strings.Fields(line)
+		if len(f) < 5 {
+			continue
+		}
+		la, ra := strings.Split(f[1], ":"), strings.Split(f[2], ":")
+		if len(la) != 2 || len(ra) != 2 {
+			continue
+		}
+		lp, err1 := strconv.ParseInt(la[1], 16, 32)
+		rp, err2 := strconv.ParseInt(ra[1], 16, 32)
+		if err1 != nil || err2 != nil || int(lp) != lport || int(rp) != rport {
+			continue
+		}
+		q := strings.Split(f[4], ":")
+		if tx, err := strconv.ParseInt(q[0], 16, 64); err == nil {
+			return int(tx)
+		}
+	}
+	return -1
 }
