@@ -279,13 +279,14 @@ int
 munmap(void *addr, size_t len)
 {
     static int (*real)(void *, size_t);
-    int e;
+    int e = errno;
 
     if (mprotect(addr, len, PROT_NONE) == 0) {
 	++Protected;
 	++InShim;
 	shim_mark("munmap %lu protected", (unsigned long)len);
 	--InShim;
+	errno = e;
 	return 0;
     }
     e = errno;
@@ -331,6 +332,7 @@ close(int fd)
     struct sockaddr_in sin;
     socklen_t sl = sizeof(sin);
     int port;
+    int e = errno;
 
     if (real == NULL)
 	real = (int (*)(int))dlsym(RTLD_NEXT, "close");
@@ -344,6 +346,7 @@ close(int fd)
 	--InShim;
     }
     Protected = 0;
+    errno = e;	/* the caller sees only what close() itself does to it */
     return real(fd);
 }
 `
