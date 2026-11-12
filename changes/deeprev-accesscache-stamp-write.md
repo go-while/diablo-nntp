@@ -1,0 +1,1 @@
+- dreaderd: a failed write of the access lock file's stamp (disk full) was not noticed: the new access cache stayed unannounced, so no process loaded it, and the install was never tried again; it is now logged and tried again.

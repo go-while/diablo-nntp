@@ -3758,10 +3758,22 @@ RenameAccessCache(void)
 	    unlink(oldbuf[i]);
     }
 
-    if (r > 0)
-	WriteBestEffort(tfp, &tfp, 1);
+    /*
+     * The stamp announces the new set.  When it cannot be written the set
+     * is not announced (an empty lock file is not loaded, an old stamp
+     * keeps the old set) and the install must be tried again.
+     */
+    if (r > 0 && WriteAll(tfp, &tfp, 1) < 0) {
+	logit(LOG_CRIT, "Unable to write %s (%s), access cache not announced",
+	    PatDbExpand(DRAccessLockPat), strerror(errno));
+	r = -1;
+    }
     xflock(tfp, XLOCK_UN);
-    close(tfp);
+    if (close(tfp) < 0 && r > 0) {
+	logit(LOG_CRIT, "Unable to write %s (%s), access cache not announced",
+	    PatDbExpand(DRAccessLockPat), strerror(errno));
+	r = -1;
+    }
     return(r);
 }
 
