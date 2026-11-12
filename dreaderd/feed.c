@@ -366,8 +366,9 @@ NNAcceptArticle(Connection *conn)
 }
 
 /*
- * NNDiscardArticleStart() - read the article that follows a refused TAKETHIS
- * up to its terminating dot and throw it away, then answer reply.  The peer
+ * NNDiscardArticleStart() and its state NNDiscardArticle() - read the article
+ * that follows a refused TAKETHIS up to its terminating dot and throw it
+ * away, then answer reply (500 if none is kept).  The peer
  * sends the article without waiting for an answer (RFC 4644 2.5.2): if it
  * were not read here, its lines would be taken for commands.  The answer is
  * kept with the connection (a reader process serves many at once).
