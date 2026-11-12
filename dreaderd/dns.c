@@ -3744,10 +3744,14 @@ RenameAccessCache(void)
 #ifdef ENOTSUP
 	    nolinks = nolinks || e == ENOTSUP;
 #endif
-	    /* every install after the first needs hard links (FAT, some SMB/FUSE mounts have none) */
+	    /*
+	     * every install after the first needs hard links (FAT, some
+	     * SMB/FUSE mounts have none; EPERM is also a directory in the
+	     * place of a cache file, which the hint still fits)
+	     */
 	    logit(LOG_CRIT, "Unable to link %s to %s (%s), access cache not installed%s",
 		PatDbExpand(pats[i]), oldbuf[i], strerror(e),
-		nolinks ? ": the db directory must be on a file system with hard links" : "");
+		nolinks ? ": every install after the first needs a hard link to each cache file in the db directory" : "");
 	    r = -1;
 	}
     }

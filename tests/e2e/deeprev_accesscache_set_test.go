@@ -322,7 +322,7 @@ func TestDeepRevAccessCacheLinkNotSupported(t *testing.T) {
 	testkit.WaitFor(t, 5*time.Second, "the refused link in the log", func() bool {
 		return strings.Contains(generalLog(s), "Unable to link ")
 	})
-	if want := "the db directory must be on a file system with hard links"; !strings.Contains(generalLog(s), want) {
+	if want := "every install after the first needs a hard link to each cache file in the db directory"; !strings.Contains(generalLog(s), want) {
 		t.Errorf("the log of a link() refused with EPERM does not say %q", want)
 	}
 	if got := list(); !slices.Equal(got, []string{"e2e.test"}) {
@@ -362,7 +362,7 @@ func TestDeepRevAccessCacheLinkFailure(t *testing.T) {
 	if !strings.Contains(generalLog(s), "Unable to link ") {
 		t.Errorf("the refused link is not in the log")
 	}
-	if strings.Contains(generalLog(s), "file system with hard links") {
+	if strings.Contains(generalLog(s), "needs a hard link") {
 		t.Errorf("a link() that failed with EIO is logged as a file system without hard links")
 	}
 	if got := list(); !slices.Equal(got, []string{"e2e.test"}) {
