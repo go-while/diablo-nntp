@@ -312,6 +312,98 @@ func TestDeepRevAccessCacheRetryPaced(t *testing.T) {
 	waitB(t, flag, list)
 }
 
+// TestDeepRevAccessCacheRetryIdle: while a failed install waits for its retry, the main
+// loop's select() sleeps no longer than AccessRetryMs(), so an idle server (no client, which
+// would bring a pass of its own) tries again 5 s after the failure, not with the idle
+// loop's next wakeup (10 s), and picks up the end of the fault at the next retry.
+//
+// A site with dreader.access A serves one client; then a preloaded write() refuses the stamp
+// of the lock file (ENOSPC) and A is replaced by B. From here on no client connects until
+// the end, and everything is seen from outside: the injector's time of each refused stamp
+// write (the first try, then at least three retries, each 4.5 s to 8 s after the one before),
+// then, once the fault is lifted, the new stamp of the lock file (within 8 s). Only then a
+// client must get B's groups.
+func TestDeepRevAccessCacheRetryIdle(t *testing.T) {
+	so := preloadShim(t, "stampfail", withMark(withFdPath(stampWriteFailSource)))
+	dir := t.TempDir()
+	flag := filepath.Join(dir, "fail")
+	mark := filepath.Join(dir, "mark")
+	_, spool := spoolStore(t)
+	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: accessSetA, NoStart: true})
+	s.Env = append(s.Env, lockFaultEnv(so), "SHIM_MARK="+mark, "STAMPFAIL_FLAG="+flag)
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("general.log:\n%s\nmarks:\n%s", generalLog(s), strings.Join(shimMarks(mark), "\n"))
+		}
+	})
+	startReader(t, s, "[127.0.0.1]:"+strings.TrimPrefix(s.Addr, "127.0.0.1:"))
+	list := func() []string {
+		t.Helper()
+		c := s.Reader(t)
+		defer c.Close()
+		c.ExpectCmd(215, "LIST ACTIVE")
+		names := activeNames(c.ReadDotLines())
+		c.ExpectCmd(205, "QUIT")
+		return names
+	}
+	if got := list(); !slices.Equal(got, []string{"e2e.test"}) {
+		t.Fatalf("with dreader.access A: groups %q, want [e2e.test]", got)
+	}
+	lock := filepath.Join(s.Dir, ".accesslock")
+	fi0, err := os.Stat(lock)
+	if err != nil || fi0.Size() == 0 {
+		t.Fatalf("the lock file has no stamp after the first install: %v %v", fi0, err)
+	}
+
+	// No client from here on: the idle loop (10 s) sees the change of dreader.access.
+	if err := os.WriteFile(flag, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.WriteFile(t, "dreader.access", accessSetB)
+	testkit.WaitFor(t, 25*time.Second, "the first refused stamp write of the install of B, with no client", func() bool {
+		return len(shimMarked(mark, "refused write")) > 0
+	})
+	testkit.WaitFor(t, 30*time.Second, "three retries of the install of B, with no client", func() bool {
+		return len(shimMarked(mark, "refused write")) >= 4
+	})
+	at, untimed := refusedWriteTimes(mark)
+	t.Logf("idle, fault on: intervals between the refused stamp writes %v s", retryGaps(at))
+	if len(untimed) > 0 {
+		t.Fatalf("refused stamp writes without their time: %q", untimed)
+	}
+	for i := 1; i < len(at); i++ {
+		if d := at[i] - at[i-1]; d < 4.5 || d > 8 {
+			t.Errorf("idle: try %d came %.3f s after the one before, want 5 s (4.5 s to 8 s; the idle loop alone wakes every 10 s)", i+1, d)
+		}
+	}
+	if fi, err := os.Stat(lock); err != nil || fi.Size() != fi0.Size() || !fi.ModTime().Equal(fi0.ModTime()) {
+		t.Errorf("the lock file's stamp changed during the fault: before %v, now %v %v", fi0.ModTime(), fi, err)
+	}
+
+	// The fault is lifted, still with no client: the next retry installs B.
+	if err := os.Remove(flag); err != nil {
+		t.Fatal(err)
+	}
+	lifted := time.Now()
+	stamped := false
+	for time.Since(lifted) < 15*time.Second && !stamped {
+		time.Sleep(20 * time.Millisecond)
+		fi, err := os.Stat(lock)
+		stamped = err == nil && fi.Size() > 0 && !fi.ModTime().Equal(fi0.ModTime())
+	}
+	took := time.Since(lifted)
+	t.Logf("idle: the new stamp came %v after the fault was lifted", took.Round(10*time.Millisecond))
+	if !stamped {
+		t.Fatalf("idle: no new stamp of the lock file 15 s after the fault was lifted")
+	}
+	if took > 8*time.Second {
+		t.Errorf("idle: the new stamp came %v after the fault was lifted, want at the next retry (5 s at most, 8 s with slack)", took.Round(10*time.Millisecond))
+	}
+	if got := list(); !slices.Equal(got, []string{"e2e.other"}) {
+		t.Errorf("after the idle retry installed B: groups %q, want B's [e2e.other]", got)
+	}
+}
+
 // closeFailSource makes close() of the descriptor of .accesslock that was opened for writing
 // close it and then report EIO, while the file CLOSEFAIL_FLAG exists; each one is marked.
 const closeFailSource = `#define _GNU_SOURCE
