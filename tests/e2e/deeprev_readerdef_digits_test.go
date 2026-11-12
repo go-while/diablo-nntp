@@ -1,8 +1,12 @@
 package e2e
 
 import (
+	"bytes"
+	"fmt"
 	"net"
+	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -63,14 +67,20 @@ access ` + PeerIP + ` 100mbit
 // the two a login got.
 func refusalSite(t *testing.T, userpass string) *Site {
 	t.Helper()
+	return refusalSiteWith(t, map[string]string{"userpass": userpass}, "file", "userpass")
+}
+
+// refusalSiteWith is refusalSite with the backend line "<backend> <s.Dir>/<file>" in the
+// authdef (backend "file" or "perl") and files written to the site directory.
+func refusalSiteWith(t *testing.T, files map[string]string, backend, file string) *Site {
+	t.Helper()
 	_, spool := spoolStore(t)
-	s := NewReaderSite(t, ReaderOptions{Spool: spool, NoStart: true,
-		Files: map[string]string{"userpass": userpass}})
+	s := NewReaderSite(t, ReaderOptions{Spool: spool, NoStart: true, Files: files})
 	access := `vserverdef DEFAULT
     hostname ` + PathHost + `
 end
 authdef byfile
-    file ` + filepath.Join(s.Dir, "userpass") + `
+    ` + backend + ` ` + filepath.Join(s.Dir, file) + `
 end
 readerdef DEFAULT
     read yes
@@ -169,4 +179,118 @@ func TestDeepRevAuthRefusalBanLine(t *testing.T) {
 			t.Errorf("user %s: refused with %q, want %q", tc.user, line, tc.want)
 		}
 	}
+}
+
+// refusalLineRE is one well-formed status line and nothing after it.
+var refusalLineRE = regexp.MustCompile(`^[1-5][0-9][0-9] [^\r\n\x00]*\r\n$`)
+
+// refusalRaw logs in as user with the password "pw" and returns all bytes the server sends
+// after AUTHINFO PASS, until it is quiet for 2 s or closes the connection, and whether it
+// closed it. When the reply is 281 it also returns the replies to MODE READER and GROUP.
+func refusalRaw(t *testing.T, s *Site, user string) (raw string, closed bool, mode, group string) {
+	t.Helper()
+	c := s.Reader(t)
+	defer c.Close()
+	c.ExpectCmd(381, "AUTHINFO USER %s", user)
+	if err := c.Send("AUTHINFO PASS pw\r\n"); err != nil {
+		t.Fatalf("user %s: AUTHINFO PASS: %v", user, err)
+	}
+	b, eof := c.ReadUntilQuiet(2*time.Second, 8192)
+	raw, closed = string(b), eof
+	if strings.HasPrefix(raw, "281") && !closed {
+		_, mode, _ = c.TryCmd("MODE READER")
+		_, group, _ = c.TryCmd("GROUP e2e.test")
+	}
+	return raw, closed, mode, group
+}
+
+type lineEndCase struct{ user, answer, want string }
+
+// checkLineEndRefusals: each user is refused with exactly the line want plus CRLF and the
+// connection is closed; it never gets 281.
+func checkLineEndRefusals(t *testing.T, s *Site, cases []lineEndCase) {
+	t.Helper()
+	for _, tc := range cases {
+		raw, closed, mode, group := refusalRaw(t, s, tc.user)
+		t.Logf("user %s, answer %q: AUTHINFO PASS -> %q, closed %v", tc.user, tc.answer, raw, closed)
+		switch {
+		case strings.HasPrefix(raw, "281"):
+			t.Errorf("user %s, refused by the backend with %q, was let in: %q; MODE READER: %q; GROUP e2e.test: %q",
+				tc.user, tc.answer, raw, mode, group)
+		case !refusalLineRE.MatchString(raw):
+			t.Errorf("user %s (%q): the reply is not one well-formed status line: %q", tc.user, tc.answer, raw)
+		case raw != tc.want+"\r\n":
+			t.Errorf("user %s (%q): refused with %q, want %q", tc.user, tc.answer, raw, tc.want+"\r\n")
+		case !closed:
+			t.Errorf("user %s (%q): the connection is still open after the refusal %q", tc.user, tc.answer, raw)
+		}
+	}
+}
+
+// checkLineEndLogin: user mb, whose backend answer names readerdef 100mbit, logs in with it
+// (MODE READER 200: posting allowed; DEFAULT would give 201).
+func checkLineEndLogin(t *testing.T, s *Site) {
+	t.Helper()
+	c := s.Reader(t)
+	c.ExpectCmd(381, "AUTHINFO USER mb")
+	c.ExpectCmd(281, "AUTHINFO PASS pw")
+	c.ExpectCmd(200, "MODE READER")
+	c.ExpectCmd(211, "GROUP e2e.test")
+	c.ExpectCmd(205, "QUIT")
+}
+
+// TestDeepRevReaderdefDigitsLineEndFile: a backend answer can end in a line end. The file
+// backend cuts its line at the LF only, so a user file with CRLF gives "502" and a CR. When a
+// refusal was three digits followed by the end, a space or a TAB only, "502" and a CR was
+// taken for a readerdef name that does not exist, SetAuthDetails() used the first readerdef
+// (the admin's DEFAULT, which grants read access), and the refused user got 281. Three digits
+// followed by any white space are a refusal; the client gets one well-formed line, then the
+// close.
+func TestDeepRevReaderdefDigitsLineEndFile(t *testing.T) {
+	s := refusalSite(t, "cr:pw:502\r\ncrtxt:pw:502 Go away\r\ncr600:pw:600 1 502 x\r\nmb:pw:100mbit\n")
+	checkLineEndRefusals(t, s, []lineEndCase{
+		{"cr", "502\r", "502 Access denied"},
+		{"crtxt", "502 Go away\r", "502 Go away"},
+		{"cr600", "600 1 502 x\r", "502 x"},
+	})
+	checkLineEndLogin(t, s)
+}
+
+// TestDeepRevReaderdefDigitsLineEndPerl: the Perl backend passes the script's answer on as it
+// is, so "110 502" with a newline or CRLF reaches the main process as "502" and an LF or CR LF.
+// As with the file backend, the refused user got 281 through readerdef DEFAULT. Skipped when
+// dreaderd is built without Perl support.
+func TestDeepRevReaderdefDigitsLineEndPerl(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join(bin(t), "dreaderd"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(b, []byte("PERL auth request")) {
+		t.Skip("dreaderd is built without Perl support (PERL_ENABLED)")
+	}
+	cases := []lineEndCase{
+		{"nl", "110 502\n", "502 Access denied"},
+		{"crlf", "110 502\r\n", "502 Access denied"},
+		{"cr", "110 502\r", "502 Access denied"},
+		{"txt", "110 502 Go away\r\n", "502 Go away"},
+		{"ban", "110 600 1 502 x\r\n", "502 x"},
+	}
+	esc := strings.NewReplacer("\r", `\r`, "\n", `\n`)
+	var m strings.Builder
+	for _, tc := range append(cases, lineEndCase{"mb", "110 100mbit", ""}) {
+		fmt.Fprintf(&m, "    \"%s\" => \"%s\",\n", tc.user, esc.Replace(tc.answer))
+	}
+	script := "my %ans = (\n" + m.String() + ");\n" + `sub checkuser {
+    my ($user, $pass) = @_;
+    return "0" unless $pass eq "pw" && exists $ans{$user};
+    return $ans{$user};
+}
+1;
+`
+	s := refusalSiteWith(t, map[string]string{"auth.pl": script}, "perl", "auth.pl")
+	for i := range cases {
+		cases[i].answer = strings.TrimPrefix(cases[i].answer, "110 ")
+	}
+	checkLineEndRefusals(t, s, cases)
+	checkLineEndLogin(t, s)
 }

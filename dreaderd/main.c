@@ -193,6 +193,7 @@ static double ListenPauseUntil;	/* MonoMs(): listeners off until then */
 static void DnsRefuseLog(int r);
 static void DnsQInitLimits(void);
 static int IsAuthRefusal(const char *s);
+static int AuthFieldSpace(int c);
 static void AuthRefusalLine(char *buf, size_t len, const char *p);
 
 /*
@@ -2032,25 +2033,39 @@ DnsRefuseText(int r, char *buf, size_t len)
  * A backend answers "110 readerdef" to name the client's readerdef, or
  * "110 NNN text" to refuse the client; the worker passes what follows
  * "110 " on in dr_ReaderName.  Three digits followed by the end of the
- * string, a space or a TAB are a refusal ("502", "502 Go away", "502",
- * TAB, "Go away"), also when a readerdef has that name: a readerdef name
- * of just three digits is not usable.  Three digits followed by anything
- * else ("100mbit") are a readerdef name.  Returns 1 for a refusal.
+ * string or white space are a refusal ("502", "502 Go away", "502", TAB,
+ * "Go away", and "502" with the CR or LF of a backend that ends its
+ * answer with a line end), also when a readerdef has that name: a
+ * readerdef name of just three digits is not usable.  Three digits
+ * followed by anything else ("100mbit") are a readerdef name.  Returns 1
+ * for a refusal.
  */
 static int
 IsAuthRefusal(const char *s)
 {
     return (isdigit((unsigned char)s[0]) && isdigit((unsigned char)s[1]) &&
 	    isdigit((unsigned char)s[2]) &&
-	    (s[3] == 0 || s[3] == ' ' || s[3] == '\t'));
+	    (s[3] == 0 || isspace((unsigned char)s[3])));
+}
+
+/*
+ * AuthFieldSpace() - white space between the fields of a backend refusal
+ *
+ * Any white space but CR and LF, which end the refusal.
+ */
+static int
+AuthFieldSpace(int c)
+{
+    return (c != '\r' && c != '\n' && isspace((unsigned char)c));
 }
 
 /*
  * AuthRefusalLine() - the status line for a backend refusal
  *
  * p is the refusal ("NNN", "NNN text", the code and the text separated by
- * spaces or TABs).  buf gets "NNN text\r\n" with a single space after the
- * code; the text ends at a CR or LF, so one line goes out.  Without a text
+ * white space, see AuthFieldSpace()).  buf gets "NNN text\r\n" with a
+ * single space after the code; the text ends at a CR or LF, so one line
+ * goes out.  Without a text
  * it is "NNN Access denied"; when p is no refusal at all (a "600" ban
  * without the code that is to follow it) it is "502 Access denied".  The
  * text starts at buf + 4 in every case.
@@ -2064,7 +2079,7 @@ AuthRefusalLine(char *buf, size_t len, const char *p)
 
     if (IsAuthRefusal(p)) {
 	code = p;
-	for (text = p + 3; *text == ' ' || *text == '\t'; text++) {
+	for (text = p + 3; AuthFieldSpace(*text); text++) {
 	}
     }
     n = (int)strcspn(text, "\r\n");
@@ -3027,20 +3042,20 @@ HandleDnsThread(ForkDesc *desc)
 	     * Perpetuating the ugly return code chaining
 	     * Requires reader ban lists to actually work,
 	     * and actually only tweaks the host banned count.
-	     * The fields are separated by spaces or TABs.  A bare "600"
-	     * bans nobody; the client gets the generic refusal line.
+	     * The fields are separated by white space (AuthFieldSpace()),
+	     * a CR or LF ends the answer.  A bare "600" bans nobody; the
+	     * client gets the generic refusal line.
 	     */
 
-	    p += 3;
-	    if (*p) {
-		for (; *p == ' ' || *p == '\t'; p++) {
-		}
+	    for (p += 3; AuthFieldSpace(*p); p++) {
+	    }
+	    if (*p && *p != '\r' && *p != '\n') {
 #ifdef READER_BAN_LISTS
 		bantime = strtol(p, NULL, 10) * 60;
 #endif
-		for (; *p && *p != ' ' && *p != '\t'; p++) {
+		for (; *p && !isspace((unsigned char)*p); p++) {
 		}
-		for (; *p == ' ' || *p == '\t'; p++) {
+		for (; AuthFieldSpace(*p); p++) {
 		}
 
 #ifdef	READER_BAN_LISTS
