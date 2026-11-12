@@ -49,6 +49,7 @@
 Prototype void DnsTask(int fd, const char *id);
 Prototype const char *AuthTimeoutName(int how);
 Prototype void InstallAccessCache(void);
+Prototype int AccessRetryMs(int maxMs);
 Prototype int ReadAccessCache(void);
 Prototype int ProxyFromOk(const ReaderDef *rd, const struct sockaddr_storage *peer);
 Prototype void UpdateAuthDetails(ForkDesc *desc);
@@ -3648,6 +3649,42 @@ AccessRenameWaits(void)
     AccessRenameLogged = now;
 }
 
+/*
+ * A failed install (a cache file that could not be written, a rename,
+ * the stamp) is tried again, but not before ACCESS_RETRY_MS have passed:
+ * InstallAccessCache() runs on every pass of the main loop, which comes
+ * with every client, and a whole install on every pass while the cause
+ * lasts (a full disk) took the main process from the clients.  The main
+ * loop sleeps no longer than the wait (AccessRetryMs()).  A busy lock is
+ * not a failure: its renames are still tried on every pass.
+ */
+#define ACCESS_RETRY_MS	5000
+static double AccessRetryAt = 0;	/* MonoMs(): no new try before; 0: none due */
+
+static void
+AccessInstallFailed(void)
+{
+    Access_LastUpdate = 0;
+    AccessRetryAt = MonoMs() + ACCESS_RETRY_MS;
+}
+
+/*
+ * AccessRetryMs() - the milliseconds the main loop may sleep, at most
+ * maxMs, so that the next try of a failed install is not late.
+ */
+int
+AccessRetryMs(int maxMs)
+{
+    double left;
+
+    if (AccessRetryAt == 0)
+	return(maxMs);
+    left = AccessRetryAt - MonoMs();
+    if (left < 1)
+	return(1);
+    return((left < maxMs) ? (int)left + 1 : maxMs);
+}
+
 static int
 RenameAccessCache(void)
 {
@@ -3760,7 +3797,7 @@ RenameAccessCache(void)
 
     /*
      * The stamp announces the new set to the running processes.  When it
-     * cannot be written, the install is tried again on the next pass.
+     * cannot be written, the install is tried again (AccessInstallFailed()).
      * Meanwhile: after an empty first stamp nothing is loaded; after a
      * failed later stamp the running processes keep the old set (the
      * stamp did not change), but a process that loads for the first time
@@ -3875,10 +3912,17 @@ InstallAccessCache(void) {
 	    AccessRenameWaits();
 	    return;
 	case -1:
-	    Access_LastUpdate = 0;
-	    break;
+	    AccessRenamePending = 0;
+	    AccessInstallFailed();
+	    return;
 	}
 	AccessRenamePending = 0;
+    }
+
+    if (AccessRetryAt != 0) {
+	if (MonoMs() < AccessRetryAt)
+	    return;
+	AccessRetryAt = 0;
     }
 
     /*
@@ -4915,7 +4959,7 @@ InstallAccessCache(void) {
     if (writeError) {
 	logit(LOG_CRIT, "Unable to write the new access cache files (%s etc.) - not updating",
 		vsnewbuf);
-	Access_LastUpdate = 0;
+	AccessInstallFailed();
 	return;
     }
     switch (RenameAccessCache()) {
@@ -4925,7 +4969,7 @@ InstallAccessCache(void) {
 	AccessRenameLogged = 0;
 	break;
     case -1:
-	Access_LastUpdate = 0;
+	AccessInstallFailed();
 	break;
     }
 }

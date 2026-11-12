@@ -57,6 +57,7 @@ Prototype void RTClearStatus(int index, int count);
 Prototype void RTUpdateStatus(int slot, const char *ctl, ...);
 Prototype pid_t ForkPipe(int *pfd, void (*task)(int fd, const char *id), const char *description, int sockType);
 Prototype void ValidateTcpBufferSize(int *psize);
+Prototype double MonoMs(void);
 
 Prototype int NumReaderForks;
 Prototype int ThisReaderFork;
@@ -189,7 +190,6 @@ static double ListenPauseUntil;	/* MonoMs(): listeners off until then */
 #define DQR_INFLIGHT	9	/* fd pass to a reader: ETOOMANYREFS	*/
 #define DQR_READER	10	/* waited readerdnswait for its reader	*/
 #define DQR_N		11	/* reasons are 1..10; 0 = admitted */
-static double MonoMs(void);
 static void DnsRefuseLog(int r);
 static void DnsQInitLimits(void);
 
@@ -1197,6 +1197,8 @@ main(int ac, char **av)
 
 		if (ReaderOutBackoff && ms > READEROUT_BACKOFF_MS)
 		    ms = READEROUT_BACKOFF_MS;
+		/* a failed access cache install is tried again on time */
+		ms = AccessRetryMs(ms);
 
 		if (ListenPauseUntil > 0) {
 		    double left = ListenPauseUntil - MonoMs();
@@ -2057,7 +2059,7 @@ DnsRefuseFlush(void)
 /*
  * Milliseconds on a clock that does not jump with the time of day.
  */
-static double
+double
 MonoMs(void)
 {
 #ifdef CLOCK_MONOTONIC

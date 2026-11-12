@@ -162,7 +162,8 @@ func TestDeepRevAccessCacheStampWriteFailsLater(t *testing.T) {
 		return len(shimMarked(mark, "refused write")) > 0
 	})
 	m0 := len(shimMarked(mark, "refused write"))
-	for i := 0; i < 5; i++ {
+	// a failed install is tried again after 5 s (ACCESS_RETRY_MS): look for 8
+	for i := 0; i < 8; i++ {
 		got := list()
 		if !slices.Equal(got, []string{"e2e.test"}) && !slices.Equal(got, []string{"e2e.other"}) {
 			t.Errorf("during the fault: groups %q, want one whole set (A's [e2e.test] or B's [e2e.other])", got)
@@ -170,10 +171,76 @@ func TestDeepRevAccessCacheStampWriteFailsLater(t *testing.T) {
 		time.Sleep(time.Second)
 	}
 	if m := len(shimMarked(mark, "refused write")); m <= m0 {
-		t.Errorf("the install was not tried again during 5 s of the fault (no further refused stamp write)")
+		t.Errorf("the install was not tried again during 8 s of the fault (no further refused stamp write)")
 	}
 	if fi1, err := os.Stat(lock); err != nil || fi1.Size() != fi0.Size() || !fi1.ModTime().Equal(fi0.ModTime()) {
 		t.Errorf("the lock file's stamp changed during the fault: before %v, now %v %v", fi0.ModTime(), fi1, err)
+	}
+	waitB(t, flag, list)
+}
+
+// TestDeepRevAccessCacheRetryPaced: InstallAccessCache() runs on every pass of the main
+// loop, and a pass comes with every client. A failed install was redone on the next pass, so
+// while the cause lasted (a full disk) the main process read dreader.access, wrote the five
+// cache files, renamed them and logged a LOG_CRIT line for every client: about 2600 installs
+// in 4 s, and it accepted about 7 times fewer connections. A failed install is now tried
+// again after 5 s.
+//
+// While a preloaded write() refuses the stamp of the lock file (ENOSPC), dreader.access A is
+// replaced by B and clients connect without a pause for 4 s: at most 3 installs may come in
+// that time. Once the fault is gone, B must be installed.
+func TestDeepRevAccessCacheRetryPaced(t *testing.T) {
+	so := preloadShim(t, "stampfail", withMark(withFdPath(stampWriteFailSource)))
+	dir := t.TempDir()
+	flag := filepath.Join(dir, "fail")
+	mark := filepath.Join(dir, "mark")
+	_, spool := spoolStore(t)
+	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: accessSetA, NoStart: true})
+	s.Env = append(s.Env, lockFaultEnv(so), "SHIM_MARK="+mark, "STAMPFAIL_FLAG="+flag)
+	t.Cleanup(func() {
+		if t.Failed() {
+			log := generalLog(s)
+			if len(log) > 20000 {
+				log = "...\n" + log[len(log)-20000:]
+			}
+			t.Logf("general.log:\n%s", log)
+		}
+	})
+	startReader(t, s, "[127.0.0.1]:"+strings.TrimPrefix(s.Addr, "127.0.0.1:"))
+	list := func() []string {
+		t.Helper()
+		c := s.Reader(t)
+		defer c.Close()
+		c.ExpectCmd(215, "LIST ACTIVE")
+		names := activeNames(c.ReadDotLines())
+		c.ExpectCmd(205, "QUIT")
+		return names
+	}
+	if got := list(); !slices.Equal(got, []string{"e2e.test"}) {
+		t.Fatalf("with dreader.access A: groups %q, want [e2e.test]", got)
+	}
+
+	if err := os.WriteFile(flag, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.WriteFile(t, "dreader.access", accessSetB)
+	testkit.WaitFor(t, 20*time.Second, "a refused stamp write of the install of B", func() bool {
+		return len(shimMarked(mark, "refused write")) > 0
+	})
+	installs := func() int { return strings.Count(generalLog(s), "Installing access cache") }
+	i0, m0 := installs(), len(shimMarked(mark, "refused write"))
+	n := 0
+	for start := time.Now(); time.Since(start) < 4*time.Second; n++ {
+		readerGreeting(s.Addr)
+	}
+	i1, m1 := installs(), len(shimMarked(mark, "refused write"))
+	t.Logf("%d connections in 4 s of the fault: %d installs, %d refused stamp writes", n, i1-i0, m1-m0)
+	if n < 20 {
+		t.Fatalf("only %d connections in 4 s: too few passes of the main loop for the test to mean anything", n)
+	}
+	if i1-i0 > 3 || m1-m0 > 3 {
+		t.Errorf("the failed install is repeated without a pause: %d installs and %d refused stamp writes in 4 s with %d connections, want at most 3",
+			i1-i0, m1-m0, n)
 	}
 	waitB(t, flag, list)
 }
