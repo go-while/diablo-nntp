@@ -3680,8 +3680,8 @@ AccessRetryMs(int maxMs)
     if (AccessRetryAt == 0)
 	return(maxMs);
     left = AccessRetryAt - MonoMs();
-    if (left < 1)
-	return(1);
+    if (left < 1 || left > ACCESS_RETRY_MS)
+	return(1);	/* due (InstallAccessCache() clears it) */
     return((left < maxMs) ? (int)left + 1 : maxMs);
 }
 
@@ -3928,7 +3928,10 @@ InstallAccessCache(void) {
     }
 
     if (AccessRetryAt != 0) {
-	if (MonoMs() < AccessRetryAt)
+	double left = AccessRetryAt - MonoMs();
+
+	/* more than the whole wait left: the clock went back (no monotonic one) */
+	if (left > 0 && left <= ACCESS_RETRY_MS)
 	    return;
 	AccessRetryAt = 0;
     }
