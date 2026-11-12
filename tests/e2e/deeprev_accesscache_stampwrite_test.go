@@ -3,9 +3,13 @@ package e2e
 import (
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	testkit "github.com/go-while/nntp-testkit"
 )
 
 // stampWriteFailSource makes write() to a file whose name ends in "/.accesslock" fail with
@@ -105,5 +109,125 @@ func TestDeepRevAccessCacheStampWriteFails(t *testing.T) {
 		t.Errorf("the lock file after the fault: %v", err)
 	} else if fi.Size() == 0 {
 		t.Errorf("the lock file has no stamp (0 bytes) after the fault")
+	}
+}
+
+// closeFailSource makes close() of the descriptor of .accesslock that was opened for writing
+// close it and then report EIO, while the file CLOSEFAIL_FLAG exists; each one is marked.
+const closeFailSource = `#define _GNU_SOURCE
+#define __EXTENSIONS__
+#include <dlfcn.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/types.h>
+#include <unistd.h>
+/*FDPATH*/
+/*MARK*/
+int
+close(int fd)
+{
+    static int (*real)(int);
+    const char *flag = getenv("CLOSEFAIL_FLAG");
+    int bad = 0;
+    int r;
+
+    if (real == NULL)
+	real = (int (*)(int))dlsym(RTLD_NEXT, "close");
+    if (flag != NULL && access(flag, F_OK) == 0) {
+	char path[4096];
+	size_t l;
+
+	fdpath(fd, path, sizeof(path));
+	l = strlen(path);
+	if (l >= 12 && strcmp(path + l - 12, "/.accesslock") == 0 &&
+	    (fcntl(fd, F_GETFL) & O_ACCMODE) == O_RDWR)
+	    bad = 1;
+    }
+    r = real(fd);
+    if (bad && r == 0) {
+	shim_mark("failed close of .accesslock");
+	errno = EIO;
+	return -1;
+    }
+    return r;
+}
+`
+
+// TestDeepRevAccessCacheStampCloseFails: when close() of the lock file fails after its stamp
+// was written, the set is announced (the stamp is there), so the log must not say "not
+// announced" (as it did); it says that the close failed, and the install is tried again,
+// as a failed close may hide a write that did not reach the disk.
+//
+// While a preloaded close() reports EIO for .accesslock, dreader.access A is replaced by B:
+// the log names the failed close and never "not announced", the clients get B, the install
+// is retried while the fault lasts and no more once it is gone.
+func TestDeepRevAccessCacheStampCloseFails(t *testing.T) {
+	if runtime.GOOS == "freebsd" || runtime.GOOS == "netbsd" {
+		t.Skip("the close() injector cannot go with the descriptor-name tracker these systems need (it defines close() too)")
+	}
+	so := preloadShim(t, "closefail", withMark(withFdPath(closeFailSource)))
+	dir := t.TempDir()
+	flag := filepath.Join(dir, "fail")
+	mark := filepath.Join(dir, "mark")
+	_, spool := spoolStore(t)
+	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: accessSetA, NoStart: true})
+	s.Env = append(s.Env, lockFaultEnv(so), "SHIM_MARK="+mark, "CLOSEFAIL_FLAG="+flag)
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("general.log:\n%s\nmarks:\n%s", generalLog(s), strings.Join(shimMarks(mark), "\n"))
+		}
+	})
+	startReader(t, s, "[127.0.0.1]:"+strings.TrimPrefix(s.Addr, "127.0.0.1:"))
+	list := func() []string {
+		t.Helper()
+		c := s.Reader(t)
+		defer c.Close()
+		c.ExpectCmd(215, "LIST ACTIVE")
+		names := activeNames(c.ReadDotLines())
+		c.ExpectCmd(205, "QUIT")
+		return names
+	}
+	if got := list(); !slices.Equal(got, []string{"e2e.test"}) {
+		t.Fatalf("with dreader.access A: groups %q, want [e2e.test]", got)
+	}
+	installs := func() int { return strings.Count(generalLog(s), "Installing access cache") }
+
+	if err := os.WriteFile(flag, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.WriteFile(t, "dreader.access", accessSetB)
+	testkit.WaitFor(t, 15*time.Second, "a failed close of the lock file", func() bool {
+		return len(shimMarked(mark, "failed close")) > 0
+	})
+	n0 := installs()
+	time.Sleep(3 * time.Second)
+	if n := installs(); n <= n0 {
+		t.Errorf("the install was not tried again while close() failed (%d installs in 3 s)", n-n0)
+	}
+	log := generalLog(s)
+	if !strings.Contains(log, "Unable to close "+filepath.Join(s.Dir, ".accesslock")+" after writing its stamp") {
+		t.Errorf("the failed close of the lock file is not logged as such")
+	}
+	if strings.Contains(log, "not announced") {
+		t.Errorf("a failed close after a written stamp is logged as \"not announced\"")
+	}
+	if got := list(); !slices.Equal(got, []string{"e2e.other"}) {
+		t.Errorf("with the stamp written but close() failing: groups %q, want B's [e2e.other] (the set is announced)", got)
+	}
+
+	if err := os.Remove(flag); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2 * time.Second)
+	n1 := installs()
+	time.Sleep(3 * time.Second)
+	if n := installs(); n != n1 {
+		t.Errorf("the install is still repeated after the fault is gone (%d more in 3 s)", n-n1)
+	}
+	if got := list(); !slices.Equal(got, []string{"e2e.other"}) {
+		t.Errorf("after the fault: groups %q, want B's [e2e.other]", got)
 	}
 }

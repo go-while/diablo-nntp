@@ -3759,9 +3759,12 @@ RenameAccessCache(void)
     }
 
     /*
-     * The stamp announces the new set.  When it cannot be written the set
-     * is not announced (an empty lock file is not loaded, an old stamp
-     * keeps the old set) and the install must be tried again.
+     * The stamp announces the new set to the running processes.  When it
+     * cannot be written, the install is tried again on the next pass.
+     * Meanwhile: after an empty first stamp nothing is loaded; after a
+     * failed later stamp the running processes keep the old set (the
+     * stamp did not change), but a process that loads for the first time
+     * can load the new files, which are a whole set.
      */
     if (r > 0 && WriteAll(tfp, &tfp, 1) < 0) {
 	logit(LOG_CRIT, "Unable to write %s (%s), access cache not announced",
@@ -3770,7 +3773,12 @@ RenameAccessCache(void)
     }
     xflock(tfp, XLOCK_UN);
     if (close(tfp) < 0 && r > 0) {
-	logit(LOG_CRIT, "Unable to write %s (%s), access cache not announced",
+	/*
+	 * The stamp was written: the set is announced.  A failed close()
+	 * may still mean the write did not reach the disk (NFS, I/O error),
+	 * so the install is tried again all the same.
+	 */
+	logit(LOG_CRIT, "Unable to close %s after writing its stamp (%s), access cache install tried again",
 	    PatDbExpand(DRAccessLockPat), strerror(errno));
 	r = -1;
     }
