@@ -3745,13 +3745,17 @@ RenameAccessCache(void)
 	    nolinks = nolinks || e == ENOTSUP;
 #endif
 	    /*
-	     * every install after the first needs hard links (FAT, some
-	     * SMB/FUSE mounts have none; EPERM is also a directory in the
-	     * place of a cache file, which the hint still fits)
+	     * every install after the first needs hard links.  EPERM and
+	     * EOPNOTSUPP have more than one cause: a file system without
+	     * hard links (FAT, some SMB/FUSE mounts), a cache file the
+	     * process may not link (Linux fs.protected_hardlinks for a file
+	     * of another user, an immutable file), a directory in the place
+	     * of a cache file; the hint names what to check, not one cause.
 	     */
 	    logit(LOG_CRIT, "Unable to link %s to %s (%s), access cache not installed%s",
 		PatDbExpand(pats[i]), oldbuf[i], strerror(e),
-		nolinks ? ": every install after the first needs a hard link to each cache file in the db directory" : "");
+		nolinks ? ": every install after the first needs a hard link to each cache file in the db directory"
+		    " (check that the file system supports hard links and that the ownership, permissions and attributes of the cache files allow them)" : "");
 	    r = -1;
 	}
     }

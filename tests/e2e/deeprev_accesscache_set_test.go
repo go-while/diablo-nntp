@@ -305,11 +305,12 @@ func TestDeepRevAccessCacheSetKept(t *testing.T) {
 
 // TestDeepRevAccessCacheLinkNotSupported: every install after the first keeps a hard link
 // to each access cache file in use. On a file system without hard links (FAT, some SMB and
-// FUSE mounts: link() fails with EPERM) no later install can work; the log must say so,
-// rather than only "Operation not permitted".
+// FUSE mounts: link() fails with EPERM), or where the ownership, permissions or attributes of
+// a cache file forbid the link (also EPERM), no later install can work; the log must say what
+// to check, rather than only "Operation not permitted".
 //
-// A preloaded link() fails with EPERM for cache.readerdef: the log names the cause, the client
-// keeps A; once link() works again, B is installed.
+// A preloaded link() fails with EPERM for cache.readerdef: the log names the need and both
+// kinds of cause, the client keeps A; once link() works again, B is installed.
 func TestDeepRevAccessCacheLinkNotSupported(t *testing.T) {
 	s, flag, mark, list := accessFaultSite(t, "ACFAULT_LINK=/cache.readerdef", "ACFAULT_LINK_EPERM=1")
 	if err := os.WriteFile(flag, nil, 0o644); err != nil {
@@ -322,7 +323,7 @@ func TestDeepRevAccessCacheLinkNotSupported(t *testing.T) {
 	testkit.WaitFor(t, 5*time.Second, "the refused link in the log", func() bool {
 		return strings.Contains(generalLog(s), "Unable to link ")
 	})
-	if want := "every install after the first needs a hard link to each cache file in the db directory"; !strings.Contains(generalLog(s), want) {
+	if want := "every install after the first needs a hard link to each cache file in the db directory (check that the file system supports hard links and that the ownership, permissions and attributes of the cache files allow them)"; !strings.Contains(generalLog(s), want) {
 		t.Errorf("the log of a link() refused with EPERM does not say %q", want)
 	}
 	if got := list(); !slices.Equal(got, []string{"e2e.test"}) {
