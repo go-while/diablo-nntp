@@ -26,6 +26,16 @@ const timeShiftSource = `#define _GNU_SOURCE
 #include <time.h>
 #include <unistd.h>
 /*MARK*/
+/*
+ * NetBSD's <time.h> renames time() to __time50 (64-bit time_t), so this definition is
+ * __time50 there, and the libc symbol "time" is the old one: look up the same name.
+ */
+#ifdef __NetBSD__
+#define TIME_NAME "__time50"
+#else
+#define TIME_NAME "time"
+#endif
+
 time_t
 time(time_t *tp)
 {
@@ -37,7 +47,11 @@ time(time_t *tp)
     int fd;
 
     if (real == NULL)
-	real = (time_t (*)(time_t *))dlsym(RTLD_NEXT, "time");
+	real = (time_t (*)(time_t *))dlsym(RTLD_NEXT, TIME_NAME);
+    if (real == NULL) {
+	shim_mark("dlsym(%s) failed", TIME_NAME);
+	abort();
+    }
     if (f != NULL && (fd = open(f, O_RDONLY)) >= 0) {
 	char buf[32];
 	ssize_t n = read(fd, buf, sizeof(buf) - 1);

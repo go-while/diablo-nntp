@@ -119,13 +119,28 @@ fstat_refused(int fd)
     return 0;
 }
 
+/*
+ * NetBSD's <sys/stat.h> renames fstat() to __fstat50 (the struct stat of today), so this
+ * definition is __fstat50 there, and the libc symbol "fstat" is the old one for old binaries
+ * with another struct stat: look up the same name.
+ */
+#ifdef __NetBSD__
+#define FSTAT_NAME "__fstat50"
+#else
+#define FSTAT_NAME "fstat"
+#endif
+
 int
 fstat(int fd, struct stat *st)
 {
     static int (*real)(int, struct stat *);
 
     if (real == NULL)
-	real = (int (*)(int, struct stat *))dlsym(RTLD_NEXT, "fstat");
+	real = (int (*)(int, struct stat *))dlsym(RTLD_NEXT, FSTAT_NAME);
+    if (real == NULL) {
+	shim_mark("dlsym(%s) failed", FSTAT_NAME);
+	abort();
+    }
     if (fstat_refused(fd))
 	return -1;
     return real(fd, st);
