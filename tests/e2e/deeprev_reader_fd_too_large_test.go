@@ -15,8 +15,22 @@ import (
 // with FDHIGH_PAIR set, the first descriptor of the first socketpair() of the process that
 // loaded the injector (the main process) is. The soft descriptor limit is raised for it when
 // needed. Each move, or why there was none, is marked.
-const highFdSource = `#define _GNU_SOURCE
+const highFdSource = `#if defined(__sun)
+/*
+ * As diablo is built (Makefile: -D_XOPEN_SOURCE=600 -D__EXTENSIONS__): illumos'
+ * <sys/socket.h> then maps recvmsg() and socketpair() to __xnet_recvmsg and
+ * __xnet_socketpair, with the X/Open struct msghdr (msg_control); so do these definitions,
+ * and the real functions are looked up by those names (as in dns_fdlost_test.go).
+ */
+#define _XOPEN_SOURCE 600
 #define __EXTENSIONS__
+#define REAL_RECVMSG "__xnet_recvmsg"
+#define REAL_SOCKETPAIR "__xnet_socketpair"
+#else
+#define _GNU_SOURCE
+#define REAL_RECVMSG "recvmsg"
+#define REAL_SOCKETPAIR "socketpair"
+#endif
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -72,7 +86,11 @@ recvmsg(int s, struct msghdr *msg, int flags)
     ssize_t r;
 
     if (real == NULL)
-	real = (ssize_t (*)(int, struct msghdr *, int))dlsym(RTLD_NEXT, "recvmsg");
+	real = (ssize_t (*)(int, struct msghdr *, int))dlsym(RTLD_NEXT, REAL_RECVMSG);
+    if (real == NULL) {
+	shim_mark("dlsym(%s) failed", REAL_RECVMSG);
+	abort();
+    }
     r = real(s, msg, flags);
     if (r <= 0 || done || getenv("FDHIGH_RECV") == NULL || getpid() == firstpid)
 	return r;
@@ -99,7 +117,11 @@ socketpair(int domain, int type, int protocol, int sv[2])
     int r;
 
     if (real == NULL)
-	real = (int (*)(int, int, int, int *))dlsym(RTLD_NEXT, "socketpair");
+	real = (int (*)(int, int, int, int *))dlsym(RTLD_NEXT, REAL_SOCKETPAIR);
+    if (real == NULL) {
+	shim_mark("dlsym(%s) failed", REAL_SOCKETPAIR);
+	abort();
+    }
     r = real(domain, type, protocol, sv);
     if (r == 0 && !done && getenv("FDHIGH_PAIR") != NULL && getpid() == firstpid) {
 	done = 1;
