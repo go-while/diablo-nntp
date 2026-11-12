@@ -927,6 +927,28 @@ listCacheAdd(Connection *conn, const char *group)
     conn->co_ListCacheGroups = tgl;
 }
 
+/*
+ * A plain group name of the list with its place in the list: the names are
+ * sorted with qsort() to find the duplicates, and the place keeps the
+ * first one of equal names first, since qsort() is not stable.
+ */
+typedef struct PlainName {
+    GroupList	*pn_Gl;
+    int		pn_Idx;
+} PlainName;
+
+static int
+plainNameCmp(const void *a, const void *b)
+{
+    const PlainName *pa = a;
+    const PlainName *pb = b;
+    int r = strcmp(pa->pn_Gl->group, pb->pn_Gl->group);
+
+    if (r == 0)
+	r = (pa->pn_Idx > pb->pn_Idx) - (pa->pn_Idx < pb->pn_Idx);
+    return(r);
+}
+
 GroupList *
 ListActiveGroups(Connection *conn, char *pat)
 {
@@ -938,6 +960,7 @@ ListActiveGroups(Connection *conn, char *pat)
     GroupList *allowedgroups = conn->co_Auth.dr_GroupDef->gr_Groups;
     char *ng;
     int wild = 0;
+    int n = 0;
  
     /*
      * Create a list of the patterns, in their order: GroupFindWild() lets
@@ -953,20 +976,39 @@ ListActiveGroups(Connection *conn, char *pat)
 	tgl->next = NULL;
 	*patend = tgl;
 	patend = &tgl->next;
+	++n;
     }
     if (!wild) {
-	/* plain names: each one that is allowed, once */
-	for (gl = patlist; gl; gl = gl->next) {
-	    GroupList *pgl;
+	/*
+	 * plain names: each one that is allowed, once.  A line may hold
+	 * some 110000 names, so the duplicates are found by sorting
+	 * (n log n), not by comparing each name with all earlier ones: a
+	 * reader process serves all its clients from one loop.  The group
+	 * of each later duplicate is dropped; the first of equal names
+	 * keeps its place in the list.
+	 */
+	if (n > 1) {
+	    PlainName *pn = zalloc(&conn->co_MemPool, n * sizeof(PlainName));
+	    int i;
 
+	    for (i = 0, gl = patlist; gl; gl = gl->next, ++i) {
+		pn[i].pn_Gl = gl;
+		pn[i].pn_Idx = i;
+	    }
+	    qsort(pn, n, sizeof(PlainName), plainNameCmp);
+	    for (i = n - 1; i > 0; --i) {
+		if (strcmp(pn[i - 1].pn_Gl->group, pn[i].pn_Gl->group) == 0)
+		    zfreeStr(&conn->co_MemPool, &pn[i].pn_Gl->group);
+	    }
+	    zfree(&conn->co_MemPool, pn, n * sizeof(PlainName));
+	}
+	for (gl = patlist; gl; gl = gl->next) {
+	    if (gl->group == NULL)
+		continue;
 	    if (allowedgroups != NULL &&
 				GroupFindWild(gl->group, allowedgroups) == 0)
 		continue;
-	    for (pgl = patlist; pgl != gl; pgl = pgl->next)
-		if (strcmp(pgl->group, gl->group) == 0)
-		    break;
-	    if (pgl == gl)
-		listCacheAdd(conn, gl->group);
+	    listCacheAdd(conn, gl->group);
 	}
     } else {
 	for (recOff = KPDBScanFirst(KDBActive, 0, &recLen);
