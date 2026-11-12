@@ -97,7 +97,9 @@ GTOD(struct timeval *tv, void *tz)
 // an address of its own (its timeout lines are its own) sends NEWGROUPS, reads the answer up
 // to the first group where the cache order and the scan order differ (so the answer comes
 // from the cache and the connection holds the read lock), then stops reading; on Linux the
-// server side of the connection must show unsent bytes. Then a preloaded gettimeofday()
+// server side of the connection must show unsent bytes and the client's unread bytes must
+// stay the same for 600 ms (the reader can write no more: a write would refresh the idle
+// time). Then a preloaded gettimeofday()
 // moves the reader's clock an hour on, past both limits, the reader's next check of all
 // descriptors must end the client by both timeouts in one pass, and the client must see the
 // connection closed (not a read timeout) before the end of the answer. Then a new group: the
@@ -205,14 +207,29 @@ access 127.0.0.6 rp
 	}
 	// ... and the reader has more to write than the buffers take: the rest of the answer (about
 	// 200 bytes a group) is far more than the socket buffers (txbufsize 512, a client buffer
-	// of 1 KB, a few KB of slack) and dreaderd's output buffer (7 KB) can hold. On Linux the
-	// server side of the connection must show unsent bytes.
+	// of 1 KB, a few KB of slack) and dreaderd's output buffer (7 KB) can hold. What the client
+	// read made room, and the reader fills it again; every write it makes refreshes the idle
+	// time, so the clock may only jump once it can write no more. On Linux: the server side of
+	// the connection shows unsent bytes and the client's unread bytes stay the same for
+	// 600 ms. Elsewhere there is nothing to look at: 2 s for the reader to fill the buffers.
 	if runtime.GOOS == "linux" {
 		lp := v.LocalAddr().(*net.TCPAddr).Port
 		sp := v.RemoteAddr().(*net.TCPAddr).Port
-		testkit.WaitFor(t, 10*time.Second, "unsent bytes on the server side of the client's connection", func() bool {
-			return tcpTxQueue(sp, lp) > 0
+		last, same := -1, 0
+		testkit.WaitFor(t, 15*time.Second, "the reader blocked writing to the client", func() bool {
+			tx, _ := tcpQueues(sp, lp)
+			_, rx := tcpQueues(lp, sp)
+			if tx > 0 && rx > 0 && rx == last {
+				same++
+			} else {
+				same = 0
+			}
+			last = rx
+			time.Sleep(200 * time.Millisecond)
+			return same >= 3
 		})
+	} else {
+		time.Sleep(2 * time.Second)
 	}
 	got := k
 
@@ -275,12 +292,13 @@ access 127.0.0.6 rp
 	}
 }
 
-// tcpTxQueue returns the bytes queued for sending on the IPv4 TCP connection from local port
-// lport to remote port rport (Linux, /proc/net/tcp), -1 when it is not found.
-func tcpTxQueue(lport, rport int) int {
+// tcpQueues returns the bytes queued for sending and those received but not yet read on the
+// IPv4 TCP connection from local port lport to remote port rport (Linux, /proc/net/tcp);
+// -1, -1 when it is not found.
+func tcpQueues(lport, rport int) (tx, rx int) {
 	b, err := os.ReadFile("/proc/net/tcp")
 	if err != nil {
-		return -1
+		return -1, -1
 	}
 	for _, line := range strings.Split(string(b), "\n")[1:] {
 		f := strings.Fields(line)
@@ -297,9 +315,15 @@ func tcpTxQueue(lport, rport int) int {
 			continue
 		}
 		q := strings.Split(f[4], ":")
-		if tx, err := strconv.ParseInt(q[0], 16, 64); err == nil {
-			return int(tx)
+		if len(q) != 2 {
+			return -1, -1
 		}
+		t, err1 := strconv.ParseInt(q[0], 16, 64)
+		r, err2 := strconv.ParseInt(q[1], 16, 64)
+		if err1 != nil || err2 != nil {
+			return -1, -1
+		}
+		return int(t), int(r)
 	}
-	return -1
+	return -1, -1
 }
