@@ -160,16 +160,17 @@ func TestReaderNulProxyLine(t *testing.T) {
 	}
 }
 
-// nulTakethis sends, in one write, a TAKETHIS line with a NUL byte, an article whose body has
-// a line "QUIT", its dot, and MODE STREAM, and returns the answer lines that came within 5 s.
-func nulTakethis(t *testing.T, addr, from string) []string {
+// nulTakethis sends, in one write, a TAKETHIS line with a NUL byte (after lead, e.g. blanks),
+// an article whose body has a line "QUIT", its dot, and MODE STREAM, and returns the answer
+// lines that came within 5 s.
+func nulTakethis(t *testing.T, addr, from, lead string) []string {
 	t.Helper()
 	n := dialNulLine(t, addr, from)
 	if l, err := n.send("MODE STREAM\r\n"); err != nil || !strings.HasPrefix(l, "203 ") {
 		t.Fatalf("from %s: MODE STREAM: %q %v", from, l, err)
 	}
 	id := "<nul-takethis." + strings.ReplaceAll(t.Name(), "/", ".") + "@e2e.test>"
-	raw := "TAKETHIS " + id + "\x00junk\r\n" +
+	raw := lead + "TAKETHIS " + id + "\x00junk\r\n" +
 		"Path: e2e.peer!not-for-mail\r\n" +
 		"From: <nul@example.invalid>\r\n" +
 		"Newsgroups: e2e.test\r\n" +
@@ -213,10 +214,17 @@ func TestNulTakethisFraming(t *testing.T) {
 	t.Run("dreaderd feed", func(t *testing.T) {
 		_, spool := spoolStore(t)
 		s := NewReaderSite(t, ReaderOptions{Spool: spool})
-		check(t, nulTakethis(t, s.Addr, PeerIP))
+		check(t, nulTakethis(t, s.Addr, PeerIP, ""))
 	})
 	t.Run("diablo", func(t *testing.T) {
 		s := NewSite(t, SiteOptions{})
-		check(t, nulTakethis(t, s.Addr, PeerIP))
+		check(t, nulTakethis(t, s.Addr, PeerIP, ""))
+	})
+	// diablo's command parser (strtok) skips blanks, tabs and CR before the keyword, so the
+	// TAKETHIS test must too (dreaderd's parseword() does not skip them: there such a line is
+	// no TAKETHIS at all, with or without a NUL)
+	t.Run("diablo leading blanks", func(t *testing.T) {
+		s := NewSite(t, SiteOptions{})
+		check(t, nulTakethis(t, s.Addr, PeerIP, "  \t"))
 	})
 }

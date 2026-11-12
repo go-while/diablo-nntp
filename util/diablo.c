@@ -2187,8 +2187,13 @@ DoSession(int fd, int count)
 	     * answer (RFC 4644 2.5.2): read and drop it, as for the other
 	     * refused TAKETHIS, or its lines would be taken for commands.
 	     */
-	    if (strcspn(buf, " \t\r") == 8 && strncasecmp(buf, "takethis", 8) == 0)
-		LoadArticle(bi, "<>", 1, headerOnly, NULL, NULL);
+	    {
+		/* the keyword as strtok() below finds it: after blanks, tabs, CR */
+		const char *kw = buf + strspn(buf, " \t\r");
+
+		if (strcspn(kw, " \t\r") == 8 && strncasecmp(kw, "takethis", 8) == 0)
+		    LoadArticle(bi, "<>", 1, headerOnly, NULL, NULL);
+	    }
 	    continue;
 	}
 
