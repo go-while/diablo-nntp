@@ -192,6 +192,8 @@ static double ListenPauseUntil;	/* MonoMs(): listeners off until then */
 #define DQR_N		11	/* reasons are 1..10; 0 = admitted */
 static void DnsRefuseLog(int r);
 static void DnsQInitLimits(void);
+static int IsAuthRefusal(const char *s);
+static void AuthRefusalLine(char *buf, size_t len, const char *p);
 
 /*
  * Clients on their way to a reader whose socketpair is full.  The main
@@ -2024,6 +2026,55 @@ DnsRefuseText(int r, char *buf, size_t len)
     }
 }
 
+/*
+ * IsAuthRefusal() - is dr_ReaderName a refusal from an authentication backend
+ *
+ * A backend answers "110 readerdef" to name the client's readerdef, or
+ * "110 NNN text" to refuse the client; the worker passes what follows
+ * "110 " on in dr_ReaderName.  Three digits followed by the end of the
+ * string, a space or a TAB are a refusal ("502", "502 Go away", "502",
+ * TAB, "Go away"), also when a readerdef has that name: a readerdef name
+ * of just three digits is not usable.  Three digits followed by anything
+ * else ("100mbit") are a readerdef name.  Returns 1 for a refusal.
+ */
+static int
+IsAuthRefusal(const char *s)
+{
+    return (isdigit((unsigned char)s[0]) && isdigit((unsigned char)s[1]) &&
+	    isdigit((unsigned char)s[2]) &&
+	    (s[3] == 0 || s[3] == ' ' || s[3] == '\t'));
+}
+
+/*
+ * AuthRefusalLine() - the status line for a backend refusal
+ *
+ * p is the refusal ("NNN", "NNN text", the code and the text separated by
+ * spaces or TABs).  buf gets "NNN text\r\n" with a single space after the
+ * code; the text ends at a CR or LF, so one line goes out.  Without a text
+ * it is "NNN Access denied"; when p is no refusal at all (a "600" ban
+ * without the code that is to follow it) it is "502 Access denied".  The
+ * text starts at buf + 4 in every case.
+ */
+static void
+AuthRefusalLine(char *buf, size_t len, const char *p)
+{
+    const char *code = "502";
+    const char *text = "";
+    int n;
+
+    if (IsAuthRefusal(p)) {
+	code = p;
+	for (text = p + 3; *text == ' ' || *text == '\t'; text++) {
+	}
+    }
+    n = (int)strcspn(text, "\r\n");
+    if (n == 0) {
+	text = "Access denied";
+	n = (int)strlen(text);
+    }
+    snprintf(buf, len, "%.3s %.*s\r\n", code, n, text);
+}
+
 static void
 DnsRefuseLog(int r)
 {
@@ -2964,42 +3015,46 @@ HandleDnsThread(ForkDesc *desc)
 			dres.dr_CacheGen);
 
     /*
-     * "NNN text" is a refusal from an authentication backend.  A readerdef
-     * name has no blank in it, so one that starts with three digits
-     * ("100mbit", "404") is not taken for a refusal.
+     * A refusal from an authentication backend ("NNN", "NNN text"; see
+     * IsAuthRefusal()), never a readerdef name.
      */
-    if (isdigit((unsigned char)dres.dr_ReaderName[0]) && isdigit((unsigned char)dres.dr_ReaderName[1]) && isdigit((unsigned char)dres.dr_ReaderName[2]) && dres.dr_ReaderName[3] == ' ') {
+    if (IsAuthRefusal(dres.dr_ReaderName)) {
 	p = dres.dr_ReaderName;
-	if (! strncmp(p, "600 ", 4)) {
+	if (p[0] == '6' && p[1] == '0' && p[2] == '0') {
 	    /* 
 	     * Deep six a user via authentication 
 	     * Return: 110 600 <time-in-mins> 500 Your connection is rejected
 	     * Perpetuating the ugly return code chaining
 	     * Requires reader ban lists to actually work,
 	     * and actually only tweaks the host banned count.
+	     * The fields are separated by spaces or TABs.  A bare "600"
+	     * bans nobody; the client gets the generic refusal line.
 	     */
 
-	    p += 4;
+	    p += 3;
+	    if (*p) {
+		for (; *p == ' ' || *p == '\t'; p++) {
+		}
 #ifdef READER_BAN_LISTS
-	    bantime = strtol(p, NULL, 10) * 60;
+		bantime = strtol(p, NULL, 10) * 60;
 #endif
-	    for (; *p && *p != ' '; p++) {
-	    }
-	    for (; *p && *p == ' '; p++) {
-	    }
+		for (; *p && *p != ' ' && *p != '\t'; p++) {
+		}
+		for (; *p == ' ' || *p == '\t'; p++) {
+		}
 
 #ifdef	READER_BAN_LISTS
-	    if (HostBan.BanCount > 0)
-	        IPListAdd(&HostBan.BanList,
-		NetAddrToSt(0, (struct sockaddr *)&desc->d_SaveRSin, 1, 0, 1),
+		if (HostBan.BanCount > 0)
+		    IPListAdd(&HostBan.BanList,
+			NetAddrToSt(0, (struct sockaddr *)&desc->d_SaveRSin, 1, 0, 1),
 				HostBan.BanCount,
 				time(NULL) + bantime,
 				HostBan.BanHashSize,
 				HostBan.BanLinkSize);
 #endif
-
+	    }
 	}
-	snprintf(errbuf, sizeof(errbuf), "%s\r\n", p);
+	AuthRefusalLine(errbuf, sizeof(errbuf), p);
 	error1 = errbuf;
 	/* Point error2 at errbuf + 4 to catch the specific error */
 	/* error2 = "CustomError"; */
