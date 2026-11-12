@@ -412,9 +412,13 @@ NNDiscardArticle(Connection *conn)
 void
 NNDiscardArticleStart(Connection *conn, const char *reply)
 {
+    char note[] = "dropping the article of a refused TAKETHIS";
+
     zfreeStr(&conn->co_MemPool, &conn->co_DiscardReply);
     conn->co_DiscardReply = zallocStr(&conn->co_MemPool, reply);
     conn->co_Flags |= COF_MAYNOTCLOSE;
+    /* with the command log (readerdetaillog, logcmd): tests wait for this */
+    LogCmd(conn, '-', note);
     NNDiscardArticle(conn);
 }
 

@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	testkit "github.com/go-while/nntp-testkit"
 )
 
 // takethisRefused connects from "from", sends setup (each line expected to get an answer
@@ -104,7 +106,18 @@ access ` + PeerIP + ` feedauth
 	t.Run("dreaderd two discards at once", func(t *testing.T) {
 		const other = "127.0.0.5"
 		_, spool := spoolStore(t)
-		s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: DefaultReaderAccess + "access " + other + " feed\n"})
+		// readerdetaillog on: dreaderd logs "<host> [pid/slot] - dropping the article ..." when
+		// a connection enters the discard state; the test waits for both before either dot
+		s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: DefaultReaderAccess + "access " + other + " feed\n",
+			Config: map[string]string{"readerdetaillog": "on"}})
+		dropping := func(host string) bool {
+			for _, l := range strings.Split(generalLog(s), "\n") {
+				if strings.Contains(l, " "+host+" [") && strings.Contains(l, "] - dropping the article of a refused TAKETHIS") {
+					return true
+				}
+			}
+			return false
+		}
 		article := func(id string) (head, tail string) {
 			head = "Path: e2e.peer!not-for-mail\r\nFrom: <two@example.invalid>\r\n"
 			tail = "Newsgroups: e2e.test\r\nSubject: two discards\r\n" +
@@ -144,7 +157,11 @@ access ` + PeerIP + ` feedauth
 		bHead, bTail := article("<two.b@e2e.test>")
 		write(a, "TAKETHIS <two.a@e2e.test>\x00junk\r\n"+aHead)
 		write(b, "TAKETHIS not-an-id\r\n"+bHead)
-		time.Sleep(500 * time.Millisecond)
+		// both connections are in the discard state before either dot is sent (the answers
+		// come only after the dot, so they cannot be waited for here)
+		testkit.WaitFor(t, 10*time.Second, "both connections dropping their article", func() bool {
+			return dropping(PeerIP) && dropping(other)
+		})
 		write(a, aTail)
 		write(b, bTail)
 		check(t, answers(a), "501", "111")
