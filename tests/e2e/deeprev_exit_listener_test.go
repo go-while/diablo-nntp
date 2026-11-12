@@ -1,8 +1,16 @@
 package e2e
 
 import (
+	"fmt"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -76,5 +84,105 @@ func TestDeepRevExitListenerSpin(t *testing.T) {
 	if last-before > 50 {
 		t.Errorf("the main process used %d clock ticks of CPU time in the %v between drcmd exit and its end: its loop runs without a pause on the closed listening socket",
 			last-before, took.Round(10*time.Millisecond))
+	}
+}
+
+// TestDeepRevExitPassedListener: "drcmd exit" closes the listeners (DelThread()) from inside
+// DoCommand(), in the middle of the main loop's walk over the select() result. A listener
+// whose descriptor is higher than the drcmd socket's and that was readable in the same pass
+// was then reached with no thread left, and the walk ended the main process in
+// fatal("select returned unknown descriptor"), exit status 1, without the orderly shutdown.
+// dreaderd -P opens its listeners before the drcmd socket (lower numbers); dreaderd -b <fd>
+// serves one it inherited, whose number the parent chose.
+//
+// dreaderd -b 7 and -b 8 (between the descriptors dreaderd opens itself), three times each,
+// with clients connecting in a loop so that the listener is readable when the exit command
+// comes: the main process must end without that fatal().
+func TestDeepRevExitPassedListener(t *testing.T) {
+	for _, fd := range []int{7, 8} {
+		for run := 1; run <= 3; run++ {
+			t.Run(fmt.Sprintf("fd%d-%d", fd, run), func(t *testing.T) { exitPassedListener(t, fd) })
+		}
+	}
+}
+
+func exitPassedListener(t *testing.T, fd int) {
+	_, spool := spoolStore(t)
+	s := NewReaderSite(t, ReaderOptions{Spool: spool, NoStart: true})
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := l.(*net.TCPListener).File()
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := l.Addr().String()
+	cmd := exec.Command(filepath.Join(s.Bin, "dreaderd"), "-d", "-p", PathHost, "-h", PathHost, "-b", strconv.Itoa(fd))
+	cmd.ExtraFiles = make([]*os.File, fd-2) // descriptor 3+i is ExtraFiles[i]; the others closed
+	cmd.ExtraFiles[fd-3] = f
+	out, err := os.Create(filepath.Join(s.Dir, "stderr.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.Stdout, cmd.Stderr = out, out
+	cmd.Dir = s.Dir
+	cmd.Env = append(os.Environ(), s.Env...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	t.Cleanup(func() {
+		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		time.Sleep(200 * time.Millisecond) // the killed children are gone for good
+	})
+	f.Close()
+	l.Close()
+	out.Close()
+	if g := waitGreeting(addr, 20*time.Second); !strings.HasPrefix(g, "20") {
+		t.Fatalf("greeting on the listener passed as descriptor %d: %q", fd, g)
+	}
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				if c, err := net.DialTimeout("tcp", addr, 200*time.Millisecond); err == nil {
+					c.Close()
+				}
+			}
+		}()
+	}
+	time.Sleep(300 * time.Millisecond)
+	exitOut, _ := s.TryRun("drcmd", "exit")
+	var werr error
+	select {
+	case werr = <-done:
+	case <-time.After(30 * time.Second):
+		t.Errorf("dreaderd still runs 30 s after drcmd exit")
+	}
+	close(stop)
+	wg.Wait()
+	b, _ := os.ReadFile(filepath.Join(s.Dir, "stderr.txt"))
+	logs := string(b) + generalLog(s)
+	t.Logf("drcmd exit: %q; dreaderd ended: %v", strings.TrimSpace(exitOut), werr)
+	if strings.Contains(logs, "select returned unknown descriptor") {
+		var lines []string
+		for _, ln := range strings.Split(logs, "\n") {
+			if strings.Contains(ln, "unknown descriptor") {
+				lines = append(lines, ln)
+			}
+		}
+		t.Errorf("the main process ended in fatal() during drcmd exit (status %v): %s", werr, strings.Join(lines, "\n"))
 	}
 }

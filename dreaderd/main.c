@@ -1355,9 +1355,15 @@ main(int ac, char **av)
 			    desc->d_stime+=end.tms_stime-start.tms_stime;
 			}
 #endif
-		    } else {
+		    } else if (FD_ISSET(i, &SFds)) {
 			fatal("select returned unknown descriptor %d", i);
 		    }
+		    /*
+		     * else it was closed earlier in this walk (DelThread()
+		     * takes it out of SFds): "drcmd exit" closes the
+		     * listeners, whose numbers can be higher than its own
+		     * (dreaderd -b <fd>)
+		     */
 		}
 	    }
 	    (void)ScanTimers(1, 0);
