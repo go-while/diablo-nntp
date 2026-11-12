@@ -131,14 +131,30 @@ void
 NNTPTakeThis(Connection *conn, char **pptr)
 {
     const char *origmsgid = "<>";
-    const char *msgid = MsgId(parseword(pptr, ""), NULL);
+    const char *msgid = MsgId(parseword(pptr, ""), &origmsgid);
 
     conn->co_Flags &= ~(COF_IHAVE|COF_POST|COF_POSTTOOBIG|COF_POSTXREF);
 
+    /*
+     * The article follows the command without waiting for an answer (RFC
+     * 4644 2.5.2): a refused TAKETHIS must read and drop it too, or its
+     * lines would be taken for commands.  The command table lets TAKETHIS
+     * through on a server (transit) connection only.
+     */
     if (conn->co_Flags & COF_SERVER) {
 	if (strcmp(msgid, "<>") == 0) {
-	    MBLogPrintf(conn, &conn->co_TMBuf, "439 %s\r\n", origmsgid);
-	    NNCommand(conn);
+	    /* 439 with the message-id as sent: its first word, bounded */
+	    char reply[MAXMSGIDLEN + 8];
+	    size_t n = strcspn(origmsgid, " \t\r\n");
+
+	    if (n == 0) {
+		origmsgid = "<>";
+		n = 2;
+	    }
+	    if (n > MAXMSGIDLEN)
+		n = MAXMSGIDLEN;
+	    snprintf(reply, sizeof(reply), "439 %.*s", (int)n, origmsgid);
+	    NNDiscardArticleStart(conn, reply);
 	} else
 	    NNAcceptArticleStart(conn, msgid);
     } else {
@@ -343,9 +359,9 @@ NNAcceptArticle(Connection *conn)
  * NNDiscardArticleStart() - read the article that follows a refused TAKETHIS
  * up to its terminating dot and throw it away, then answer reply.  The peer
  * sends the article without waiting for an answer (RFC 4644 2.5.2): if it
- * were not read here, its lines would be taken for commands.
+ * were not read here, its lines would be taken for commands.  The answer is
+ * kept with the connection (a reader process serves many at once).
  */
-static const char *DiscardReply;
 
 static void
 NNDiscardArticle(Connection *conn)
@@ -368,7 +384,9 @@ NNDiscardArticle(Connection *conn)
 	) {
 	    conn->co_Flags &= ~COF_MAYNOTCLOSE;
 	    conn->co_RMBuf.mh_SkipLong = 0;
-	    MBLogPrintf(conn, &conn->co_TMBuf, "%s\r\n", DiscardReply);
+	    MBLogPrintf(conn, &conn->co_TMBuf, "%s\r\n",
+		conn->co_DiscardReply ? conn->co_DiscardReply : "500 What?");
+	    zfreeStr(&conn->co_MemPool, &conn->co_DiscardReply);
 	    NNCommand(conn);
 	    return;
 	}
@@ -384,7 +402,8 @@ NNDiscardArticle(Connection *conn)
 void
 NNDiscardArticleStart(Connection *conn, const char *reply)
 {
-    DiscardReply = reply;	/* a constant string */
+    zfreeStr(&conn->co_MemPool, &conn->co_DiscardReply);
+    conn->co_DiscardReply = zallocStr(&conn->co_MemPool, reply);
     conn->co_Flags |= COF_MAYNOTCLOSE;
     NNDiscardArticle(conn);
 }

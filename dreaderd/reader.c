@@ -1485,8 +1485,15 @@ NNCommand2(Connection *conn)
 	if ((scan->cmd_Flags & CMDF_AUTH) &&
 	    (conn->co_Auth.dr_Flags & DF_AUTHREQUIRED)
 	) {
-	    MBLogPrintf(conn, &conn->co_TMBuf, "480 Authentication required for command\r\n");
-	    NNCommand(conn);
+	    static const char *authReply = "480 Authentication required for command";
+
+	    /* a TAKETHIS article follows unasked: read and drop it first */
+	    if (scan->cmd_Func == NNTPTakeThis)
+		NNDiscardArticleStart(conn, authReply);
+	    else {
+		MBLogPrintf(conn, &conn->co_TMBuf, "%s\r\n", authReply);
+		NNCommand(conn);
+	    }
 	} else {
 	    conn->co_ByteCountType = scan->cmd_DRBC_Type;
 	    scan->cmd_Func(conn, &ptr);
