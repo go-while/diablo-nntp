@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"net"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -52,4 +53,42 @@ access ` + PeerIP + ` 100mbit
 	}
 	c.ExpectCmd(111, "DATE")
 	c.ExpectCmd(205, "QUIT")
+}
+
+// TestDeepRevReaderdefDigitsBareCode: the main process takes a value that starts with three
+// digits for a refusal only when a space follows ("502 Go away"). A file backend entry whose
+// third field is a bare code ("502") or a code and a TAB is then a readerdef name, one that
+// does not exist. Such a login must still be refused, not let in with another readerdef.
+func TestDeepRevReaderdefDigitsBareCode(t *testing.T) {
+	_, spool := spoolStore(t)
+	s := NewReaderSite(t, ReaderOptions{Spool: spool, NoStart: true,
+		Files: map[string]string{"userpass": "bare:pw:502\ntab:pw:502\tGo away\nsp:pw:502 Go away\n"}})
+	access := `vserverdef DEFAULT
+    hostname ` + PathHost + `
+end
+authdef byfile
+    file ` + filepath.Join(s.Dir, "userpass") + `
+end
+readerdef full
+    read yes
+    post yes
+end
+readerdef userfile
+    read yes
+    auth byfile
+end
+access 127.0.0.1 userfile
+`
+	s.WriteFile(t, "dreader.access", access)
+	startReader(t, s, "[127.0.0.1]:"+s.Addr[strings.LastIndex(s.Addr, ":")+1:])
+	for _, u := range []string{"sp", "bare", "tab"} {
+		c := s.Reader(t)
+		c.ExpectCmd(381, "AUTHINFO USER %s", u)
+		code, line := c.Cmd("AUTHINFO PASS pw")
+		t.Logf("user %s: AUTHINFO PASS -> %d %q", u, code, line)
+		if code == 281 {
+			t.Errorf("user %s, whose file entry is a refusal (\"502...\"), was let in: %d %q", u, code, line)
+		}
+		c.Close()
+	}
 }
