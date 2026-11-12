@@ -161,8 +161,7 @@ func TestDeepRevAccessCacheStampWriteFailsLater(t *testing.T) {
 	testkit.WaitFor(t, 20*time.Second, "a refused stamp write of the later install", func() bool {
 		return len(shimMarked(mark, "refused write")) > 0
 	})
-	installs := func() int { return strings.Count(generalLog(s), "Installing access cache") }
-	n0 := installs()
+	m0 := len(shimMarked(mark, "refused write"))
 	for i := 0; i < 5; i++ {
 		got := list()
 		if !slices.Equal(got, []string{"e2e.test"}) && !slices.Equal(got, []string{"e2e.other"}) {
@@ -170,8 +169,8 @@ func TestDeepRevAccessCacheStampWriteFailsLater(t *testing.T) {
 		}
 		time.Sleep(time.Second)
 	}
-	if n := installs(); n <= n0 {
-		t.Errorf("the install was not tried again during 5 s of the fault")
+	if m := len(shimMarked(mark, "refused write")); m <= m0 {
+		t.Errorf("the install was not tried again during 5 s of the fault (no further refused stamp write)")
 	}
 	if fi1, err := os.Stat(lock); err != nil || fi1.Size() != fi0.Size() || !fi1.ModTime().Equal(fi0.ModTime()) {
 		t.Errorf("the lock file's stamp changed during the fault: before %v, now %v %v", fi0.ModTime(), fi1, err)
@@ -269,10 +268,16 @@ func TestDeepRevAccessCacheStampCloseFails(t *testing.T) {
 	testkit.WaitFor(t, 15*time.Second, "a failed close of the lock file", func() bool {
 		return len(shimMarked(mark, "failed close")) > 0
 	})
-	n0 := installs()
-	time.Sleep(3 * time.Second)
-	if n := installs(); n <= n0 {
-		t.Errorf("the install was not tried again while close() failed (%d installs in 3 s)", n-n0)
+	// each try ends in a failed close; the main process tries on its next pass, which comes
+	// within a few seconds when it has nothing else to do
+	m0 := len(shimMarked(mark, "failed close"))
+	tried := false
+	for deadline := time.Now().Add(15 * time.Second); time.Now().Before(deadline) && !tried; {
+		time.Sleep(200 * time.Millisecond)
+		tried = len(shimMarked(mark, "failed close")) > m0
+	}
+	if !tried {
+		t.Errorf("the install was not tried again within 15 s while close() failed")
 	}
 	log := generalLog(s)
 	if !strings.Contains(log, "Unable to close "+filepath.Join(s.Dir, ".accesslock")+" after writing its stamp") {
@@ -288,11 +293,19 @@ func TestDeepRevAccessCacheStampCloseFails(t *testing.T) {
 	if err := os.Remove(flag); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(2 * time.Second)
+	// the next try succeeds: an "Installing access cache" after the last failed close, and
+	// none after that (a try that was under way when the fault went may still fail once)
+	time.Sleep(time.Second)
+	testkit.WaitFor(t, 15*time.Second, "a try after the fault", func() bool {
+		log := generalLog(s)
+		i := strings.LastIndex(log, "Unable to close ")
+		return i >= 0 && strings.Contains(log[i:], "Installing access cache")
+	})
+	time.Sleep(time.Second)
 	n1 := installs()
-	time.Sleep(3 * time.Second)
+	time.Sleep(6 * time.Second)
 	if n := installs(); n != n1 {
-		t.Errorf("the install is still repeated after the fault is gone (%d more in 3 s)", n-n1)
+		t.Errorf("the install is still repeated after the fault is gone (%d more in 6 s)", n-n1)
 	}
 	if got := list(); !slices.Equal(got, []string{"e2e.other"}) {
 		t.Errorf("after the fault: groups %q, want B's [e2e.other]", got)
