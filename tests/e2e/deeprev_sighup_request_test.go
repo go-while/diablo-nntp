@@ -3,6 +3,7 @@ package e2e
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -24,13 +25,28 @@ import (
 // The spool server is started after the client is connected, so its link has the higher
 // descriptor. The reader is stopped (SIGSTOP) while the request is out, gets SIGHUP, and is
 // continued once the server has answered, so it finds the signal and the answer together.
-// The crash command must not run.
+// The client must be closed without the answer (the state above: freed while the answer was
+// there), the reader must end, and the crash command must not run.
+//
+// A write into the freed connection did not always fault: the pool pages of the client are
+// given back with munmap(), and the next mmap() (a buffer for the server's answer) often got
+// the same address back, so the write went into live memory and the test passed (1 of 9 runs
+// against the old code). Where an LD_PRELOAD injector can be used, munmap() makes the pages
+// inaccessible instead (unmapTrapSource), so such a write faults every time.
 func TestDeepRevSighupRequestInFlight(t *testing.T) {
 	requireProcessInspection(t, false)
 	port := testkit.FreePort(t)
 	addr := "127.0.0.1:" + strconv.Itoa(port)
 	s := NewReaderSite(t, ReaderOptions{SpoolAddr: addr, NoStart: true,
 		Config: map[string]string{"readercrash": "@home@/crash.sh"}})
+	mark := ""
+	if preloadHost(true) {
+		so := preloadShim(t, "unmaptrap", withMark(unmapTrapSource))
+		mark = filepath.Join(t.TempDir(), "mark")
+		s.Env = append(s.Env, lockFaultEnv(so), "SHIM_MARK="+mark)
+	} else {
+		t.Logf("no LD_PRELOAD on %s: a write into the freed client may go unnoticed", runtime.GOOS)
+	}
 	crashLog := filepath.Join(s.Dir, "crash.log")
 	s.WriteFile(t, "crash.sh", "#!/bin/sh\necho \"$1\" >> "+crashLog+"\n")
 	if err := os.Chmod(filepath.Join(s.Dir, "crash.sh"), 0o755); err != nil {
@@ -92,9 +108,22 @@ func TestDeepRevSighupRequestInFlight(t *testing.T) {
 	}
 	_ = syscall.Kill(reader, syscall.SIGHUP)
 	time.Sleep(answerAfter + time.Second)
+	unmapped := readerUnmaps(mark, reader)
 	_ = syscall.Kill(reader, syscall.SIGCONT)
 
+	// The client is dropped before the answer reaches it.
+	lines, err := c.ExpectClosed(10 * time.Second)
+	for _, l := range lines {
+		if strings.HasPrefix(l, "222") {
+			t.Fatalf("the client got the answer (%q) before the reader dropped it: the test did not reach the state it is about (the answer there while the client is freed)", lines)
+		}
+	}
+	if err != nil {
+		t.Fatalf("the client was not closed after SIGHUP to its reader: %v", err)
+	}
+
 	// The reader ends (it has no client left); a fault would run the crash command.
+	gone := false
 	limit = time.Now().Add(10 * time.Second)
 	for time.Now().Before(limit) {
 		if b, _ := os.ReadFile(crashLog); len(b) > 0 {
@@ -102,6 +131,7 @@ func TestDeepRevSighupRequestInFlight(t *testing.T) {
 				generalLog(s))
 		}
 		if syscall.Kill(reader, 0) != nil {
+			gone = true
 			break
 		}
 		time.Sleep(50 * time.Millisecond)
@@ -110,4 +140,47 @@ func TestDeepRevSighupRequestInFlight(t *testing.T) {
 	if b, _ := os.ReadFile(crashLog); len(b) > 0 {
 		t.Fatalf("the reader process faulted after SIGHUP with a request in flight (the crash command ran)\n%s", generalLog(s))
 	}
+	if !gone {
+		t.Errorf("the reader %d still runs 10 s after SIGHUP: it did not drop its client", reader)
+	}
+	if mark != "" && readerUnmaps(mark, reader) <= unmapped {
+		t.Errorf("the reader %d gave no memory back (munmap()) after SIGCONT: the client was not freed, or the injector did not act", reader)
+	}
+}
+
+// unmapTrapSource makes munmap() leave the pages mapped but inaccessible (PROT_NONE), so a
+// later use of freed pool memory faults instead of reaching whatever the next mmap() put
+// there; each call is marked. The address space is not given back: for short tests only.
+const unmapTrapSource = `#define _GNU_SOURCE
+#define __EXTENSIONS__
+#include <fcntl.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/mman.h>
+#include <unistd.h>
+/*MARK*/
+int
+munmap(void *addr, size_t len)
+{
+    shim_mark("munmap %lu", (unsigned long)len);
+    return mprotect(addr, len, PROT_NONE);
+}
+`
+
+// readerUnmaps counts the munmap() calls the injector marked for process pid (0 without a
+// mark file).
+func readerUnmaps(mark string, pid int) int {
+	if mark == "" {
+		return 0
+	}
+	n := 0
+	for _, l := range shimMarked(mark, " munmap ") {
+		if strings.HasPrefix(l, strconv.Itoa(pid)+" ") {
+			n++
+		}
+	}
+	return n
 }
