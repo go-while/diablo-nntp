@@ -2065,10 +2065,9 @@ AuthFieldSpace(int c)
  * p is the refusal ("NNN", "NNN text", the code and the text separated by
  * white space, see AuthFieldSpace()).  buf gets "NNN text\r\n" with a
  * single space after the code; the text ends at a CR or LF, so one line
- * goes out.  Without a text
- * it is "NNN Access denied"; when p is no refusal at all (a "600" ban
- * without the code that is to follow it) it is "502 Access denied".  The
- * text starts at buf + 4 in every case.
+ * goes out.  Without a text it is "NNN Access denied"; when p is no
+ * refusal at all (a "600" ban without the code that is to follow it) it
+ * is "502 Access denied".  The text starts at buf + 4 in every case.
  */
 static void
 AuthRefusalLine(char *buf, size_t len, const char *p)
