@@ -1,12 +1,15 @@
 package e2e
 
 import (
+	"errors"
 	"net"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
+	testkit "github.com/go-while/nntp-testkit"
 	"github.com/go-while/nntp-testkit/client"
 )
 
@@ -90,6 +93,33 @@ func TestDeepRevDrcmdDrippingClient(t *testing.T) {
 	}
 }
 
+// drcmdSend sends raw on a new control connection, closes the sending side and returns what
+// came back and whether the connection was closed. For a line that is to be refused
+// (refused), dreaderd closes the connection as soon as the byte past the buffer shows the
+// line too long, so the rest of the write may fail with EPIPE or ECONNRESET: that counts as
+// the close. For any other line the whole write must go through.
+func drcmdSend(t *testing.T, sock, raw string, refused bool) (string, bool) {
+	t.Helper()
+	c, err := net.DialTimeout("unix", sock, 10*time.Second)
+	if err != nil {
+		t.Fatalf("connect to the control socket: %v", err)
+	}
+	defer c.Close()
+	c.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	if n, err := c.Write([]byte(raw)); err != nil {
+		if refused && n >= drcmdMaxLine && (errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET)) {
+			text, _ := readToEOF(c, 8*time.Second)
+			return text, true
+		}
+		t.Fatalf("write (%d of %d bytes): %v", n, len(raw), err)
+	}
+	c.(*net.UnixConn).CloseWrite()
+	return readToEOF(c, 8*time.Second)
+}
+
+// drcmdMaxLine is the buffer of a control command line, its NUL included (MAXLINE, lib/defs.h).
+const drcmdMaxLine = 16384
+
 // TestDeepRevDrcmdLongLineAndEOF: a control command line that does not fit into the buffer
 // (MAXLINE) is not run: fgets() ran its first part as a command, and so did the first
 // version of the deadline. A last line without a newline at EOF is still run, as fgets() did.
@@ -97,23 +127,9 @@ func TestDeepRevDrcmdLongLineAndEOF(t *testing.T) {
 	_, spool := spoolStore(t)
 	s := NewReaderSite(t, ReaderOptions{Spool: spool})
 	sock := filepath.Join(s.Dir, "run", ".dreadersock")
-	send := func(t *testing.T, raw string) (string, bool) {
-		t.Helper()
-		c, err := net.DialTimeout("unix", sock, 10*time.Second)
-		if err != nil {
-			t.Fatalf("connect to the control socket: %v", err)
-		}
-		defer c.Close()
-		c.SetWriteDeadline(time.Now().Add(5 * time.Second))
-		if _, err := c.Write([]byte(raw)); err != nil {
-			t.Fatalf("write: %v", err)
-		}
-		c.(*net.UnixConn).CloseWrite()
-		return readToEOF(c, 8*time.Second)
-	}
 
 	t.Run("longer than the buffer", func(t *testing.T) {
-		text, eof := send(t, "status "+strings.Repeat("x", 20000))
+		text, eof := drcmdSend(t, sock, "status "+strings.Repeat("x", 20000), true)
 		if !eof || text != "" {
 			t.Errorf("a command line of 20007 bytes without a newline: got %q (closed: %v), want nothing and the close", text, eof)
 		}
@@ -122,7 +138,7 @@ func TestDeepRevDrcmdLongLineAndEOF(t *testing.T) {
 		}
 	})
 	t.Run("last line at EOF", func(t *testing.T) {
-		if text, _ := send(t, "status"); !strings.Contains(text, "Connect=") {
+		if text, _ := drcmdSend(t, sock, "status", false); !strings.Contains(text, "Connect=") {
 			t.Errorf("\"status\" without a newline, then EOF: got %q, want the status line", text)
 		}
 	})
@@ -132,25 +148,10 @@ func TestDeepRevDrcmdLongLineAndEOF(t *testing.T) {
 // with its NUL. A line whose text is 16383 bytes fits: at EOF without a newline and with a
 // newline it is run (fgets() ran it too); one byte more is refused.
 func TestDeepRevDrcmdLineBoundary(t *testing.T) {
-	const maxline = 16384 // lib/defs.h
+	const maxline = drcmdMaxLine
 	_, spool := spoolStore(t)
 	s := NewReaderSite(t, ReaderOptions{Spool: spool})
 	sock := filepath.Join(s.Dir, "run", ".dreadersock")
-	send := func(t *testing.T, raw string) string {
-		t.Helper()
-		c, err := net.DialTimeout("unix", sock, 10*time.Second)
-		if err != nil {
-			t.Fatalf("connect to the control socket: %v", err)
-		}
-		defer c.Close()
-		c.SetWriteDeadline(time.Now().Add(5 * time.Second))
-		if _, err := c.Write([]byte(raw)); err != nil {
-			t.Fatalf("write: %v", err)
-		}
-		c.(*net.UnixConn).CloseWrite()
-		text, _ := readToEOF(c, 8*time.Second)
-		return text
-	}
 	line := func(n int) string { return "status " + strings.Repeat("x", n-len("status ")) }
 	for _, tc := range []struct {
 		name, raw string
@@ -163,9 +164,18 @@ func TestDeepRevDrcmdLineBoundary(t *testing.T) {
 		{"16384 bytes and a newline", line(maxline) + "\n", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			text := send(t, tc.raw)
+			refusals := strings.Count(generalLog(s), "drcmd: command line longer than")
+			text, closed := drcmdSend(t, sock, tc.raw, !tc.run)
 			if ran := strings.Contains(text, "Connect="); ran != tc.run {
 				t.Errorf("%s: answer %q, run %v, want %v", tc.name, text, ran, tc.run)
+			}
+			if !tc.run {
+				if !closed {
+					t.Errorf("%s: the connection was not closed", tc.name)
+				}
+				testkit.WaitFor(t, 5*time.Second, "the refusal in the log", func() bool {
+					return strings.Count(generalLog(s), "drcmd: command line longer than") > refusals
+				})
 			}
 		})
 	}
