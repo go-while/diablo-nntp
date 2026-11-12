@@ -61,6 +61,37 @@ func TestDeepRevCheckgroupsLongLines(t *testing.T) {
 		}
 	})
 
+	// ParseControl() logs the real limit too: a dcontrol.ctl line of 255 characters is read,
+	// one of 256 is logged as too long; the checkgroups is still taken by the rule after them
+	t.Run("dcontrol.ctl limit", func(t *testing.T) {
+		fits := "#" + strings.Repeat("f", 254)
+		over := "#" + strings.Repeat("o", 255)
+		s := cgSite(t, []string{"e2e.test"},
+			fits+"\n"+over+"\ncheckgroups:*:*:log=cg.log\n",
+			"e2e.test\tThe test group.",
+			"e2e.new\tA new group.")
+		ctl := "dcontrol.ctl: line 2 too long (at most 255 characters), ignored"
+		logFile := filepath.Join(s.Dir, "log", "cg.log")
+		limit := time.Now().Add(15 * time.Second)
+		for time.Now().Before(limit) {
+			b, _ := os.ReadFile(logFile)
+			if strings.Contains(generalLog(s), ctl) && strings.Contains(string(b), "Checkgroups:") {
+				break
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+		log := generalLog(s)
+		if !strings.Contains(log, ctl) {
+			t.Errorf("general.log does not say %q for the dcontrol.ctl line of 256 characters:\n%s", ctl, log)
+		}
+		if strings.Contains(log, "dcontrol.ctl: line 1 too long") {
+			t.Errorf("the dcontrol.ctl line of 255 characters was refused as too long")
+		}
+		if b, _ := os.ReadFile(logFile); !strings.Contains(string(b), "Checkgroups: not acted on") {
+			t.Errorf("cg.log does not say that the checkgroups was logged only (the rule on line 3, after the two long lines):\n%s", b)
+		}
+	})
+
 	// the log names the real limit: a line of 255 characters is read, one of 256 is not
 	t.Run("localgroups limit", func(t *testing.T) {
 		fits := "zz.fits." + strings.Repeat("x", 247)
