@@ -3,6 +3,7 @@ package e2e
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -185,8 +186,10 @@ func TestDeepRevAuthRefusalBanLine(t *testing.T) {
 var refusalLineRE = regexp.MustCompile(`^[1-5][0-9][0-9] [^\r\n\x00]*\r\n$`)
 
 // refusalRaw logs in as user with the password "pw" and returns all bytes the server sends
-// after AUTHINFO PASS, until it is quiet for 2 s or closes the connection, and whether it
-// closed it. When the reply is 281 it also returns the replies to MODE READER and GROUP.
+// after AUTHINFO PASS and whether it closed the connection. It waits up to 10 s for the first
+// line (a worker that is slow with the backend must not leave the reply empty), or for the
+// close, then reads until the server is quiet for 2 s or closes. When the reply is 281 it
+// also returns the replies to MODE READER and GROUP.
 func refusalRaw(t *testing.T, s *Site, user string) (raw string, closed bool, mode, group string) {
 	t.Helper()
 	c := s.Reader(t)
@@ -195,8 +198,13 @@ func refusalRaw(t *testing.T, s *Site, user string) (raw string, closed bool, mo
 	if err := c.Send("AUTHINFO PASS pw\r\n"); err != nil {
 		t.Fatalf("user %s: AUTHINFO PASS: %v", user, err)
 	}
-	b, eof := c.ReadUntilQuiet(2*time.Second, 8192)
-	raw, closed = string(b), eof
+	c.Conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	first, err := c.R.ReadString('\n')
+	raw, closed = first, err == io.EOF
+	if err == nil {
+		b, eof := c.ReadUntilQuiet(2*time.Second, 8192)
+		raw, closed = raw+string(b), eof
+	}
 	if strings.HasPrefix(raw, "281") && !closed {
 		_, mode, _ = c.TryCmd("MODE READER")
 		_, group, _ = c.TryCmd("GROUP e2e.test")

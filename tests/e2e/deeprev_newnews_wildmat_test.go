@@ -85,11 +85,11 @@ func TestReaderNewnewsWildmat(t *testing.T) {
 // whole NEWNEWS ended within the 0.5 s the test waits before it sends the DATE, and the DATE
 // was answered in under 1 ms.
 //
-// Bounds: the NEWNEWS time runs from sending the line to the final "." and includes that
-// 0.5 s wait; it must be at most 10 s (the work itself takes a few ms with a linear check, so
-// a slow or busy host has a wide margin, and the quadratic check takes about 5 times the
-// bound). The DATE must be answered within 5 s of being sent (at worst it waits for the work
-// of the NEWNEWS line; the quadratic check makes it wait about 50 s).
+// Bounds (checkNewnewsLongLine()): the NEWNEWS time runs from sending the line to the final
+// "." and includes that 0.5 s wait; it must be at most 3 s. The DATE must be answered within
+// 2 s of being sent (at worst it waits for the work of the NEWNEWS line). With a linear check
+// the NEWNEWS takes 0.50 s and the DATE under 10 ms; the quadratic check takes about 50 s for
+// both, so a host 15 times faster than the test VMs still fails it.
 func TestReaderNewnewsManyPlainNames(t *testing.T) {
 	const nNames = 110000
 	st, spool := spoolStore(t)
@@ -154,19 +154,25 @@ func TestReaderNewnewsManyPlainNames(t *testing.T) {
 // that to show (a news server has far more). The result is the one of the whole wildmat: the
 // last piece that matches a group decides, so "!misc.*" in the middle of the line does not
 // exclude misc.test, which is a plain piece again after it, and each article is listed once.
+//
+// Bounds as in TestReaderNewnewsManyPlainNames: fixed code takes 0.50 s for the NEWNEWS and
+// under 10 ms for the DATE, the old code 13 to 15 s for both on the test VMs, so a host 4
+// times faster than they are still fails the 3 s and 2 s bounds.
 func TestReaderNewnewsManyPlainNamesAndWild(t *testing.T) {
 	const (
 		nNames  = 110000
 		nGroups = 8000
-		chunk   = 2000 // groups per dgrpctl run: adding a group gets slower the more there are
+		chunk   = 1000 // groups per dgrpctl run: adding a group gets slower the more there are
 	)
 	st, spool := spoolStore(t)
 	access := strings.Replace(DefaultReaderAccess, "readerdef rp\n", "readerdef rp\n    allownewnews yes\n", 1)
 	groups := []string{"comp.lang.c", "misc.test"}
 	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: access, Groups: groups, NoStart: true})
 	// x0000000.g .. x0007999.g: no piece of the line matches them, but each piece shares up to
-	// eight characters with some of them. dgrpctl takes 2 to 4 ms for each (more with more
-	// groups), so the test adds them in runs that stay inside the 60 s limit of a command.
+	// eight characters with some of them. dgrpctl takes 1.5 to 4.5 ms for each group (more the
+	// more groups there are), so the test adds them in runs of 1000: the longest run took 4.5 s
+	// on the test VMs (8.8 s with runs of 2000), against the 60 s limit of a command, which a
+	// host 13 times slower would reach.
 	for from := 0; from < nGroups; from += chunk {
 		var cg strings.Builder
 		for i := from; i < from+chunk && i < nGroups; i++ {
@@ -214,13 +220,13 @@ func TestReaderNewnewsManyPlainNamesAndWild(t *testing.T) {
 
 // checkNewnewsLongLine sends the one NEWNEWS line (nNames pieces, what says which kind) on a
 // connection to the site's reader (readerforks 1), asks for the DATE on a second connection
-// 0.5 s later and checks: the DATE is answered within 5 s, the NEWNEWS ends within 10 s of
+// 0.5 s later and checks: the DATE is answered within 2 s, the NEWNEWS ends within 3 s of
 // being sent (this includes the 0.5 s wait) and lists the message-ids in want once each.
 func checkNewnewsLongLine(t *testing.T, s *Site, line string, nNames int, what string, want []string) {
 	t.Helper()
 	const (
-		newnewsMax  = 10 * time.Second
-		dateMax     = 5 * time.Second
+		newnewsMax  = 3 * time.Second
+		dateMax     = 2 * time.Second
 		readTimeout = 120 * time.Second // a quadratic check ends in about 50 s
 	)
 	if len(line) > 1<<20 {
