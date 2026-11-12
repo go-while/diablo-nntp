@@ -53,8 +53,8 @@ func takethisRefused(t *testing.T, addr, from string, setup [][2]string, line, n
 // answers. dreaderd answered "439 <>" for a missing or invalid message-id, and 480 when the
 // feed had not yet authenticated, without reading the article: its lines were taken for
 // commands (500 per header line, and a body line "QUIT" ended the session). Now the answer
-// comes after the dot (439 with the message-id as sent, its first word), then the next
-// command's own answer. diablo already read the article of its refused TAKETHIS (control).
+// comes after the dot (439 with the message-id as sent, its first word, if all of it is
+// printable US-ASCII, else "<>"), then the next command's own answer. diablo already read the article of its refused TAKETHIS (control).
 //
 // The answer is kept with each connection: two feeds of one reader process that drop an
 // article at the same time, one refused for a NUL byte (501), one for an invalid message-id
@@ -77,6 +77,12 @@ func TestTakethisRefusedFraming(t *testing.T) {
 		_, spool := spoolStore(t)
 		s := NewReaderSite(t, ReaderOptions{Spool: spool})
 		check(t, takethisRefused(t, s.Addr, PeerIP, stream, "TAKETHIS", "MODE STREAM", "203"), "439 <>", "203")
+	})
+	// only printable US-ASCII is echoed: a control byte in an invalid id gives "439 <>"
+	t.Run("dreaderd message-id with a control byte", func(t *testing.T) {
+		_, spool := spoolStore(t)
+		s := NewReaderSite(t, ReaderOptions{Spool: spool})
+		check(t, takethisRefused(t, s.Addr, PeerIP, stream, "TAKETHIS <a\x01b\x7fc", "MODE STREAM", "203"), "439 <>", "203")
 	})
 	t.Run("dreaderd authentication required", func(t *testing.T) {
 		access := DefaultReaderAccess + `authdef feedauth

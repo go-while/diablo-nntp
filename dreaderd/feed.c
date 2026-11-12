@@ -143,16 +143,26 @@ NNTPTakeThis(Connection *conn, char **pptr)
      */
     if (conn->co_Flags & COF_SERVER) {
 	if (strcmp(msgid, "<>") == 0) {
-	    /* 439 with the message-id as sent: its first word, bounded */
+	    /*
+	     * 439 with the message-id as sent (its first word, bounded), if
+	     * every byte of it is printable US-ASCII; else, or with none, "<>".
+	     */
 	    char reply[MAXMSGIDLEN + 8];
 	    size_t n = strcspn(origmsgid, " \t\r\n");
+	    size_t i;
 
-	    if (n == 0) {
+	    if (n > MAXMSGIDLEN)
+		n = MAXMSGIDLEN;
+	    for (i = 0; i < n; ++i) {
+		unsigned char c = (unsigned char)origmsgid[i];
+
+		if (c < 0x21 || c > 0x7e)
+		    break;
+	    }
+	    if (n == 0 || i < n) {
 		origmsgid = "<>";
 		n = 2;
 	    }
-	    if (n > MAXMSGIDLEN)
-		n = MAXMSGIDLEN;
 	    snprintf(reply, sizeof(reply), "439 %.*s", (int)n, origmsgid);
 	    NNDiscardArticleStart(conn, reply);
 	} else
