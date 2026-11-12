@@ -1,0 +1,1 @@
+- dreaderd, diablo: a TAKETHIS line with a NUL byte got its 501, but the article that follows it unasked was left unread and its lines taken for commands; the article is now read and dropped before the next command, as for the other refused TAKETHIS.

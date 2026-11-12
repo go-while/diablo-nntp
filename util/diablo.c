@@ -2182,6 +2182,13 @@ DoSession(int fd, int count)
 	if (memchr(buf, 0, bytes - 1) != NULL) {
 	    xfprintf(fo, "501 Syntax error: NUL byte in the command line\r\n");
 	    fflush(fo);
+	    /*
+	     * A TAKETHIS is followed by its article without waiting for an
+	     * answer (RFC 4644 2.5.2): read and drop it, as for the other
+	     * refused TAKETHIS, or its lines would be taken for commands.
+	     */
+	    if (strcspn(buf, " \t\r") == 8 && strncasecmp(buf, "takethis", 8) == 0)
+		LoadArticle(bi, "<>", 1, headerOnly, NULL, NULL);
 	    continue;
 	}
 

@@ -15,6 +15,7 @@ Prototype void NNTPMode(Connection *conn, char **pptr);
 Prototype void NNTPIHave(Connection *conn, char **pptr);
 Prototype void NNTPCheck(Connection *conn, char **pptr);
 Prototype void NNTPTakeThis(Connection *conn, char **pptr);
+Prototype void NNDiscardArticleStart(Connection *conn, const char *reply);
 Prototype void NNTPPost(Connection *conn, char **pptr);
 Prototype int ValidXRef(const char *buf, int len);
 
@@ -336,6 +337,56 @@ NNAcceptArticle(Connection *conn)
 	 */
 	FD_SET(conn->co_Desc->d_Fd, &WFds);
     }
+}
+
+/*
+ * NNDiscardArticleStart() - read the article that follows a refused TAKETHIS
+ * up to its terminating dot and throw it away, then answer reply.  The peer
+ * sends the article without waiting for an answer (RFC 4644 2.5.2): if it
+ * were not read here, its lines would be taken for commands.
+ */
+static const char *DiscardReply;
+
+static void
+NNDiscardArticle(Connection *conn)
+{
+    char *buf;
+    int len = 0;
+    int maxl = 1000;
+
+    conn->co_Func = NNDiscardArticle;
+    conn->co_State = "discard";
+    conn->co_RMBuf.mh_SkipLong = 1;
+
+    while (--maxl > 0 && (len = MBReadLine(&conn->co_RMBuf, &buf)) > 0) {
+	if (conn->co_RMBuf.mh_LongLine) {
+	    conn->co_RMBuf.mh_LongLine = 0;
+	    continue;
+	}
+	if ((len == 3 && strcmp(buf, ".\r") == 0) ||
+	    (len == 2 && strcmp(buf, ".") == 0)
+	) {
+	    conn->co_Flags &= ~COF_MAYNOTCLOSE;
+	    conn->co_RMBuf.mh_SkipLong = 0;
+	    MBLogPrintf(conn, &conn->co_TMBuf, "%s\r\n", DiscardReply);
+	    NNCommand(conn);
+	    return;
+	}
+    }
+    if (len <= 0) {
+	if (len < 0)
+	    NNTerminate(conn);
+    } else {
+	FD_SET(conn->co_Desc->d_Fd, &WFds);
+    }
+}
+
+void
+NNDiscardArticleStart(Connection *conn, const char *reply)
+{
+    DiscardReply = reply;	/* a constant string */
+    conn->co_Flags |= COF_MAYNOTCLOSE;
+    NNDiscardArticle(conn);
 }
 
 /*

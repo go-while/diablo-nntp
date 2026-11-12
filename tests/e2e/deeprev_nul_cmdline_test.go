@@ -159,3 +159,64 @@ func TestReaderNulProxyLine(t *testing.T) {
 		t.Errorf("the proxied line without the NUL was refused: %q", got)
 	}
 }
+
+// nulTakethis sends, in one write, a TAKETHIS line with a NUL byte, an article whose body has
+// a line "QUIT", its dot, and MODE STREAM, and returns the answer lines that came within 5 s.
+func nulTakethis(t *testing.T, addr, from string) []string {
+	t.Helper()
+	n := dialNulLine(t, addr, from)
+	if l, err := n.send("MODE STREAM\r\n"); err != nil || !strings.HasPrefix(l, "203 ") {
+		t.Fatalf("from %s: MODE STREAM: %q %v", from, l, err)
+	}
+	id := "<nul-takethis." + strings.ReplaceAll(t.Name(), "/", ".") + "@e2e.test>"
+	raw := "TAKETHIS " + id + "\x00junk\r\n" +
+		"Path: e2e.peer!not-for-mail\r\n" +
+		"From: <nul@example.invalid>\r\n" +
+		"Newsgroups: e2e.test\r\n" +
+		"Subject: nul takethis\r\n" +
+		"Date: " + time.Now().UTC().Format(time.RFC1123Z) + "\r\n" +
+		"Message-ID: " + id + "\r\n" +
+		"\r\n" +
+		"QUIT\r\n" +
+		".\r\n" +
+		"MODE STREAM\r\n"
+	n.c.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	if _, err := n.c.Write([]byte(raw)); err != nil {
+		t.Fatal(err)
+	}
+	var lines []string
+	for {
+		l, err := n.line()
+		if err != nil {
+			break
+		}
+		lines = append(lines, l)
+		if strings.HasPrefix(l, "203 ") || strings.HasPrefix(l, "205 ") {
+			break
+		}
+	}
+	return lines
+}
+
+// TestNulTakethisFraming: a TAKETHIS is followed by its article without waiting for an answer
+// (RFC 4644 2.5.2). The 501 for a NUL byte in the line left the article unread, so its lines
+// were taken for commands: 500 for each header line, and a body line "QUIT" ended the
+// session. The article must be read and dropped: 501, then the answer of the next command
+// (MODE STREAM, 203), nothing between; for a feed of dreaderd and of diablo.
+func TestNulTakethisFraming(t *testing.T) {
+	check := func(t *testing.T, lines []string) {
+		t.Helper()
+		if len(lines) != 2 || !strings.HasPrefix(lines[0], "501 ") || !strings.HasPrefix(lines[1], "203 ") {
+			t.Errorf("TAKETHIS with a NUL, its article (a body line QUIT), MODE STREAM: answers %q, want the 501 and then 203", lines)
+		}
+	}
+	t.Run("dreaderd feed", func(t *testing.T) {
+		_, spool := spoolStore(t)
+		s := NewReaderSite(t, ReaderOptions{Spool: spool})
+		check(t, nulTakethis(t, s.Addr, PeerIP))
+	})
+	t.Run("diablo", func(t *testing.T) {
+		s := NewSite(t, SiteOptions{})
+		check(t, nulTakethis(t, s.Addr, PeerIP))
+	})
+}

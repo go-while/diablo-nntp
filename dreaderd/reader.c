@@ -1427,7 +1427,20 @@ NNCommand2(Connection *conn)
      * NUL junk was served, and a line starting with NUL got no answer.
      */
     if (nul) {
-	MBLogPrintf(conn, &conn->co_TMBuf, "501 Syntax error: NUL byte in the command line\r\n");
+	static const char *nulReply = "501 Syntax error: NUL byte in the command line";
+
+	/*
+	 * A TAKETHIS is followed by its article without waiting for an
+	 * answer (RFC 4644 2.5.2): read it up to its dot and drop it, then
+	 * answer, or its lines would be taken for commands.  Only a server
+	 * (transit) connection takes TAKETHIS at all.
+	 */
+	if ((conn->co_Flags & COF_SERVER) &&
+	    strcspn(ptr, " \t\r") == 8 && strncasecmp(ptr, "takethis", 8) == 0) {
+	    NNDiscardArticleStart(conn, nulReply);
+	    return;
+	}
+	MBLogPrintf(conn, &conn->co_TMBuf, "%s\r\n", nulReply);
 	NNCommand(conn);
 	return;
     }
