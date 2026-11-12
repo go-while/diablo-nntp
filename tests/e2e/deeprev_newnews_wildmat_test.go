@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"net"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -51,6 +52,14 @@ func TestReaderNewnewsWildmat(t *testing.T) {
 		{"*,!comp.*", []string{"misc.test"}},
 		{"*,!comp.lang.?o,!misc.*", []string{"comp.lang.c", "comp.os.linux"}},
 		{"!comp.*", nil},
+		// plain names among wild pieces: the place in the list decides, not the kind of piece
+		{"!*,comp.lang.c", []string{"comp.lang.c"}},
+		{"comp.lang.c,!comp.*", nil},
+		{"*,misc.test,misc.test", groups},
+		{"misc.test,!misc.*,misc.test", []string{"misc.test"}},
+		{"misc.test,misc.*,!misc.test", nil},
+		{"comp.*,!comp.lang.*,comp.lang.go,nosuch.group", []string{"comp.lang.go", "comp.os.linux"}},
+		{"comp.lang.c,comp.lang.go,!comp.lang.?,comp.lang.c", []string{"comp.lang.c", "comp.lang.go"}},
 	} {
 		c.ExpectCmd(230, "NEWNEWS %s 000101 000000 GMT", tc.wildmat)
 		got := c.ReadDotLines()
@@ -82,12 +91,7 @@ func TestReaderNewnewsWildmat(t *testing.T) {
 // bound). The DATE must be answered within 5 s of being sent (at worst it waits for the work
 // of the NEWNEWS line; the quadratic check makes it wait about 50 s).
 func TestReaderNewnewsManyPlainNames(t *testing.T) {
-	const (
-		nNames      = 110000
-		newnewsMax  = 10 * time.Second
-		dateMax     = 5 * time.Second
-		readTimeout = 120 * time.Second // the quadratic check ends in about 50 s
-	)
+	const nNames = 110000
 	st, spool := spoolStore(t)
 	access := strings.Replace(DefaultReaderAccess, "readerdef rp\n", "readerdef rp\n    allownewnews yes\n", 1)
 	groups := []string{"comp.lang.c", "misc.test"}
@@ -126,6 +130,102 @@ func TestReaderNewnewsManyPlainNames(t *testing.T) {
 		}
 	}
 
+	// x0000000 .. x0109999, with the two real groups spread over the line, three and two times
+	var sb strings.Builder
+	sb.WriteString("NEWNEWS comp.lang.c")
+	for i := 0; i < nNames; i++ {
+		switch i {
+		case 30000, 90000:
+			sb.WriteString(",misc.test")
+		case 55000:
+			sb.WriteString(",comp.lang.c")
+		}
+		fmt.Fprintf(&sb, ",x%07d", i)
+	}
+	sb.WriteString(",comp.lang.c 000101 000000 GMT\r\n")
+
+	checkNewnewsLongLine(t, s, sb.String(), nNames+5, "plain names", all)
+}
+
+// TestReaderNewnewsManyPlainNamesAndWild: the same line with one wild piece in front and a '!'
+// piece among the names. ListActiveGroups() matched every piece against every active group
+// once a piece was wild, so the plain names, which 4e8828c took without a scan, cost groups
+// times 110,000 calls of WildCmp() in the reader's loop; the site has nGroups more groups for
+// that to show (a news server has far more). The result is the one of the whole wildmat: the
+// last piece that matches a group decides, so "!misc.*" in the middle of the line does not
+// exclude misc.test, which is a plain piece again after it, and each article is listed once.
+func TestReaderNewnewsManyPlainNamesAndWild(t *testing.T) {
+	const (
+		nNames  = 110000
+		nGroups = 8000
+		chunk   = 2000 // groups per dgrpctl run: adding a group gets slower the more there are
+	)
+	st, spool := spoolStore(t)
+	access := strings.Replace(DefaultReaderAccess, "readerdef rp\n", "readerdef rp\n    allownewnews yes\n", 1)
+	groups := []string{"comp.lang.c", "misc.test"}
+	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: access, Groups: groups, NoStart: true})
+	// x0000000.g .. x0007999.g: no piece of the line matches them, but each piece shares up to
+	// eight characters with some of them. dgrpctl takes 2 to 4 ms for each (more with more
+	// groups), so the test adds them in runs that stay inside the 60 s limit of a command.
+	for from := 0; from < nGroups; from += chunk {
+		var cg strings.Builder
+		for i := from; i < from+chunk && i < nGroups; i++ {
+			fmt.Fprintf(&cg, "x%07d.g bulk group\n", i)
+		}
+		s.WriteFile(t, "bulk.groups", cg.String())
+		s.Run(t, "dgrpctl", "checkgroups", "exec", filepath.Join(s.Dir, "bulk.groups"))
+	}
+	startReader(t, s, "[127.0.0.1]:"+s.Addr[strings.LastIndex(s.Addr, ":")+1:])
+	ids := map[string]string{}
+	for _, g := range groups {
+		id := msgID(t)
+		ids[g] = id
+		feedReader(t, s, st, g, newArticle(id, g, "plain names and wild "+g, "body"))
+	}
+	all := []string{ids["comp.lang.c"], ids["misc.test"]}
+	slices.Sort(all)
+
+	c := s.Reader(t)
+	defer c.ExpectCmd(205, "QUIT")
+	for _, g := range groups {
+		testkit.WaitFor(t, 10*time.Second, "the article in "+g, func() bool {
+			_, line := c.Cmd("GROUP %s", g)
+			return strings.HasPrefix(line, "211 1 ")
+		})
+	}
+
+	// comp.*, then x0000000 .. x0109999 with misc.test twice spread over the line and
+	// "!misc.*" between the two; comp.lang.c comes from comp.*
+	var sb strings.Builder
+	sb.WriteString("NEWNEWS comp.*")
+	for i := 0; i < nNames; i++ {
+		switch i {
+		case 30000, 90000:
+			sb.WriteString(",misc.test")
+		case 60000:
+			sb.WriteString(",!misc.*")
+		}
+		fmt.Fprintf(&sb, ",x%07d", i)
+	}
+	sb.WriteString(" 000101 000000 GMT\r\n")
+
+	checkNewnewsLongLine(t, s, sb.String(), nNames+4, "plain names and wild pieces", all)
+}
+
+// checkNewnewsLongLine sends the one NEWNEWS line (nNames pieces, what says which kind) on a
+// connection to the site's reader (readerforks 1), asks for the DATE on a second connection
+// 0.5 s later and checks: the DATE is answered within 5 s, the NEWNEWS ends within 10 s of
+// being sent (this includes the 0.5 s wait) and lists the message-ids in want once each.
+func checkNewnewsLongLine(t *testing.T, s *Site, line string, nNames int, what string, want []string) {
+	t.Helper()
+	const (
+		newnewsMax  = 10 * time.Second
+		dateMax     = 5 * time.Second
+		readTimeout = 120 * time.Second // a quadratic check ends in about 50 s
+	)
+	if len(line) > 1<<20 {
+		t.Fatalf("the NEWNEWS line is %d bytes, more than CLIENT_MAXLINE", len(line))
+	}
 	dial := func() (net.Conn, *bufio.Reader) {
 		nc, err := net.DialTimeout("tcp", s.Addr, 10*time.Second)
 		if err != nil {
@@ -142,27 +242,10 @@ func TestReaderNewnewsManyPlainNames(t *testing.T) {
 	other, otherR := dial()
 	nn, nnR := dial()
 
-	// x0000000 .. x0109999, with the two real groups spread over the line, three and two times
-	var sb strings.Builder
-	sb.WriteString("NEWNEWS comp.lang.c")
-	for i := 0; i < nNames; i++ {
-		switch i {
-		case 30000, 90000:
-			sb.WriteString(",misc.test")
-		case 55000:
-			sb.WriteString(",comp.lang.c")
-		}
-		fmt.Fprintf(&sb, ",x%07d", i)
-	}
-	sb.WriteString(",comp.lang.c 000101 000000 GMT\r\n")
-	if sb.Len() > 1<<20 {
-		t.Fatalf("the NEWNEWS line is %d bytes, more than CLIENT_MAXLINE", sb.Len())
-	}
-
 	start := time.Now()
 	nn.SetWriteDeadline(start.Add(readTimeout))
-	if _, err := nn.Write([]byte(sb.String())); err != nil {
-		t.Fatalf("writing the NEWNEWS line (%d bytes): %v", sb.Len(), err)
+	if _, err := nn.Write([]byte(line)); err != nil {
+		t.Fatalf("writing the NEWNEWS line (%d bytes): %v", len(line), err)
 	}
 	// give the reader the line, then ask the other client for the date
 	time.Sleep(500 * time.Millisecond)
@@ -174,7 +257,7 @@ func TestReaderNewnewsManyPlainNames(t *testing.T) {
 	if err != nil || !strings.HasPrefix(l, "111 ") {
 		t.Errorf("other client's DATE: %q %v after %v", l, err, dateTook)
 	} else if dateTook > dateMax {
-		t.Errorf("other client's DATE waited %v (more than %v) behind a NEWNEWS of %d plain names", dateTook, dateMax, nNames)
+		t.Errorf("other client's DATE waited %v (more than %v) behind a NEWNEWS of %d %s", dateTook, dateMax, nNames, what)
 	}
 
 	nn.SetReadDeadline(start.Add(readTimeout))
@@ -194,13 +277,13 @@ func TestReaderNewnewsManyPlainNames(t *testing.T) {
 		got = append(got, strings.TrimRight(l, "\r\n"))
 	}
 	took := time.Since(start)
-	t.Logf("NEWNEWS of %d names (%d bytes) took %v, the other client's DATE %v", nNames+5, sb.Len(), took, dateTook)
+	t.Logf("NEWNEWS of %d names (%d bytes) took %v, the other client's DATE %v", nNames, len(line), took, dateTook)
 	if took > newnewsMax {
-		t.Errorf("a NEWNEWS of %d plain names held the reader %v (more than %v)", nNames, took, newnewsMax)
+		t.Errorf("a NEWNEWS of %d %s held the reader %v (more than %v)", nNames, what, took, newnewsMax)
 	}
 	sorted := slices.Clone(got)
 	slices.Sort(sorted)
-	if !slices.Equal(sorted, all) {
-		t.Errorf("NEWNEWS of %d plain names: %q, want each of %q once", nNames, got, all)
+	if !slices.Equal(sorted, want) {
+		t.Errorf("NEWNEWS of %d %s: %q, want each of %q once", nNames, what, got, want)
 	}
 }

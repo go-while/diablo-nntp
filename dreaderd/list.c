@@ -911,7 +911,11 @@ ActiveCacheInsert(activeCacheEnt **acp, char *newGroup, int newCts)
  * comma-separated patterns are tried in order, the last one that matches a
  * group decides, and a pattern with a leading '!' excludes the groups it
  * matches.  Each group is listed once.  A list of plain group names (no '*',
- * '?' or '!') is taken as it is, without a scan of the active file.
+ * '?' or '!') is taken as it is, without a scan of the active file.  In a
+ * list with wild pieces too, the plain names are not tried against every
+ * group one by one: each group is looked up among the sorted plain names
+ * and only the wild pieces after the last plain name that equals it are
+ * matched.
  *
  * NOTE that the returned list is not in the same order as the
  * comma-separated pattern
@@ -949,6 +953,40 @@ plainNameCmp(const void *a, const void *b)
     return(r);
 }
 
+/*
+ * Is a piece of the list wild: a '!' first, or a '*' or '?' in it.  Any other
+ * piece is a plain group name, which is compared as it is.
+ */
+static int
+wildPiece(const char *ng)
+{
+    return (*ng == '!' || strchr(ng, '*') || strchr(ng, '?'));
+}
+
+/*
+ * The place in the list of the last of the sorted plain names pn[0..n-1]
+ * that is g, or -1 when no plain name is g.  Equal names are sorted by
+ * place, so the last of them has the highest one.
+ */
+static int
+plainLastPlace(const PlainName *pn, int n, const char *g)
+{
+    int lo = 0;
+    int hi = n;		/* pn[hi..] are the names greater than g */
+
+    while (lo < hi) {
+	int mid = lo + (hi - lo) / 2;
+
+	if (strcmp(pn[mid].pn_Gl->group, g) <= 0)
+	    lo = mid + 1;
+	else
+	    hi = mid;
+    }
+    if (lo > 0 && strcmp(pn[lo - 1].pn_Gl->group, g) == 0)
+	return(pn[lo - 1].pn_Idx);
+    return(-1);
+}
+
 GroupList *
 ListActiveGroups(Connection *conn, char *pat)
 {
@@ -959,7 +997,7 @@ ListActiveGroups(Connection *conn, char *pat)
     GroupList *gl = NULL;
     GroupList *allowedgroups = conn->co_Auth.dr_GroupDef->gr_Groups;
     char *ng;
-    int wild = 0;
+    int nwild = 0;
     int n = 0;
  
     /*
@@ -969,8 +1007,8 @@ ListActiveGroups(Connection *conn, char *pat)
     for (ng = strtok(pat, ","); ng; ng = strtok(NULL, ",")) {
 	GroupList *tgl;
 
-	if (*ng == '!' || strchr(ng, '*') || strchr(ng, '?'))
-	    wild = 1;
+	if (wildPiece(ng))
+	    ++nwild;
 	tgl = zalloc(&conn->co_MemPool, sizeof(GroupList));
 	tgl->group = zallocStr(&conn->co_MemPool, ng);
 	tgl->next = NULL;
@@ -978,7 +1016,7 @@ ListActiveGroups(Connection *conn, char *pat)
 	patend = &tgl->next;
 	++n;
     }
-    if (!wild) {
+    if (nwild == 0) {
 	/*
 	 * plain names: each one that is allowed, once.  A line may hold
 	 * some 110000 names, so the duplicates are found by sorting
@@ -1011,6 +1049,34 @@ ListActiveGroups(Connection *conn, char *pat)
 	    listCacheAdd(conn, gl->group);
 	}
     } else {
+	/*
+	 * Wild pieces: each active group is matched as GroupFindWild() would
+	 * for the whole list, the last piece that matches decides.  The
+	 * plain pieces (npn of them, put first in pn, sorted) are found by
+	 * a lookup of the group, the wild ones (the nwild after them, in
+	 * list order) by a match, tried from the last one back as far as
+	 * the place of the last plain piece that is the group: a plain
+	 * piece matches positively, so only a wild piece after it can
+	 * change that.  A line may hold some 110000 plain names with one
+	 * '*' among them, and a reader process serves all its clients from
+	 * one loop: matching each name against each group is groups times
+	 * 110000 calls of WildCmp().
+	 */
+	int npn = n - nwild;
+	PlainName *pn = zalloc(&conn->co_MemPool, n * sizeof(PlainName));
+	PlainName *wp = pn + npn;
+	int i;
+	int j = 0;
+	int k = 0;
+
+	for (i = 0, gl = patlist; gl; gl = gl->next, ++i) {
+	    PlainName *e = wildPiece(gl->group) ? &wp[k++] : &pn[j++];
+
+	    e->pn_Gl = gl;
+	    e->pn_Idx = i;
+	}
+	qsort(pn, npn, sizeof(PlainName), plainNameCmp);
+
 	for (recOff = KPDBScanFirst(KDBActive, 0, &recLen);
 	    recOff;
 	    recOff = KPDBScanNext(KDBActive, recOff, 0, &recLen)
@@ -1021,14 +1087,28 @@ ListActiveGroups(Connection *conn, char *pat)
 	    const char *group = KPDBGetField(rec, recLen, NULL, &groupLen, NULL);
 
 	    if (group && groupLen < MAXGNAME) {
+		int lastplain;
+		int match;
+
 		bcopy(group, grpbuf, groupLen);
 		grpbuf[groupLen] = 0;
-		if (GroupFindWild(grpbuf, patlist) &&
-			(allowedgroups == NULL ||
-			 GroupFindWild(grpbuf, allowedgroups)))
+		lastplain = plainLastPlace(pn, npn, grpbuf);
+		match = (lastplain >= 0);
+		for (i = nwild - 1; i >= 0 && wp[i].pn_Idx > lastplain; --i) {
+		    const char *wpat = wp[i].pn_Gl->group;
+		    int neg = (*wpat == '!');
+
+		    if (WildCmp(neg ? wpat + 1 : wpat, grpbuf) == 0) {
+			match = !neg;
+			break;
+		    }
+		}
+		if (match && (allowedgroups == NULL ||
+			      GroupFindWild(grpbuf, allowedgroups)))
 		    listCacheAdd(conn, grpbuf);
 	    }
 	}
+	zfree(&conn->co_MemPool, pn, n * sizeof(PlainName));
     }
     while (patlist) {
 	gl = patlist;
