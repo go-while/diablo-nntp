@@ -69,10 +69,25 @@ func TestReaderAccessCacheStampDiffers(t *testing.T) {
 
 	refuse := strings.Replace(DefaultReaderAccess,
 		"readerdef rp\n    read yes\n    post yes\n", "readerdef rp\n    read no\n    post no\n", 1)
-	install(refuse)
-	if fi, err := os.Stat(lock); err != nil || !fi.ModTime().Before(time.Now().Add(time.Minute)) {
-		t.Fatalf("the install did not write the lock file (%v, %v)", fi.ModTime(), err)
+	// stamped waits until the install wrote the lock file: the test set its time hours ahead,
+	// the install's stamp is of now. The stamp comes after the renames (and after the links
+	// kept for a put-back are removed), so the new inode alone does not mean it is there yet.
+	stamped := func() {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			fi, err := os.Stat(lock)
+			if err == nil && fi.ModTime().Before(time.Now().Add(time.Minute)) {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("the install did not write the lock file within 5 s (%v, %v)", fi, err)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
 	}
+	install(refuse)
+	stamped()
 	expect(false, "the new dreader.access (127.0.0.1 refused) was not loaded after the lock file's time had been later")
 
 	// the same second, half a second later
@@ -80,6 +95,7 @@ func TestReaderAccessCacheStampDiffers(t *testing.T) {
 	stampAccessLock(t, s, lock, sec)
 	expect(false, "refused rules after the lock file's time changed")
 	install(DefaultReaderAccess)
+	stamped()
 	half := sec.Add(500 * time.Millisecond)
 	if err := os.Chtimes(lock, half, half); err != nil {
 		t.Fatal(err)
