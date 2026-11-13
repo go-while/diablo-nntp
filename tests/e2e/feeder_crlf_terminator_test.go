@@ -16,8 +16,8 @@ import (
 // closes on the first 500.
 //
 // The article mixes CRLF and bare-LF lines the way a Spotnet post did on an archive feed.
-// The article must be accepted whole (the size in incoming.log is every byte sent, the
-// terminator included) and the next command must be answered normally.
+// The article must be accepted whole (recbytes in the session line is every byte sent,
+// the terminator included) and the next command must be answered normally.
 func TestFeederBareLFDotIsData(t *testing.T) {
 	id := msgID(t)
 	art := newArticle(id, "e2e.test", "bare LF dot", "x")
@@ -44,12 +44,12 @@ func TestFeederBareLFDotIsData(t *testing.T) {
 	id2 := msgID(t)
 	p.ExpectCmd(238, "CHECK %s", id2)
 
-	// Every byte of the article was taken: no part of it was left for the command loop.
-	size := len(raw)
-	testkit.WaitFor(t, 10*time.Second, "article size in incoming.log", func() bool {
-		l := feederLogs(s)
-		return strings.Contains(l, id+" "+fmt.Sprint(size)+" ")
-	})
-
 	p.ExpectCmd(205, "QUIT")
+
+	// Every byte of the article was taken (the session line counts the bytes received,
+	// the terminator included): no part of it was left for the command loop.
+	want := fmt.Sprintf("recbytes=%d ", len(raw))
+	testkit.WaitFor(t, 10*time.Second, "session line "+want, func() bool {
+		return strings.Contains(feederLogs(s), want)
+	})
 }
