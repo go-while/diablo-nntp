@@ -34,9 +34,10 @@ import (
 // ACFAULT_FLAG exists:
 //   - fgets() of a FILE whose name ends in ACFAULT_FGETS hits a real read error once
 //     ACFAULT_FGETS_AFTER lines were read from it: the stream is made unbuffered when it is
-//     first read, and at the failing call its descriptor is replaced (dup2) by a descriptor of
-//     the directory "/", so the next read() fails with EISDIR and the libc itself sets the
-//     error flag of the stream (no stdio internals are touched, it is the same on every libc);
+//     first read, and at the failing call its descriptor is replaced (dup2) by a write-only
+//     descriptor of /dev/null, so the next read() fails with EBADF and the libc itself sets
+//     the error flag of the stream (no stdio internals are touched, it is the same on every
+//     libc; a directory descriptor is not used, NetBSD lets read() of a directory succeed);
 //   - fchmod() of a descriptor whose name ends in one of the comma-separated suffixes of
 //     ACFAULT_FCHMOD fails with EPERM;
 //   - fclose() of a FILE whose name ends in ACFAULT_FCLOSE closes it and fails with ENOSPC (the
@@ -140,12 +141,12 @@ fgets_fault(char *(*real)(char *, int, FILE *), char *s, int n, FILE *fp)
 		setvbuf(fp, NULL, _IONBF, 0);	/* nothing is read ahead: every byte is a read() */
 	    }
 	    if (lines >= (after ? atol(after) : 0)) {
-		int dirfd = open("/", O_RDONLY);
+		int wrfd = open("/dev/null", O_WRONLY);
 
 		shim_mark("refused fgets of %s after %ld lines", path, lines);
-		if (dirfd >= 0) {
-		    dup2(dirfd, fileno(fp));
-		    close(dirfd);
+		if (wrfd >= 0) {
+		    dup2(wrfd, fileno(fp));
+		    close(wrfd);
 		}
 		return real(s, n, fp);	/* read() fails now */
 	    }
@@ -493,7 +494,15 @@ func TestDeepRevAccessCacheSourceFstatFails(t *testing.T) {
 // like the end of the file, and the empty prefix was installed over the working cache, so
 // every client was refused. Now nothing is installed, the old cache stays in use, and the
 // read is tried again after 5 s; once dreader.access is a file again, it is installed.
+// Skipped where read() of a directory succeeds (NetBSD): there a directory is no read error.
 func TestDeepRevAccessCacheSourceIsDirectory(t *testing.T) {
+	if fd, err := syscall.Open(t.TempDir(), syscall.O_RDONLY, 0); err == nil {
+		_, rerr := syscall.Read(fd, make([]byte, 512))
+		syscall.Close(fd)
+		if rerr == nil {
+			t.Skipf("read() of a directory succeeds on %s: a directory as dreader.access is no read error here", runtime.GOOS)
+		}
+	}
 	s, _, _ := installSite(t, "", "")
 	list := startAndList(t, s)
 	before := fileIds(t, s.Dir, accessCacheFiles...)
@@ -541,7 +550,7 @@ end
 `
 
 // TestDeepRevAccessCacheSourceReadCut (A4): a read error in the middle of
-// dreader.access (the injector makes the read() of the line after n lines fail with EISDIR).
+// dreader.access (the injector makes the read() of the line after n lines fail with EBADF).
 // The part read must not be installed, and it must not be judged either: a cut file is not
 // a bad one, so a content error in the part read is not reported while the read fails. The
 // old cache stays in use and the read is tried again after 5 s. Once the read works again, the
