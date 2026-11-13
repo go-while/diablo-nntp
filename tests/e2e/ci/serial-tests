@@ -18,3 +18,5 @@
 ^TestReaderListWildcardTime$
 ^TestReaderListWildcardLinear$
 ^TestOverWideRangeDoesNotBlock$
+^TestReaderNewnewsManyPlainNames$
+^TestReaderNewnewsManyPlainNamesAndWild$

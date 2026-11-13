@@ -447,6 +447,7 @@ TestReaderLoginsQueueForDNSWorker 0.03
 TestReaderLongLineAtLimit 0.05
 TestReaderLongLineClosed 0.03
 TestReaderNewnewsKeepsSelectedGroup 0.03
+TestReaderNewnewsManyPlainNamesAndWild 9
 TestReaderNewnewsUnreadableOverview 0.04
 TestReaderOverviewLockFailure 0.12
 TestReaderPerlAuth 0.04
