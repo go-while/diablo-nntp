@@ -70,7 +70,8 @@ jobs:
         run: |
           printf '%s\n' \
             '127.0.0.2 peer.e2e.test' '127.0.0.3 peer3.e2e.test' \
-            '127.0.0.4 peer4.e2e.test' '127.0.0.9 peer9.e2e.test' \
+            '127.0.0.4 peer4.e2e.test' '127.0.0.5 peer5.e2e.test' \
+            '127.0.0.6 peer6.e2e.test' '127.0.0.9 peer9.e2e.test' \
             '127.0.0.10 peer10.e2e.test' | sudo tee -a /etc/hosts >/dev/null
 
       # Installs build packages, creates the news user, builds with RADIUS off
@@ -231,9 +232,9 @@ jobs:
           usesh: true
           prepare: |
             # The e2e tests bind client sockets to several 127.0.0.x source
-            # addresses (PeerIP 127.0.0.2 and .3/.4/.9/.10); unlike Linux, FreeBSD
+            # addresses (PeerIP 127.0.0.2 and .3/.4/.5/.6/.9/.10); unlike Linux, FreeBSD
             # has only 127.0.0.1 on lo0 by default, so add the rest as aliases.
-            for ip in 2 3 4 9 10; do ifconfig lo0 alias 127.0.0.$ip netmask 0xffffffff; done
+            for ip in 2 3 4 5 6 9 10; do ifconfig lo0 alias 127.0.0.$ip netmask 0xffffffff; done
             # The DNS tests (dnscache_test.go, dnsoverload_test.go) dial from many
             # more source addresses (Linux has all of 127/8 on lo): add the ones they use.
             for ip in $(i=1; while [ $i -le 9 ]; do echo 127.1.0.$i; i=$((i+1)); done) \
@@ -246,7 +247,8 @@ jobs:
             # diablo reverse-resolves the peer; map these names in /etc/hosts so
             # the PTR lookup stays local (names arbitrary; peers matched by IP).
             printf '%s\n' '127.0.0.2 peer.e2e.test' '127.0.0.3 peer3.e2e.test' \
-              '127.0.0.4 peer4.e2e.test' '127.0.0.9 peer9.e2e.test' \
+              '127.0.0.4 peer4.e2e.test' '127.0.0.5 peer5.e2e.test' \
+              '127.0.0.6 peer6.e2e.test' '127.0.0.9 peer9.e2e.test' \
               '127.0.0.10 peer10.e2e.test' >> /etc/hosts
           run: |
             set -e
@@ -288,10 +290,11 @@ jobs:
           copyback: "true"
           prepare: |
             # Same 127.0.0.x client source addresses as the FreeBSD job needs.
-            for ip in 2 3 4 9 10; do ifconfig lo0 addif 127.0.0.$ip up 2>/dev/null || true; done
+            for ip in 2 3 4 5 6 9 10; do ifconfig lo0 addif 127.0.0.$ip up 2>/dev/null || true; done
             # Local names so diablo's reverse PTR lookup of the peer stays local.
             printf '%s\n' '127.0.0.2 peer.e2e.test' '127.0.0.3 peer3.e2e.test' \
-              '127.0.0.4 peer4.e2e.test' '127.0.0.9 peer9.e2e.test' \
+              '127.0.0.4 peer4.e2e.test' '127.0.0.5 peer5.e2e.test' \
+              '127.0.0.6 peer6.e2e.test' '127.0.0.9 peer9.e2e.test' \
               '127.0.0.10 peer10.e2e.test' >> /etc/hosts
           run: |
             set -e
@@ -387,7 +390,7 @@ jobs:
           usesh: true
           prepare: |
             # Same 127.0.0.x client source addresses as the FreeBSD job needs.
-            for ip in 2 3 4 9 10; do ifconfig lo0 inet 127.0.0.$ip netmask 255.255.255.255 alias; done
+            for ip in 2 3 4 5 6 9 10; do ifconfig lo0 inet 127.0.0.$ip netmask 255.255.255.255 alias; done
             # The DNS tests (dnscache_test.go, dnsoverload_test.go) dial from many
             # more source addresses (Linux has all of 127/8 on lo): add the ones they use.
             for ip in $(i=1; while [ $i -le 9 ]; do echo 127.1.0.$i; i=$((i+1)); done) \
@@ -399,7 +402,8 @@ jobs:
             done
             # Local names so diablo's reverse PTR lookup of the peer stays local.
             printf '%s\n' '127.0.0.2 peer.e2e.test' '127.0.0.3 peer3.e2e.test' \
-              '127.0.0.4 peer4.e2e.test' '127.0.0.9 peer9.e2e.test' \
+              '127.0.0.4 peer4.e2e.test' '127.0.0.5 peer5.e2e.test' \
+              '127.0.0.6 peer6.e2e.test' '127.0.0.9 peer9.e2e.test' \
               '127.0.0.10 peer10.e2e.test' >> /etc/hosts
           run: |
             set -e

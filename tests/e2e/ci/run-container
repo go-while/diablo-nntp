@@ -134,7 +134,8 @@ set --
 # until a foreground docker returns.
 docker run --rm --init --cidfile "$cid" "$@" \
     --add-host peer.e2e.test:127.0.0.2 --add-host peer3.e2e.test:127.0.0.3 \
-    --add-host peer4.e2e.test:127.0.0.4 --add-host peer9.e2e.test:127.0.0.9 \
+    --add-host peer4.e2e.test:127.0.0.4 --add-host peer5.e2e.test:127.0.0.5 \
+    --add-host peer6.e2e.test:127.0.0.6 --add-host peer9.e2e.test:127.0.0.9 \
     --add-host peer10.e2e.test:127.0.0.10 \
     -e E2E_FAKE_SENDMAIL=1 --mount "type=bind,src=$src,dst=/src" -w /src "$imageid" sh -ec '
       umask 022
