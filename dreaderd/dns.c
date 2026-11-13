@@ -3653,8 +3653,11 @@ AccessRenameWaits(void)
 }
 
 /*
- * A failed install (a cache file that could not be written, a rename,
- * the stamp) is tried again, but not before ACCESS_RETRY_MS have passed:
+ * A failed install (dreader.access that could not be opened, statted or
+ * read to its end, a cache file that could not be created or written, a
+ * rename, the stamp) and a bad dreader.access that is not settled yet (a
+ * fix may come within the same second) are tried again, but not before
+ * ACCESS_RETRY_MS have passed:
  * InstallAccessCache() runs on every pass of the main loop, which comes
  * with every client, and a whole install on every pass while the cause
  * lasts (a full disk) took the main process from the clients.  The main
@@ -4054,6 +4057,8 @@ InstallAccessCache(void) {
     int copt = OPT_NONE;
     int parseError = 0;	/* bad file content, as opposed to a transient failure */
     int writeError = 0;	/* a cache file could not be written */
+    int readError = 0;	/* dreader.access could not be read to its end */
+    int readErrno = 0;
     int postTrailerWarned = 0;	/* one obsolete-option warning per file read */
     int skiptail = 0;	/* the rest of a line longer than buf */
     GroupListRef *glRefs = NULL;	/* the readerdefs' group list names */
@@ -4108,10 +4113,14 @@ InstallAccessCache(void) {
     if ((fp = fopen(PatLibExpand(DReaderAccessPat), "r")) == NULL) {
 	logit(LOG_CRIT, "Unable to open %s (%s)",
 			PatLibExpand(DReaderAccessPat), strerror(errno));
+	AccessInstallFailed();
 	return;
     }
     if (fstat(fileno(fp), &st) != 0) {
+	logit(LOG_CRIT, "Unable to stat %s (%s)",
+			PatLibExpand(DReaderAccessPat), strerror(errno));
 	fclose(fp);
+	AccessInstallFailed();
 	return;
     }
     Access_LastUpdate = st.st_mtime;
@@ -4136,17 +4145,20 @@ InstallAccessCache(void) {
 
     if ((vsf = CreateAccessCache(vsnewbuf)) == NULL) {	logit(LOG_CRIT, "Unable to create %s (%s)", vsnewbuf, strerror(errno));
 	fclose(fp);
+	AccessInstallFailed();
 	return;
     }
     if ((grf = CreateAccessCache(grnewbuf)) == NULL) {	logit(LOG_CRIT, "Unable to create %s (%s)", grnewbuf, strerror(errno));
 	fclose(fp);
 	fclose(vsf);
+	AccessInstallFailed();
 	return;
     }
     if ((auf = CreateAccessCache(aunewbuf)) == NULL) {	logit(LOG_CRIT, "Unable to create %s (%s)", aunewbuf, strerror(errno));
 	fclose(fp);
 	fclose(vsf);
 	fclose(grf);
+	AccessInstallFailed();
 	return;
     }
     if ((rdf = CreateAccessCache(rdnewbuf)) == NULL) {	logit(LOG_CRIT, "Unable to create %s (%s)", rdnewbuf, strerror(errno));
@@ -4154,6 +4166,7 @@ InstallAccessCache(void) {
 	fclose(vsf);
 	fclose(grf);
 	fclose(auf);
+	AccessInstallFailed();
 	return;
     }
 
@@ -4163,6 +4176,7 @@ InstallAccessCache(void) {
 	fclose(grf);
 	fclose(auf);
 	fclose(rdf);
+	AccessInstallFailed();
 	return;
     }
 
@@ -5091,7 +5105,19 @@ InstallAccessCache(void) {
 	logit(LOG_ERR, "dreader.access: Invalid access definition : %s in line %d\n", opt, linecount);
 	parseError = 1;
     }
-    fclose(fp);
+    /*
+     * A read error ends the loop like the end of the file, and the lookahead
+     * of a long line can hit it as well: what was read is not all of the file
+     * and must not be installed, nor judged (a cut file is not a bad one).
+     */
+    if (ferror(fp)) {
+	readError = 1;
+	readErrno = errno;
+    }
+    if (fclose(fp) != 0 && !readError) {
+	readError = 1;
+	readErrno = errno;
+    }
     /* a short .new file (disk full) must not replace the cache in use */
     writeError = ferror(vsf) | ferror(grf) | ferror(auf) | ferror(rdf) | ferror(raf);
     if (fclose(vsf) != 0)
@@ -5104,12 +5130,19 @@ InstallAccessCache(void) {
 	writeError = 1;
     if (fclose(raf) != 0)
 	writeError = 1;
-    if (checkGroupListRefs(glRefs, glRefCount, grNames, grNameCount) > 0)
+    if (!readError && checkGroupListRefs(glRefs, glRefCount, grNames, grNameCount) > 0)
 	parseError = 1;
     free(glRefs);
     while (grNameCount > 0)
 	free(grNames[--grNameCount]);
     free(grNames);
+    /* source read failure, then bad content, then output failure, then the install */
+    if (readError) {
+	logit(LOG_CRIT, "Unable to read %s (%s) - not updating",
+		PatLibExpand(DReaderAccessPat), strerror(readErrno));
+	AccessInstallFailed();
+	return;
+    }
     if (parseError) {
 	/*
 	 * Bad content.  Keep the refused file's mtime/size/ino (set above) so
@@ -5117,9 +5150,14 @@ InstallAccessCache(void) {
 	 * file is parsed again.  Transient failures below still retry.
 	 */
 	logit(LOG_ERR, "Errors in dreader.access file - not updating");
-	/* the file is settled only if it was already older than the moment we read it (seen); a same-second in-place fix reuses its mtime/size/inode, so a not-yet-settled file must be reparsed or it is skipped forever */
+	/*
+	 * The file is settled only if it was already older than the moment we
+	 * read it (seen); a same-second in-place fix reuses its mtime/size/inode,
+	 * so a not-yet-settled file must be read again, but not on every pass:
+	 * after the wait of AccessInstallFailed(), which also forgets the file.
+	 */
 	if (st.st_mtime >= seen - 1)
-	    Access_LastUpdate = 0;
+	    AccessInstallFailed();
 	return;
     }
     if (writeError) {
