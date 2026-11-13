@@ -1,15 +1,12 @@
 package e2e
 
 import (
-	"net"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	testkit "github.com/go-while/nntp-testkit"
 	"github.com/go-while/nntp-testkit/proc"
 )
 
@@ -40,10 +37,11 @@ func TestDeepRevHistoryCompatHashLookup(t *testing.T) {
 		t.Fatalf("diablo.config has no \"hash prime\" line:\n%s", conf)
 	}
 	s.WriteFile(t, "diablo.config", strings.Replace(conf, "hash\tprime\n", "hash\tcrc/prime\n", 1))
-	s.Addr = net.JoinHostPort("127.0.0.1", strconv.Itoa(testkit.FreePort(t)))
-	s.Proc = startSiteTCP(t, proc.Options{
+	l := listenFree(t)
+	s.Addr = l.Addr().String()
+	s.Proc = startOnListener(t, l, proc.Options{
 		Path: filepath.Join(s.Bin, "diablo"),
-		Args: []string{"-d", "-p", PathHost, "-h", PathHost, "-P", s.Addr, "server"},
+		Args: []string{"-d", "-p", PathHost, "-h", PathHost, "-P", s.Addr, "-b", listenFDArg, "server"},
 		Env:  slices.Clone(s.Env),
 		Dir:  s.Dir,
 	}, s.Addr)

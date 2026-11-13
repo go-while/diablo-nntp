@@ -35,10 +35,11 @@ func TestReaderNewnewsManyMissingGroupsSmallStack(t *testing.T) {
 	// process itself around the start and ignored the result of putting it back.) If the shell
 	// cannot set the limit it exits, and the start below fails.
 	port := s.Addr[strings.LastIndex(s.Addr, ":")+1:]
-	s.Proc = startSiteTCP(t, proc.Options{
+	s.Proc = startOnListener(t, listenOn(t, s.Addr), proc.Options{
 		Path: "/bin/sh",
 		Args: []string{"-c", `ulimit -s 256 || exit 125; exec "$@"`, "e2e-smallstack",
-			filepath.Join(s.Bin, "dreaderd"), "-d", "-p", PathHost, "-h", PathHost, "-P", "[127.0.0.1]:" + port},
+			filepath.Join(s.Bin, "dreaderd"), "-d", "-p", PathHost, "-h", PathHost, "-P", "[127.0.0.1]:" + port,
+			"-b", listenFDArg},
 		Env: s.Env,
 		Dir: s.Dir,
 	}, s.Addr)

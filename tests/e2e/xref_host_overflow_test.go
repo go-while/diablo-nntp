@@ -43,10 +43,10 @@ func TestFeedNoXrefLongXRefHost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s2.Proc = startSiteTCP(t, proc.Options{
+	s2.Proc = startOnListener(t, listenOn(t, s2.Addr), proc.Options{
 		Path: filepath.Join(s2.Bin, "dreaderd"),
 		Args: []string{"-d", "-p", PathHost, "-h", PathHost,
-			"-P", "[127.0.0.1]:" + port, "-X", longHost},
+			"-P", "[127.0.0.1]:" + port, "-b", listenFDArg, "-X", longHost},
 		Env: s2.Env,
 		Dir: s2.Dir,
 	}, s2.Addr)

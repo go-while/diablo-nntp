@@ -32,7 +32,8 @@ type ReaderOptions struct {
 	Access    string             // dreader.access; "" = DefaultReaderAccess
 	Config    map[string]string  // diablo.config directives added or replacing the generated ones
 
-	// PlainBind passes -P as "127.0.0.1:port" instead of "[127.0.0.1]:port".
+	// PlainBind passes -P as "127.0.0.1:port" instead of "[127.0.0.1]:port", and dreaderd
+	// binds it itself instead of being handed the test's listening socket.
 	PlainBind bool
 
 	// NoStart writes the site and its groups but doesn't start dreaderd.
@@ -58,7 +59,8 @@ access ` + PeerIP + ` feed
 `
 
 // NewReaderSite writes a reader site into a temporary directory, creates its groups,
-// starts dreaderd -d (in the foreground) on a free port of 127.0.0.1 and waits for its
+// starts dreaderd -d (in the foreground) on a free port of 127.0.0.1, whose listening
+// socket the test opens and hands over (listenFree, startOnListener), and waits for its
 // greeting. proc's cleanup stops it with SIGTERM, then SIGKILL.
 func NewReaderSite(tb testing.TB, o ReaderOptions) *Site {
 	tb.Helper()
@@ -72,8 +74,8 @@ func NewReaderSite(tb testing.TB, o ReaderOptions) *Site {
 	}
 	s := &Site{Dir: tb.TempDir(), Bin: bin(tb)}
 	logGeneralOnFailure(tb, s)
-	port := testkit.FreePort(tb)
-	s.Addr = net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	l := listenFree(tb) // dreaderd is handed this socket (-b) instead of binding the port
+	s.Addr = l.Addr().String()
 	s.Env = []string{"DIABLO_CONFIG_PATH=" + filepath.Join(s.Dir, "diablo.config")}
 
 	for _, d := range []string{"spool/group", "spool/cache", "spool/postq", "log", "run", "dqueue"} {
@@ -123,30 +125,44 @@ func NewReaderSite(tb testing.TB, o ReaderOptions) *Site {
 		s.Run(tb, "dgrpctl", "newgroup", g, "y")
 	}
 
-	if o.NoStart {
-		return s
+	switch {
+	case o.NoStart:
+		l.Close() // whatever starts dreaderd binds s.Addr itself, or startReader listens there
+	case o.PlainBind:
+		l.Close()
+		s.Proc = startSiteTCP(tb, readerProc(s, s.Addr), s.Addr)
+	default:
+		// "[host]:port": before the -P fix (jrehmer/diablo-nntp PR "dreaderd: -P/-B
+		// host:port") dreaderd kept the ":port" in the host of a plain "host:port".
+		startOnReader(tb, s, l, "[127.0.0.1]:"+strconv.Itoa(l.Addr().(*net.TCPAddr).Port))
 	}
-
-	// "[host]:port" by default: before the -P fix (jrehmer/diablo-nntp PR "dreaderd: -P/-B
-	// host:port") dreaderd kept the ":port" in the host of a plain "host:port".
-	bind := "[127.0.0.1]:" + strconv.Itoa(port)
-	if o.PlainBind {
-		bind = s.Addr
-	}
-	startReader(tb, s, bind)
 	return s
 }
 
-// startReader starts dreaderd -d for a reader site (written with NoStart) on bind and waits
-// for its greeting on s.Addr.
+// startReader starts dreaderd -d for a reader site (written with NoStart, or whose
+// dreaderd has stopped) on a listening socket the test opens on s.Addr and hands over, and
+// waits for its greeting. bind is passed as -P too, as a site would, but dreaderd serves
+// the socket it is handed (-b) and binds nothing.
 func startReader(tb testing.TB, s *Site, bind string) {
 	tb.Helper()
-	s.Proc = startSiteTCP(tb, proc.Options{
+	startOnReader(tb, s, listenOn(tb, s.Addr), bind)
+}
+
+func startOnReader(tb testing.TB, s *Site, l *net.TCPListener, bind string) {
+	tb.Helper()
+	o := readerProc(s, bind)
+	o.Args = append(o.Args, "-b", listenFDArg)
+	s.Proc = startOnListener(tb, l, o, s.Addr)
+}
+
+// readerProc is how a reader site runs dreaderd -d with -P bind.
+func readerProc(s *Site, bind string) proc.Options {
+	return proc.Options{
 		Path: filepath.Join(s.Bin, "dreaderd"),
 		Args: []string{"-d", "-p", PathHost, "-h", PathHost, "-P", bind},
 		Env:  s.Env,
 		Dir:  s.Dir,
-	}, s.Addr)
+	}
 }
 
 // Reader dials dreaderd from 127.0.0.1 (read and post in the default dreader.access).

@@ -264,10 +264,10 @@ func TestReaderForksAutoTaskset(t *testing.T) {
 	s := NewReaderSite(t, ReaderOptions{Spool: spool, NoStart: true,
 		Config: map[string]string{"readerforks": "auto", "readerfeedforks": "0"}})
 	port := strings.TrimPrefix(s.Addr, "127.0.0.1:")
-	s.Proc = startSiteTCP(t, proc.Options{
+	s.Proc = startOnListener(t, listenOn(t, s.Addr), proc.Options{
 		Path: taskset,
 		Args: []string{"-c", cpus[0] + "," + cpus[1], filepath.Join(s.Bin, "dreaderd"),
-			"-d", "-p", PathHost, "-h", PathHost, "-P", "[127.0.0.1]:" + port},
+			"-d", "-p", PathHost, "-h", PathHost, "-P", "[127.0.0.1]:" + port, "-b", listenFDArg},
 		Env: s.Env,
 		Dir: s.Dir,
 	}, s.Addr)
@@ -300,10 +300,10 @@ func TestReaderForksAutoCgroupQuota(t *testing.T) {
 	s := NewReaderSite(t, ReaderOptions{Spool: spool, NoStart: true,
 		Config: map[string]string{"readerforks": "auto", "readerfeedforks": "0"}})
 	port := strings.TrimPrefix(s.Addr, "127.0.0.1:")
-	s.Proc = startSiteTCP(t, proc.Options{
+	s.Proc = startOnListener(t, listenOn(t, s.Addr), proc.Options{
 		Path: sdrun,
 		Args: append(scope, filepath.Join(s.Bin, "dreaderd"),
-			"-d", "-p", PathHost, "-h", PathHost, "-P", "[127.0.0.1]:"+port),
+			"-d", "-p", PathHost, "-h", PathHost, "-P", "[127.0.0.1]:"+port, "-b", listenFDArg),
 		Env: s.Env,
 		Dir: s.Dir,
 	}, s.Addr)

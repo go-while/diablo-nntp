@@ -382,10 +382,10 @@ func TestReaderDNSAuthFdLimit(t *testing.T) {
 	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: AuthReaderAccess, NoStart: true,
 		Config: map[string]string{"readerforks": "4", "readerthreads": "64"}})
 	_, port, _ := net.SplitHostPort(s.Addr)
-	s.Proc = startSiteTCP(t, proc.Options{
+	s.Proc = startOnListener(t, listenOn(t, s.Addr), proc.Options{
 		Path: "/bin/sh",
 		Args: []string{"-c", `ulimit -n 100 && exec "$0" "$@"`, filepath.Join(s.Bin, "dreaderd"),
-			"-d", "-p", PathHost, "-h", PathHost, "-P", "[127.0.0.1]:" + port},
+			"-d", "-p", PathHost, "-h", PathHost, "-P", "[127.0.0.1]:" + port, "-b", listenFDArg},
 		Env: s.Env,
 		Dir: s.Dir,
 	}, s.Addr)

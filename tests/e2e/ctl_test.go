@@ -47,6 +47,7 @@ func ctlPath(tb testing.TB, s *Site) string {
 const EnvSleep = "E2E_SLEEP"
 
 func TestMain(m *testing.M) {
+	runListenHandoff() // returns only in a test binary that is not a handoff process
 	if runStartupProbe() {
 		os.Exit(0)
 	}
