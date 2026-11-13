@@ -198,3 +198,106 @@ access ` + PeerIP + ` feedauth
 		check(t, takethisRefused(t, s.Addr, PeerIP, stream, "TAKETHIS not-a-message-id", "MODE STREAM", "203"), "501", "203")
 	})
 }
+
+// TestTakethisLongLineFraming: a body line over the limit in the article of a TAKETHIS is
+// dropped, and the end of the article still follows the CRLF rule of #389: only a "." after
+// a CRLF ends it. dreaderd took a dropped line as ended by CRLF even when the peer ended it
+// with a bare LF, so a "." after it ended the article, and the body line QUIT after that dot
+// was taken for a command (205). The ending of the dropped line is now kept from the bytes
+// themselves.
+//
+// Both readers are checked: a refused TAKETHIS (invalid message-id, the article dropped) and
+// a valid one (the article read, then refused for the long line, 439). The line is either
+// just over the limit, its newline read with the end of the line, or twice the limit with
+// the newline written only after dreaderd logged the dropped line, so the tail is dropped as
+// it arrives; there the CR is also sent on its own before the LF (a CR and its LF in two
+// reads, as far as the test can make the reads).
+func TestTakethisLongLineFraming(t *testing.T) {
+	const quitThenDot = ".\r\nQUIT\r\n" // the "." is data, the article's own dot follows
+	type part struct {
+		raw  string
+		wait bool // written once dreaderd logged the dropped line
+	}
+	over := strings.Repeat("x", 2*clientMaxLine)
+	cases := []struct {
+		name  string
+		parts []part
+	}{
+		// newline included the line is clientMaxLine+1 bytes: dropped when its newline is read
+		{"bare LF", []part{{strings.Repeat("x", clientMaxLine) + "\n" + quitThenDot, false}}},
+		{"CRLF", []part{{strings.Repeat("x", clientMaxLine-1) + "\r\n", false}}},
+		// the newline comes after the line was dropped
+		{"bare LF later", []part{{over, false}, {"\n" + quitThenDot, true}}},
+		{"CRLF later", []part{{over, false}, {"\r\n", true}}},
+		{"CR then LF later", []part{{over, false}, {"\r", true}, {"\n", true}}},
+		{"CR then data later", []part{{over, false}, {"\r", true}, {"x\n" + quitThenDot, true}}},
+	}
+	send := func(t *testing.T, s *Site, line string, parts []part) []string {
+		t.Helper()
+		n := dialNulLine(t, s.Addr, PeerIP)
+		if l, err := n.send("MODE STREAM\r\n"); err != nil || !strings.HasPrefix(l, "203 ") {
+			t.Fatalf("MODE STREAM: %q %v", l, err)
+		}
+		id := "<takethis-long." + strings.ReplaceAll(t.Name(), "/", ".") + "@e2e.test>"
+		if line == "" {
+			line = "TAKETHIS " + id
+		}
+		write := func(raw string) {
+			t.Helper()
+			n.c.SetWriteDeadline(time.Now().Add(30 * time.Second))
+			if _, err := n.c.Write([]byte(raw)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		write(line + "\r\n" +
+			"Path: e2e.peer!not-for-mail\r\n" +
+			"From: <long@example.invalid>\r\n" +
+			"Newsgroups: e2e.test\r\n" +
+			"Subject: long line framing\r\n" +
+			"Date: " + time.Now().UTC().Format(time.RFC1123Z) + "\r\n" +
+			"Message-ID: " + id + "\r\n" +
+			"\r\nbefore\r\n")
+		for _, p := range parts {
+			if p.wait {
+				testkit.WaitFor(t, 10*time.Second, "dreaderd dropped the long line", func() bool {
+					return strings.Contains(s.logOutput(), "MBReadLine line longer than")
+				})
+				// let dreaderd read what was sent so far, so the next part comes in a read of its own
+				time.Sleep(100 * time.Millisecond)
+			}
+			write(p.raw)
+		}
+		// right after the long line: in the CRLF cases this dot ends the article
+		write(".\r\nMODE STREAM\r\n")
+		var lines []string
+		for len(lines) < 4 {
+			l, err := n.line()
+			if err != nil {
+				break
+			}
+			lines = append(lines, l)
+			if strings.HasPrefix(l, "203 ") || strings.HasPrefix(l, "205 ") {
+				break
+			}
+		}
+		return lines
+	}
+	check := func(t *testing.T, lines []string, first string) {
+		t.Helper()
+		if len(lines) != 2 || !strings.HasPrefix(lines[0], first) || !strings.HasPrefix(lines[1], "203 ") {
+			t.Errorf("TAKETHIS with a long body line, then MODE STREAM: answers %q, want %q... and then 203", lines, first)
+		}
+	}
+	for _, c := range cases {
+		t.Run("refused "+c.name, func(t *testing.T) {
+			_, spool := spoolStore(t)
+			s := NewReaderSite(t, ReaderOptions{Spool: spool})
+			check(t, send(t, s, "TAKETHIS not-a-message-id", c.parts), "439 not-a-message-id")
+		})
+		t.Run("accepted "+c.name, func(t *testing.T) {
+			_, spool := spoolStore(t)
+			s := NewReaderSite(t, ReaderOptions{Spool: spool})
+			check(t, send(t, s, "", c.parts), "439 ")
+		})
+	}
+}

@@ -243,12 +243,13 @@ NNAcceptArticle(Connection *conn)
 	if (conn->co_RMBuf.mh_LongLine) {
 	    conn->co_RMBuf.mh_LongLine = 0;
 	    conn->co_Flags |= COF_POSTTOOBIG;
-	    /* the line was dropped: its end is not known, the article is refused anyway */
-	    conn->co_PrevCrlf = 1;
+	    /* its ending is known once the line is dropped: mh_LongCR */
+	    conn->co_PrevCrlf = -1;
 	    continue;
 	}
 	thisCrlf = (len >= 2 && buf[len-2] == '\r');
-	prevCrlf = conn->co_PrevCrlf;
+	prevCrlf = (conn->co_PrevCrlf < 0) ?
+		    conn->co_RMBuf.mh_LongCR : conn->co_PrevCrlf;
 	conn->co_PrevCrlf = thisCrlf;
 	/*
 	 * expected EOF, ".\r\n".  A POST also takes ".\n" because some
@@ -403,10 +404,11 @@ NNDiscardArticle(Connection *conn)
     while (--maxl > 0 && (len = MBReadLine(&conn->co_RMBuf, &buf)) > 0) {
 	if (conn->co_RMBuf.mh_LongLine) {
 	    conn->co_RMBuf.mh_LongLine = 0;
-	    conn->co_PrevCrlf = 1;	/* as in NNAcceptArticle() */
+	    conn->co_PrevCrlf = -1;	/* as in NNAcceptArticle() */
 	    continue;
 	}
-	prevCrlf = conn->co_PrevCrlf;
+	prevCrlf = (conn->co_PrevCrlf < 0) ?
+		    conn->co_RMBuf.mh_LongCR : conn->co_PrevCrlf;
 	conn->co_PrevCrlf = (len >= 2 && buf[len-2] == '\r');
 	if (prevCrlf && len == 3 && strcmp(buf, ".\r") == 0) {
 	    conn->co_Flags &= ~COF_MAYNOTCLOSE;
