@@ -213,15 +213,16 @@ NNAcceptArticle(Connection *conn)
     conn->co_RMBuf.mh_SkipLong = 1;
 
     while (--maxl > 0 && (len = MBReadLine(&conn->co_RMBuf, &buf)) > 0) {
-	thisCrlf = (len >= 2 && buf[len-2] == '\r');
-	prevCrlf = conn->co_PrevCrlf;
-	conn->co_PrevCrlf = thisCrlf;
-
 	if (conn->co_RMBuf.mh_LongLine) {
 	    conn->co_RMBuf.mh_LongLine = 0;
 	    conn->co_Flags |= COF_POSTTOOBIG;
+	    /* the line was dropped: its end is not known, the article is refused anyway */
+	    conn->co_PrevCrlf = 1;
 	    continue;
 	}
+	thisCrlf = (len >= 2 && buf[len-2] == '\r');
+	prevCrlf = conn->co_PrevCrlf;
+	conn->co_PrevCrlf = thisCrlf;
 	/*
 	 * expected EOF, ".\r\n".  A POST also takes ".\n" because some
 	 * idiotic newsreaders (like old versions of netscape) don't do the
