@@ -20,3 +20,7 @@
 ^TestOverWideRangeDoesNotBlock$
 ^TestReaderNewnewsManyPlainNames$
 ^TestReaderNewnewsManyPlainNamesAndWild$
+^TestDeepRevAccessCacheCreate
+^TestDeepRevAccessCacheSource
+^TestDeepRevAccessCacheUnsettled$
+^TestDeepRevAccessCacheSettledBad
