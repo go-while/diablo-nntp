@@ -1,0 +1,1 @@
+- dreaderd: an article outside `cachemin`/`cachemax` was emptied after it got its final cache name, where another reader process could already have it mapped (SIGBUS); it is emptied before the rename now.

@@ -85,7 +85,8 @@ FileAllocSpace(int fd, off_t off, off_t len)
 	e = posix_fallocate(fd, off, len);
 	if (e == 0)
 	    return 0;
-	if (e < 0 && (errno == ENOSYS || errno == EOPNOTSUPP))
+	/* posix_fallocate() returns the error number, errno is not set */
+	if (e == ENOSYS || e == EOPNOTSUPP)
 	    posix_fallocate_ok = 0;
     }
 #endif

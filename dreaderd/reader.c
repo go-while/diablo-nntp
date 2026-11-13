@@ -485,6 +485,13 @@ ReaderTask(int fd, const char *id)
 			    (TerminatePending &&
 					!(conn->co_Flags & COF_MAYNOTCLOSE))
 			) {
+			    /*
+			     * A request of this client may still be out at
+			     * a server: take the client off it, the answer
+			     * must not be written into a freed connection.
+			     */
+			    if (desc->d_Type == THREAD_NNTP && conn->co_SReq)
+				NNTerminate(conn);
 			    DeleteConnection(conn);
 			    DelThread(desc);
 			}
@@ -516,6 +523,7 @@ HandleReaderMsg(ForkDesc *desc)
 	     * Tell the main server that we are done with the connection
 	     */
 	    SendMsg(TFd, recv_fd, &dres);
+	    close(recv_fd);	/* the main server has its own copy */
 	} else if (recv_fd == RECV_FD_LOST) {
 	    /*
 	     * The connection's descriptor was dropped on the way: hand the
@@ -772,6 +780,11 @@ NNTerminate(Connection *conn)
 	ActiveCacheFreeMain();
 	ActiveCacheWriteUnlock();
     }
+    /*
+     * The idle and the session timeout can both end the same connection
+     * in one pass; the lock must be given back only once.
+     */
+    conn->co_ListCacheMode = ACMODE_NONE;
     MBFlush(conn, &conn->co_TMBuf);
     FD_SET(conn->co_Desc->d_Fd, &WFds);
 }
@@ -1224,6 +1237,7 @@ NNCommand2(Connection *conn)
     char *buf;
     Command *scan;
     int len;
+    int nul;
 
     conn->co_Func = NNCommand2;
     conn->co_State = "waitcmd";
@@ -1278,6 +1292,21 @@ NNCommand2(Connection *conn)
     }
 
     /*
+     * a NUL byte in the line, seen before the line is used as a C string;
+     * MBReadLine() put a NUL in the place of the newline (a last line at
+     * EOF has none: its NUL is behind the len bytes, which are all data)
+     */
+    {
+	int clen = len;
+
+	if (!conn->co_RMBuf.mh_NoNL && clen > 0 && buf[clen - 1] == '\0')
+	    --clen;
+	if (clen > 0 && buf[clen - 1] == '\r')
+	    --clen;
+	nul = (memchr(buf, 0, clen) != NULL);
+    }
+
+    /*
      * strip CR LF
      */
 
@@ -1326,8 +1355,8 @@ NNCommand2(Connection *conn)
         proto = NULL;
       }
 
-      /* an empty first line has no word: cmd is NULL */
-      if (cmd != NULL && strcmp(cmd, "PROXY") == 0 && proto &&
+      /* an empty first line has no word: cmd is NULL; no NUL in it */
+      if (!nul && cmd != NULL && strcmp(cmd, "PROXY") == 0 && proto &&
           srcaddr && srcport && dstaddr && dstport) {
         memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_UNSPEC;
@@ -1359,7 +1388,7 @@ NNCommand2(Connection *conn)
       struct sockaddr_in sin;
       char *pt = NULL;
 
-      if (strncasecmp(ptr, "proxied ", 8) || ! ((pt = strrchr(ptr, ':')))) {
+      if (nul || strncasecmp(ptr, "proxied ", 8) || ! ((pt = strrchr(ptr, ':')))) {
           MBLogPrintf(conn,
               &conn->co_TMBuf,
               "400 %s: Proxy authentication failure.\r\n",
@@ -1389,6 +1418,31 @@ NNCommand2(Connection *conn)
       conn->co_Auth.dr_Flags |= DF_ISPROXIED;
       conn->co_Auth.dr_ResultFlags = DR_REQUIRE_DNS;
       return;
+    }
+
+    /*
+     * A command line cannot hold a NUL byte (RFC 3977 9.2 and 9.8: keywords
+     * and tokens have none) and must not be cut and then interpreted (3.2.1):
+     * 501.  Without this check the line was cut at the NUL: "ARTICLE <id>"
+     * NUL junk was served, and a line starting with NUL got no answer.
+     */
+    if (nul) {
+	static const char *nulReply = "501 Syntax error: NUL byte in the command line";
+
+	/*
+	 * A TAKETHIS is followed by its article without waiting for an
+	 * answer (RFC 4644 2.5.2): read it up to its dot and drop it, then
+	 * answer, or its lines would be taken for commands.  Only a server
+	 * (transit) connection takes TAKETHIS at all.
+	 */
+	if ((conn->co_Flags & COF_SERVER) &&
+	    strcspn(ptr, " \t\r") == 8 && strncasecmp(ptr, "takethis", 8) == 0) {
+	    NNDiscardArticleStart(conn, nulReply);
+	    return;
+	}
+	MBLogPrintf(conn, &conn->co_TMBuf, "%s\r\n", nulReply);
+	NNCommand(conn);
+	return;
     }
 
     /*
@@ -1431,8 +1485,15 @@ NNCommand2(Connection *conn)
 	if ((scan->cmd_Flags & CMDF_AUTH) &&
 	    (conn->co_Auth.dr_Flags & DF_AUTHREQUIRED)
 	) {
-	    MBLogPrintf(conn, &conn->co_TMBuf, "480 Authentication required for command\r\n");
-	    NNCommand(conn);
+	    static const char *authReply = "480 Authentication required for command";
+
+	    /* a TAKETHIS article follows unasked: read and drop it first */
+	    if (scan->cmd_Func == NNTPTakeThis)
+		NNDiscardArticleStart(conn, authReply);
+	    else {
+		MBLogPrintf(conn, &conn->co_TMBuf, "%s\r\n", authReply);
+		NNCommand(conn);
+	    }
 	} else {
 	    conn->co_ByteCountType = scan->cmd_DRBC_Type;
 	    scan->cmd_Func(conn, &ptr);
@@ -1680,8 +1741,17 @@ sigSegVReader(int sigNo)
     } else {
 	char cmdbuf[256];
 
-	if (fork())
-	   return;
+	if (fork()) {
+	    /*
+	     * The child keeps the image for the handler.  This process
+	     * must not go back into the fault: returning with the handler
+	     * still installed ran the faulting instruction again and came
+	     * back here to fork, without end.  Die of the signal instead.
+	     */
+	    signal(sigNo, SIG_DFL);
+	    raise(sigNo);
+	    return;
+	}
 	snprintf(cmdbuf, sizeof(cmdbuf), "%s %d", DOpts.ReaderCrashHandler, getpid());
 	if (system(cmdbuf) != 0)
 	    logit(LOG_ERR, "crash handler %s failed", cmdbuf);

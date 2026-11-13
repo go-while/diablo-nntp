@@ -1,0 +1,1 @@
+- dreader.access: `ratelimitrange N-N` (or high below low) was accepted and divided by zero in the reader on its first write; it is now refused with the existing notice.

@@ -1,0 +1,1 @@
+- dreaderd: a reader process that got SIGHUP (`drcmd exit`) while a client had an article request out at a spool server could write the answer into the client connection it had just freed and fault.

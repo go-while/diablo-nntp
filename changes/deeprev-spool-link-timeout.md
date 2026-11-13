@@ -1,0 +1,1 @@
+- dreaderd: after a dreader.access reload, a `readerdef DEFAULT` idle/session timeout or ratelimit was applied to the links to spool and post servers, closing them.

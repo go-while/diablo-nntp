@@ -2007,6 +2007,7 @@ DoSession(int fd, int count)
     int syntax = 0;
     int unimp = 0;
     int nfd;
+    int bytes;
 
     /*
      * reinitialize random generator
@@ -2162,12 +2163,38 @@ DoSession(int fd, int count)
 	    break;
 	}
 	ArticleFileIdle(bi);
-	if ((buf = bgets(bi, NULL)) == NULL || buf == (char *)-1)
+	/* with its length, so a NUL byte in the line can be seen */
+	if ((buf = bgets(bi, &bytes)) == NULL || buf == (char *)-1)
 	    break;
+	if (bytes <= 0 || buf[bytes - 1] != '\n') {
+	    /* the buffer is full without a newline */
+	    logit(LOG_ERR, "Line buffer overflow fd %d", nfd);
+	    break;
+	}
+	buf[bytes - 1] = 0;
 
 
 	if (DebugOpt > 2) {
 	    ddprintf("%d << %s", (int)getpid(), buf);
+	}
+
+	/* a NUL byte in the command line: 501, not cut there (RFC 3977 3.2.1) */
+	if (memchr(buf, 0, bytes - 1) != NULL) {
+	    xfprintf(fo, "501 Syntax error: NUL byte in the command line\r\n");
+	    fflush(fo);
+	    /*
+	     * A TAKETHIS is followed by its article without waiting for an
+	     * answer (RFC 4644 2.5.2): read and drop it, as for the other
+	     * refused TAKETHIS, or its lines would be taken for commands.
+	     */
+	    {
+		/* the keyword as strtok() below finds it: after blanks, tabs, CR */
+		const char *kw = buf + strspn(buf, " \t\r");
+
+		if (strcspn(kw, " \t\r") == 8 && strncasecmp(kw, "takethis", 8) == 0)
+		    LoadArticle(bi, "<>", 1, headerOnly, NULL, NULL);
+	    }
+	    continue;
 	}
 
 	cmd = strtok(buf, " \t\r\n");

@@ -360,8 +360,12 @@ NNFeedOverview(Connection *conn)
 	    /*
 	     * Skip groups with names that are too long
 	     */
-	    if (ngroup - group > MAXGNAME)
+	    if (ngroup - group > MAXGNAME) {
+		*ngroup = c;
+		if (*ngroup == ',')
+		    ++ngroup;
 		continue;
+	    }
 
 	    /* Strip trailing space or tab from group name */
 	    whspptr = strpbrk(group, " \t");
@@ -409,8 +413,12 @@ NNFeedOverview(Connection *conn)
 	    /*
 	     * Skip groups with names that are too long
 	     */
-	    if (ngroup - group > MAXGNAME)
+	    if (ngroup - group > MAXGNAME) {
+		*ngroup = c;
+		if (*ngroup == ',')
+		    ++ngroup;
 		continue;
+	    }
 
 	    /* Strip trailing space or tab from group name */
 	    whspptr = strpbrk(group, " \t");
@@ -723,6 +731,7 @@ WriteOverview(Connection *conn, ArtNumAss *an, const char *group, const char *xr
 		LogIncoming("%s - %s%s", conn->co_Auth.dr_Host, "", logbuf);
 	    MBLogPrintf(conn, &conn->co_TMBuf, "400 Error writing data\r\n");
 	    NNTerminate(conn);
+	    PutOverInfo(ov);
 	    return(1);
 	}
 
@@ -1701,6 +1710,10 @@ MakeOverHFile(OverInfo *ov, artno_t artNo, int create)
 		            gfname,
 		            strerror(errno)
 		        );
+			/* as on the other failures: the temporary file is not kept */
+			hfd = -1;
+			close(tmpfd);
+			tmpfd = -1;
 		    } else {
 		        zpos = zmap + (st.st_size >= 18 ? st.st_size - 4 : 0);
 		        zlen = st.st_size < 18 ? 0 :

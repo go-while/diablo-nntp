@@ -1,0 +1,1 @@
+- dreaderd: a dserver.hosts entry whose `bind=` address fails leaked one descriptor on every retry.

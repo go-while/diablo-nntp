@@ -1,0 +1,1 @@
+- dreaderd: a post with more than one Newsgroups, From, Subject, Date or Message-ID header is refused (441); before, the checks went by the last one of each. These five by decision; other headers that may appear only once are not checked.

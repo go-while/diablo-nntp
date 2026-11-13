@@ -1,0 +1,1 @@
+- dreaderd, diablo: a command line with a NUL byte is answered with 501 (RFC 3977 3.2.1, 9.2); it was cut at the NUL, so `ARTICLE <id>` NUL junk was served, and a line starting with NUL got no answer. The connection stays open. dreaderd also refuses a NUL in a last line without a newline and in a PROXY or `proxied` first line (400 and close, as for any bad header).

@@ -1,0 +1,1 @@
+- dreaderd: a reader that got a client descriptor at or above MAXFDS handed it back to the main process but kept its own copy open, so the client hung and the reader lost a descriptor.

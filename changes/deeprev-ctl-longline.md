@@ -1,0 +1,1 @@
+- dreaderd: for a checkgroups, the rest of a dcontrol.ctl or localgroups line longer than 255 characters was read as a line of its own (a checkgroups rule or a protected group nobody wrote); such a line is skipped whole, as the other readers of dcontrol.ctl do.

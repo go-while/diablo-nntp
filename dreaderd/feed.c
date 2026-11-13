@@ -15,6 +15,7 @@ Prototype void NNTPMode(Connection *conn, char **pptr);
 Prototype void NNTPIHave(Connection *conn, char **pptr);
 Prototype void NNTPCheck(Connection *conn, char **pptr);
 Prototype void NNTPTakeThis(Connection *conn, char **pptr);
+Prototype void NNDiscardArticleStart(Connection *conn, const char *reply);
 Prototype void NNTPPost(Connection *conn, char **pptr);
 Prototype int ValidXRef(const char *buf, int len);
 
@@ -130,14 +131,40 @@ void
 NNTPTakeThis(Connection *conn, char **pptr)
 {
     const char *origmsgid = "<>";
-    const char *msgid = MsgId(parseword(pptr, ""), NULL);
+    const char *msgid = MsgId(parseword(pptr, ""), &origmsgid);
 
     conn->co_Flags &= ~(COF_IHAVE|COF_POST|COF_POSTTOOBIG|COF_POSTXREF);
 
+    /*
+     * The article follows the command without waiting for an answer (RFC
+     * 4644 2.5.2): a refused TAKETHIS must read and drop it too, or its
+     * lines would be taken for commands.  The command table lets TAKETHIS
+     * through on a server (transit) connection only.
+     */
     if (conn->co_Flags & COF_SERVER) {
 	if (strcmp(msgid, "<>") == 0) {
-	    MBLogPrintf(conn, &conn->co_TMBuf, "439 %s\r\n", origmsgid);
-	    NNCommand(conn);
+	    /*
+	     * 439 with the message-id as sent (its first word, bounded), if
+	     * every byte of it is printable US-ASCII; else, or with none, "<>".
+	     */
+	    char reply[MAXMSGIDLEN + 8];
+	    size_t n = strcspn(origmsgid, " \t\r\n");
+	    size_t i;
+
+	    if (n > MAXMSGIDLEN)
+		n = MAXMSGIDLEN;
+	    for (i = 0; i < n; ++i) {
+		unsigned char c = (unsigned char)origmsgid[i];
+
+		if (c < 0x21 || c > 0x7e)
+		    break;
+	    }
+	    if (n == 0 || i < n) {
+		origmsgid = "<>";
+		n = 2;
+	    }
+	    snprintf(reply, sizeof(reply), "439 %.*s", (int)n, origmsgid);
+	    NNDiscardArticleStart(conn, reply);
 	} else
 	    NNAcceptArticleStart(conn, msgid);
     } else {
@@ -216,12 +243,13 @@ NNAcceptArticle(Connection *conn)
 	if (conn->co_RMBuf.mh_LongLine) {
 	    conn->co_RMBuf.mh_LongLine = 0;
 	    conn->co_Flags |= COF_POSTTOOBIG;
-	    /* the line was dropped: its end is not known, the article is refused anyway */
-	    conn->co_PrevCrlf = 1;
+	    /* its ending is known once the line is dropped: mh_LongCR */
+	    conn->co_PrevCrlf = -1;
 	    continue;
 	}
 	thisCrlf = (len >= 2 && buf[len-2] == '\r');
-	prevCrlf = conn->co_PrevCrlf;
+	prevCrlf = (conn->co_PrevCrlf < 0) ?
+		    conn->co_RMBuf.mh_LongCR : conn->co_PrevCrlf;
 	conn->co_PrevCrlf = thisCrlf;
 	/*
 	 * expected EOF, ".\r\n".  A POST also takes ".\n" because some
@@ -348,6 +376,70 @@ NNAcceptArticle(Connection *conn)
 	 */
 	FD_SET(conn->co_Desc->d_Fd, &WFds);
     }
+}
+
+/*
+ * NNDiscardArticleStart() and its state NNDiscardArticle() - read the article
+ * that follows a refused TAKETHIS up to its terminating dot and throw it
+ * away, then answer reply (500 if none is kept).  The peer
+ * sends the article without waiting for an answer (RFC 4644 2.5.2): if it
+ * were not read here, its lines would be taken for commands.  The answer is
+ * kept with the connection (a reader process serves many at once).  The
+ * article ends as an accepted one does (NNAcceptArticle()): only on CRLF
+ * "." CRLF, a "." after a bare LF or ended by one is data.
+ */
+
+static void
+NNDiscardArticle(Connection *conn)
+{
+    char *buf;
+    int len = 0;
+    int maxl = 1000;
+    int prevCrlf;
+
+    conn->co_Func = NNDiscardArticle;
+    conn->co_State = "discard";
+    conn->co_RMBuf.mh_SkipLong = 1;
+
+    while (--maxl > 0 && (len = MBReadLine(&conn->co_RMBuf, &buf)) > 0) {
+	if (conn->co_RMBuf.mh_LongLine) {
+	    conn->co_RMBuf.mh_LongLine = 0;
+	    conn->co_PrevCrlf = -1;	/* as in NNAcceptArticle() */
+	    continue;
+	}
+	prevCrlf = (conn->co_PrevCrlf < 0) ?
+		    conn->co_RMBuf.mh_LongCR : conn->co_PrevCrlf;
+	conn->co_PrevCrlf = (len >= 2 && buf[len-2] == '\r');
+	if (prevCrlf && len == 3 && strcmp(buf, ".\r") == 0) {
+	    conn->co_Flags &= ~COF_MAYNOTCLOSE;
+	    conn->co_RMBuf.mh_SkipLong = 0;
+	    MBLogPrintf(conn, &conn->co_TMBuf, "%s\r\n",
+		conn->co_DiscardReply ? conn->co_DiscardReply : "500 What?");
+	    zfreeStr(&conn->co_MemPool, &conn->co_DiscardReply);
+	    NNCommand(conn);
+	    return;
+	}
+    }
+    if (len <= 0) {
+	if (len < 0)
+	    NNTerminate(conn);
+    } else {
+	FD_SET(conn->co_Desc->d_Fd, &WFds);
+    }
+}
+
+void
+NNDiscardArticleStart(Connection *conn, const char *reply)
+{
+    char note[] = "dropping the article of a refused TAKETHIS";
+
+    zfreeStr(&conn->co_MemPool, &conn->co_DiscardReply);
+    conn->co_DiscardReply = zallocStr(&conn->co_MemPool, reply);
+    conn->co_Flags |= COF_MAYNOTCLOSE;
+    conn->co_PrevCrlf = 1;	/* the command line ended the line before */
+    /* with the command log (readerdetaillog, logcmd): tests wait for this */
+    LogCmd(conn, '-', note);
+    NNDiscardArticle(conn);
 }
 
 /*

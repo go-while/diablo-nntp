@@ -1,0 +1,1 @@
+- dreaderd: the per-session count of posted and fed bytes was an int and wrapped after 2 GiB, giving a negative `postbytes=` in the log and wrong POST/FEED byte totals in `drcmd stats`.

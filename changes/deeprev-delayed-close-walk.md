@@ -1,0 +1,1 @@
+- dreaderd: the delayed-close list (`-c`) was walked through entries it had just freed; after a backward clock step a later pass could close an unrelated descriptor.

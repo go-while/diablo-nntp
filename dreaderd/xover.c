@@ -32,6 +32,8 @@ void NNStartListOverview(Connection *conn, const char *hdr, const char *ran, con
 void NNStartListOverviewRange(Connection *conn);
 void NNStartListOverviewMsgId(Connection *conn, const char *msgid);
 void NNListOverviewRange(Connection *conn);
+static int StartListOverviewRangeRun(Connection *conn);
+static int ListOverviewRangeRun(Connection *conn);
 
 Prototype char *OverViewFmt;
 
@@ -105,21 +107,35 @@ NNTPNewNews(Connection *conn, char **pptr)
     }
 }
 
+/*
+ * NEWNEWS lists the groups of the list one after the other.  A group with
+ * nothing to list (no such group, no overview, no article in range or in the
+ * time) must not call back into this function for the next one: a line of
+ * some 110000 group names that hold nothing would nest one call per name
+ * and overflow the stack of the reader process (4 MB on NetBSD), which
+ * serves all its clients.  StartListOverviewRangeRun() and
+ * ListOverviewRangeRun() return nonzero when the group is done and the next
+ * one is to be taken, and the loop here takes it.
+ */
 void
 NNListNewNews(Connection *conn)
 {
-    conn->co_Func = NNListNewNews;
-    conn->co_State = "listnewnews";
+    for (;;) {
+	GroupList *gl;
 
-    if (conn->co_ListCacheGroups == NULL) {
-	MBPrintf(&conn->co_TMBuf, ".\r\n");
-	if (conn->co_GroupName)
-	    zfreeStr(&conn->co_MemPool, &conn->co_GroupName);
-	conn->co_GroupName = conn->co_SavedGroupName;
-	conn->co_SavedGroupName = NULL;
-	NNCommand(conn);
-    } else {
-	GroupList *gl = conn->co_ListCacheGroups;
+	conn->co_Func = NNListNewNews;
+	conn->co_State = "listnewnews";
+
+	if (conn->co_ListCacheGroups == NULL) {
+	    MBPrintf(&conn->co_TMBuf, ".\r\n");
+	    if (conn->co_GroupName)
+		zfreeStr(&conn->co_MemPool, &conn->co_GroupName);
+	    conn->co_GroupName = conn->co_SavedGroupName;
+	    conn->co_SavedGroupName = NULL;
+	    NNCommand(conn);
+	    return;
+	}
+	gl = conn->co_ListCacheGroups;
 	if (conn->co_GroupName)
 	    zfreeStr(&conn->co_MemPool, &conn->co_GroupName);
 	conn->co_GroupName = gl->group;
@@ -127,7 +143,8 @@ NNListNewNews(Connection *conn)
 	conn->co_ListEndNo = LL_MAX;
 	conn->co_ListCacheGroups = gl->next;
 	zfree(&conn->co_MemPool, gl, sizeof(GroupList));
-	NNStartListOverviewRange(conn);
+	if (!StartListOverviewRangeRun(conn))
+	    return;
     }
 }
 
@@ -439,6 +456,17 @@ NNStartListOverview(Connection *conn, const char *hdr, const char *ran, const ch
 void
 NNStartListOverviewRange(Connection *conn)
 {
+    if (StartListOverviewRangeRun(conn))
+	NNListNewNews(conn);
+}
+
+/*
+ * Nonzero: NEWNEWS has nothing to list in this group, take the next one
+ * (the caller does, see NNListNewNews()).
+ */
+static int
+StartListOverviewRangeRun(Connection *conn)
+{
     /*
      * trim list range
      */
@@ -457,13 +485,11 @@ NNStartListOverviewRange(Connection *conn)
 	conn->co_ListEndNo = 0;
 
     if ((rec = KPDBReadRecord(KDBActive, conn->co_GroupName, KP_LOCK_RO, &recLen)) == NULL) {
-	if (conn->co_ArtMode == COM_NEWNEWS) {
-	    NNListNewNews(conn);	/* no such group: the next one */
-	    return;
-	}
+	if (conn->co_ArtMode == COM_NEWNEWS)
+	    return(1);			/* no such group: the next one */
 	FinishOverviewDotNewline(conn);
 	NNCommand(conn);
-	return;
+	return(0);
     }
     lbeg = strtoll(KPDBGetField(rec, recLen, "NB", NULL, "0"), NULL, 10);
     lend = strtoll(KPDBGetField(rec, recLen, "NE", NULL, "0"), NULL, 10);
@@ -476,23 +502,31 @@ NNStartListOverviewRange(Connection *conn)
 		conn->co_ListBegNo > lend ||
 		conn->co_ListEndNo < lbeg ||
 		conn->co_ListBegNo > conn->co_ListEndNo) {
-	if (conn->co_ArtMode == COM_NEWNEWS) {
-	    NNListNewNews(conn);	/* nothing in this group: the next one */
-	    return;
-	}
+	if (conn->co_ArtMode == COM_NEWNEWS)
+	    return(1);			/* nothing in this group: the next one */
 	FinishOverviewDotNewline(conn);
 	NNCommand(conn);
-	return;
+	return(0);
     }
     if (conn->co_ListBegNo < lbeg)
 	conn->co_ListBegNo = lbeg;
     if (conn->co_ListEndNo > lend)
 	conn->co_ListEndNo = lend;
-    NNListOverviewRange(conn);
+    return(ListOverviewRangeRun(conn));
 }
 
 void
 NNListOverviewRange(Connection *conn)
+{
+    if (ListOverviewRangeRun(conn))
+	NNListNewNews(conn);
+}
+
+/*
+ * Nonzero: the group of a NEWNEWS list is done, take the next one.
+ */
+static int
+ListOverviewRangeRun(Connection *conn)
 {
     OverInfo *ov;
     int xpat_count = 0;
@@ -502,20 +536,18 @@ NNListOverviewRange(Connection *conn)
     conn->co_State = "listover";
 
     if ((ov = GetOverInfo(conn->co_GroupName)) == NULL) {
-	if (conn->co_ArtMode == COM_NEWNEWS) {
-	    NNListNewNews(conn);	/* no overview for this group: the next one */
-	    return;
-	}
+	if (conn->co_ArtMode == COM_NEWNEWS)
+	    return(1);			/* no overview for this group: the next one */
 	FinishOverviewDotNewline(conn);
 	NNCommand(conn);
-	return;
+	return(0);
     }
     if (conn->co_TMBuf.mh_WError) {
 	PutOverInfo(ov);
 	// This takes care of cleaning up any compression state
 	FinishOverviewDotNewline(conn);
 	NNCommand(conn);
-	return;
+	return(0);
     }
     while (conn->co_TMBuf.mh_Bytes < MBUF_HIWAT &&
 	    conn->co_ListBegNo <= conn->co_ListEndNo
@@ -557,10 +589,10 @@ NNListOverviewRange(Connection *conn)
 	if (conn->co_ArtMode != COM_NEWNEWS)
 	    FinishOverviewDotNewline(conn);
 	NNCommand(conn);
-	if (conn->co_ArtMode == COM_NEWNEWS) {
-	    NNListNewNews(conn);
-	}
+	if (conn->co_ArtMode == COM_NEWNEWS)
+	    return(1);
     }
+    return(0);
 }
 
 void

@@ -1,0 +1,1 @@
+- dreaderd: a filesystem without posix_fallocate() support is now recognised (the error number is the return value, not errno), so the call is not repeated for every new overview index.

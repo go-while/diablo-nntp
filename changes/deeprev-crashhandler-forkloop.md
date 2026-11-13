@@ -1,0 +1,1 @@
+- dreaderd: with `readercrash` set, a reader that faulted (SIGSEGV, SIGBUS, SIGFPE, SIGILL) returned from the signal handler into the fault and forked again without end; it now forks once for the crash command and dies of the signal.

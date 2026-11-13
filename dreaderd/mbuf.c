@@ -602,7 +602,9 @@ MBRead(MBufHead *mh, void *data, int len)
  *		  mh_SkipLong is 0 we report EOF with mh_RError set.  If
  *		  it is 1 we drop the line, set mh_LongLine and return an
  *		  empty line (length 1); the rest of the line, if not yet
- *		  received, is dropped as it arrives (mh_Skip).
+ *		  received, is dropped as it arrives (mh_Skip).  Once the
+ *		  line is dropped up to its newline, which can be after
+ *		  the return, mh_LongCR tells whether it ended with CR LF.
  */
 
 int
@@ -734,12 +736,19 @@ MBReadLine(MBufHead *mh, char **pptr)
 		    /*
 		     * end of a long line not yet reached, drop the data
 		     * unless it holds the newline.  The rest is kept.
+		     * mh_LongCR follows the last byte dropped, so a CR and
+		     * its LF in two reads still count as CR LF.
 		     */
-		    char *nl = memchr(mbuf->mb_Buf + mbuf->mb_Size, '\n', n);
+		    char *p = mbuf->mb_Buf + mbuf->mb_Size;
+		    char *nl = memchr(p, '\n', n);
 
 		    mh->mh_TotalBytes += n;
-		    if (nl == NULL)
+		    if (nl == NULL) {
+			mh->mh_LongCR = (p[n - 1] == '\r');
 			continue;
+		    }
+		    if (nl > p)
+			mh->mh_LongCR = (nl[-1] == '\r');
 		    mh->mh_Skip = 0;
 		    n -= nl + 1 - (mbuf->mb_Buf + mbuf->mb_Size);
 		    mbuf->mb_Size = mbuf->mb_Index = mbuf->mb_NLScan =
@@ -790,7 +799,24 @@ MBReadLine(MBufHead *mh, char **pptr)
 	/*
 	 * Drop the line but keep the connection.  If the newline is in
 	 * mbuf, keep what follows it, else skip up to the next newline.
+	 * mh_LongCR: the last byte of the line before its newline is a
+	 * CR, or so far, when the newline is still to come (mh_Skip).
 	 */
+
+	{
+	    char last = 0;
+
+	    for (scan = mh->mh_MBuf; scan != NULL; scan = scan->mb_Next) {
+		int end = (haveit && scan == mbuf) ?
+			    scan->mb_NLScan - 1 : scan->mb_Size;
+
+		if (end > scan->mb_Index)
+		    last = scan->mb_Buf[end - 1];
+		if (haveit && scan == mbuf)
+		    break;
+	    }
+	    mh->mh_LongCR = (last == '\r');
+	}
 
 	while ((scan = mh->mh_MBuf) != NULL && (!haveit || scan != mbuf)) {
 	    mh->mh_MBuf = scan->mb_Next;
@@ -871,6 +897,7 @@ MBReadLine(MBufHead *mh, char **pptr)
 	    mbuf->mb_Buf[mbuf->mb_NLScan] = 0;	/* do not replace last char */
 	else
 	    mbuf->mb_Buf[mbuf->mb_NLScan-1] = 0;/* replace nl	*/
+	mh->mh_NoNL = nonl;	/* the caller may need to know which */
 	*pptr = mbuf->mb_Buf + mbuf->mb_Index;
 	mh->mh_Bytes -= r;
 	mbuf->mb_Index = mbuf->mb_NLScan;
@@ -940,10 +967,10 @@ MBNormalize(MBufHead *mh, int *plen)
 	    mbuf->mb_Buf + bytes,
 	    scan->mb_Size - scan->mb_Index
 	);
+	bytes += scan->mb_Size - scan->mb_Index;
 	if (scan->mb_Buf)
 	    zfree(mh->mh_BufPool, scan->mb_Buf, scan->mb_Max);
 	zfree(mh->mh_MemPool, scan, sizeof(MBuf));
-	bytes += scan->mb_Size - scan->mb_Index;
     }
     mh->mh_MBuf = mbuf;
     return(mbuf->mb_Buf);

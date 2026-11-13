@@ -34,6 +34,7 @@
 
 #include "defs.h"
 #include <sys/resource.h>
+#include <poll.h>	/* lib/defs.h includes it only when USE_POLL is set */
 
 #ifdef __linux__
 #include <sched.h>
@@ -56,6 +57,7 @@ Prototype void RTClearStatus(int index, int count);
 Prototype void RTUpdateStatus(int slot, const char *ctl, ...);
 Prototype pid_t ForkPipe(int *pfd, void (*task)(int fd, const char *id), const char *description, int sockType);
 Prototype void ValidateTcpBufferSize(int *psize);
+Prototype double MonoMs(void);
 
 Prototype int NumReaderForks;
 Prototype int ThisReaderFork;
@@ -188,9 +190,11 @@ static double ListenPauseUntil;	/* MonoMs(): listeners off until then */
 #define DQR_INFLIGHT	9	/* fd pass to a reader: ETOOMANYREFS	*/
 #define DQR_READER	10	/* waited readerdnswait for its reader	*/
 #define DQR_N		11	/* reasons are 1..10; 0 = admitted */
-static double MonoMs(void);
 static void DnsRefuseLog(int r);
 static void DnsQInitLimits(void);
+static int IsAuthRefusal(const char *s);
+static int AuthFieldSpace(int c);
+static void AuthRefusalLine(char *buf, size_t len, const char *p);
 
 /*
  * Clients on their way to a reader whose socketpair is full.  The main
@@ -1196,6 +1200,8 @@ main(int ac, char **av)
 
 		if (ReaderOutBackoff && ms > READEROUT_BACKOFF_MS)
 		    ms = READEROUT_BACKOFF_MS;
+		/* a failed access cache install is tried again on time */
+		ms = AccessRetryMs(ms);
 
 		if (ListenPauseUntil > 0) {
 		    double left = ListenPauseUntil - MonoMs();
@@ -1352,9 +1358,15 @@ main(int ac, char **av)
 			    desc->d_stime+=end.tms_stime-start.tms_stime;
 			}
 #endif
-		    } else {
+		    } else if (FD_ISSET(i, &SFds)) {
 			fatal("select returned unknown descriptor %d", i);
 		    }
+		    /*
+		     * else it was closed earlier in this walk (DelThread()
+		     * takes it out of SFds): "drcmd exit" closes the
+		     * listeners, whose numbers can be higher than its own
+		     * (dreaderd -b <fd>)
+		     */
 		}
 	    }
 	    (void)ScanTimers(1, 0);
@@ -1412,12 +1424,16 @@ main(int ac, char **av)
 	/* Clean out the delayed closes */
 	if (NeedClosing != NULL) {
 	    PendingClose *pc;
+	    PendingClose *npc;
 	    PendingClose *ppc = NULL;
 	    time_t timenow = time(NULL);
 
-	    for (pc = NeedClosing; pc != NULL; ppc = pc, pc = pc->next) {
-		if (pc->when > timenow)
+	    for (pc = NeedClosing; pc != NULL; pc = npc) {
+		npc = pc->next;
+		if (pc->when > timenow) {
+		    ppc = pc;	/* the last entry that stays */
 		    continue;
+		}
 		WriteBestEffort(pc->fd, pc->msgbuf, strlen(pc->msgbuf));
 		close(pc->fd);
 		pc->fd = -1;
@@ -1426,9 +1442,9 @@ main(int ac, char **av)
 		    --NumActive;
 		}
 		if (pc == NeedClosing)
-		    NeedClosing = pc->next;
+		    NeedClosing = npc;
 		if (ppc != NULL)
-		    ppc->next = pc->next;
+		    ppc->next = npc;
 		zfree(&PendingMemPool, pc, sizeof(PendingClose));
 	    }
 	}
@@ -1569,6 +1585,67 @@ DoListen(ForkDesc *desc, time_t t)
  * DOCOMMAND() - handles a control connection
  */
 
+#define DRCMD_READ_TIMEOUT	2	/* seconds to wait for the command line */
+
+/*
+ * The command line of a drcmd client, read within DRCMD_READ_TIMEOUT
+ * seconds in all: counted from the start, not per read, so a client that
+ * sends its line a byte at a time cannot hold the main loop longer either.
+ * Returns its length, 0 for nothing to run: EOF before any byte, the time
+ * ran out, a read error, or a line whose text (without the newline) does
+ * not fit in buf (logged).  A last line without a newline at EOF is run,
+ * as fgets() did; when buf is full, one more byte tells EOF or a newline
+ * (the line fits) from more text (it does not).
+ */
+static int
+DrcmdReadLine(int fd, char *buf, int size)
+{
+    double end = MonoMs() + DRCMD_READ_TIMEOUT * 1000.0;
+    int n = 0;
+
+    for (;;) {
+	struct pollfd pfd;
+	double left = end - MonoMs();
+	char extra;
+	char *nl;
+	int r;
+
+	if (left <= 0)
+	    return(0);
+	pfd.fd = fd;
+	pfd.events = POLLIN;
+	pfd.revents = 0;
+	r = poll(&pfd, 1, (int)left + 1);
+	if (r < 0 && errno == EINTR)
+	    continue;
+	if (r <= 0)
+	    return(0);
+	if (n < size - 1)
+	    r = read(fd, buf + n, size - 1 - n);
+	else
+	    r = read(fd, &extra, 1);
+	if (r < 0 && errno == EINTR)
+	    continue;
+	if (r < 0)
+	    return(0);
+	if (r == 0)
+	    break;		/* EOF: a last line without a newline is run */
+	if (n >= size - 1) {
+	    if (extra == '\n')
+		break;		/* the text fills buf exactly */
+	    logit(LOG_ERR, "drcmd: command line longer than %d bytes, not run", size - 1);
+	    return(0);
+	}
+	if ((nl = memchr(buf + n, '\n', r)) != NULL) {
+	    n = nl + 1 - buf;
+	    break;
+	}
+	n += r;
+    }
+    buf[n] = 0;
+    return(n);
+}
+
 void
 DoCommand(int ufd)
 {
@@ -1597,7 +1674,12 @@ DoCommand(int ufd)
 	if (fi && fo) {
 	    char buf[MAXLINE];
 
-	    while (fgets(buf, sizeof(buf), fi) != NULL) {
+	    /*
+	     * drcmd sends its one command line at once.  This is the main
+	     * loop: do not wait without end for a client that sends nothing
+	     * or half a line; the connection is then closed.
+	     */
+	    while (DrcmdReadLine(fd, buf, sizeof(buf)) > 0) {
 		char *s1;
 		char *s2;
 
@@ -1675,7 +1757,8 @@ DoCommand(int ufd)
 				    kill(desc->d_Pid, SIGHUP);
 				break;
 			    case THREAD_LISTEN:
-				close(desc->d_Fd);
+				/* closes it, and takes it out of SFds */
+				DelThread(desc);
 				break;
 			    case THREAD_DRCMD:
 				break;
@@ -1944,6 +2027,69 @@ DnsRefuseText(int r, char *buf, size_t len)
     }
 }
 
+/*
+ * IsAuthRefusal() - is dr_ReaderName a refusal from an authentication backend
+ *
+ * A backend answers "110 readerdef" to name the client's readerdef, or
+ * "110 NNN text" to refuse the client; the worker passes what follows
+ * "110 " on in dr_ReaderName.  Three digits followed by the end of the
+ * string or white space are a refusal ("502", "502 Go away", "502", TAB,
+ * "Go away", and "502" with the CR or LF of a backend that ends its
+ * answer with a line end), also when a readerdef has that name: a
+ * readerdef name of just three digits is not usable.  Three digits
+ * followed by anything else ("100mbit") may be a readerdef name: they are
+ * when that readerdef exists, and a refusal when it does not (see
+ * HandleDnsThread()).  Returns 1 for a refusal in the first form.
+ */
+static int
+IsAuthRefusal(const char *s)
+{
+    return (isdigit((unsigned char)s[0]) && isdigit((unsigned char)s[1]) &&
+	    isdigit((unsigned char)s[2]) &&
+	    (s[3] == 0 || isspace((unsigned char)s[3])));
+}
+
+/*
+ * AuthFieldSpace() - white space between the fields of a backend refusal
+ *
+ * Any white space but CR and LF, which end the refusal.
+ */
+static int
+AuthFieldSpace(int c)
+{
+    return (c != '\r' && c != '\n' && isspace((unsigned char)c));
+}
+
+/*
+ * AuthRefusalLine() - the status line for a backend refusal
+ *
+ * p is the refusal ("NNN", "NNN text", the code and the text separated by
+ * white space, see AuthFieldSpace()).  buf gets "NNN text\r\n" with a
+ * single space after the code; the text ends at a CR or LF, so one line
+ * goes out.  Without a text it is "NNN Access denied"; when p is no
+ * refusal at all (a "600" ban without the code that is to follow it) it
+ * is "502 Access denied".  The text starts at buf + 4 in every case.
+ */
+static void
+AuthRefusalLine(char *buf, size_t len, const char *p)
+{
+    const char *code = "502";
+    const char *text = "";
+    int n;
+
+    if (IsAuthRefusal(p)) {
+	code = p;
+	for (text = p + 3; AuthFieldSpace(*text); text++) {
+	}
+    }
+    n = (int)strcspn(text, "\r\n");
+    if (n == 0) {
+	text = "Access denied";
+	n = (int)strlen(text);
+    }
+    snprintf(buf, len, "%.3s %.*s\r\n", code, n, text);
+}
+
 static void
 DnsRefuseLog(int r)
 {
@@ -1985,7 +2131,7 @@ DnsRefuseFlush(void)
 /*
  * Milliseconds on a clock that does not jump with the time of day.
  */
-static double
+double
 MonoMs(void)
 {
 #ifdef CLOCK_MONOTONIC
@@ -2439,8 +2585,8 @@ ForkPipe(int *pfd, void (*task)(int fd, const char *id), const char *description
 	logit(LOG_INFO, "DNS worker IPC uses %s",
 		sockType == SOCK_SEQPACKET ? "SOCK_SEQPACKET" : "SOCK_STREAM");
     }
-    if (fds[0] > MAXFDS || fds[1] > MAXFDS) {
-	logit(LOG_ERR, "pipe desc > MAXFDS: %d/%d/%d", fds[0], fds[1], MAXFDS);
+    if (fds[0] >= MAXFDS || fds[1] >= MAXFDS) {
+	logit(LOG_ERR, "pipe desc >= MAXFDS: %d/%d/%d", fds[0], fds[1], MAXFDS);
 	close(fds[0]);
 	close(fds[1]);
 	return((pid_t)-1);
@@ -2822,6 +2968,7 @@ HandleDnsThread(ForkDesc *desc)
     const char *error1 = NULL;
     const char *error2 = NULL;
     const char *vsname = "-";	/* only known once SetAuthDetails() ran */
+    int BadAuthName = 0;	/* backend answer: no refusal, no readerdef */
     char errbuf[1024], *p;
     int r;
 #ifdef READER_BAN_LISTS
@@ -2883,38 +3030,47 @@ HandleDnsThread(ForkDesc *desc)
 			dres.dr_Lookup & DL_MASK, dres.dr_RevHost,
 			dres.dr_CacheGen);
 
-    if (isdigit((unsigned char)dres.dr_ReaderName[0]) && isdigit((unsigned char)dres.dr_ReaderName[1]) && isdigit((unsigned char)dres.dr_ReaderName[2])) {
+    /*
+     * A refusal from an authentication backend ("NNN", "NNN text"; see
+     * IsAuthRefusal()), never a readerdef name.
+     */
+    if (IsAuthRefusal(dres.dr_ReaderName)) {
 	p = dres.dr_ReaderName;
-	if (! strncmp(p, "600 ", 4)) {
+	if (p[0] == '6' && p[1] == '0' && p[2] == '0') {
 	    /* 
 	     * Deep six a user via authentication 
 	     * Return: 110 600 <time-in-mins> 500 Your connection is rejected
 	     * Perpetuating the ugly return code chaining
 	     * Requires reader ban lists to actually work,
 	     * and actually only tweaks the host banned count.
+	     * The fields are separated by white space (AuthFieldSpace()),
+	     * a CR or LF ends the answer.  A bare "600" bans nobody; the
+	     * client gets the generic refusal line.
 	     */
 
-	    p += 4;
+	    for (p += 3; AuthFieldSpace(*p); p++) {
+	    }
+	    if (*p && *p != '\r' && *p != '\n') {
 #ifdef READER_BAN_LISTS
-	    bantime = strtol(p, NULL, 10) * 60;
+		bantime = strtol(p, NULL, 10) * 60;
 #endif
-	    for (; *p && *p != ' '; p++) {
-	    }
-	    for (; *p && *p == ' '; p++) {
-	    }
+		for (; *p && !isspace((unsigned char)*p); p++) {
+		}
+		for (; AuthFieldSpace(*p); p++) {
+		}
 
 #ifdef	READER_BAN_LISTS
-	    if (HostBan.BanCount > 0)
-	        IPListAdd(&HostBan.BanList,
-		NetAddrToSt(0, (struct sockaddr *)&desc->d_SaveRSin, 1, 0, 1),
+		if (HostBan.BanCount > 0)
+		    IPListAdd(&HostBan.BanList,
+			NetAddrToSt(0, (struct sockaddr *)&desc->d_SaveRSin, 1, 0, 1),
 				HostBan.BanCount,
 				time(NULL) + bantime,
 				HostBan.BanHashSize,
 				HostBan.BanLinkSize);
 #endif
-
+	    }
 	}
-	snprintf(errbuf, sizeof(errbuf), "%s\r\n", p);
+	AuthRefusalLine(errbuf, sizeof(errbuf), p);
 	error1 = errbuf;
 	/* Point error2 at errbuf + 4 to catch the specific error */
 	/* error2 = "CustomError"; */
@@ -2937,7 +3093,24 @@ HandleDnsThread(ForkDesc *desc)
         if (r == 1)
 	    ClearOldAccessMap();
 
-        if (dres.dr_Code == 0 && dres.dr_AuthUser[0] && dres.dr_AuthPass[0]) {
+	/*
+	 * A name that starts with three digits is a readerdef ("100mbit")
+	 * only when this readerdef exists.  Anything else is a backend
+	 * answer that is no refusal in the form IsAuthRefusal() knows
+	 * ("502-Go away", "502:x", "123abc"): SetAuthDetails() took the
+	 * first readerdef for it, so refuse the client instead.
+	 */
+	if (isdigit((unsigned char)dres.dr_ReaderName[0]) &&
+		isdigit((unsigned char)dres.dr_ReaderName[1]) &&
+		isdigit((unsigned char)dres.dr_ReaderName[2]) &&
+		strcmp(dres.dr_ReaderDef->rd_Name, dres.dr_ReaderName) != 0) {
+	    logit(LOG_ERR, "authentication from %s: the answer of the backend starts with three digits and is no readerdef, login refused",
+		    NetAddrToSt(0, (struct sockaddr *)&dres.dr_Addr, 1, 0, 0));
+	    AuthRefusalLine(errbuf, sizeof(errbuf), "");
+	    error1 = errbuf;
+	    error2 = errbuf + 4;
+	    BadAuthName = 1;
+        } else if (dres.dr_Code == 0 && dres.dr_AuthUser[0] && dres.dr_AuthPass[0]) {
 	    /* AUTHINFO USER/PASS that no access entry accepts (RFC 4643) */
 	    snprintf(errbuf, sizeof(errbuf), "481 Authentication failed\r\n");
 	    error1 = errbuf;
@@ -2951,7 +3124,7 @@ HandleDnsThread(ForkDesc *desc)
 	    error2 = "Unauthorized";
         }
 
-        if (dres.dr_Flags & DF_STATUS) {
+        if (!BadAuthName && (dres.dr_Flags & DF_STATUS)) {
             snprintf(errbuf, sizeof(errbuf), "180 %s status: connect=%d failed=%d dns=%d/%d act=%d/%d\r\n", dres.dr_VServerDef->vs_HostName,
 		    ConnectCount, FailCount, 
 		    NumPending, DOpts.ReaderDns,
@@ -3369,9 +3542,9 @@ deleteDnsResHash(DnsRes *dres, ForkDesc *desc)
 		    logit(
 			LOG_INFO,
 #ifdef	DREADER_CLIENT_TIMING
-			"closed from %s%s%s%s%s%s (%s) groups=%u arts=%u bytes=%.0f posts=%d postbytes=%d postfail=%d vserv=%s secs=%d utime=%.3f stime=%.3f%s",
+			"closed from %s%s%s%s%s%s (%s) groups=%u arts=%u bytes=%.0f posts=%d postbytes=%.0f postfail=%d vserv=%s secs=%d utime=%.3f stime=%.3f%s",
 #else
-			"closed from %s%s%s%s%s%s (%s) groups=%u arts=%u bytes=%.0f posts=%d postbytes=%d postfail=%d vserv=%s secs=%d%s",
+			"closed from %s%s%s%s%s%s (%s) groups=%u arts=%u bytes=%.0f posts=%d postbytes=%.0f postfail=%d vserv=%s secs=%d%s",
 #endif
 			(dr->dr_Flags & DF_IGNORED_AUTH_LONG ? "!" : ""),
 			(dr->dr_AuthUser[0] ? dr->dr_AuthUser : ""),

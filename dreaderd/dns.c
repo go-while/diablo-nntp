@@ -49,6 +49,7 @@
 Prototype void DnsTask(int fd, const char *id);
 Prototype const char *AuthTimeoutName(int how);
 Prototype void InstallAccessCache(void);
+Prototype int AccessRetryMs(int maxMs);
 Prototype int ReadAccessCache(void);
 Prototype int ProxyFromOk(const ReaderDef *rd, const struct sockaddr_storage *peer);
 Prototype void UpdateAuthDetails(ForkDesc *desc);
@@ -113,7 +114,51 @@ MemPool	*DnsMemPool;
 time_t Access_LastUpdate = 0;
 static off_t Access_LastSize = -1;	/* with the mtime: which dreader.access */
 static ino_t Access_LastIno = 0;	/* the cache was built from */
-time_t Cache_LastUpdate = 0;
+
+/*
+ * The access lock file's stamp when this process last loaded the cache.
+ * RenameAccessCache() writes the lock file after each install, so any change
+ * of the stamp means a new cache, also an older time (clock stepped back, a VM
+ * restored) and a second install within the same second (nanoseconds where
+ * struct stat has them).
+ */
+typedef struct CacheStamp {
+    time_t cs_Sec;
+    long cs_Nsec;
+    off_t cs_Size;
+    ino_t cs_Ino;
+    dev_t cs_Dev;
+} CacheStamp;
+
+static int Cache_Loaded = 0;
+static CacheStamp Cache_Stamp;
+
+/* POSIX.1-2008 st_mtim; macOS spells it st_mtimespec */
+#if defined(__APPLE__)
+#define ST_MTIME_NSEC(st)	((long)(st)->st_mtimespec.tv_nsec)
+#elif defined(DIABLO_NO_ST_MTIM)
+#define ST_MTIME_NSEC(st)	0L
+#else
+#define ST_MTIME_NSEC(st)	((long)(st)->st_mtim.tv_nsec)
+#endif
+
+static void
+cacheStampOf(const struct stat *st, CacheStamp *cs)
+{
+    cs->cs_Sec = st->st_mtime;
+    cs->cs_Nsec = ST_MTIME_NSEC(st);
+    cs->cs_Size = st->st_size;
+    cs->cs_Ino = st->st_ino;
+    cs->cs_Dev = st->st_dev;
+}
+
+static int
+cacheStampSame(const CacheStamp *a, const CacheStamp *b)
+{
+    return(a->cs_Sec == b->cs_Sec && a->cs_Nsec == b->cs_Nsec &&
+		a->cs_Size == b->cs_Size && a->cs_Ino == b->cs_Ino &&
+		a->cs_Dev == b->cs_Dev);
+}
 
 AccessMap accessmap;
 AccessMap oldaccessmap;
@@ -1493,6 +1538,9 @@ netRemoteAuthenticate(char *user, char *pass, char *conf, char *localip, char *r
 #ifdef		LDAP_ENABLED
 
 static LDAP *LdapLd = NULL;	/* the connection, kept between logins */
+#ifndef NEW_LDAP
+static char *LdapLdConf = NULL;	/* the authdef URL LdapLd was opened for */
+#endif
 
 /*
  * The time left of AuthCall()'s deadline as a timeval: -1 without a limit,
@@ -1771,6 +1819,9 @@ LDAPAuthenticate(char *user, char *pass, char *realm, char *conf)
      */
     if ((rcode = LDAPSearch(LdapLd, ludp->lud_dn, ludp->lud_scope, ludp->lud_filter, ludp->lud_attrs, &res)) != LDAP_SUCCESS) {
 	logit(LOG_ERR,"LDAP search for %s failed: %s\n", url, ldap_err2string(rcode));
+	/* a failed search can still hand back a result: it is ours to free */
+	if (res != NULL)
+	    ldap_msgfree(res);
 	free(confst);
 	ldap_unbind_s(LdapLd);
 	ldap_free_urldesc(ludp);
@@ -1840,6 +1891,17 @@ LDAPAuthenticate(char *user, char *pass, char *conf)
     char *dn;
 #endif
 
+    /*
+     * The connection and the parsed URL (base, scope, filter) belong to the
+     * authdef that opened them: another authdef gets its own.
+     */
+    if (LdapLd != NULL && (LdapLdConf == NULL || strcmp(LdapLdConf, conf) != 0)) {
+	ldap_unbind_s(LdapLd);
+	ldap_free_urldesc(ludp);
+	LdapLd = NULL;
+	ludp = NULL;
+    }
+
     if (LdapLd == NULL) {
 	if (ldap_is_ldap_url(conf) == 0) {
 	    logit(LOG_ERR, "No LDAP URL: %s\n", conf);
@@ -1874,6 +1936,8 @@ LDAPAuthenticate(char *user, char *pass, char *conf)
 	}
 	if (DebugOpt)
 	    printf("Connection to LDAP server established\n");
+	free(LdapLdConf);
+	LdapLdConf = strdup(conf);	/* NULL: the next login connects again */
     }
 
     /* Build the filter string and attributes */
@@ -1924,10 +1988,14 @@ LDAPAuthenticate(char *user, char *pass, char *conf)
 	/* Search failed - fail auth attempt */
 	logit(LOG_INFO, "LDAP search failed (%s): %s\n",
 						user, ldap_err2string(rcode));
+	/* a failed search can still hand back a result: it is ours to free */
+	if (res != NULL)
+	    ldap_msgfree(res);
 	free(filter);
 	ldap_unbind_s(LdapLd);
 	ldap_free_urldesc(ludp);
 	LdapLd = NULL;
+	ludp = NULL;
 	return(NULL);
     }
 
@@ -1993,6 +2061,8 @@ LDAPAuthenticate(char *user, char *pass, char *conf)
     if (bv_val != NULL)
 	ldap_value_free(bv_val);
 #endif
+    free(filter);
+    ldap_msgfree(res);
     return(r);
 }
 #endif	/* NEW_LDAP */
@@ -2208,40 +2278,62 @@ static char *PAM_user;
 static char *PAM_password;
 static int PAM_error = 0;
 
+/*
+ * The messages of a conversation: Linux-PAM and OpenPAM pass a vector of
+ * num_msg pointers, Solaris/illumos PAM a pointer to one array of num_msg
+ * messages.  The two agree for a single message only.
+ */
+#ifdef __sun
+#define PAM_MSG(msg, i)	(&(*(msg))[(i)])
+#else
+#define PAM_MSG(msg, i)	((msg)[(i)])
+#endif
+
 static int PAM_conv(int num_msg, const struct pam_message **msg, struct pam_response **resp, void *appdata)
 {
     int count;
-    int replies = 0;
-    struct pam_response *reply = NULL;
-    
-    for (count = 0; count < num_msg; count++) {
-	switch (msg[count]->msg_style) {
+    int bad = 0;
+    struct pam_response *reply;
+
+    /*
+     * One answer for each message, at the index of its message: PAM reads
+     * (and frees) num_msg of them, also for a message that needs no answer.
+     */
+    if (num_msg <= 0)
+	return PAM_CONV_ERR;
+    reply = (struct pam_response *)calloc(num_msg, sizeof(struct pam_response));
+    if (reply == NULL)
+	return PAM_BUF_ERR;
+
+    for (count = 0; count < num_msg && !bad; count++) {
+	const char *answer = NULL;
+
+	switch (PAM_MSG(msg, count)->msg_style) {
 	    case PAM_PROMPT_ECHO_ON:
-		reply = (struct pam_response *)realloc(reply,
-						sizeof(struct pam_response));
-		reply[replies].resp_retcode = PAM_SUCCESS;
-		reply[replies++].resp = strdup(PAM_user);
+		answer = PAM_user;
 		break;
 	    case PAM_PROMPT_ECHO_OFF:
-		reply = (struct pam_response *)realloc(reply,
-						sizeof(struct pam_response));
-		reply[replies].resp_retcode = PAM_SUCCESS;
-		reply[replies++].resp = strdup(PAM_password);
+		answer = PAM_password;
 		break;
 	    case PAM_TEXT_INFO:
 		break;
 	    case PAM_ERROR_MSG:
 		default:
 		PAM_error = 1;
-		if (reply != NULL) {
-		    free(reply);
-		    reply = NULL;
-		}
-		return PAM_CONV_ERR;
-      }
+		bad = 1;
+		break;
+	}
+	reply[count].resp_retcode = PAM_SUCCESS;
+	if (answer != NULL && (reply[count].resp = strdup(answer)) == NULL)
+	    bad = 1;
     }
-    if (reply != NULL)
-	*resp = reply;
+    if (bad) {
+	for (count = 0; count < num_msg; count++)
+	    free(reply[count].resp);
+	free(reply);
+	return PAM_CONV_ERR;
+    }
+    *resp = reply;
     return PAM_SUCCESS;
 }
 
@@ -3537,7 +3629,10 @@ accessValue(char *dst, size_t size, const char *val, const char *opt, int lineco
  * The renames are done under an exclusive lock: ReadAccessCache() opens
  * the five files under a shared one, so it gets all old or all new files.
  * While a reader holds it, the caller tries again on its next pass rather
- * than wait.  Returns 1 when done, 0 when the lock is busy, -1 on error.
+ * than wait.  Before the renames each file in use is kept as <name>.old,
+ * a hard link, or a copy (CopyAccessCacheOld()) where link() says the file
+ * cannot be linked there (linkRefused()), so that a failed rename can be
+ * put back.  Returns 1 when done, 0 when the lock is busy, -1 on error.
  */
 static int AccessRenamePending = 0;
 static time_t AccessRenameSince = 0;	/* when the renames were first put off */
@@ -3557,13 +3652,167 @@ AccessRenameWaits(void)
     AccessRenameLogged = now;
 }
 
+/*
+ * A failed install (a cache file that could not be written, a rename,
+ * the stamp) is tried again, but not before ACCESS_RETRY_MS have passed:
+ * InstallAccessCache() runs on every pass of the main loop, which comes
+ * with every client, and a whole install on every pass while the cause
+ * lasts (a full disk) took the main process from the clients.  The main
+ * loop sleeps no longer than the wait (AccessRetryMs()).  A busy lock is
+ * not a failure: its renames are still tried on every pass.
+ */
+#define ACCESS_RETRY_MS	5000
+static double AccessRetryAt = 0;	/* MonoMs(): no new try before; 0: none due */
+
+static void
+AccessInstallFailed(void)
+{
+    Access_LastUpdate = 0;
+    AccessRetryAt = MonoMs() + ACCESS_RETRY_MS;
+}
+
+/*
+ * AccessRetryMs() - the milliseconds the main loop may sleep, at most
+ * maxMs, so that the next try of a failed install is not late.
+ */
+int
+AccessRetryMs(int maxMs)
+{
+    double left;
+
+    if (AccessRetryAt == 0)
+	return(maxMs);
+    left = AccessRetryAt - MonoMs();
+    if (left < 1 || left > ACCESS_RETRY_MS)
+	return(1);	/* due (InstallAccessCache() clears it) */
+    return((left < maxMs) ? (int)left + 1 : maxMs);
+}
+
+/*
+ * linkRefused() - did link() fail because this file cannot get a hard link
+ * here, rather than for a passing reason: a file system without hard links
+ * (EPERM, EOPNOTSUPP or ENOTSUP, which may be the same), a file the process
+ * may not link (Linux fs.protected_hardlinks for a file of another user, an
+ * immutable file: EPERM), the two names on different mounts (EXDEV, as
+ * for a cache file that is a bind mount), too many links (EMLINK).
+ * RenameAccessCache() then copies the file instead.
+ */
+static int
+linkRefused(int e)
+{
+#ifdef EPERM
+    if (e == EPERM)
+	return(1);
+#endif
+#ifdef EOPNOTSUPP
+    if (e == EOPNOTSUPP)
+	return(1);
+#endif
+#ifdef ENOTSUP
+    if (e == ENOTSUP)
+	return(1);
+#endif
+#ifdef EXDEV
+    if (e == EXDEV)
+	return(1);
+#endif
+#ifdef EMLINK
+    if (e == EMLINK)
+	return(1);
+#endif
+    return(0);
+}
+
+/*
+ * CopyAccessCacheOld() - keep the cache file path as old by copying it,
+ * where it cannot be hard linked: the copy is written to old.tmp in the
+ * same directory (mode 0600, as the cache files, see CreateAccessCache())
+ * and renamed to old when it is whole.  Returns 0 when done; -1 with errno
+ * set on any failure (also when path is not a regular file), and then
+ * old.tmp is removed and old is not there.
+ * The caller holds the exclusive access lock and has removed old.
+ */
+static int
+CopyAccessCacheOld(const char *path, const char *old)
+{
+    char tmp[PATH_MAX];
+    char buf[8192];
+    struct stat st;
+    int in;
+    int out = -1;
+    int made = 0;
+    int e;
+
+    if (snprintf(tmp, sizeof(tmp), "%s.tmp", old) >= (int)sizeof(tmp)) {
+	errno = ENAMETOOLONG;
+	return(-1);
+    }
+    if ((in = open(path, O_RDONLY)) < 0)
+	return(-1);
+    if (fstat(in, &st) < 0)
+	goto failed;
+    if (!S_ISREG(st.st_mode)) {
+	errno = S_ISDIR(st.st_mode) ? EISDIR : EINVAL;	/* not a cache file */
+	goto failed;
+    }
+    /* a temporary left by a crash would stop O_EXCL */
+    if (unlink(tmp) < 0 && errno != ENOENT)
+	goto failed;
+    if ((out = open(tmp, O_WRONLY|O_CREAT|O_EXCL, 0600)) < 0)
+	goto failed;
+    made = 1;
+    if (fchmod(out, 0600) < 0)
+	goto failed;
+    for (;;) {
+	ssize_t n = read(in, buf, sizeof(buf));
+
+	if (n < 0) {
+	    if (errno == EINTR)
+		continue;
+	    goto failed;
+	}
+	if (n == 0)
+	    break;
+	if (WriteAll(out, buf, n) < 0)
+	    goto failed;
+    }
+    e = close(out);
+    out = -1;
+    if (e < 0)
+	goto failed;
+    close(in);
+    in = -1;
+    if (rename(tmp, old) < 0)
+	goto failed;
+    return(0);
+failed:
+    e = errno;
+    if (out >= 0)
+	close(out);
+    if (in >= 0)
+	close(in);
+    if (made)
+	unlink(tmp);
+    errno = e;
+    return(-1);
+}
+
 static int
 RenameAccessCache(void)
 {
     const char *pats[5];
     char newbuf[PATH_MAX];
+    char oldbuf[5][PATH_MAX];
+    int saved[5];
+    int copied = 0;			/* <name>.old copies made, not links */
+    int copiedIdx = 0;			/* the first of them (pats[]) */
+    int copiedErr = 0;			/* its link() error */
     int tfp;
     int i;
+    int r = 1;
+
+    for (i = 0; i < 5; ++i)
+	oldbuf[i][0] = 0;
 
     pats[0] = DRVserverCachePat;
     pats[1] = DRGroupCachePat;
@@ -3584,15 +3833,156 @@ RenameAccessCache(void)
 	close(tfp);
 	return(busy ? 0 : -1);
     }
-    for (i = 0; i < 5; ++i) {
+    /*
+     * The five files are one set: a reader must never load new files next
+     * to old ones (a readerdef naming a group list the old cache.groupdef
+     * does not have gets the first list).  Keep each file in use as
+     * <name>.old, a hard link or, where link() says the file cannot be
+     * linked there (linkRefused()), a copy; when a rename fails, put back
+     * the files already renamed, write no stamp, and the readers keep the
+     * set they have.  The put-back renames <name>.old over the name either
+     * way; a copy has another inode, which nothing compares (a process
+     * that has the file open or mapped keeps the old inode).  Only a file
+     * that is not there needs no <name>.old: when one cannot be made,
+     * nothing is renamed.  (A crash in the middle of the renames is not
+     * covered: that would need a journal.)
+     */
+    for (i = 0; i < 5 && r > 0; ++i) {
+	snprintf(oldbuf[i], sizeof(oldbuf[i]), "%s.old", PatDbExpand(pats[i]));
+	saved[i] = 0;
+	if (unlink(oldbuf[i]) < 0 && errno != ENOENT) {
+	    logit(LOG_CRIT, "Unable to remove %s (%s), access cache not installed",
+		oldbuf[i], strerror(errno));
+	    r = -1;
+	} else if (link(PatDbExpand(pats[i]), oldbuf[i]) == 0) {
+	    saved[i] = 1;
+	} else if (errno != ENOENT) {
+	    int e = errno;
+	    int nolinks = 0;
+
+	    if (linkRefused(e)) {
+		int ce;
+
+		if (CopyAccessCacheOld(PatDbExpand(pats[i]), oldbuf[i]) == 0) {
+		    saved[i] = 1;
+		    if (copied++ == 0) {
+			copiedIdx = i;
+			copiedErr = e;
+		    }
+		    continue;
+		}
+		ce = errno;	/* before the arguments are evaluated */
+		logit(LOG_CRIT, "Unable to copy %s to %s (%s)",
+		    PatDbExpand(pats[i]), oldbuf[i], strerror(ce));
+	    }
+#ifdef EPERM
+	    nolinks = nolinks || e == EPERM;
+#endif
+#ifdef EOPNOTSUPP
+	    nolinks = nolinks || e == EOPNOTSUPP;
+#endif
+#ifdef ENOTSUP
+	    nolinks = nolinks || e == ENOTSUP;
+#endif
+	    /*
+	     * no link, and no copy (tried only after linkRefused() errors:
+	     * any other, such as EIO, may be passing).  EPERM and EOPNOTSUPP
+	     * have more than one cause: a file system without hard links
+	     * (FAT, some SMB/FUSE mounts), a cache file the process may not
+	     * link (Linux fs.protected_hardlinks for a file of another user,
+	     * an immutable file), a directory in the place of a cache file;
+	     * the hint names what to check, not one cause.
+	     */
+	    logit(LOG_CRIT, "Unable to link %s to %s (%s), access cache not installed%s",
+		PatDbExpand(pats[i]), oldbuf[i], strerror(e),
+		nolinks ? ": every install after the first needs a hard link to each cache file in the db directory"
+		    " (check that the file system supports hard links and that the ownership, permissions and attributes of the cache files allow them)" : "");
+	    r = -1;
+	}
+    }
+    if (copied > 0) {
+	/* once per install: on a file system without hard links, every one */
+	logit(LOG_NOTICE, "Copied %s to %s, it cannot be hard linked (%s)%s",
+	    PatDbExpand(pats[copiedIdx]), oldbuf[copiedIdx], strerror(copiedErr),
+	    (copied > 1) ? ", and other access cache files the same way" : "");
+    }
+    for (i = 0; i < 5 && r > 0; ++i) {
 	snprintf(newbuf, sizeof(newbuf), "%s.new", PatDbExpand(pats[i]));
-	rename(newbuf, PatDbExpand(pats[i]));
+	if (rename(newbuf, PatDbExpand(pats[i])) < 0) {
+	    /* the caller builds and installs the files again */
+	    logit(LOG_CRIT, "Unable to rename %s to %s (%s)",
+		newbuf, PatDbExpand(pats[i]), strerror(errno));
+	    r = -1;
+	    break;
+	}
+    }
+    if (r < 0 && i < 5) {
+	int bad = 0;
+	int j;
+
+	/* i: the rename that failed (or 0 when a link failed: nothing to do) */
+	for (j = 0; j < i; ++j) {
+	    /* without a <name>.old there was no file in use: remove the new one */
+	    if (saved[j] ? rename(oldbuf[j], PatDbExpand(pats[j])) < 0 :
+			(unlink(PatDbExpand(pats[j])) < 0 && errno != ENOENT)) {
+		logit(LOG_CRIT, "Unable to put back %s (%s)",
+		    PatDbExpand(pats[j]), strerror(errno));
+		bad = 1;
+	    }
+	}
+	if (bad) {
+	    /*
+	     * No set at all rather than a mixed one.  The lock file goes
+	     * first: a reader loads nothing without it, and one that waited
+	     * for our lock sees it removed.  The running processes keep
+	     * their maps, a new one refuses clients until an install works.
+	     */
+	    if (unlink(PatDbExpand(DRAccessLockPat)) < 0 && errno != ENOENT) {
+		/* an empty lock file is not loaded either (ReadAccessCache()) */
+		logit(LOG_CRIT, "Unable to remove %s (%s), emptying it",
+		    PatDbExpand(DRAccessLockPat), strerror(errno));
+		if (ftruncate(tfp, 0) < 0)
+		    logit(LOG_CRIT, "Unable to empty %s (%s): a new process may load a mixed access cache",
+			PatDbExpand(DRAccessLockPat), strerror(errno));
+	    }
+	    for (j = 0; j < 5; ++j) {
+		if (unlink(PatDbExpand(pats[j])) < 0 && errno != ENOENT)
+		    logit(LOG_CRIT, "Unable to remove %s (%s)",
+			PatDbExpand(pats[j]), strerror(errno));
+	    }
+	    logit(LOG_CRIT, "access cache files removed: they were not one set");
+	}
+    }
+    for (i = 0; i < 5; ++i) {
+	if (oldbuf[i][0])
+	    unlink(oldbuf[i]);
     }
 
-    WriteBestEffort(tfp, &tfp, 1);
+    /*
+     * The stamp announces the new set to the running processes.  When it
+     * cannot be written, the install is tried again (AccessInstallFailed()).
+     * Meanwhile: after an empty first stamp nothing is loaded; after a
+     * failed later stamp the running processes keep the old set (the
+     * stamp did not change), but a process that loads for the first time
+     * can load the new files, which are a whole set.
+     */
+    if (r > 0 && WriteAll(tfp, &tfp, 1) < 0) {
+	logit(LOG_CRIT, "Unable to write %s (%s), access cache not announced",
+	    PatDbExpand(DRAccessLockPat), strerror(errno));
+	r = -1;
+    }
     xflock(tfp, XLOCK_UN);
-    close(tfp);
-    return(1);
+    if (close(tfp) < 0 && r > 0) {
+	/*
+	 * The stamp was written: the set is announced.  A failed close()
+	 * may still mean the write did not reach the disk (NFS, I/O error),
+	 * so the install is tried again all the same.
+	 */
+	logit(LOG_CRIT, "Unable to close %s after writing its stamp (%s), access cache install tried again",
+	    PatDbExpand(DRAccessLockPat), strerror(errno));
+	r = -1;
+    }
+    return(r);
 }
 
 /*
@@ -3663,6 +4053,7 @@ InstallAccessCache(void) {
     AccessDef accessdef;
     int copt = OPT_NONE;
     int parseError = 0;	/* bad file content, as opposed to a transient failure */
+    int writeError = 0;	/* a cache file could not be written */
     int postTrailerWarned = 0;	/* one obsolete-option warning per file read */
     int skiptail = 0;	/* the rest of a line longer than buf */
     GroupListRef *glRefs = NULL;	/* the readerdefs' group list names */
@@ -3684,10 +4075,20 @@ InstallAccessCache(void) {
 	    AccessRenameWaits();
 	    return;
 	case -1:
-	    Access_LastUpdate = 0;
-	    break;
+	    AccessRenamePending = 0;
+	    AccessInstallFailed();
+	    return;
 	}
 	AccessRenamePending = 0;
+    }
+
+    if (AccessRetryAt != 0) {
+	double left = AccessRetryAt - MonoMs();
+
+	/* more than the whole wait left: the clock went back (no monotonic one) */
+	if (left > 0 && left <= ACCESS_RETRY_MS)
+	    return;
+	AccessRetryAt = 0;
     }
 
     /*
@@ -4420,7 +4821,10 @@ InstallAccessCache(void) {
 		    if (readerdef.rd_RateLimitRangeLow < 1 ||
 			readerdef.rd_RateLimitRangeLow > 200 ||
 			readerdef.rd_RateLimitRangeHigh < 1 ||
-			readerdef.rd_RateLimitRangeHigh > 200) {
+			readerdef.rd_RateLimitRangeHigh > 200 ||
+			/* MBFlush() takes random % (high - low) */
+			readerdef.rd_RateLimitRangeHigh <=
+					readerdef.rd_RateLimitRangeLow) {
 			    logit(LOG_NOTICE, "dreader.access: bad 'ratelimitrange' in line %d", linecount);
 			    readerdef.rd_RateLimitRangeLow = 0;
 			    readerdef.rd_RateLimitRangeHigh = 0;
@@ -4688,11 +5092,18 @@ InstallAccessCache(void) {
 	parseError = 1;
     }
     fclose(fp);
-    fclose(vsf);
-    fclose(grf);
-    fclose(auf);
-    fclose(rdf);
-    fclose(raf);
+    /* a short .new file (disk full) must not replace the cache in use */
+    writeError = ferror(vsf) | ferror(grf) | ferror(auf) | ferror(rdf) | ferror(raf);
+    if (fclose(vsf) != 0)
+	writeError = 1;
+    if (fclose(grf) != 0)
+	writeError = 1;
+    if (fclose(auf) != 0)
+	writeError = 1;
+    if (fclose(rdf) != 0)
+	writeError = 1;
+    if (fclose(raf) != 0)
+	writeError = 1;
     if (checkGroupListRefs(glRefs, glRefCount, grNames, grNameCount) > 0)
 	parseError = 1;
     free(glRefs);
@@ -4711,6 +5122,12 @@ InstallAccessCache(void) {
 	    Access_LastUpdate = 0;
 	return;
     }
+    if (writeError) {
+	logit(LOG_CRIT, "Unable to write the new access cache files (%s etc.) - not updating",
+		vsnewbuf);
+	AccessInstallFailed();
+	return;
+    }
     switch (RenameAccessCache()) {
     case 0:
 	AccessRenamePending = 1;
@@ -4718,7 +5135,7 @@ InstallAccessCache(void) {
 	AccessRenameLogged = 0;
 	break;
     case -1:
-	Access_LastUpdate = 0;
+	AccessInstallFailed();
 	break;
     }
 }
@@ -4741,19 +5158,35 @@ ReadAccessCache(void) {
     int tfp;
     struct stat st;
     int i;
-    time_t lastmod;
+    CacheStamp stamp;
     int fail;
 
     if (DebugOpt > 1)
 	printf("Checking access cache\n");
 
-    if (stat(PatDbExpand(DRAccessLockPat), &st) != 0 ||
-		st.st_mtime <= Cache_LastUpdate) {
+    /*
+     * Load when the lock file's stamp differs from the one of the last load,
+     * not only when it is later: after a clock step back every new install
+     * has an older time.
+     */
+    if (stat(PatDbExpand(DRAccessLockPat), &st) != 0) {
 	if (DebugOpt)
 	    printf("No lock or not changed\n");
 	return(0);
     }
-    lastmod = st.st_mtime;
+    cacheStampOf(&st, &stamp);
+    if (Cache_Loaded && cacheStampSame(&stamp, &Cache_Stamp)) {
+	if (DebugOpt)
+	    printf("No lock or not changed\n");
+	return(0);
+    }
+    /*
+     * Only a completed install writes the lock file (one byte, its stamp);
+     * an empty one was created by an install that has not finished, or
+     * emptied by one that left no consistent set: load nothing.
+     */
+    if (st.st_size == 0)
+	return(0);
 
     /* Obtain a lock so that we know it won't disappear from under us */
 
@@ -4768,6 +5201,16 @@ ReadAccessCache(void) {
 	close(tfp);
 	return(0);
     }
+    /*
+     * The stamp of the files opened below: an install may have come in
+     * between.  A lock file that is gone (no link left) or empty now, or
+     * that cannot be looked at, means no consistent set: load nothing.
+     */
+    if (fstat(tfp, &st) != 0 || st.st_nlink == 0 || st.st_size == 0) {
+	close(tfp);
+	return(0);
+    }
+    cacheStampOf(&st, &stamp);
 
     if (DebugOpt)
 	printf("Loading access cache\n");
@@ -4860,7 +5303,8 @@ ReadAccessCache(void) {
 	accessmap.GroupMapSize = st.st_size;
 
 	mapptr = accessmap.GroupMap;
-	while (*mapptr) {
+	/* the file has no terminator: its size ends the list */
+	while (mapptr < (char *)accessmap.GroupMap + st.st_size && *mapptr) {
 	    gp = zalloc(&DnsMemPool, sizeof(GroupDef));
 	    gp->gr_Groups = NULL;
 	    gp->gr_Next = NULL;
@@ -4905,7 +5349,8 @@ ReadAccessCache(void) {
     accessmap.AccessCount = st.st_size / sizeof(AccessDef);
     close(raf);
 
-    Cache_LastUpdate = lastmod;
+    Cache_Stamp = stamp;
+    Cache_Loaded = 1;
     return(1);
 }
 
@@ -5127,6 +5572,13 @@ UpdateAuthDetails(ForkDesc *desc)
 
     if (DebugOpt)
 	printf("Updating auth details\n");
+    /*
+     * A link to a spool or post server is not a client: AddServer() leaves
+     * its dr_ReaderDef NULL so that no client limit (idletimeout,
+     * sessiontimeout, ratelimit) applies to it.
+     */
+    if (desc->d_Type == THREAD_SPOOL || desc->d_Type == THREAD_POST)
+	return;
     if (conn && !conn->co_Auth.dr_StaticAuth)
 	SetAuthDetails(&conn->co_Auth, conn->co_Auth.dr_ReaderName);
 }

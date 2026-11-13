@@ -1,0 +1,1 @@
+- dreaderd: MBNormalize() read the size of a buffer it had just freed (harmless with the current allocator).

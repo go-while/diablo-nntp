@@ -330,7 +330,7 @@ typedef struct DnsRes {
     int dr_Flags;			/* what options are enabled	*/
     int dr_ArtCount;			/* how many articles fetched	*/
     int dr_PostCount;			/* how many articles posted	*/
-    int dr_PostBytes;			/* how many bytes posted	*/
+    double dr_PostBytes;		/* how many bytes posted	*/
     int dr_PostFailCount;		/* how many posts failed	*/
     double dr_ByteCount;		/* how many bytes sent		*/
     int dr_GrpCount;			/* how many groups accessed	*/
@@ -421,6 +421,8 @@ typedef struct MBufHead {
     char	mh_SkipLong;	/* caller wants a long line skipped, not EOF */
     char	mh_Skip;	/* dropping the rest of a long line */
     char	mh_LongLine;	/* MBReadLine() dropped a long line */
+    char	mh_LongCR;	/* the dropped long line ended with CR LF */
+    char	mh_NoNL;	/* its last line ended at EOF, not with a newline */
 } MBufHead;
 
 /*
@@ -534,7 +536,8 @@ typedef struct Connection {
     int		co_BytesHeader;
     int		co_LinesHeader;	/* body lines from Bytes:, -1: none */
     int		co_BodyLines;	/* body lines received		*/
-    int		co_PrevCrlf;	/* the previous article line ended with CRLF */
+    int		co_PrevCrlf;	/* the previous article line ended with CRLF,
+				 * -1: it was a dropped long line, see mh_LongCR */
     int		co_Flags;
     int		co_Numbering;
     TimeRestrict co_TimeRestrict;
@@ -542,6 +545,7 @@ typedef struct Connection {
     char	*co_GroupName;	/* current group or NULL	*/
     char	*co_SavedGroupName;	/* the client's group during NEWNEWS */
     char	*co_IHaveMsgId;
+    char	*co_DiscardReply;	/* answer once a dropped article is read */
     Control	*co_Ctl;	/* control lookup cache		*/
     struct ServReq *co_SReq;	/* see note(1)			*/
     int		co_ListRec;
