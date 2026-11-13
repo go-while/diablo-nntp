@@ -534,6 +534,7 @@ typedef struct Connection {
     int		co_BytesHeader;
     int		co_LinesHeader;	/* body lines from Bytes:, -1: none */
     int		co_BodyLines;	/* body lines received		*/
+    int		co_PrevCrlf;	/* the previous article line ended with CRLF */
     int		co_Flags;
     int		co_Numbering;
     TimeRestrict co_TimeRestrict;

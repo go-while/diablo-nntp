@@ -188,6 +188,7 @@ NNAcceptArticleStart(Connection *conn, const char *msgid)
     conn->co_BytesHeader = 0;
     conn->co_LinesHeader = -1;
     conn->co_BodyLines = 0;
+    conn->co_PrevCrlf = 1;	/* the command line ended the line before */
     MBFree(&conn->co_ArtBuf);
     NNAcceptArticle(conn);
 }
@@ -199,6 +200,8 @@ NNAcceptArticle(Connection *conn)
     int len = 0;
     int maxl = 1000;
     int bareLF;
+    int thisCrlf;
+    int prevCrlf;
 
     conn->co_Func = NNAcceptArticle;
     conn->co_State = "accart";
@@ -210,18 +213,26 @@ NNAcceptArticle(Connection *conn)
     conn->co_RMBuf.mh_SkipLong = 1;
 
     while (--maxl > 0 && (len = MBReadLine(&conn->co_RMBuf, &buf)) > 0) {
+	thisCrlf = (len >= 2 && buf[len-2] == '\r');
+	prevCrlf = conn->co_PrevCrlf;
+	conn->co_PrevCrlf = thisCrlf;
+
 	if (conn->co_RMBuf.mh_LongLine) {
 	    conn->co_RMBuf.mh_LongLine = 0;
 	    conn->co_Flags |= COF_POSTTOOBIG;
 	    continue;
 	}
 	/*
-	 * expected EOF, ".\r\n", but we also allow ".\n" because some
+	 * expected EOF, ".\r\n".  A POST also takes ".\n" because some
 	 * idiotic newsreaders (like old versions of netscape) don't do the
-	 * right thing.
+	 * right thing.  A fed article (IHAVE, TAKETHIS) ends only on CRLF
+	 * "." CRLF (RFC 3977 3.1.1): a "." the peer ended with a bare LF,
+	 * or one after a bare LF, is data.
 	 */
-	if ((len == 3 && strcmp(buf, ".\r") == 0) ||
-	    (len == 2 && strcmp(buf, ".") == 0)
+	if ((conn->co_Flags & COF_POST) ?
+	    ((len == 3 && strcmp(buf, ".\r") == 0) ||
+	     (len == 2 && strcmp(buf, ".") == 0)) :
+	    (prevCrlf && len == 3 && strcmp(buf, ".\r") == 0)
 	) {
 	    if (conn->co_Flags & COF_HEADFEED)	/* can't use bytecounter */
 		conn->co_ByteCounter = 0.0;
@@ -243,7 +254,7 @@ NNAcceptArticle(Connection *conn)
 	 */
 
 	if ((conn->co_Flags & COF_POST) == 0) {
-	    if (len > 0 && buf[0] == '.') {
+	    if (prevCrlf && len > 0 && buf[0] == '.') {
 		++buf;
 		--len;
 	    }
