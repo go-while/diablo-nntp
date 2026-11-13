@@ -14,6 +14,12 @@ import (
 // to the answer of next (one that starts with nextCode) or a 205.
 func takethisRefused(t *testing.T, addr, from string, setup [][2]string, line, next, nextCode string) []string {
 	t.Helper()
+	return takethisRefusedBody(t, addr, from, setup, line, "QUIT\r\n", next, nextCode)
+}
+
+// takethisRefusedBody is takethisRefused with the article body given (raw, before the dot).
+func takethisRefusedBody(t *testing.T, addr, from string, setup [][2]string, line, body, next, nextCode string) []string {
+	t.Helper()
 	n := dialNulLine(t, addr, from)
 	for _, s := range setup {
 		if l, err := n.send(s[0] + "\r\n"); err != nil || !strings.HasPrefix(l, s[1]+" ") {
@@ -29,7 +35,7 @@ func takethisRefused(t *testing.T, addr, from string, setup [][2]string, line, n
 		"Date: " + time.Now().UTC().Format(time.RFC1123Z) + "\r\n" +
 		"Message-ID: " + id + "\r\n" +
 		"\r\n" +
-		"QUIT\r\n" +
+		body +
 		".\r\n" +
 		next + "\r\n"
 	n.c.SetWriteDeadline(time.Now().Add(5 * time.Second))
@@ -168,6 +174,25 @@ access ` + PeerIP + ` feedauth
 		check(t, answers(a), "501", "111")
 		check(t, answers(b), "439 not-an-id", "111")
 	})
+	// The article ends only on CRLF "." CRLF, as an accepted one (#389): a "." after a bare
+	// LF, or one ended by a bare LF, is data. The old discard loop ended at either, and the
+	// body line QUIT after it was taken for a command (205).
+	bareLF := map[string]string{
+		"dot after a bare LF":  "bare LF line\n.\r\nQUIT\r\n",
+		"dot ended by bare LF": "line\r\n.\nQUIT\r\n",
+	}
+	for name, body := range bareLF {
+		t.Run("dreaderd "+name, func(t *testing.T) {
+			_, spool := spoolStore(t)
+			s := NewReaderSite(t, ReaderOptions{Spool: spool})
+			check(t, takethisRefusedBody(t, s.Addr, PeerIP, stream, "TAKETHIS not-a-message-id", body, "MODE STREAM", "203"),
+				"439 not-a-message-id", "203")
+		})
+		t.Run("diablo "+name, func(t *testing.T) {
+			s := NewSite(t, SiteOptions{})
+			check(t, takethisRefusedBody(t, s.Addr, PeerIP, stream, "TAKETHIS not-a-message-id", body, "MODE STREAM", "203"), "501", "203")
+		})
+	}
 	t.Run("diablo", func(t *testing.T) {
 		s := NewSite(t, SiteOptions{})
 		check(t, takethisRefused(t, s.Addr, PeerIP, stream, "TAKETHIS not-a-message-id", "MODE STREAM", "203"), "501", "203")

@@ -383,7 +383,9 @@ NNAcceptArticle(Connection *conn)
  * away, then answer reply (500 if none is kept).  The peer
  * sends the article without waiting for an answer (RFC 4644 2.5.2): if it
  * were not read here, its lines would be taken for commands.  The answer is
- * kept with the connection (a reader process serves many at once).
+ * kept with the connection (a reader process serves many at once).  The
+ * article ends as an accepted one does (NNAcceptArticle()): only on CRLF
+ * "." CRLF, a "." after a bare LF or ended by one is data.
  */
 
 static void
@@ -392,6 +394,7 @@ NNDiscardArticle(Connection *conn)
     char *buf;
     int len = 0;
     int maxl = 1000;
+    int prevCrlf;
 
     conn->co_Func = NNDiscardArticle;
     conn->co_State = "discard";
@@ -400,11 +403,12 @@ NNDiscardArticle(Connection *conn)
     while (--maxl > 0 && (len = MBReadLine(&conn->co_RMBuf, &buf)) > 0) {
 	if (conn->co_RMBuf.mh_LongLine) {
 	    conn->co_RMBuf.mh_LongLine = 0;
+	    conn->co_PrevCrlf = 1;	/* as in NNAcceptArticle() */
 	    continue;
 	}
-	if ((len == 3 && strcmp(buf, ".\r") == 0) ||
-	    (len == 2 && strcmp(buf, ".") == 0)
-	) {
+	prevCrlf = conn->co_PrevCrlf;
+	conn->co_PrevCrlf = (len >= 2 && buf[len-2] == '\r');
+	if (prevCrlf && len == 3 && strcmp(buf, ".\r") == 0) {
 	    conn->co_Flags &= ~COF_MAYNOTCLOSE;
 	    conn->co_RMBuf.mh_SkipLong = 0;
 	    MBLogPrintf(conn, &conn->co_TMBuf, "%s\r\n",
@@ -430,6 +434,7 @@ NNDiscardArticleStart(Connection *conn, const char *reply)
     zfreeStr(&conn->co_MemPool, &conn->co_DiscardReply);
     conn->co_DiscardReply = zallocStr(&conn->co_MemPool, reply);
     conn->co_Flags |= COF_MAYNOTCLOSE;
+    conn->co_PrevCrlf = 1;	/* the command line ended the line before */
     /* with the command log (readerdetaillog, logcmd): tests wait for this */
     LogCmd(conn, '-', note);
     NNDiscardArticle(conn);
