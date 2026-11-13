@@ -53,10 +53,10 @@ access 127.0.0.1 rf
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.Proc = startSiteTCP(t, proc.Options{
+	s.Proc = startOnListener(t, listenOn(t, s.Addr), proc.Options{
 		Path: filepath.Join(s.Bin, "dreaderd"),
 		Args: []string{"-d", "-p", PathHost, "-h", PathHost,
-			"-P", "[127.0.0.1]:" + port},
+			"-P", "[127.0.0.1]:" + port, "-b", listenFDArg},
 		Env:    s.Env,
 		Dir:    s.Dir,
 		Ulimit: []string{"-n 64"},

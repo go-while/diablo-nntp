@@ -11,7 +11,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -119,16 +118,17 @@ expire * trad
 `
 
 // NewSite writes a feeder site into a temporary directory, starts diablo -d (in the
-// foreground) on a free port of 127.0.0.1 and waits until it accepts connections and has
-// built its host cache. The cleanup stops diablo with "dicmd exit", then proc's cleanup
+// foreground) on a free port of 127.0.0.1, whose listening socket the test opens and hands
+// over (listenFree, startOnListener), and waits until it accepts connections and has built
+// its host cache. The cleanup stops diablo with "dicmd exit", then proc's cleanup
 // sends SIGTERM and SIGKILL if it is still running, and logs diablo's output when the test
 // failed.
 func NewSite(tb testing.TB, o SiteOptions) *Site {
 	tb.Helper()
 	s := &Site{Dir: tb.TempDir(), Bin: bin(tb)}
 	logGeneralOnFailure(tb, s)
-	port := testkit.FreePort(tb)
-	s.Addr = net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	l := listenFree(tb) // diablo is handed this socket (-b) instead of binding the port
+	s.Addr = l.Addr().String()
 	s.Env = []string{"DIABLO_CONFIG_PATH=" + filepath.Join(s.Dir, "diablo.config")}
 
 	for _, d := range []string{"spool/news", "dqueue", "feeds", "log", "run"} {
@@ -164,11 +164,12 @@ func NewSite(tb testing.TB, o SiteOptions) *Site {
 		o.Setup(tb, s)
 	}
 	if o.NoStart {
+		l.Close() // whatever starts diablo binds s.Addr itself
 		return s
 	}
 
-	args := append([]string{"-d", "-p", PathHost, "-h", PathHost, "-P", s.Addr}, o.Args...)
-	s.Proc = startSiteTCP(tb, proc.Options{
+	args := append([]string{"-d", "-p", PathHost, "-h", PathHost, "-P", s.Addr, "-b", listenFDArg}, o.Args...)
+	s.Proc = startOnListener(tb, l, proc.Options{
 		Path: filepath.Join(s.Bin, "diablo"),
 		Args: append(args, "server"),
 		Env:  append(slices.Clone(s.Env), o.Env...),
