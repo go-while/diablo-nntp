@@ -22,7 +22,8 @@ func TestReaderFeedBareLFControlInBody(t *testing.T) {
 
 	p := s.Peer(t)
 	p.ExpectCmd(335, "IHAVE %s", id)
-	p.MustSend(strings.Join(art, "\n") + "\n.\n")
+	// bare LF line ends; only CRLF "." CRLF ends a fed article, so the last line and the end are CRLF
+	p.MustSend(strings.Join(art, "\n") + "\r\n.\r\n")
 	p.ExpectStatus(235, "IHAVE "+id+" (bare LF)")
 	p.ExpectCmd(205, "QUIT")
 
