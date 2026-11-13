@@ -4,10 +4,12 @@ import (
 	"bufio"
 	"fmt"
 	"net"
+	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
+
+	"github.com/go-while/nntp-testkit/proc"
 )
 
 // TestReaderNewnewsManyMissingGroupsSmallStack: NEWNEWS took the next group of its list from
@@ -24,21 +26,23 @@ import (
 // list (empty) and the ".", and another client must still be served afterwards.
 func TestReaderNewnewsManyMissingGroupsSmallStack(t *testing.T) {
 	const nNames = 110000
-	var old syscall.Rlimit
-	if err := syscall.Getrlimit(syscall.RLIMIT_STACK, &old); err != nil {
-		t.Skipf("getrlimit: %v", err)
-	}
-	low := old
-	low.Cur = 256 << 10
-	if err := syscall.Setrlimit(syscall.RLIMIT_STACK, &low); err != nil {
-		t.Skipf("setrlimit: %v", err)
-	}
-	restore := func() { _ = syscall.Setrlimit(syscall.RLIMIT_STACK, &old) }
-	t.Cleanup(restore)
 	access := strings.Replace(DefaultReaderAccess, "readerdef rp\n", "readerdef rp\n    allownewnews yes\n", 1)
 	_, spool := spoolStore(t)
-	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: access, Groups: []string{"comp.lang.c"}})
-	restore()
+	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: access, Groups: []string{"comp.lang.c"}, NoStart: true})
+	// The limit is set by a shell that then runs dreaderd, so it applies to dreaderd (and the
+	// reader it forks) and to nothing else: not to this test process, and so not to the
+	// programs other tests of this process start. The test process once lowered its own limit
+	// and put it back afterwards; on NetBSD the put-back did not reach the programs the process
+	// started later, which then died of SIGSEGV on a 256 KB stack. If the shell cannot set the
+	// limit it exits, and the start below fails.
+	port := s.Addr[strings.LastIndex(s.Addr, ":")+1:]
+	s.Proc = startSiteTCP(t, proc.Options{
+		Path: "/bin/sh",
+		Args: []string{"-c", `ulimit -s 256 || exit 125; exec "$@"`, "e2e-smallstack",
+			filepath.Join(s.Bin, "dreaderd"), "-d", "-p", PathHost, "-h", PathHost, "-P", "[127.0.0.1]:" + port},
+		Env: s.Env,
+		Dir: s.Dir,
+	}, s.Addr)
 
 	var sb strings.Builder
 	sb.WriteString("NEWNEWS x0000000")
