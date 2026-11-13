@@ -31,10 +31,9 @@ func TestReaderNewnewsManyMissingGroupsSmallStack(t *testing.T) {
 	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: access, Groups: []string{"comp.lang.c"}, NoStart: true})
 	// The limit is set by a shell that then runs dreaderd, so it applies to dreaderd (and the
 	// reader it forks) and to nothing else: not to this test process, and so not to the
-	// programs other tests of this process start. The test process once lowered its own limit
-	// and put it back afterwards; on NetBSD the put-back did not reach the programs the process
-	// started later, which then died of SIGSEGV on a 256 KB stack. If the shell cannot set the
-	// limit it exits, and the start below fails.
+	// programs other tests of this process start. (The test used to lower the limit of the
+	// process itself around the start and ignored the result of putting it back.) If the shell
+	// cannot set the limit it exits, and the start below fails.
 	port := s.Addr[strings.LastIndex(s.Addr, ":")+1:]
 	s.Proc = startSiteTCP(t, proc.Options{
 		Path: "/bin/sh",
