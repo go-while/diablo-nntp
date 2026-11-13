@@ -15,11 +15,11 @@ typedef struct Group {
     struct Group *gr_Next;
     int		gr_State;
     artno_t	gr_StartNo;
-    int		gr_StartDiff;
+    artno_t	gr_StartDiff;
     artno_t	gr_EndNo;
-    int		gr_EndDiff;
+    artno_t	gr_EndDiff;	/* article numbers are 64 bit: so is a difference */
     artno_t	gr_SynNo;
-    int		gr_SynDiff;
+    artno_t	gr_SynDiff;
     int		gr_NoCTS;
     int		gr_NoLMTS;
     char	*gr_GroupName;
@@ -34,6 +34,7 @@ typedef struct Group {
 #define GRF_SYNNO	0x0010
 #define GRF_LMTS	0x0020	/* last modified time stamp */
 #define GRF_CTS		0x0040	/* creation time stamp */
+#define GRF_BADNUM	0x0100	/* local record with a number out of range */
 #define GRF_FROMLOCAL	0x0800
 #define GRF_NEW		0x1000
 #define GRF_FROMREMOTE	0x2000
@@ -58,6 +59,16 @@ int SyncArtNumbersSynOpt = 0; /* synchronize article numbers	*/
 int SyncArtNumbersRange = 0;  /* relative sync beginning based on range	*/
 int SyncArtNumbersAddition = 0;  /* add this when syncing ending article no. */
 int SyncArtNumbersMaxPerc = 0;	/* max % value to increase upwards	*/
+
+/*
+ * Article numbers above this are refused, from the remote and from the
+ * local database alike.  It is far above any real group, keeps every
+ * number in 15 digits, and keeps the percentage arithmetic of -P (a
+ * difference times 100, -P times a number) inside 64 bits.
+ */
+#define DSYNC_ARTNO_MAX	100000000000000LL	/* 10^14 */
+#define DSYNC_PERC_MAX	10000
+#define DSYNC_ADD_MAX	1000000000	/* -n: 10^9 */
 int VerboseOpt = 0;
 int ForReal = 1;
 char *SyncModStatusFlag = NULL;
@@ -200,13 +211,41 @@ main(int ac, char **av)
 	    }
 	    break;
 	case 'n':
-	    SyncArtNumbersAddition = strtol((*ptr) ? ptr : av[++i], NULL, 0);
+	    {
+		/* as -P: an int would take 4294967296 for 0 */
+		char *e;
+		const char *arg = (*ptr) ? ptr : av[++i];
+		long v;
+
+		errno = 0;
+		v = (arg != NULL) ? strtol(arg, &e, 0) : 0;
+		if (arg == NULL || e == arg || *e != 0 || errno != 0 ||
+				v < -DSYNC_ADD_MAX || v > DSYNC_ADD_MAX) {
+		    fprintf(stderr, "-n must be -%d..%d\n", DSYNC_ADD_MAX, DSYNC_ADD_MAX);
+		    exit(1);
+		}
+		SyncArtNumbersAddition = (int)v;
+	    }
 	    break;
 	case 'o':
 	    SyncOverwriteOpt = 1;
 	    break;
 	case 'P':
-	    SyncArtNumbersMaxPerc = strtol((*ptr) ? ptr : av[++i], NULL, 0);
+	    {
+		/* checked as a long: an int would take 4294967296 for 0 */
+		char *e;
+		const char *arg = (*ptr) ? ptr : av[++i];
+		long v;
+
+		errno = 0;
+		v = (arg != NULL) ? strtol(arg, &e, 0) : -1;
+		if (arg == NULL || e == arg || *e != 0 || errno != 0 ||
+					v < 0 || v > DSYNC_PERC_MAX) {
+		    fprintf(stderr, "-P must be 0..%d\n", DSYNC_PERC_MAX);
+		    exit(1);
+		}
+		SyncArtNumbersMaxPerc = (int)v;
+	    }
 	    break;
 	case 'p':
 	    ptr = (*ptr) ? ptr : av[++i];
@@ -335,6 +374,8 @@ main(int ac, char **av)
 		flags,
 		desc
 	    );
+	    if (grp == NULL)
+		continue;
 	    grp->gr_State &= ~(GRF_NEW|GRF_MODIFIED);
 	    grp->gr_State &= ~(GRF_CTS|GRF_LMTS);
 	    grp->gr_State |= GRF_FROMLOCAL;
@@ -522,6 +563,13 @@ main(int ac, char **av)
 		    continue;
 
 		/*
+		 * the name comes from the remote: it becomes a key in
+		 * dactive.kp and part of the overview file names
+		 */
+		if (ValidGroupName(group) < 0)
+		    continue;
+
+		/*
 		 * ignore group that does not match the wildcard, even though
 		 * the remote end is supposed to do this for us.
 		 */
@@ -595,6 +643,10 @@ main(int ac, char **av)
 	    Group *group;
 
 	    for (group = GHash[i]; group; group = group->gr_Next) {
+		/* its record is left as it is, and stays (see EnterGroup()) */
+		if (group->gr_State & GRF_BADNUM)
+		    continue;
+
 		/*
 		 * If we have a new group not previously in the database,
 		 * we only add it if SyncGroupsOpt is set.
@@ -628,28 +680,28 @@ main(int ac, char **av)
 			    printf(" desc='%s'", group->gr_Description);
 		    }
 		    if (group->gr_State & (GRF_STARTNO | GRF_NEW)) {
-			char startBuf[20];
-			sprintf(startBuf, "%010lld", group->gr_StartNo);
+			char startBuf[32];
+			snprintf(startBuf, sizeof(startBuf), "%010lld", (long long)group->gr_StartNo);
 			if (ForReal)
 			    KPDBWriteEncode(KDBActive, group->gr_GroupName, "NB", startBuf, 0);
 			if (VerboseOpt)
-			    printf(" NB=%s(%+d)", startBuf, group->gr_StartDiff);
+			    printf(" NB=%s(%+lld)", startBuf, group->gr_StartDiff);
 		    }
 		    if (group->gr_State & (GRF_ENDNO | GRF_NEW)) {
-			char endBuf[16];
-			sprintf(endBuf, "%010lld", group->gr_EndNo);
+			char endBuf[32];
+			snprintf(endBuf, sizeof(endBuf), "%010lld", (long long)group->gr_EndNo);
 			if (ForReal)
 			    KPDBWriteEncode(KDBActive, group->gr_GroupName, "NE", endBuf, 0);
 			if (VerboseOpt)
-			    printf(" NE=%s(%+d)", endBuf, group->gr_EndDiff);
+			    printf(" NE=%s(%+lld)", endBuf, group->gr_EndDiff);
 		    }
 		    if (group->gr_State & (GRF_SYNNO | GRF_NEW)) {
-			char synBuf[16];
-			sprintf(synBuf, "%010lld", group->gr_SynNo);
+			char synBuf[32];
+			snprintf(synBuf, sizeof(synBuf), "%010lld", (long long)group->gr_SynNo);
 			if (ForReal)
 			    KPDBWriteEncode(KDBActive, group->gr_GroupName, "NX", synBuf, 0);
 			if (VerboseOpt)
-			    printf(" NX=%s(%+d)", synBuf, group->gr_SynDiff);
+			    printf(" NX=%s(%+lld)", synBuf, group->gr_SynDiff);
 		    }
 		    if (group->gr_State & GRF_CTS) {
 			char ctsBuf[16];
@@ -710,6 +762,16 @@ processLine(char *cmd, char *wild, int *count, int *ok)
 	    return;
 
 	/*
+	 * the name comes from the remote (or the -G file): it becomes a key
+	 * in dactive.kp and part of the overview file names
+	 */
+	if (ValidGroupName(group) < 0) {
+	    SanitizeString(group);
+	    printf("Invalid group name - skipping : %s\n", group);
+	    return;
+	}
+
+	/*
 	 * ignore group that does not match the wildcard, even though
 	 * the remote end is supposed to do this for us.
 	 */
@@ -725,9 +787,9 @@ processLine(char *cmd, char *wild, int *count, int *ok)
 	grp = EnterGroup(
 	    2,
 	    group, 
-	    strtol(gbeg, NULL, 10), 
-	    strtol(gend, NULL, 10), 
-	    strtol(gend, NULL, 10), /* end repeated */
+	    strtoll(gbeg, NULL, 10),
+	    strtoll(gend, NULL, 10),
+	    strtoll(gend, NULL, 10), /* end repeated */
 	    -1,
 	    -1,
 	    flags, 
@@ -764,11 +826,40 @@ EnterGroup(int pass, const char *groupName, artno_t begNo, artno_t endNo, artno_
 {
     Group **pgroup = &GHash[hash(groupName)];
     Group *group;
+    int bad;
+
+    /*
+     * A number of 16 digits or more overran the 16-byte buffers the NE
+     * and NX fields are formatted into; see DSYNC_ARTNO_MAX.
+     */
+    bad = (begNo > DSYNC_ARTNO_MAX || endNo > DSYNC_ARTNO_MAX ||
+						synNo > DSYNC_ARTNO_MAX);
 
     while ((group = *pgroup) != NULL) {
 	if (strcmp(groupName, group->gr_GroupName) == 0)
 	    break;
 	pgroup = &group->gr_Next;
+    }
+    /* a local record out of range: nothing of it is changed (below) */
+    if (group != NULL && (group->gr_State & GRF_BADNUM))
+	return(group);
+    if (bad) {
+	/*
+	 * A known group keeps its numbers but is still there (the caller
+	 * marks it as listed by the remote, so -D does not delete it); an
+	 * unknown one is not created.  A local record (pass 1) is still
+	 * entered, marked: else a remote line for it would take it as a
+	 * new group (with -g) and write over the record.  It is left as it
+	 * is, -D included.
+	 */
+	printf("Article number out of range - skipping : %s\n", groupName);
+	if (pass == 1 && group == NULL) {
+	    *pgroup = group = calloc(sizeof(Group) + strlen(groupName) + 1, 1);
+	    group->gr_State = GRF_BADNUM;
+	    group->gr_GroupName = (char *)(group + 1);
+	    strcpy(group->gr_GroupName, groupName);
+	}
+	return(group);
     }
     if (group == NULL) {
 	/*
@@ -797,21 +888,32 @@ EnterGroup(int pass, const char *groupName, artno_t begNo, artno_t endNo, artno_
 	    group->gr_State |= GRF_SYNNO;
 	    if (group->gr_SynNo != synNo) {
 		if (SyncArtNumbersSynOpt != 2 || synNo > group->gr_SynNo) {
-		    int perc;
-		    if (group->gr_SynNo == 0)
-			group->gr_SynNo = 1;
-		    group->gr_SynDiff = (synNo + SyncArtNumbersAddition) -
-							group->gr_SynNo;
-		    perc = group->gr_SynDiff * 100 / group->gr_SynNo;
-		    if (SyncArtNumbersMaxPerc && group->gr_SynNo &&
+		    artno_t perc;
+		    /*
+		     * 0 counts as 1 for the percentage (as before), but the
+		     * number is only changed once the result is known to
+		     * be in range: a refused update leaves it as it was.
+		     */
+		    artno_t base = group->gr_SynNo ? group->gr_SynNo : 1;
+		    artno_t nv;
+
+		    group->gr_SynDiff = (synNo + SyncArtNumbersAddition) - base;
+		    perc = group->gr_SynDiff * 100 / base;
+		    if (SyncArtNumbersMaxPerc &&
 				(group->gr_SynDiff > 0) &&
 				(perc > SyncArtNumbersMaxPerc))
-			group->gr_SynDiff = SyncArtNumbersMaxPerc *
-							group->gr_SynNo / 100;
+			group->gr_SynDiff = SyncArtNumbersMaxPerc * base / 100;
 		    if (group->gr_SynDiff == 0)
 			group->gr_SynDiff = 1;
-		    group->gr_SynNo += group->gr_SynDiff;
-		    group->gr_State |= GRF_MODIFIED;
+		    nv = base + group->gr_SynDiff;
+		    if (nv < 0 || nv > DSYNC_ARTNO_MAX) {
+			/* -n took it out of range: refused as such a remote number */
+			printf("Article number out of range - skipping NX : %s\n", groupName);
+			group->gr_SynDiff = 0;
+		    } else {
+			group->gr_SynNo = nv;
+			group->gr_State |= GRF_MODIFIED;
+		    }
 		}
 	    }
 	}
@@ -824,22 +926,33 @@ EnterGroup(int pass, const char *groupName, artno_t begNo, artno_t endNo, artno_
 	    group->gr_State |= GRF_ENDNO;
 	    if (group->gr_EndNo != endNo) {
 		if (SyncArtNumbersEndOpt != 2 || endNo > group->gr_EndNo) {
-		    int perc;
-		    if (group->gr_EndNo == 0)
-			group->gr_EndNo = 1;
-		    group->gr_EndDiff = (synNo + SyncArtNumbersAddition) -
-							group->gr_EndNo;
-		    perc = group->gr_EndDiff * 100 / group->gr_EndNo;
-		    if (SyncArtNumbersMaxPerc && group->gr_EndNo &&
+		    artno_t perc;
+		    /*
+		     * 0 counts as 1 for the percentage (as before), but the
+		     * number is only changed once the result is known to
+		     * be in range: a refused update leaves it as it was.
+		     */
+		    artno_t base = group->gr_EndNo ? group->gr_EndNo : 1;
+		    artno_t nv;
+
+		    group->gr_EndDiff = (synNo + SyncArtNumbersAddition) - base;
+		    perc = group->gr_EndDiff * 100 / base;
+		    if (SyncArtNumbersMaxPerc &&
 				(group->gr_EndDiff > 0) &&
 				(perc > SyncArtNumbersMaxPerc))
-			group->gr_EndDiff = SyncArtNumbersMaxPerc *
-							group->gr_EndNo / 100;
+			group->gr_EndDiff = SyncArtNumbersMaxPerc * base / 100;
 		    if (group->gr_EndDiff == 0)
 			group->gr_EndDiff = 1;
-		    group->gr_EndNo += group->gr_EndDiff;
-		    group->gr_NoLMTS = 1;
-		    group->gr_State |= GRF_MODIFIED;
+		    nv = base + group->gr_EndDiff;
+		    if (nv < 0 || nv > DSYNC_ARTNO_MAX) {
+			/* -n took it out of range: refused as such a remote number */
+			printf("Article number out of range - skipping NE : %s\n", groupName);
+			group->gr_EndDiff = 0;
+		    } else {
+			group->gr_EndNo = nv;
+			group->gr_NoLMTS = 1;
+			group->gr_State |= GRF_MODIFIED;
+		    }
 		}
 	    }
 	}

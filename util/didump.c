@@ -256,6 +256,16 @@ main(int ac, char **av)
 		fprintf(stderr, "dump may be invalid\n");
 	    }
 	    HistoryVersion = hh.version;
+	    /*
+	     * A damaged header must not make the record size 0 or smaller
+	     * than a record (pieces of records dumped as entries, a read
+	     * past the last one).
+	     */
+	    if (hh.henSize < sizeof(History) || hh.henSize > 4096) {
+		fprintf(stderr, "corrupted history file - record size %d (expected %d)\n",
+		    (int)hh.henSize, (int)sizeof(History));
+		exit(1);
+	    }
 	    rsize = hh.henSize;
 	    hsize = hh.hashSize;
 	    HOffset = hh.headSize + hsize * sizeof(HistIndex);
@@ -301,6 +311,9 @@ PrintTrace(int fd, HistIndex index, int rsize)
 	else
 	    off = index;
 	lseek(fd, off, 0);
+	/* h holds one record, whatever the header gives as the record size */
+	if (rsize > (int)sizeof(h))
+	    rsize = sizeof(h);
 	if (read(fd, &h, rsize) != rsize) {
 	    fprintf(stderr, "read error @ %d (%lld)", index, (long long)off);
 	    break;

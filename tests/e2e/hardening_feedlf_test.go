@@ -3,6 +3,7 @@ package e2e
 // dreaderd: an article fed with LF-only line ends.
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -15,7 +16,8 @@ func feedLFArticle(t *testing.T, s *Site, body string) int {
 	id := msgID(t)
 	p.ExpectCmd(335, "IHAVE %s", id)
 	p.MustSend("Path: x\nFrom: a@example.invalid\nNewsgroups: e2e.test\nSubject: s\nMessage-ID: " + id +
-		"\nDate: Mon, 02 Jan 2006 15:04:05 -0700\n\n" + body + ".\n")
+		"\nDate: Mon, 02 Jan 2006 15:04:05 -0700\n\n" + strings.TrimSuffix(body, "\n") +
+		"\r\n.\r\n") // only CRLF "." CRLF ends a fed article: the last line and the end are CRLF
 	code, line, err := p.ReadStatus()
 	if err != nil {
 		t.Fatalf("reply to the article: %v", err)

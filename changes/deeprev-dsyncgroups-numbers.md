@@ -1,0 +1,1 @@
+- dsyncgroups: the distance to the remote article number was kept in 32 bit and the `-P` percentage overflowed, so NE/NX jumped to a wrong number above 2^31 and `-P` did not limit a large jump.

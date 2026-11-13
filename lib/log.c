@@ -95,7 +95,8 @@ openProg(LogInfo *LI, const char *prog)
 	if (dup2(fds[0], fileno(stdin)) < 0) {
 	    cerr = errno;
 	    syslog(LOG_ERR, "log unable to dup2(): %s", strerror(cerr));
-	    (void)write(st[1], &cerr, sizeof(cerr));
+	    if (write(st[1], &cerr, sizeof(cerr)) < 0)
+		;	/* nothing more a child that cannot start can do */
 	    _exit(1);
 	}
 	close(fds[0]);
@@ -103,7 +104,8 @@ openProg(LogInfo *LI, const char *prog)
 	execl(prog, prog, NULL);
 	cerr = errno;
 	syslog(LOG_ERR, "log unable to execl(%s): %s", prog, strerror(cerr));
-	(void)write(st[1], &cerr, sizeof(cerr));
+	if (write(st[1], &cerr, sizeof(cerr)) < 0)
+	    ;	/* as above */
 	close(fileno(stdin));
 	_exit(1);
     }

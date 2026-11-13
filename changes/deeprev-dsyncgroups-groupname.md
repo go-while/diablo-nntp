@@ -1,0 +1,1 @@
+- dsyncgroups: group names from the remote (`/`, `..`, control characters) were entered into dactive.kp unchecked; names that are not valid newsgroup names are now skipped.

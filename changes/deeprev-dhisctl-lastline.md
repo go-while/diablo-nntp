@@ -1,0 +1,1 @@
+- dhisctl: `-f` cut the last character of every line, so a last Message-ID without a newline was refused, and an empty line wrote before the buffer; lines are now cut at the newline.

@@ -1,0 +1,1 @@
+- dlockhistory: the inode number of the history was kept in an int, so on a file system with 64-bit inode numbers every check could take the history as replaced and reopen it.

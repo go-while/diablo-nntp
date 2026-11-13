@@ -63,8 +63,12 @@ main(int ac, char *av[])
 	    DHostsCachePat = av[arg];
 	    arg++;
 	    ac--;
-	    if (av[arg] != NULL)
+	    if (av[arg] != NULL) {
+		/* step over it: it was taken as the cache file again */
 		DiabloHostsPat = av[arg];
+		arg++;
+		ac--;
+	    }
 	    continue;
 	}
 	ac--;

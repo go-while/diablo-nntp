@@ -31,6 +31,7 @@
 #include "defs.h"
 
 int HistoryEntryValid(History *h);
+static int dumpRest(const char *p, History *h, char *f1);
 
 void
 Usage(void)
@@ -54,6 +55,7 @@ main(int ac, char **av)
     int r = 1;
     int count = 0;
     int failed = 0;
+    int inputError = 0;
     char buf[1024];
     int flags = 0;
     int uflag = 0;
@@ -139,8 +141,9 @@ main(int ac, char **av)
     while (fgets(buf, sizeof(buf), stdin) != NULL) {
 	History h = { 0 };
 	int n;
-	int iter;
-	int exp;
+	int iter = 0;
+	int exp = 0;
+	int pos = 0;
 	char f1 = 0;
 
 	if (buf[0] == '.') {
@@ -148,17 +151,15 @@ main(int ac, char **av)
 	    break;
 	}
 
-	n = sscanf(buf, "DUMP %x.%x.%x gm=%d ex=%d boff=%d bsize=%d flags=%c",
+	n = sscanf(buf, "DUMP %x.%x.%x gm=%d ex=%d%n",
 	    &h.hv.h1,
 	    &h.hv.h2,
 	    &iter,
 	    &h.gmt,
 	    &exp,
-	    &h.boffset,		/* 0 if old style dump */
-	    &h.bsize,		/* 0 if old style dump */
-	    &f1			/* 0 if no flags       */
+	    &pos
 	);
-	if (n >= 5) {
+	if (n == 5 && dumpRest(buf + pos, &h, &f1) == 0) {
 	    int r = 0;
 
 	    h.iter = iter;
@@ -179,6 +180,7 @@ main(int ac, char **av)
 	    ;
 	} else {
 	    fprintf(stderr, "Format error: %s", buf);
+	    inputError = 1;
 	    break;
 	}
 	if (verbose && ((count + failed) & 1023) == 0) {
@@ -189,12 +191,78 @@ main(int ac, char **av)
 	    fflush(stdout);
 	}
     }
+    if (ferror(stdin)) {
+	fprintf(stderr, "diload: read error on input\n");
+	inputError = 1;
+    }
     printf("diload: %d/%d entries loaded\n", count, count + failed);
+    /*
+     * A line we could not read, or a read error, must show in the exit
+     * status whatever HistoryClose() says: the caller is about to move
+     * this file over the live history.  Input that simply ends without
+     * the "." line stays valid, as before.
+     */
     r = HistoryClose();
-    if (r == RCOK)
+    if (r == RCOK && inputError == 0)
 	return(0);
     else
 	return(1);
+}
+
+/*
+ * dumpRest() - check what follows "ex=N" in a DUMP line and take its
+ * fields.  A line is old style (didump -o: nothing more) or new style:
+ * boff= and bsize=, then any of file="..." (didump -v), flags= (hand made
+ * lists leave it out) and next=, as didump writes them.  Anything else,
+ * a line that stops inside a field included, is a format error (-1):
+ * sscanf() alone took a line cut after boff= as an old style one, and
+ * anything at all after bsize=.  A line may end in CR LF.
+ *
+ * A complete line is taken as it is, also as the last one without its
+ * newline: a dump cut off right after a field (ex=, bsize=, flags=, a
+ * quoted file=) or inside a number cannot be told from a complete
+ * shorter line.
+ */
+static int
+dumpRest(const char *p, History *h, char *f1)
+{
+    int boff, bsize, pos = 0;
+
+    p += strspn(p, " \t\r\n");
+    if (*p == 0)
+	return(0);
+    if (sscanf(p, "boff=%d bsize=%d%n", &boff, &bsize, &pos) != 2 || pos == 0)
+	return(-1);
+    p += pos;
+    while (*p == ' ' || *p == '\t') {
+	p += strspn(p, " \t");
+	if (strncmp(p, "file=\"", 6) == 0) {
+	    const char *q = strchr(p + 6, '"');
+
+	    if (q == NULL)
+		return(-1);
+	    p = q + 1;
+	} else if (strncmp(p, "flags=", 6) == 0) {
+	    p += 6;
+	    if (*p == 'H') {
+		*f1 = 'H';
+		++p;
+	    }
+	} else if (strncmp(p, "next=", 5) == 0) {
+	    p += 5;
+	    if (*p == '-')
+		++p;
+	    if (strspn(p, "0123456789") == 0)
+		return(-1);
+	    p += strspn(p, "0123456789");
+	}
+    }
+    p += strspn(p, "\r\n");
+    if (*p != 0)
+	return(-1);
+    h->boffset = boff;
+    h->bsize = bsize;
+    return(0);
 }
 
 int
