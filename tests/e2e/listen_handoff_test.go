@@ -42,6 +42,13 @@ import (
 // socket from; with it set the test binary is that process (TestMain).
 const listenHandoffEnv = "E2E_LISTEN_HANDOFF"
 
+// handoffKeepPrefix hides an LD_PRELOAD variable (LD_PRELOAD, LD_PRELOAD_32, LD_PRELOAD_64)
+// of the daemon's environment from the handoff process; execOnListener puts it back for the
+// daemon. A shim is meant for the daemon only: on illumos a Go program calls libc, so the
+// handoff process would load it too, and a fcntl or recvmsg fault would hit the handoff
+// itself (on Linux and the BSDs Go makes its system calls directly).
+const handoffKeepPrefix = "E2E_HANDOFF_KEEP_"
+
 // listenFDArg in a daemon's arguments is replaced with the number of the descriptor of
 // the listening socket, e.g. "-b", listenFDArg.
 const listenFDArg = "@listenfd@"
@@ -102,7 +109,14 @@ func startOnListener(tb testing.TB, l *net.TCPListener, o proc.Options, addr str
 
 	o.Args = append([]string{o.Path}, o.Args...)
 	o.Path = self
-	o.Env = append(slices.Clone(o.Env), listenHandoffEnv+"="+sock)
+	env := make([]string, 0, len(o.Env)+1)
+	for _, e := range o.Env {
+		if strings.HasPrefix(e, "LD_PRELOAD") {
+			e = handoffKeepPrefix + e
+		}
+		env = append(env, e)
+	}
+	o.Env = append(env, listenHandoffEnv+"="+sock)
 	p := startSiteTCP(tb, o, addr)
 	// The daemon greeted on l, so the handoff is done.
 	if err := <-sent; err != nil {
@@ -194,9 +208,16 @@ func execOnListener(sock string, args []string) error {
 			argv[i] = strconv.Itoa(fd)
 		}
 	}
-	env := slices.DeleteFunc(os.Environ(), func(e string) bool {
-		return strings.HasPrefix(e, listenHandoffEnv+"=")
-	})
+	var env []string
+	for _, e := range os.Environ() {
+		switch {
+		case strings.HasPrefix(e, listenHandoffEnv+"="):
+		case strings.HasPrefix(e, handoffKeepPrefix):
+			env = append(env, strings.TrimPrefix(e, handoffKeepPrefix))
+		default:
+			env = append(env, e)
+		}
+	}
 	return syscall.Exec(path, argv, env)
 }
 
