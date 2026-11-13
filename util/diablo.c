@@ -3119,6 +3119,8 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 	int inHeader = 1;
 	int lastNl = 0;
 	int thisNl = 1;
+	int lastCrlf = 0;	/* the previous line ended with CRLF */
+	int thisCrlf = 1;
 	int skipHeader = 0;
 	int haveMsgId = 0;
 	int haveBytes = 0;
@@ -3226,6 +3228,8 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 
 	    lastNl = thisNl;
 	    thisNl = (p[bytes-1] == '\n');
+	    lastCrlf = thisCrlf;
+	    thisCrlf = (bytes > 1 && p[bytes-1] == '\n' && p[bytes-2] == '\r');
 	    headerEndLine = 0;
 
 	    if (artError == 0 && (DOpts.RejectArtsWithNul ||
@@ -3266,7 +3270,12 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 	    /*
 	     * Look for end of article
 	     */
-	    if (lastNl &&
+	    /*
+	     * Only CRLF "." CRLF ends the article (RFC 3977 3.1.1).  A "." line
+	     * the peer ended with a bare LF is data, and so is a "." after a
+	     * bare LF.  INN does the same.
+	     */
+	    if (lastCrlf && thisCrlf &&
 			((DOpts.WireFormat && bytes == 3 &&
 						strncmp(p, ".\r\n", 3) == 0) ||
 			(!DOpts.WireFormat && bytes == 2 &&
@@ -3289,7 +3298,7 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 	     * THERE IS NO TERMINATOR
 	     */
 	    if (!DOpts.WireFormat) {
-		if (lastNl && *p == '.') {
+		if (lastCrlf && *p == '.') {
 		    ++p;
 		    --bytes;
 		}
