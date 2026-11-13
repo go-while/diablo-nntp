@@ -32,8 +32,11 @@ import (
 
 // installFaultSource is a fault injector for the install of the access cache. While the file
 // ACFAULT_FLAG exists:
-//   - fgets() of a FILE whose name ends in ACFAULT_FGETS fails with a read error (the error
-//     flag of the stream set, errno EIO) once ACFAULT_FGETS_AFTER lines were read from it;
+//   - fgets() of a FILE whose name ends in ACFAULT_FGETS hits a real read error once
+//     ACFAULT_FGETS_AFTER lines were read from it: the stream is made unbuffered when it is
+//     first read, and at the failing call its descriptor is replaced (dup2) by a descriptor of
+//     the directory "/", so the next read() fails with EISDIR and the libc itself sets the
+//     error flag of the stream (no stdio internals are touched, it is the same on every libc);
 //   - fchmod() of a descriptor whose name ends in one of the comma-separated suffixes of
 //     ACFAULT_FCHMOD fails with EPERM;
 //   - fclose() of a FILE whose name ends in ACFAULT_FCLOSE closes it and fails with ENOSPC (the
@@ -132,13 +135,19 @@ fgets_fault(char *(*real)(char *, int, FILE *), char *s, int n, FILE *fp)
     if (suffix != NULL && fp != NULL && flagged()) {
 	fdpath(fileno(fp), path, sizeof(path));
 	if (path[0] && ends(path, suffix)) {
-	    if (ftell(fp) == 0)
+	    if (ftell(fp) == 0) {
 		lines = 0;
+		setvbuf(fp, NULL, _IONBF, 0);	/* nothing is read ahead: every byte is a read() */
+	    }
 	    if (lines >= (after ? atol(after) : 0)) {
+		int dirfd = open("/", O_RDONLY);
+
 		shim_mark("refused fgets of %s after %ld lines", path, lines);
-		(void)fputc('x', fp);	/* a write to a read-only stream sets its error flag */
-		errno = EIO;
-		return NULL;
+		if (dirfd >= 0) {
+		    dup2(dirfd, fileno(fp));
+		    close(dirfd);
+		}
+		return real(s, n, fp);	/* read() fails now */
 	    }
 	    lines++;
 	}
@@ -489,11 +498,26 @@ func TestDeepRevAccessCacheSourceIsDirectory(t *testing.T) {
 	list := startAndList(t, s)
 	before := fileIds(t, s.Dir, accessCacheFiles...)
 	src := filepath.Join(s.Dir, "dreader.access")
+	// The file is replaced by a directory with the main process stopped: a pass of its loop
+	// between the remove and the mkdir would fail to open the file ("No such file") as its
+	// first try, and the failed read would only come with the retry.
+	pid := readMainPid(t, s)
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := proc.Signal(syscall.SIGSTOP); err != nil {
+		t.Fatalf("SIGSTOP dreaderd %d: %v", pid, err)
+	}
+	defer proc.Signal(syscall.SIGCONT)
 	if err := os.Remove(src); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Mkdir(src, 0o755); err != nil {
 		t.Fatal(err)
+	}
+	if err := proc.Signal(syscall.SIGCONT); err != nil {
+		t.Fatalf("SIGCONT dreaderd %d: %v", pid, err)
 	}
 	n := hammer(s.Addr, retryWindow)
 	wantTries(t, "Unable to read dreader.access", logLines(s, "Unable to read", "dreader.access"), n)
@@ -517,7 +541,7 @@ end
 `
 
 // TestDeepRevAccessCacheSourceReadCut (A4): a read error in the middle of
-// dreader.access (the injector fails fgets() with the stream's error flag set after n lines).
+// dreader.access (the injector makes the read() of the line after n lines fail with EISDIR).
 // The part read must not be installed, and it must not be judged either: a cut file is not
 // a bad one, so a content error in the part read is not reported while the read fails. The
 // old cache stays in use and the read is tried again after 5 s. Once the read works again, the
