@@ -1361,6 +1361,10 @@ func TestIncomingFilterTextBinary(t *testing.T) {
 		// review of go-while, 5: a decoded "begin" line frames a file, it is not text
 		{"a base64 text part that decodes to a begin line, then a part with a uuencoded file", mime("multipart/mixed; boundary=b",
 			mpBody("b", b64One("begin 644 x\n"), plain(uu(12)...))), "437"},
+		// review of chatgpt-1: the lines of a short run of encoded lines are not text, decoded or not
+		{"a base64 text part that decodes to a short uuencoded file, then a part with a uuencoded file",
+			mime("multipart/mixed; boundary=b", mpBody("b",
+				b64One("begin 644 x\n"+strings.Join(uuRaw(8), "\n")+"\nend\n"), plain(uu(12)...))), "437"},
 		// 5, 6: a base64 text part after the binary is checked on its own
 		{"text with a small uuencoded file, then a base64 text part", mime("multipart/mixed; boundary=b",
 			mpBody("b", plain(cat(text, uu(12))...), b64TextPart())), "235"},
@@ -1641,7 +1645,9 @@ func TestTextBinaryLimitReload(t *testing.T) {
 		return GlobalLabel + "label peer\n    inhost " + PeerIP + "\n    alias e2e.peer\n    addgroup *\nend\n" +
 			feed("fnone", "") + feed("fsmall", small) + feed("fbig", big)
 	}
-	s := NewSite(t, SiteOptions{Newsfeeds: cfg("    textbinary 1k\n", "")})
+	// a compressed spool: the queue lines carry the compressed size (C<size>), the last SOUT field,
+	// which the master must still read after it loaded dnewsfeeds (review of chatgpt-1)
+	s := NewSite(t, SiteOptions{Newsfeeds: cfg("    textbinary 1k\n", ""), SpoolCtl: compressedSpoolCtl})
 	text := []string{"Here is the small program I mentioned, uuencoded."}
 	uu := func(n int) []string {
 		return append(append([]string{"begin 644 prog.bin"}, atLines(n, 60, uuAlphabet, "M")...), "end")
@@ -1708,6 +1714,11 @@ func TestTextBinaryLimitReload(t *testing.T) {
 			has := !slices.Contains(deepRevMissing(q, []string{ids[i]}), ids[i])
 			if want := slices.Contains(a.want, f); has != want {
 				t.Errorf("feed %s, %s: queued %v, want %v\ndqueue/%s: %q", f, a.name, has, want, f, q)
+			}
+			for _, l := range q {
+				if strings.Contains(l, ids[i]) && !strings.Contains(l, " C") {
+					t.Errorf("feed %s, %s: no compressed size in the queue line %q", f, a.name, l)
+				}
 			}
 		}
 	}

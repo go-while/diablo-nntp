@@ -1411,22 +1411,6 @@ decodedLineTypes(char *ptr, int len)
 {
     yencLine(ptr, len);
     /*
-     * Text before the binary (TBText): the decoded non-blank characters of
-     * the line, but not what frames an encoded file (tbFraming), as for a
-     * plain line.  Only whether there is any is asked.
-     */
-    if (TBACTIVE() && !TBFrozen && len > 0 && !tbFraming(ptr, len)) {
-	int i;
-
-	for (i = 0; i < len; i++) {
-	    if (ptr[i] != ' ' && ptr[i] != '\t' && ptr[i] != '\r' &&
-							ptr[i] != '\n') {
-		TBText++;
-		break;
-	    }
-	}
-    }
-    /*
      * A binary found before is no reason to stop (and to refuse the
      * article) when it is measured: only this line counts
      */
@@ -1437,6 +1421,24 @@ decodedLineTypes(char *ptr, int len)
 	Type |= ARTTYPE_BASE64;
 	Type &= ~ARTTYPE_DEFAULT;
 	return(1);
+    }
+    /*
+     * Text before the binary (TBText), as tbLine() counts it for a plain
+     * line: not a line of a run of encoded lines (the counters above are
+     * not 0), nor what frames an encoded file (tbFraming), nor white
+     * space.  Only whether there is any is asked.
+     */
+    if (TBACTIVE() && !TBFrozen && len > 0 && DecUUencode == 0 &&
+		DecBinHex == 0 && DecBase64 == 0 && !tbFraming(ptr, len)) {
+	int i;
+
+	for (i = 0; i < len; i++) {
+	    if (ptr[i] != ' ' && ptr[i] != '\t' && ptr[i] != '\r' &&
+							ptr[i] != '\n') {
+		TBText++;
+		break;
+	    }
+	}
     }
     return(0);
 }

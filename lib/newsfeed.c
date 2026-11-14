@@ -2659,14 +2659,23 @@ FeedConfigTime(void)
 
 /*
  * The master, on a SOUT line whose process measured with a newer dnewsfeeds
- * than the master has: load it now (forced: the process saw it settle, the
- * once-a-minute check and its 10 s wait may not have come yet), so the
- * feeds are checked with the limits the article was measured with.
+ * than the master has: load it now (the once-a-minute check may not have come
+ * yet), so the feeds are checked with the limits the article was measured
+ * with.  Call it with the line read to its end: loading uses strtok().
  */
 void
 FeedConfigAtLeast(time_t gen)
 {
-    if (gen > NFMTime)
+    struct stat st = { 0 };
+
+    /*
+     * As the once-a-minute check does: the file is there, is not older than
+     * the generation (restored with an old mtime: no load per article) and
+     * has settled (the process's own load at its fork did not wait for
+     * that); until then the next line with a generation asks again.
+     */
+    if (gen > NFMTime && istat(0, &st) == 0 && st.st_mtime >= gen &&
+							!TooNear(st.st_mtime))
 	LoadNewsFeed(0, 1, NULL);
 }
 

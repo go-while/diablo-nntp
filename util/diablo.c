@@ -1609,6 +1609,7 @@ DoPipe(int fd)
 	    int lines = -1;
 	    long tbSize = -1;
 	    int tbAlt = -1;
+	    time_t tbGen = 0;
 
 	    /* L<lines> (D-174), before cSize: see FeedAdd() */
 	    if (cSize != NULL && cSize[0] == 'L') {
@@ -1629,7 +1630,7 @@ DoPipe(int fd)
 
 		    tbAlt = (int)strtol(e + 1, &g, 16);
 		    if (*g == ':')
-			FeedConfigAtLeast((time_t)strtoull(g + 1, NULL, 16));
+			tbGen = (time_t)strtoull(g + 1, NULL, 16);
 		} else {
 		    tbSize = -1;
 		}
@@ -1654,6 +1655,12 @@ DoPipe(int fd)
 	    if (path && offsize && msgid && nglist && npath && headOnly) {
 		int spamArt = 0;
 
+		/*
+		 * Only now, with the line read to its end: loading dnewsfeeds
+		 * uses strtok() too (cSize is the last field)
+		 */
+		if (tbGen > 0)
+		    FeedConfigAtLeast(tbGen);
 		bytes = 0;
 		{
 		    char *p;
