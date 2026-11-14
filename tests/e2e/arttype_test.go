@@ -1616,12 +1616,14 @@ func TestTextBinaryLimitReload(t *testing.T) {
 	// diablo checks dnewsfeeds once a minute, at the first call in a new minute (the master
 	// at least every 5 s, the connection's process at its next article), and a file younger
 	// than 10 s is left alone for that minute: the first check must come after a minute
-	// boundary that is 11 s or more behind the write, and a few seconds into the minute
+	// boundary that is 11 s or more behind the write, and the master's loop (select() times out
+	// after 5 s) must have run since: 8 s into the minute, not 3 (the master still had the old
+	// limits on the hosted CI runners)
 	boundary := written.Truncate(time.Minute).Add(time.Minute)
 	if boundary.Sub(written) < 11*time.Second {
 		boundary = boundary.Add(time.Minute)
 	}
-	time.Sleep(time.Until(boundary.Add(3 * time.Second)))
+	time.Sleep(time.Until(boundary.Add(8 * time.Second)))
 
 	arts := []struct {
 		name string
