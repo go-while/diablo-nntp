@@ -1615,15 +1615,24 @@ DoPipe(int fd)
 		lines = (int)strtol(cSize + 1, NULL, 10);
 		cSize = strtok(NULL, "\t\n");
 	    }
-	    /* T<size>:<type>, a binary in a text article, also before cSize */
+	    /*
+	     * T<size>:<type>:<generation>, a binary in a text article, also
+	     * before cSize: the process measured it with the dnewsfeeds of
+	     * that mtime, which the master may not have loaded yet
+	     */
 	    if (cSize != NULL && cSize[0] == 'T') {
 		char *e;
 
 		tbSize = strtol(cSize + 1, &e, 10);
-		if (*e == ':')
-		    tbAlt = (int)strtol(e + 1, NULL, 16);
-		else
+		if (*e == ':') {
+		    char *g;
+
+		    tbAlt = (int)strtol(e + 1, &g, 16);
+		    if (*g == ':')
+			FeedConfigAtLeast((time_t)strtoull(g + 1, NULL, 16));
+		} else {
 		    tbSize = -1;
+		}
 		cSize = strtok(NULL, "\t\n");
 	    }
 

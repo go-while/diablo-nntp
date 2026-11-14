@@ -148,14 +148,16 @@
 #		all	: Any type of article (DEFAULT)
 #	Specifying a '!' before a type negates that type
 #
-#  textbinary	Y	-
+#  textbinary	Y	Y
 #
 #	Allow a binary (uuencode, BinHex or base64) that follows plain text
 #	in the body, up to the given size of encoded data ('k' and 'm' can
 #	be used as for maxsize).  In the IFILTER label the article is not
 #	rejected for the binary; in a feed, 'arttypes' does not count the
-#	binary for it.  The default, 0, is off.  This does add CPU: diablo
-#	reads such an article to its end instead of stopping at its binary.
+#	binary for it.  The default, 0, is off; GLOBAL can set it for the
+#	feeds (0 in a feed does not undo it).  A feed only gets articles that
+#	IFILTER lets in.  This does add CPU: diablo reads such an article to
+#	its end instead of stopping at its binary.
 #
 #  incomingpriority	Y	-
 #

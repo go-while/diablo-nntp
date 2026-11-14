@@ -126,6 +126,9 @@ main(int ac, char **av)
                 lines = (int)strtol(cSize + 1, NULL, 10);
                 cSize = strtok(NULL, "\t\n");
             }
+            /* T<size>:<type>:<generation> of a binary in a text article (FeedAdd()): not used here */
+            if (cSize != NULL && cSize[0] == 'T')
+                cSize = strtok(NULL, "\t\n");
             if (path && offsize && msgid && nglist) {
                 int spamArt = 0;
 		if (npath == NULL) npath = "1";

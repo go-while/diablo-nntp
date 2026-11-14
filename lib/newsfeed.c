@@ -34,6 +34,8 @@ Prototype NewslinkInfo *FeedLinkInfo(const char *hlabel);
 Prototype int FeedFilter(char *hlabel, const char *nglist, const char *npath, const char *dist, const char *artType, int bytes);
 Prototype int FeedFilterTextBinary(void);
 Prototype int FeedTextBinaryMax(void);
+Prototype time_t FeedConfigTime(void);
+Prototype void FeedConfigAtLeast(time_t gen);
 Prototype int FeedSpam(int which, const char *nglist, const char *npath, const char *dist, const char *artType, int bytes);
 Prototype void DumpAllFeedInfo(FILE *fo);
 Prototype void DumpFeedInfo(FILE *fo, char *label);
@@ -117,6 +119,7 @@ MemPool	*NFMemPool = NULL;
 const char *SaveHLabel = NULL;
 static int TextBinaryAll = 0;	/* the largest 'textbinary' of a complete load, see FeedTextBinaryMax() */
 static int textBinaryLoaded(void);
+static int textBinarySize(char *p);
 int FeedDebug = 0;
 int UseSpamAlias = 0;
 
@@ -180,12 +183,15 @@ FeedAdd(const char *msgid, time_t t, History *h, const char *nglist, const char 
 	/*
 	 * L<lines> (the body lines, D-174) comes before cSize: cSize may be
 	 * empty, and strtok() would then take the next field for it.  So
-	 * does T<size>:<type> for a binary in a text article (a feed with
-	 * 'textbinary', see FeedWrite()): its encoded bytes and the article's
-	 * type without its binary types, in hex.
+	 * does T<size>:<type>:<generation> for a binary in a text article (a
+	 * feed with 'textbinary', see FeedWrite()): its encoded bytes, the
+	 * article's type without its binary types and the mtime of the
+	 * dnewsfeeds it was measured with (FeedConfigAtLeast()), the last two
+	 * in hex.
 	 */
 	if (tbSize > 0 && tbAlt >= 0)
-	    snprintf(tbfield, sizeof(tbfield), "T%ld:%x\t", tbSize, tbAlt);
+	    snprintf(tbfield, sizeof(tbfield), "T%ld:%x:%llx\t", tbSize, tbAlt,
+					(unsigned long long)FeedConfigTime());
 	fprintf(FeedFo, "SOUT\t%s\t%lld,%ld\t%s\t%s\t%s\t%s\t%d\t%s\tL%d\t%s%s\n",
 	    path, (long long)h->boffset, (long)h->bsize, msgid, nglist, dist, npath,
 	    headerOnly, artType, lines, tbfield, cSize
@@ -1221,6 +1227,7 @@ feedOfferFilterQuery(NewsFeed *feed, const char *msgid)
 
 time_t NFGmtMin = (time_t)-1;
 time_t NFMTime = 0;
+static time_t TBAllMTime = 0;	/* the dnewsfeeds mtime TextBinaryAll comes from */
 
 void
 TouchNewsFeed(void)
@@ -1257,7 +1264,16 @@ LoadNewsFeed(time_t t, int force, const char *hlabel)
 
 	errno = 0;
 
-	if ((istat(0, &st) == 0 && st.st_mtime != NFMTime && !TooNear(st.st_mtime)) ||
+	/*
+	 * A label-only load (a connection's process) keeps what the last
+	 * complete load found for TextBinaryAll: when the file changed since
+	 * that one, the first complete check loads it again, although
+	 * NFMTime has the new mtime.
+	 */
+	if ((istat(0, &st) == 0 &&
+		(st.st_mtime != NFMTime ||
+			(SaveHLabel == NULL && st.st_mtime != TBAllMTime)) &&
+		!TooNear(st.st_mtime)) ||
 	    force ||
 	    NFMTime == 0
 	) {
@@ -1583,11 +1599,7 @@ LoadNewsFeed(time_t t, int force, const char *hlabel)
 				   "Newsfeed config line %d, textbinary does not apply to the %s label, ignored",
 				    lineNo, nf->nf_Label);
 			    } else {
-				long v = bsizetol(s2);
-
-				/* 2g and more is a limit nothing reaches, not off */
-				nf->nf_TextBinary = (v > 0x7fffffffL) ? 0x7fffffff :
-							(v < 0) ? 0 : (int)v;
+				nf->nf_TextBinary = textBinarySize(s2);
 			    }
 			    err = 0;
 			}
@@ -2146,8 +2158,10 @@ LoadNewsFeed(time_t t, int force, const char *hlabel)
 	     * its articles for the feeds (FeedTextBinaryMax()), and keeps
 	     * what the master saw.
 	     */
-	    if (SaveHLabel == NULL)
+	    if (SaveHLabel == NULL) {
 		TextBinaryAll = textBinaryLoaded();
+		TBAllMTime = NFMTime;
+	    }
 	}
     }
 }
@@ -2572,6 +2586,35 @@ FeedFilter(char *hlabel, const char *nglist, const char *npath, const char *dist
 }
 
 /*
+ * A 'textbinary' size, with k, m and g as for bsizetol(), but in a double:
+ * on a 32-bit long "2g" overflows there.  2g and more is a limit nothing
+ * reaches, not off.
+ */
+static int
+textBinarySize(char *p)
+{
+    double n = (double)strtol(p, &p, 0);
+
+    switch (*p) {
+    case 'g':
+    case 'G':
+	n *= 1024.0;
+	/* fall through */
+    case 'm':
+    case 'M':
+	n *= 1024.0;
+	/* fall through */
+    case 'k':
+    case 'K':
+	n *= 1024.0;
+	break;
+    }
+    if (n >= 2147483647.0)
+	return(0x7fffffff);
+    return((n > 0) ? (int)n : 0);
+}
+
+/*
  * The 'textbinary' limit of the IFILTER label: a binary in a text article
  * with at most that many bytes of encoded data is not filtered.  0 = off.
  */
@@ -2604,6 +2647,29 @@ textBinaryLoaded(void)
  * dnewsfeeds changes, LoadNewsFeed()), so it also keeps the largest limit of
  * the last load of every label, which is what the master saw.
  */
+/*
+ * The mtime of the dnewsfeeds this process loaded, the generation of its
+ * limits: FeedAdd() sends it to the master with a binary in a text article.
+ */
+time_t
+FeedConfigTime(void)
+{
+    return(NFMTime);
+}
+
+/*
+ * The master, on a SOUT line whose process measured with a newer dnewsfeeds
+ * than the master has: load it now (forced: the process saw it settle, the
+ * once-a-minute check and its 10 s wait may not have come yet), so the
+ * feeds are checked with the limits the article was measured with.
+ */
+void
+FeedConfigAtLeast(time_t gen)
+{
+    if (gen > NFMTime)
+	LoadNewsFeed(0, 1, NULL);
+}
+
 int
 FeedTextBinaryMax(void)
 {

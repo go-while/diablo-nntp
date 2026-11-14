@@ -1292,6 +1292,14 @@ func TestIncomingFilterTextBinary(t *testing.T) {
 		}
 		return l
 	}
+	// groups runs of 8 lines, each ended by a line of text, then one of 9 lines
+	cutBefore := func(groups int) []string {
+		var l []string
+		for i := 0; i < groups; i++ {
+			l = append(append(l, uuRaw(8)...), "x")
+		}
+		return append(l, uuRaw(9)...)
+	}
 	b64Cut := func(groups int) []string {
 		l := atLines(9, 76, b64Alphabet, "")
 		for i := 0; i < groups; i++ {
@@ -1350,6 +1358,9 @@ func TestIncomingFilterTextBinary(t *testing.T) {
 			mpBody("b", b64One("\n"), plain(uu(12)...))), "437"},
 		{"a base64 text part with text, then a part with a uuencoded file", mime("multipart/mixed; boundary=b",
 			mpBody("b", b64One("Real discussion.\n"), plain(uu(12)...))), "235"},
+		// review of go-while, 5: a decoded "begin" line frames a file, it is not text
+		{"a base64 text part that decodes to a begin line, then a part with a uuencoded file", mime("multipart/mixed; boundary=b",
+			mpBody("b", b64One("begin 644 x\n"), plain(uu(12)...))), "437"},
 		// 5, 6: a base64 text part after the binary is checked on its own
 		{"text with a small uuencoded file, then a base64 text part", mime("multipart/mixed; boundary=b",
 			mpBody("b", plain(cat(text, uu(12))...), b64TextPart())), "235"},
@@ -1362,6 +1373,10 @@ func TestIncomingFilterTextBinary(t *testing.T) {
 		// 7: a type that comes after the binary is checked too, by a label that filters it
 		{"text with a small uuencoded file, then an HTML part", mime("multipart/alternative; boundary=b",
 			mpBody("b", plain(cat(text, uu(12))...), []string{"Content-Type: text/html", "", "<p>hi</p>"})), "235"},
+		// review of go-while, 7: runs of fewer than 9 lines before the 9-line run that makes it a
+		// binary are data too: 8 runs of 8 lines and one of 9 are 4453 bytes
+		{"a uuencoded file cut into 8-line runs, over the limit", art(cat(text, cutBefore(8))), "437"},
+		{"a uuencoded file cut into 8-line runs, within the limit", art(cat(text, cutBefore(1))), "235"},
 		{"text with a small yEnc file", art(cat(text, []string{"=ybegin line=128 size=6 name=a.bin", "abcdef", "=yend size=6"})), "437"},
 		{"text with a small uuencoded file and a yEnc file", art(cat(text, uu(12), []string{"=ybegin line=128 size=6 name=a.bin", "abcdef", "=yend size=6"})), "437"},
 	} {
@@ -1498,6 +1513,14 @@ func TestTextBinaryArtType(t *testing.T) {
 		{"multipart, text with a small uuencoded file, then a yEnc part",
 			mix("multipart/mixed; boundary=b", txt(cat(text, uu(12))...),
 				txt("=ybegin line=128 size=6 name=a.bin", "abcdef", "=yend size=6")), "none"},
+		// review of go-while, 3: the type settles at the blank line that ends the header block,
+		// so a base64 encoding before an octet-stream type is a base64 binary with or without
+		{"a base64 encoding before an octet-stream type", atArticle([]string{"Mime-Version: 1.0",
+			"Content-Transfer-Encoding: base64", "Content-Type: application/octet-stream"},
+			atLines(3, 76, b64Alphabet, "")), "none"},
+		{"an octet-stream type before a base64 encoding", atArticle([]string{"Mime-Version: 1.0",
+			"Content-Type: application/octet-stream", "Content-Transfer-Encoding: base64"},
+			atLines(3, 76, b64Alphabet, "")), "none"},
 	} {
 		got := artTypeOf(t, on, c.lines)
 		if want := artTypeOf(t, off, c.lines); got != want {
@@ -1509,6 +1532,27 @@ func TestTextBinaryArtType(t *testing.T) {
 		if v := tbType(off, c.lines); v != "-" {
 			t.Errorf("%s: without textbinary TextBinaryType is shown (%s)", c.name, v)
 		}
+	}
+}
+
+// TestDrequeueTextBinaryField: a SOUT line as FeedAdd() writes it for a binary in a text article
+// has T<size>:<type>:<generation> before the compressed size (L<lines> before that). drequeue
+// has no use for it, but took it for the size: dqueue got "CT732:1:..." for "C77".
+func TestDrequeueTextBinaryField(t *testing.T) {
+	s := NewSite(t, SiteOptions{NoStart: true})
+	in := strings.Join([]string{"SOUT", "D.00000000/B.0000", "0,10", "<tb@e2e.test>", "e2e.test", "world",
+		"e2e.other!not-for-mail", "0", "000000", "L5", "T732:1:6a1d2e3f", "77"}, "\t") + "\n"
+	cmd := exec.Command(filepath.Join(s.Bin, "drequeue"), "peer")
+	cmd.Dir = s.Dir
+	cmd.Env = append(os.Environ(), s.Env...)
+	cmd.Stdin = strings.NewReader(in)
+	b, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("drequeue: %v\n%.400s", err, b)
+	}
+	q := s.ReadFile(t, "dqueue/peer")
+	if !strings.Contains(q, "<tb@e2e.test> 0,10 L5 C77") || strings.Contains(q, "T732") {
+		t.Errorf("dqueue/peer: %.300q, want the line with L5 and C77", q)
 	}
 }
 
@@ -1561,9 +1605,9 @@ func TestTextBinaryOutgoingFeed(t *testing.T) {
 			t.Fatalf("%s: IHAVE %s, want 235 (there is no IFILTER label)", a.name, got)
 		}
 	}
-	// the plain article reaches every feed; the master writes the queues in the order it
-	// got the articles, so when fnone has it the others were decided too
-	s.waitQueue(t, "fnone", 1)
+	// each article has its own connection and the master serves the pipes in no set order:
+	// wait for every article a feed should get, then a second for one it should not
+	waitQueued(t, s, ids, func(i int) []string { return arts[i].want })
 	for _, f := range []string{"fnone", "fsmall", "fbig"} {
 		q := s.queue(t, f)
 		for i, a := range arts {
@@ -1582,8 +1626,12 @@ func TestTextBinaryOutgoingFeed(t *testing.T) {
 // that connection (1830 bytes of uuencode, over the old largest limit) must reach fbig, and a
 // 732-byte one reaches fsmall and fbig. Before the fix the first article was measured with the
 // old limit, got no size for the master, and reached neither (the second one did: FeedAdd had
-// reloaded dnewsfeeds by then). Takes up to a minute and a quarter: dnewsfeeds is checked once a
-// minute, and a file younger than 10 s is left alone for that minute.
+// reloaded dnewsfeeds by then). Also, the article comes right after the minute boundary, when the
+// master (waiting up to 5 s in select()) has not checked dnewsfeeds: the process sends the mtime
+// it measured with and the master loads it. A second connection, made after the change and before
+// the check, has the new file for its label but the largest limit of the master's old one: its
+// process loads the file again at its first check. Takes up to a minute and a quarter: dnewsfeeds
+// is checked once a minute, and a file younger than 10 s is left alone for that minute.
 func TestTextBinaryLimitReload(t *testing.T) {
 	feed := func(name, extra string) string {
 		return "label " + name + "\n    hostname 127.0.0.1\n    alias e2e." + name +
@@ -1613,37 +1661,47 @@ func TestTextBinaryLimitReload(t *testing.T) {
 	time.Sleep(1100 * time.Millisecond)
 	s.WriteFile(t, "dnewsfeeds", cfg("    textbinary 1k\n", "    textbinary 4k\n"))
 	written := time.Now()
+	// a second connection, made after the change and before the master's check: its process
+	// loaded the new file for its own label, but took the largest limit from the master
+	p2 := s.Peer(t)
+	defer p2.ExpectCmd(205, "QUIT")
 	// diablo checks dnewsfeeds once a minute, at the first call in a new minute (the master
 	// at least every 5 s, the connection's process at its next article), and a file younger
 	// than 10 s is left alone for that minute: the first check must come after a minute
-	// boundary that is 11 s or more behind the write, and the master's loop (select() times out
-	// after 5 s) must have run since: 8 s into the minute, not 3 (the master still had the old
-	// limits on the hosted CI runners)
+	// boundary that is 11 s or more behind the write. The first article follows right after
+	// the boundary, while the master (waiting up to 5 s in select()) has not checked yet: the
+	// connection's process has, and the master must load what the article was measured with.
 	boundary := written.Truncate(time.Minute).Add(time.Minute)
 	if boundary.Sub(written) < 11*time.Second {
 		boundary = boundary.Add(time.Minute)
 	}
-	time.Sleep(time.Until(boundary.Add(8 * time.Second)))
+	time.Sleep(time.Until(boundary.Add(300 * time.Millisecond)))
 
 	arts := []struct {
 		name string
 		body []string
 		want []string // the feeds that get it
+		new  bool     // on the connection made after the change
 	}{
-		{"text, 1830 bytes of uuencode, the first after the change", cat2(text, uu(30)), []string{"fbig"}},
-		{"text, 732 bytes of uuencode", cat2(text, uu(12)), []string{"fbig", "fsmall"}},
-		{"text, 8 KB of uuencode", cat2(text, uu(130)), nil},
-		{"plain text", text, []string{"fbig", "fnone", "fsmall"}},
+		{"text, 1830 bytes of uuencode, the first after the change", cat2(text, uu(30)), []string{"fbig"}, false},
+		{"text, 1830 bytes of uuencode, on the connection made after the change", cat2(text, uu(31)), []string{"fbig"}, true},
+		{"text, 732 bytes of uuencode", cat2(text, uu(12)), []string{"fbig", "fsmall"}, false},
+		{"text, 8 KB of uuencode", cat2(text, uu(130)), nil, false},
+		{"plain text", text, []string{"fbig", "fnone", "fsmall"}, true},
 	}
 	ids := make([]string, len(arts))
 	for i, a := range arts {
 		var lines []string
 		lines, ids[i] = art(a.name, a.body...)
-		if got := offerOn(t, p, lines); got != "235" {
+		c := p
+		if a.new {
+			c = p2
+		}
+		if got := offerOn(t, c, lines); got != "235" {
 			t.Fatalf("%s: IHAVE %s, want 235", a.name, got)
 		}
 	}
-	s.waitQueue(t, "fnone", 2) // the plain article before the change and the last one
+	waitQueued(t, s, ids, func(i int) []string { return arts[i].want })
 	for _, f := range []string{"fnone", "fsmall", "fbig"} {
 		q := s.queue(t, f)
 		for i, a := range arts {
@@ -1653,6 +1711,33 @@ func TestTextBinaryLimitReload(t *testing.T) {
 			}
 		}
 	}
+}
+
+// waitQueued waits until every article ids[i] is in the dqueue of each feed in want(i), then
+// a second more, so that a feed that wrongly got an article (or a later one) has it too.
+// The master decides in the order of its pipes, not of the offers, so the first article in a
+// queue is no barrier for the others.
+func waitQueued(t *testing.T, s *Site, ids []string, want func(i int) []string) {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		missing := ""
+		for i := range ids {
+			for _, f := range want(i) {
+				if slices.Contains(deepRevMissing(s.queue(t, f), []string{ids[i]}), ids[i]) {
+					missing = f + " " + ids[i]
+				}
+			}
+		}
+		if missing == "" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("not in the queue after 15 s: %s", missing)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	time.Sleep(time.Second)
 }
 
 // cat2 joins two slices of lines.

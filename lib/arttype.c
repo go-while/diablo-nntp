@@ -105,7 +105,7 @@ static int PieceMore = 0;	/* the last call was a piece: the line goes on */
 
 /*
  * A binary in a text article (the 'textbinary' option of the IFILTER label
- * in dnewsfeeds).  With TextBinMax set, the text before the article
+ * and of the feeds in dnewsfeeds).  With TextBinMax set, the text before the article
  * becomes a binary is counted: the lines of a body that is not MIME, or of
  * a text part, except lines with only white space, part headers and MIME
  * delimiters, the begin and end lines of a uuencoded or BinHex file and
@@ -129,6 +129,7 @@ static int TBOther = 0;		/* a binary that is not runs of encoded lines */
 static long TBEnc = 0;		/* bytes of encoded data */
 static long TBText = 0;		/* bytes of text before the article became a binary */
 static long TBPending = 0;	/* bytes of the run being read, not yet 9 lines */
+static long TBShort = 0;	/* bytes of the runs of fewer than 9 lines that ended before the binary */
 static int TBRunKind = 0;	/* UUE, BHX or B64: a run of 9 or more lines is being read */
 static int TBTrail = 0;		/* the kind of the run that just ended, for its last lines */
 static int TBTrailLeft = 0;	/* lines after a run that may still be its last short lines */
@@ -618,6 +619,7 @@ InitArticleType(void)
     TBEnc = 0;
     TBText = 0;
     TBPending = 0;
+    TBShort = 0;
     TBRunKind = 0;
     TBTrail = 0;
     TBTrailLeft = 0;
@@ -626,8 +628,9 @@ InitArticleType(void)
 }
 
 /*
- * The 'textbinary' limit of the IFILTER label for the next articles, in
- * bytes; 0 turns the measuring off.  Set it before InitArticleType().
+ * The limit for the next articles, in bytes: the largest 'textbinary' of the
+ * IFILTER label and the feeds (FeedTextBinaryMax()); 0 turns the measuring
+ * off.  Set it before InitArticleType().
  */
 void
 ArticleTypeTextBinary(int max)
@@ -640,7 +643,7 @@ ArticleTypeTextBinary(int max)
  * within the 'textbinary' limit (it has text, and encoded data of at most
  * that many bytes, and no binary of another kind), the article's type
  * without its binary bits (ARTTYPE_DEFAULT if no other bit is left), for
- * the IFILTER label to be checked again with.  The type is the one of the
+ * the IFILTER label and the feeds to be checked again with.  The type is the one of the
  * whole article, read on to its end: a type that comes after the binary
  * (an HTML part) is in it.  Otherwise -1.
  */
@@ -677,12 +680,16 @@ ArticleTypeTextBinarySize(void)
 
 /*
  * A run of encoded lines ended: one of fewer than 9 lines is neither text
- * nor data (it does not make the article a binary); after one of 9 or more
- * come its last short lines (tbLine).
+ * nor data (it does not make the article a binary), but it is counted as
+ * data if a run of 9 or more follows (TBShort); after one of 9 or more come
+ * its last short lines (tbLine).
  */
 static void
 tbRunEnd(void)
 {
+    /* data that is cut into short runs is counted once a long run shows it is a binary */
+    if (!TBFrozen)
+	TBShort += TBPending;
     TBPending = 0;
     if (TBRunKind) {
 	TBTrail = TBRunKind;
@@ -801,8 +808,9 @@ tbLine(const char *ptr, int len, int kind, int count)
     } else if (count < 9) {
 	TBPending += len;
     } else if (count == 9) {
-	TBEnc += TBPending + len;
+	TBEnc += TBPending + TBShort + len;
 	TBPending = 0;
+	TBShort = 0;
 	TBRunKind = kind;
     } else {
 	TBEnc += len;
@@ -1403,6 +1411,22 @@ decodedLineTypes(char *ptr, int len)
 {
     yencLine(ptr, len);
     /*
+     * Text before the binary (TBText): the decoded non-blank characters of
+     * the line, but not what frames an encoded file (tbFraming), as for a
+     * plain line.  Only whether there is any is asked.
+     */
+    if (TBACTIVE() && !TBFrozen && len > 0 && !tbFraming(ptr, len)) {
+	int i;
+
+	for (i = 0; i < len; i++) {
+	    if (ptr[i] != ' ' && ptr[i] != '\t' && ptr[i] != '\r' &&
+							ptr[i] != '\n') {
+		TBText++;
+		break;
+	    }
+	}
+    }
+    /*
      * A binary found before is no reason to stop (and to refuse the
      * article) when it is measured: only this line counts
      */
@@ -1479,7 +1503,6 @@ b64Decode(const char *buf, int len)
     int dlen = DLineLen, cr = DLineCR;
     int i, v, b;
     int unclean = 0;
-    int tbtext = (TBACTIVE() && !TBFrozen);	/* count its text (TBText) */
 
     for (i = 0; i < len; i++) {
 	v = B64Val[(unsigned char)buf[i]];
@@ -1513,8 +1536,6 @@ b64Decode(const char *buf, int len)
 	if (b >= 0x20 && b != 0x7f) {
 	    /* the common case: a printable byte of the decoded line */
 	    cr = 0;
-	    if (tbtext && b != ' ')
-		TBText++;	/* decoded text, not its encoded lines */
 	    if (dlen < DLINE_MAX)
 		DLine[dlen++] = b;
 	    continue;
@@ -1610,7 +1631,13 @@ tbResult(int t)
 {
     if (TBFrozen)
 	return(TBFrozen);
-    if (TextBinMax > 0 && (t & ARTTYPE_BINARY)) {
+    /*
+     * Not inside a header block: a Content-Transfer-Encoding: base64 sent
+     * before a Content-Type: application/octet-stream settles its type at
+     * the blank line that ends the block (articleType()), as without
+     * TextBinMax.
+     */
+    if (TextBinMax > 0 && (t & ARTTYPE_BINARY) && !HdrBlock) {
 	TBFrozen = t;
 	/* no text before the binary: it is not measured, nor read on */
 	if (TBText <= 0)
