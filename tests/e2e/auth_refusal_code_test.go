@@ -32,8 +32,8 @@ func TestAuthRefusalFullCode(t *testing.T) {
 }
 
 // TestAuthFailedNoStatusLine: a client whose AUTHINFO PASS is wrong gets no readerdef name
-// from the worker, and the main process takes the first readerdef of dreader.access for it.
-// When that readerdef asks for the status report ("status yes", a monitoring entry), the
+// from the worker, and the main process takes readerdef DEFAULT for it (the first entry of
+// the access cache). When the admin's DEFAULT asks for the status report ("status yes"), the
 // refused client got the "180 ... status: connect= ..." line with the server's counters
 // instead of 481. The status line is now only for a client that is let in.
 func TestAuthFailedNoStatusLine(t *testing.T) {
@@ -46,7 +46,7 @@ end
 authdef byfile
     file `+filepath.Join(s.Dir, "userpass")+`
 end
-readerdef monitor
+readerdef DEFAULT
     status yes
 end
 readerdef userfile

@@ -3134,8 +3134,8 @@ HandleDnsThread(ForkDesc *desc)
 
         /*
          * The status line only for a client that is let in: a refused one
-         * whose readerdef (the first one, for an unknown name) asks for
-         * the status gets its refusal
+         * whose readerdef (DEFAULT, for an unknown name) asks for the
+         * status gets its refusal
          */
         if (error1 == NULL && (dres.dr_Flags & DF_STATUS)) {
             snprintf(errbuf, sizeof(errbuf), "180 %s status: connect=%d failed=%d dns=%d/%d act=%d/%d\r\n", dres.dr_VServerDef->vs_HostName,
