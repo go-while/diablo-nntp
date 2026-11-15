@@ -6,19 +6,8 @@ import (
 	"time"
 
 	testkit "github.com/go-while/nntp-testkit"
-	"github.com/go-while/nntp-testkit/client"
 	"github.com/go-while/nntp-testkit/fakeserver"
 )
-
-// hasID reports whether the article with this Message-ID is there.
-func hasID(c *client.Conn, id string) bool {
-	code, _ := c.Cmd("STAT %s", id)
-	return code == 223
-}
-
-// readersupersedelock: a Supersedes: header has its own Cancel-Lock mode, with the values of
-// readercanlock. Unset, a supersede follows readercanlock (the behaviour before the option);
-// cancels always use readercanlock.
 
 // supersedeLockSite starts a reader site with the given diablo.config directives and a
 // dcontrol.ctl that executes cancels.
@@ -64,6 +53,7 @@ func TestSupersedeLockSeparate(t *testing.T) {
 			s, st := supersedeLockSite(t, tc.cfg)
 			c := s.Reader(t)
 			defer c.ExpectCmd(205, "QUIT")
+			// article numbers in e2e.test: old 1, target 2, replacement 3
 			old, target, replacement := msgID(t), msgID(t), msgID(t)
 			feedAndSettle(t, s, st, c,
 				newArticle(old, "e2e.test", "old version", "the old version"),
@@ -77,13 +67,13 @@ func TestSupersedeLockSeparate(t *testing.T) {
 				return (tc.supLog == "" || strings.Contains(log, "supersede "+old+" by "+replacement+": "+tc.supLog)) &&
 					(tc.canLog == "" || strings.Contains(log, "cancel "+target+": "+tc.canLog))
 			})
-			if gone := !hasID(c, old); gone != tc.supersedes {
+			if gone := !present(t, c, 1); gone != tc.supersedes {
 				t.Errorf("superseded article gone: %v, want %v", gone, tc.supersedes)
 			}
-			if gone := !hasID(c, target); gone != tc.cancelGone {
+			if gone := !present(t, c, 2); gone != tc.cancelGone {
 				t.Errorf("canceled article gone: %v, want %v", gone, tc.cancelGone)
 			}
-			if !hasID(c, replacement) {
+			if !present(t, c, 3) {
 				t.Errorf("the superseding article was not stored")
 			}
 			if tc.supLog != "" && !strings.Contains(log, "supersede "+old+" by "+replacement+": "+tc.supLog) {
