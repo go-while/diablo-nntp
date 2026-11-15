@@ -1014,10 +1014,12 @@ ctGather(const char *p, int len, int more)
 }
 
 /*
- * Skip white space and comments ("(...)", nested, with quoted pairs).
+ * Skip white space and comments ("(...)", nested, with quoted pairs).  A
+ * comment left open runs to the end; *unclosed (when not NULL) is set to 1
+ * then.
  */
 static const char *
-mimeSkip(const char *p, const char *e)
+mimeSkipOpen(const char *p, const char *e, int *unclosed)
 {
     int depth;
 
@@ -1036,7 +1038,15 @@ mimeSkip(const char *p, const char *e)
 		break;
 	    }
 	}
+	if (depth > 0 && unclosed != NULL)
+	    *unclosed = 1;
     }
+}
+
+static const char *
+mimeSkip(const char *p, const char *e)
+{
+    return(mimeSkipOpen(p, e, NULL));
 }
 
 /*
@@ -1161,23 +1171,24 @@ cteGather(const char *p, int len, int more)
 /*
  * The end of a gathered Content-Transfer-Encoding header: the encoding is
  * an identity one (7bit, 8bit or binary, without case) when that token is
- * all there is but white space and comments.  Anything else, an unknown
- * encoding too, is not.
+ * all there is but white space and closed comments.  Anything else, an
+ * unknown encoding or a comment left open too, is not.
  */
 static void
 cteFinish(void)
 {
     const char *p = CTEBuf, *e = CTEBuf + CTELen, *a;
-    int n;
+    int n, unclosed = 0;
 
     CTECont = 0;
-    p = mimeSkip(p, e);
+    p = mimeSkipOpen(p, e, &unclosed);
     for (a = p; p < e && *p != ' ' && *p != '\t' && *p != '(' &&
 					*p != '\r' && *p != '\n'; ++p)
 	;
     n = (int)(p - a);
-    p = mimeSkip(p, e);
-    CTEIdentity = (!CTETrunc && p >= e &&
+    p = mimeSkipOpen(p, e, &unclosed);
+    /* a comment left open is malformed: not an identity encoding */
+    CTEIdentity = (!CTETrunc && !unclosed && p >= e &&
 	((n == 4 && (strncasecmp(a, "7bit", 4) == 0 ||
 		     strncasecmp(a, "8bit", 4) == 0)) ||
 	 (n == 6 && strncasecmp(a, "binary", 6) == 0)));
