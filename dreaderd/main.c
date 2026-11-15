@@ -610,11 +610,13 @@ main(int ac, char **av)
     }
 
     /*
-     * Can't do OpenLog() yet, but we do want to be able to log
-     * errors, so initialize standard syslog.
+     * Can't do the final OpenLog() yet, but we do want to be able to log
+     * errors, so initialize syslog now.  OpenLog() also sets the identity
+     * of the general log: without it the lines logged from here on until
+     * the final OpenLog() ("Listening on ...", warnings) had no "dreaderd:"
+     * in front of them.
      */
-    openlog("dreaderd", (DebugOpt ? LOG_PERROR : 0) | LOG_NDELAY | LOG_PID,
-            LOG_NEWS);
+    OpenLog("dreaderd", (DebugOpt ? LOG_PERROR : 0) | LOG_NDELAY | LOG_PID);
 
     if (DOpts.ReaderForks == READERFORKS_AUTO) {
 	int cpus = AvailableCpus();
