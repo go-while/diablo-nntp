@@ -96,7 +96,8 @@ func TestDeepRevDrcmdDrippingClient(t *testing.T) {
 // drcmdSend sends raw on a new control connection, closes the sending side and returns what
 // came back and whether the connection was closed (EOF or reset, not the read deadline). For
 // a line that is to be refused (refused), dreaderd closes the connection as soon as the byte
-// past the buffer shows the line too long, so the write may fail with EPIPE or ECONNRESET;
+// past the buffer shows the line too long, so the write may fail with EPIPE or ECONNRESET
+// (FreeBSD: ENOTCONN, for a write to a unix socket whose peer has closed);
 // then what follows is still read, and broke tells that the write broke off. The count of the
 // failed write is not used: NetBSD (and other BSD kernels) report -1 and EPIPE for a write()
 // that sent most of its bytes before the close, and Go then counts 0 bytes, so that a count of
@@ -117,7 +118,8 @@ func drcmdSend(t *testing.T, sock, raw string, refused bool, sndbuf int) (text s
 	}
 	c.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	if n, err := c.Write([]byte(raw)); err != nil {
-		if refused && (errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET)) {
+		if refused && (errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) ||
+			errors.Is(err, syscall.ENOTCONN)) {
 			text, closed = readToEOF(c, 8*time.Second)
 			return text, closed, true
 		}
