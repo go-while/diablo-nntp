@@ -125,8 +125,8 @@ func TestSupersedeLockWarningNoLibcanlock(t *testing.T) {
 	skipWithoutCanLockMode(t)
 	skipWithCanLock(t)
 	for _, tc := range []struct {
-		name         string
-		cfg          map[string]string
+		name          string
+		cfg           map[string]string
 		want, notWant string
 	}{
 		{"cancels require-auth, supersedes all",
