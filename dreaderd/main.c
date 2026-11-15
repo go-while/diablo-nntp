@@ -194,7 +194,7 @@ static void DnsRefuseLog(int r);
 static void DnsQInitLimits(void);
 static int IsAuthRefusal(const char *s);
 static int AuthFieldSpace(int c);
-static void AuthRefusalLine(char *buf, size_t len, const char *p);
+static void AuthRefusalLine(char *buf, size_t len, const char *p, int authinfo);
 
 /*
  * Clients on their way to a reader whose socketpair is full.  The main
@@ -2069,16 +2069,23 @@ AuthFieldSpace(int c)
  * goes out.  Without a text it is "NNN Access denied"; when p is no
  * refusal at all (a "600" ban without the code that is to follow it) it
  * is "502 Access denied".  The text starts at buf + 4 in every case.
+ *
+ * The code goes out only when it is one a refusal can have, compared as
+ * the whole number: 400 or 502 (RFC 3977 5.1.1), and 481 when the client
+ * sent AUTHINFO (authinfo, RFC 4643 2.3.1).  Any other code ("281 x", a
+ * success code, or "500 x") becomes 502, with the backend's text kept.
  */
 static void
-AuthRefusalLine(char *buf, size_t len, const char *p)
+AuthRefusalLine(char *buf, size_t len, const char *p, int authinfo)
 {
     const char *code = "502";
     const char *text = "";
     int n;
 
     if (IsAuthRefusal(p)) {
-	code = p;
+	if (strncmp(p, "400", 3) == 0 || strncmp(p, "502", 3) == 0 ||
+		(authinfo && strncmp(p, "481", 3) == 0))
+	    code = p;
 	for (text = p + 3; AuthFieldSpace(*text); text++) {
 	}
     }
@@ -2968,7 +2975,6 @@ HandleDnsThread(ForkDesc *desc)
     const char *error1 = NULL;
     const char *error2 = NULL;
     const char *vsname = "-";	/* only known once SetAuthDetails() ran */
-    int BadAuthName = 0;	/* backend answer: no refusal, no readerdef */
     char errbuf[1024], *p;
     int r;
 #ifdef READER_BAN_LISTS
@@ -3045,7 +3051,9 @@ HandleDnsThread(ForkDesc *desc)
 	     * and actually only tweaks the host banned count.
 	     * The fields are separated by white space (AuthFieldSpace()),
 	     * a CR or LF ends the answer.  A bare "600" bans nobody; the
-	     * client gets the generic refusal line.
+	     * client gets the generic refusal line.  The code after the
+	     * minutes goes out only if a refusal may have it (the "500" of
+	     * the example becomes 502, see AuthRefusalLine()).
 	     */
 
 	    for (p += 3; AuthFieldSpace(*p); p++) {
@@ -3070,7 +3078,8 @@ HandleDnsThread(ForkDesc *desc)
 #endif
 	    }
 	}
-	AuthRefusalLine(errbuf, sizeof(errbuf), p);
+	AuthRefusalLine(errbuf, sizeof(errbuf), p,
+		    dres.dr_AuthUser[0] && dres.dr_AuthPass[0]);
 	error1 = errbuf;
 	/* Point error2 at errbuf + 4 to catch the specific error */
 	/* error2 = "CustomError"; */
@@ -3106,10 +3115,9 @@ HandleDnsThread(ForkDesc *desc)
 		strcmp(dres.dr_ReaderDef->rd_Name, dres.dr_ReaderName) != 0) {
 	    logit(LOG_ERR, "authentication from %s: the answer of the backend starts with three digits and is no readerdef, login refused",
 		    NetAddrToSt(0, (struct sockaddr *)&dres.dr_Addr, 1, 0, 0));
-	    AuthRefusalLine(errbuf, sizeof(errbuf), "");
+	    AuthRefusalLine(errbuf, sizeof(errbuf), "", 0);
 	    error1 = errbuf;
 	    error2 = errbuf + 4;
-	    BadAuthName = 1;
         } else if (dres.dr_Code == 0 && dres.dr_AuthUser[0] && dres.dr_AuthPass[0]) {
 	    /* AUTHINFO USER/PASS that no access entry accepts (RFC 4643) */
 	    snprintf(errbuf, sizeof(errbuf), "481 Authentication failed\r\n");
@@ -3124,7 +3132,12 @@ HandleDnsThread(ForkDesc *desc)
 	    error2 = "Unauthorized";
         }
 
-        if (!BadAuthName && (dres.dr_Flags & DF_STATUS)) {
+        /*
+         * The status line only for a client that is let in: a refused one
+         * whose readerdef (DEFAULT, for an unknown name) asks for the
+         * status gets its refusal
+         */
+        if (error1 == NULL && (dres.dr_Flags & DF_STATUS)) {
             snprintf(errbuf, sizeof(errbuf), "180 %s status: connect=%d failed=%d dns=%d/%d act=%d/%d\r\n", dres.dr_VServerDef->vs_HostName,
 		    ConnectCount, FailCount, 
 		    NumPending, DOpts.ReaderDns,

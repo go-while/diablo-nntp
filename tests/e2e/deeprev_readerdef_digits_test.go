@@ -162,12 +162,14 @@ func TestDeepRevReaderdefDigitsBareCode(t *testing.T) {
 // ban, with reader ban lists) sends the client the "NNN text" that follows the minutes. Its
 // fields may be separated by spaces or TABs, and a "600" without a code after the minutes, or
 // a bare "600", must still give a well-formed refusal line, the generic "502 Access denied",
-// not an empty line and not a login.
+// not an empty line and not a login. The old samples' "500" is no reply to AUTHINFO PASS:
+// it goes out as 502, with the text.
 func TestDeepRevAuthRefusalBanLine(t *testing.T) {
-	s := refusalSite(t, "sp:pw:600 1 500 Go away\ntab:pw:600\t1\t500\tGo away\nnocode:pw:600 1\nbare:pw:600\n")
+	s := refusalSite(t, "sp:pw:600 1 502 Go away\ntab:pw:600\t1\t502\tGo away\nnocode:pw:600 1\nbare:pw:600\nold:pw:600 1 500 Go away\n")
 	for _, tc := range []struct{ user, want string }{
-		{"sp", "500 Go away"},
-		{"tab", "500 Go away"},
+		{"sp", "502 Go away"},
+		{"tab", "502 Go away"},
+		{"old", "502 Go away"},
 		{"nocode", "502 Access denied"},
 		{"bare", "502 Access denied"},
 	} {
