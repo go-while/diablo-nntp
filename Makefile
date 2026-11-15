@@ -42,7 +42,7 @@ CFLAGS += -MMD -MP
 LDFLAGS += -Lobj
 LDLIBS += -lfilter -ldiablo -lm -lcrypto
 
-# The libraries behind the optional features (zlib, libcanlock, Berkeley DB, cdb, PAM, LDAP,
+# The libraries behind the optional features (zlib, libcanlock, Berkeley DB, cdb, PAM,
 # Perl, RADIUS) are found by ./configure, which sets the options in lib/vendor.h and writes
 # their compiler and linker flags, and the programs they add (OPTIONAL_PROGS), to config.mk.
 # Run it before make.

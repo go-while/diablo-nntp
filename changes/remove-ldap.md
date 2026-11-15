@@ -1,0 +1,1 @@
+- dreaderd: LDAP authentication is removed (the LDAP_ENABLED and NEW_LDAP options, `ldap.h` and the `-lldap` libraries). An `ldap` line in an authdef is now an invalid option like any other unknown one: the dreader.access file is not installed. `./configure` no longer probes OpenLDAP and has no `--with-ldap` or `--without-ldap`.

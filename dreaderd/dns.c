@@ -11,15 +11,6 @@
 #include "defs.h"
 #include <setjmp.h>
 
-#ifdef LDAP_ENABLED
-#define LDAP_COMPARE
-/* the synchronous calls used below are deprecated, but still in OpenLDAP 2.x */
-#ifndef LDAP_DEPRECATED
-#define LDAP_DEPRECATED 1
-#endif
-#include <lber.h>
-#include <ldap.h>
-#endif
 #if defined(RADIUS_ENABLED) && defined(RADIUS_RADCLI)
 #include <radcli/radcli.h>
 #endif
@@ -93,13 +84,6 @@ char *dbAuthenticate(char *user, char *pass, char *conf);
 void netRemoteAccounting(DnsReq *dreq);
 char *netRemoteAuthenticate(char *user, char *pass, char *conf, char *localip, char *remoteip);
 #endif
-#ifdef LDAP_ENABLED
-#ifdef NEW_LDAP
-char * LDAPAuthenticate(char *user, char *pass, char *realm, char *conf);
-#else
-char * LDAPAuthenticate(char *user, char *pass, char *conf);
-#endif
-#endif  /* LDAP_ENABLED */
 #ifdef PERL_ENABLED
 char * PerlAuthenticate(char *user, char *pass, char *conf);
 #endif
@@ -293,15 +277,14 @@ WriteDnsResponse(int fd, const DnsRes *dres)
     return(0);
 }
 
-#if defined(NETREMOTE_ENABLED) || defined(LDAP_ENABLED) || \
-    defined(PERL_ENABLED) || defined(PAM_ENABLED)
+#if defined(NETREMOTE_ENABLED) || defined(PERL_ENABLED) || \
+    defined(PAM_ENABLED)
 #define AUTH_CALLS	/* backends that AuthCall() bounds */
 #endif
 
 #define AC_NETREMOTE	1
-#define AC_LDAP		2
-#define AC_PERL		3
-#define AC_PAM		4
+#define AC_PERL		2
+#define AC_PAM		3
 
 /*
  * AuthTimeoutName() - the backend of dr_AuthTimeout, for main's log line.
@@ -309,7 +292,7 @@ WriteDnsResponse(int fd, const DnsRes *dres)
 const char *
 AuthTimeoutName(int how)
 {
-    static const char *names[] = { "", "NetRemote", "LDAP", "Perl", "PAM" };
+    static const char *names[] = { "", "NetRemote", "Perl", "PAM" };
 
     how &= ~DR_AUTHTO_EXIT;
     if (how < 0 || how >= (int)(sizeof(names) / sizeof(names[0])))
@@ -336,12 +319,12 @@ AuthNow(void)
  * Auth time limit (readerauthtimeout).  A DNS worker serves one request
  * at a time, so a backend that hangs holds the worker.
  *
- * LDAP and NetRemote share one deadline (AuthEnd) for the whole exchange,
- * and each step gets the time left as its own timeout.  When that runs
- * out, the login is refused and the worker goes on.
+ * NetRemote has a deadline (AuthEnd) for the whole exchange, and each
+ * step gets the time left as its own timeout.  When that runs out, the
+ * login is refused and the worker goes on.
  *
  * AuthCall() also arms alarm(): at the limit for Perl and PAM, AUTH_GRACE
- * later for LDAP and NetRemote.  A call still running then may hold a libc
+ * later for NetRemote.  A call still running then may hold a libc
  * lock (syslog, the resolver) or be inside malloc, so the worker must not
  * go on.  The handler sends the refusal with write() and ends the worker
  * with _exit(); main logs the timeout and starts a new worker.
@@ -368,7 +351,6 @@ typedef struct AuthArgs {
     char	*user;
     char	*pass;
     char	*conf;
-    char	*realm;
     char	*localip;
     const char	*ipname;
 } AuthArgs;
@@ -381,14 +363,6 @@ AuthBackend(int how, AuthArgs *a)
     case AC_NETREMOTE:
 	return(netRemoteAuthenticate(a->user, a->pass, a->conf, a->localip,
 					(char *)a->ipname));
-#endif
-#ifdef LDAP_ENABLED
-    case AC_LDAP:
-#ifdef NEW_LDAP
-	return(LDAPAuthenticate(a->user, a->pass, a->realm, a->conf));
-#else
-	return(LDAPAuthenticate(a->user, a->pass, a->conf));
-#endif
 #endif
 #ifdef PERL_ENABLED
     case AC_PERL:
@@ -430,7 +404,7 @@ AuthCall(int how, AuthArgs *a, DnsRes *dres)
     sigaction(SIGALRM, &sa, &osa);
     AuthRes = dres;
     AuthHow = how;
-    alarm((how == AC_LDAP || how == AC_NETREMOTE) ? secs + AUTH_GRACE : secs);
+    alarm(how == AC_NETREMOTE ? secs + AUTH_GRACE : secs);
     r = AuthBackend(how, a);
     alarm(0);
     AuthHow = 0;
@@ -444,23 +418,6 @@ AuthCall(int how, AuthArgs *a, DnsRes *dres)
     }
     return(r);
 }
-
-#ifdef LDAP_ENABLED
-/* milliseconds left until AuthEnd; -1 without a limit, 0 when it passed */
-static double
-AuthLeft(void)
-{
-    double left;
-
-    if (AuthEnd <= 0)
-	return(-1);
-    if ((left = AuthEnd - AuthNow()) <= 0) {
-	AuthTimedOut = 1;
-	return(0);
-    }
-    return(left);
-}
-#endif
 #endif	/* AUTH_CALLS */
 
 #if defined(NETREMOTE_ENABLED) || !defined(INET6)
@@ -497,36 +454,6 @@ AuthWait(int fd, int events, double deadline)
 }
 #endif
 
-#ifdef LDAP_ENABLED
-/*
- * OpenLDAP's first API call initializes process-global state, including a
- * canonical lookup of the local hostname.  Do that in the DNS worker when
- * LDAP first appears in its access map, before any per-login AuthCall()
- * deadline.  A slow local resolver must not consume the first login's
- * connect/bind/search/compare budget.  No LDAP connection is opened here.
- */
-static void
-LDAPAuthInit(void)
-{
-    static int initialized;
-    int i;
-
-    if (initialized)
-	return;
-    for (i = 0; i < accessmap.AuthCount; ++i) {
-	if (accessmap.AuthList[i].au_LDAP[0]) {
-	    int version;
-
-	    if (ldap_get_option(NULL, LDAP_OPT_PROTOCOL_VERSION, &version) == LDAP_OPT_SUCCESS)
-		initialized = 1;
-	    else
-		logit(LOG_ERR, "Unable to initialize LDAP global options");
-	    break;
-	}
-    }
-}
-#endif
-
 /*
  * This is the process that loops handling DNS and authentication requests
  *
@@ -543,9 +470,6 @@ DnsTask(int fd, const char *id)
      */
     DnsReq dreq;
     int n;
-#ifdef LDAP_ENABLED
-    int ldapChecked = 0;
-#endif
 
     DFd = fd;
 
@@ -579,13 +503,6 @@ DnsTask(int fd, const char *id)
 	cacheChanged = ReadAccessCache();
 	if (cacheChanged == 1)
 	    ClearOldAccessMap();
-#ifdef LDAP_ENABLED
-	/* The initial map may have been inherited from main at fork. */
-	if (!ldapChecked || cacheChanged == 1) {
-	    LDAPAuthInit();
-	    ldapChecked = 1;
-	}
-#endif
 	if (dreq.dr_ResultFlags == DR_SESSEXIT_RPT) {
 		/*
 		 * This handles session termination reporting, from a
@@ -1535,539 +1452,6 @@ netRemoteAuthenticate(char *user, char *pass, char *conf, char *localip, char *r
 }
 #endif
 
-#ifdef		LDAP_ENABLED
-
-static LDAP *LdapLd = NULL;	/* the connection, kept between logins */
-#ifndef NEW_LDAP
-static char *LdapLdConf = NULL;	/* the authdef URL LdapLd was opened for */
-#endif
-
-/*
- * The time left of AuthCall()'s deadline as a timeval: -1 without a limit,
- * 0 when it has passed (AuthTimedOut), else 1.  Each step of the exchange
- * (connect, bind, search, compare) gets only what is left, so the
- * library's timeouts come before AuthCall()'s alarm.
- */
-static int
-LDAPLeft(struct timeval *tv)
-{
-    double left = AuthLeft();
-
-    if (left < 0)
-	return(-1);
-    if (left == 0)
-	return(0);
-    tv->tv_sec = (long)(left / 1000);
-    tv->tv_usec = (long)((left - tv->tv_sec * 1000.0) * 1000);
-    if (tv->tv_sec == 0 && tv->tv_usec == 0)
-	tv->tv_usec = 1;
-    return(1);
-}
-
-/* the time left as the library's connect and operation timeouts */
-static void
-LDAPTimeouts(LDAP *ld)
-{
-    struct timeval tv;
-
-    if (LDAPLeft(&tv) <= 0)
-	return;
-#ifdef LDAP_OPT_NETWORK_TIMEOUT
-    ldap_set_option(ld, LDAP_OPT_NETWORK_TIMEOUT, &tv);
-#endif
-#ifdef LDAP_OPT_TIMEOUT
-    ldap_set_option(ld, LDAP_OPT_TIMEOUT, &tv);
-#endif
-}
-
-/* a simple bind (and the connect) within the time left */
-static int
-LDAPBind(LDAP *ld, char *who, char *pw)
-{
-    struct timeval tv;
-    LDAPMessage *res = NULL;
-    int msgid;
-    int rc;
-
-    switch (LDAPLeft(&tv)) {
-    case -1:
-	return(ldap_simple_bind_s(ld, who, pw));
-    case 0:
-	return(LDAP_TIMEOUT);
-    }
-    LDAPTimeouts(ld);
-    rc = LDAP_OTHER;
-    if ((msgid = ldap_simple_bind(ld, who, pw)) < 0) {
-	ldap_get_option(ld, LDAP_OPT_ERROR_NUMBER, &rc);
-    } else if (LDAPLeft(&tv) == 0) {
-	rc = LDAP_TIMEOUT;
-    } else {
-	switch (ldap_result(ld, msgid, LDAP_MSG_ALL, &tv, &res)) {
-	case 0:
-	    rc = LDAP_TIMEOUT;
-	    break;
-	case -1:
-	    ldap_get_option(ld, LDAP_OPT_ERROR_NUMBER, &rc);
-	    break;
-	default:
-	    rc = ldap_result2error(ld, res, 1);
-	    break;
-	}
-    }
-    if (rc == LDAP_TIMEOUT)
-	AuthTimedOut = 1;
-    return(rc);
-}
-
-/* ldap_search_s() within the time left */
-static int
-LDAPSearch(LDAP *ld, char *base, int scope, char *filter, char **attrs,
-		LDAPMessage **res)
-{
-    struct timeval tv;
-    int rc;
-
-    *res = NULL;
-    switch (LDAPLeft(&tv)) {
-    case -1:
-	return(ldap_search_s(ld, base, scope, filter, attrs, 0, res));
-    case 0:
-	return(LDAP_TIMEOUT);
-    }
-    LDAPTimeouts(ld);
-    rc = ldap_search_ext_s(ld, base, scope, filter, attrs, 0, NULL, NULL,
-				&tv, LDAP_NO_LIMIT, res);
-    if (rc == LDAP_TIMEOUT)
-	AuthTimedOut = 1;
-    return(rc);
-}
-
-#ifdef NEW_LDAP
-/*
- * Send an authenticate request to an LDAP server
- *
- * Returns:	NULL	failure
- *		 "100 Sucess"	success
- *
- * Configuration is done via an LDAP URL of the form:
- *
- * ldap://hostname[:port]/dn?userPassword?scope?filter [username:passwd]
- *
- * where:
- *	userPassword is the attribute that contains the clear text password,
- *	usually called "userPassword".
- *
- *	scope is probably normally "sub" or "base".
- *
- * 	filter consists of the username and password attributes and any
- *	other site specific search options required to narrow a search
- *	to a single user. The following values can be used and will
- *	be replaced by the corresponding value supplied from Diablo.
- *
- *		$USER$		username
- *		$PASS$		password
- *		$REALM$		authentication domain, if realms are used
- *
- *	username:passwd is the username and password with which to
- *	authenticate to the LDAP server. If they are not specified,
- *	anonymous authentication is done.
- *
- * Example:
- *
- * ldap://host.example.com/dc=$REALM$,dn=example.com?userPassword?sub?(userName=$USER$)
- *
- */
-char *
-LDAPAuthenticate(char *user, char *pass, char *realm, char *conf)
-{
-    char *result = NULL;
-    char url[1024];
-    LDAPURLDesc *ludp;
-    char *confst = NULL;
-    char *r;
-    char *p;
-    LDAPMessage *res;
-    LDAPMessage *m;
-    int msgid;
-    int rcode;
-    char *ldapuser = NULL;
-    char *ldappass = NULL;
-
-    /*
-     * Parse the configuration options to extract the URL and the
-     * LDAP auth options
-     */
-    r = strdup(conf);
-    confst = strsep(&r, " \t");
-    if (confst != NULL) {
-	p = r;
-	while ((p = strsep(&r, " \t")) != NULL) {
-	    ldapuser = p;
-	    p = strchr(p, ':');
-	    if (p != NULL) {
-		   *p++ = 0;
-		   ldappass = p;
-	    }
-	}
-    } else {
-	confst = r;
-    }
-    if (LdapLd != NULL && (confst == NULL || strcmp(confst, conf) != 0)) {
-	ldap_unbind_s(LdapLd);
-	LdapLd = NULL;
-    }
-
-    /*
-     * Make a new connection to the LDAP server if one isn't already there
-     */
-    if (LdapLd == NULL) {
-	if (ldap_is_ldap_url(confst) == 0) {
-	    logit(LOG_ERR, "Not an LDAP URL: %s\n", conf);
-	    free(confst);
-	    return(NULL);
-	}
-
-	if (ldap_url_parse(confst, &ludp) != 0) {
-	    logit(LOG_ERR,"Unable to parse LDAP URL: %s\n", confst);
-	    free(confst);
-	    return(NULL);
-	}
-
-	/* Open LDAP connection */
-	if ((LdapLd = ldap_init(ludp->lud_host, ludp->lud_port)) == NULL) {
-	    /* Couldn't contact server - fail authentication attempt */
-	    logit(LOG_ERR,"Unable to connect to LDAP server: %s\n", confst);
-	    free(confst);
-	    ldap_free_urldesc(ludp);
-	    return(NULL);
-	}
-
-        ldap_free_urldesc(ludp);
-
-	if ((msgid = LDAPBind(LdapLd, ldapuser, ldappass)) !=
-								LDAP_SUCCESS) {
-	    /* Bind failed - fail auth attempt */
-	    logit(LOG_ERR,"LDAP bind failed: %s\n", confst);
-	    free(confst);
-	    ldap_unbind_s(LdapLd);
-	    LdapLd = NULL;
-	    return(NULL);
-	}
-	if (DebugOpt)
-	    printf("Connection to LDAP server established\n");
-    }
-
-    /*
-     * Setup the search parameters and substitute the user, pass and domain
-     * fields into the search URL
-     */
-    {
-	/*
-	 * Each $USER$ adds up to 63 bytes, so the template (up to 254)
-	 * can expand past url: refuse the login rather than overrun it.
-	 */
-	char *src = confst;
-	size_t used = 0;
-	int tooLong = 0;
-
-	while (*src && !tooLong) {
-	    const char *ins = NULL;
-
-	    if (user && strncmp(src, "$USER$", 6) == 0) {
-		src += 6;
-		ins = user;
-	    } else if  (pass && strncmp(src, "$PASSWD$", 8) == 0) {
-		src += 8;
-		ins = pass;
-	    } else if  (realm && strncmp(src, "$REALM$", 7) == 0) {
-		src += 7;
-		ins = realm;
-	    }
-	    if (ins != NULL) {
-		size_t l = strlen(ins);
-
-		if (l >= sizeof(url) - used)
-		    tooLong = 1;
-		else {
-		    memcpy(url + used, ins, l);
-		    used += l;
-		}
-	    } else if (used + 1 >= sizeof(url)) {
-		tooLong = 1;
-	    } else {
-		url[used++] = *src++;
-	    }
-	}
-	url[used] = 0;
-	if (tooLong) {
-	    logit(LOG_ERR, "LDAP search URL too long after substitution: %s\n", confst);
-	    free(confst);
-	    return(NULL);
-	}
-	if (DebugOpt)
-	    printf("URL: %s\n", url);
-    }
-
-    if (ldap_url_parse(url, &ludp) != 0) {
-	logit(LOG_ERR,"Unable to parse LDAP URL: %s\n", url);
-        free(confst);
-	return(NULL);
-    }
-    
-    /*
-     * Perform the search
-     */
-    if ((rcode = LDAPSearch(LdapLd, ludp->lud_dn, ludp->lud_scope, ludp->lud_filter, ludp->lud_attrs, &res)) != LDAP_SUCCESS) {
-	logit(LOG_ERR,"LDAP search for %s failed: %s\n", url, ldap_err2string(rcode));
-	/* a failed search can still hand back a result: it is ours to free */
-	if (res != NULL)
-	    ldap_msgfree(res);
-	free(confst);
-	ldap_unbind_s(LdapLd);
-	ldap_free_urldesc(ludp);
-	LdapLd = NULL;
-	return(NULL);
-    }
-
-    ldap_free_urldesc(ludp);
-
-    /*
-     * Parse the results.
-     */
-    if (DebugOpt)
-	printf("Results:\n");
-    for (m = ldap_first_entry(LdapLd, res); m != NULL;
-					m = ldap_next_entry(LdapLd, m)) {
-	BerElement *ber;
-	char *attr;
-	int i;
-	
-	for (attr = ldap_first_attribute(LdapLd, m, &ber); attr != NULL;
-				attr = ldap_next_attribute(LdapLd, m, ber)) {
-	    char **vals;
-
-	    if (DebugOpt)
-		printf("attr: %s\n", attr);
-	    if ((vals = ldap_get_values(LdapLd, m, attr)) != NULL) {
-		for (i = 0; vals[i] != NULL; ++i) {
-		    if (strcmp(pass,vals[i])==0) result="100 Success";
-		    if (DebugOpt)
-			printf("   val: %s\n", vals[i]);
-		}
-		ldap_value_free(vals);
-	    }
-	}
-    }
-    ldap_msgfree(res);
-#ifdef LDAP_DO_UNBIND
-    ldap_unbind_s(LdapLd);
-    LdapLd = NULL;
-#endif
-    free(confst);
-    return(result);
-}
-#else
-/*
- * Send an authenticate request to an LDAP server
- *
- * Returns:	NULL	failure
- *		 "100 Sucess"	success
- */
-char *
-LDAPAuthenticate(char *user, char *pass, char *conf)
-{
-    static char result[DEFNAMELEN + 16];
-    char *r;
-    static LDAPURLDesc *ludp;
-    LDAPMessage *res;
-    LDAPMessage *mptr;
-    char *ldappassattr = "userpassword";
-    int msgid;
-    int rcode;
-    char *filter;
-#ifndef LDAP_COMPARE
-    char **bv_val;
-#else
-    char *dn;
-#endif
-
-    /*
-     * The connection and the parsed URL (base, scope, filter) belong to the
-     * authdef that opened them: another authdef gets its own.
-     */
-    if (LdapLd != NULL && (LdapLdConf == NULL || strcmp(LdapLdConf, conf) != 0)) {
-	ldap_unbind_s(LdapLd);
-	ldap_free_urldesc(ludp);
-	LdapLd = NULL;
-	ludp = NULL;
-    }
-
-    if (LdapLd == NULL) {
-	if (ldap_is_ldap_url(conf) == 0) {
-	    logit(LOG_ERR, "No LDAP URL: %s\n", conf);
-	    LdapLd = NULL;
-	    return(NULL);
-	}
-
-	if (ldap_url_parse(conf, &ludp) != 0) {
-	    logit(LOG_ERR, "Unable to parse LDAP URL: %s\n", conf);
-	    ldap_free_urldesc(ludp);
-	    LdapLd = NULL;
-	    return(NULL);
-	}
-
-	/* Open LDAP connection */
-	if ((LdapLd = ldap_init(ludp->lud_host, ludp->lud_port)) == NULL) {
-	    /* Couldn't contact server - fail authentication attempt */
-	    logit(LOG_ERR, "Unable to connect to LDAP server: %s\n", conf);
-	    ldap_free_urldesc(ludp);
-	    LdapLd = NULL;
-	    return(NULL);
-	}
-
-	if ((msgid = LDAPBind(LdapLd, NULL, NULL)) !=
-								LDAP_SUCCESS) {
-	    /* Bind failed - fail auth attempt */
-	    logit(LOG_ERR, "LDAP bind failed: %s\n", conf);
-	    ldap_unbind_s(LdapLd);	/* its socket, every failed login */
-	    ldap_free_urldesc(ludp);
-	    LdapLd = NULL;
-	    return(NULL);
-	}
-	if (DebugOpt)
-	    printf("Connection to LDAP server established\n");
-	free(LdapLdConf);
-	LdapLdConf = strdup(conf);	/* NULL: the next login connects again */
-    }
-
-    /* Build the filter string and attributes */
-    if ((filter = (char *)malloc(strlen(ludp->lud_filter) + strlen(user) + 1)) == NULL) {
-	/* Malloc failed - fail auth attempt */
-	logit(LOG_ERR, "LDAP malloc failed: %s\n", conf);
-	ldap_unbind_s(LdapLd);
-	ldap_free_urldesc(ludp);
-	LdapLd = NULL;
-	return(NULL);
-    }
-    /*
-     * The filter from dreader.access was the format string of a sprintf()
-     * with the user name as its only argument.  Expand it the same way by
-     * hand: "%%" is a '%', the first "%s" is the user; anything else (a
-     * second %s, %n, ...) read or wrote past the arguments: refuse it.
-     */
-    {
-	const char *src = ludp->lud_filter;
-	char *dst = filter;
-	int subst = 0;
-
-	while (*src) {
-	    if (src[0] != '%') {
-		*dst++ = *src++;
-	    } else if (src[1] == '%') {
-		*dst++ = '%';
-		src += 2;
-	    } else if (src[1] == 's' && !subst) {
-		strcpy(dst, user);
-		dst += strlen(user);
-		src += 2;
-		subst = 1;
-	    } else {
-		logit(LOG_ERR, "LDAP filter may hold one %%s and no other %% conversion: %s\n", conf);
-		free(filter);
-		ldap_unbind_s(LdapLd);
-		ldap_free_urldesc(ludp);
-		LdapLd = NULL;
-		return(NULL);
-	    }
-	}
-	*dst = 0;
-    }
-
-    /* Perform the search */
-    if ((rcode = LDAPSearch(LdapLd, ludp->lud_dn, ludp->lud_scope, filter, ludp->lud_attrs, &res)) != LDAP_SUCCESS) {
-	/* Search failed - fail auth attempt */
-	logit(LOG_INFO, "LDAP search failed (%s): %s\n",
-						user, ldap_err2string(rcode));
-	/* a failed search can still hand back a result: it is ours to free */
-	if (res != NULL)
-	    ldap_msgfree(res);
-	free(filter);
-	ldap_unbind_s(LdapLd);
-	ldap_free_urldesc(ludp);
-	LdapLd = NULL;
-	ludp = NULL;
-	return(NULL);
-    }
-
-    /* See what we got back - we only care about the first response */
-    if ((mptr = ldap_first_entry(LdapLd, res)) == NULL) {
-	/* Error - fail auth attempt */
-	logit(LOG_INFO, "LDAP auth failed: %s\n", user);
-	free(filter);
-	ldap_msgfree(res);
-	ldap_unbind_s(LdapLd);
-	ldap_free_urldesc(ludp);
-	/* the statics must not keep the freed handle and URL: the next login would use them */
-	LdapLd = NULL;
-	ludp = NULL;
-	return(NULL);
-    }
-
-    r = NULL;
-#ifdef LDAP_COMPARE
-    dn = ldap_get_dn(LdapLd, mptr);
-    {
-	struct timeval tv;
-
-	if (LDAPLeft(&tv) == 0) {
-	    rcode = LDAP_TIMEOUT;
-	} else {
-	    LDAPTimeouts(LdapLd);
-	    rcode = ldap_compare_s(LdapLd, dn, ldappassattr, pass);
-	}
-    }
-    if (rcode == LDAP_COMPARE_TRUE) {
-	strcpy(result, "100 Success");
-	r = result;
-    } else if (rcode == LDAP_TIMEOUT) {
-	/* out of time: a late answer must not meet the next login */
-	AuthTimedOut = 1;
-	free(dn);
-	free(filter);
-	ldap_msgfree(res);
-	ldap_unbind_s(LdapLd);
-	ldap_free_urldesc(ludp);
-	LdapLd = NULL;
-	ludp = NULL;
-	return(NULL);
-    } else {
-	logit(LOG_INFO, "LDAP auth failed: %s\n", user);
-	r = NULL;
-    }
-    free(dn);
-#else
-    /* Read the password and compare it */
-    bv_val = ldap_get_values(LdapLd, mptr, ldappassattr);
-    if (bv_val == NULL || ldap_count_values(bv_val) == 0) {
-	/* No password value returned - fail auth attempt */
-	logit(LOG_INFO, "LDAP auth failed: %s\n", user);
-	r = NULL;
-    } else if (strcmp(bv_val[0], pass) == 0) {
-	strcpy(result, "100 Success");
-	r = result;
-    } else {
-	r = NULL;
-    }
-    if (bv_val != NULL)
-	ldap_value_free(bv_val);
-#endif
-    free(filter);
-    ldap_msgfree(res);
-    return(r);
-}
-#endif	/* NEW_LDAP */
-#endif	/* LDAP_ENABLED */
-
 #ifdef PERL_ENABLED
 
 /*
@@ -2641,7 +2025,6 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
 	AuthNeeded = 0;
 
 	if (*dres->dr_AuthDef->au_Radius ||
-		*dres->dr_AuthDef->au_LDAP ||
 		*dres->dr_AuthDef->au_Perl ||
 		*dres->dr_AuthDef->au_PAM ||
 		*dres->dr_AuthDef->au_NetRemote ||
@@ -2935,41 +2318,6 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
 		if (DebugOpt)
 		    printf("Authentication via NetRemote FAILED\n");
 		logit(LOG_ERR, "NetRemote authentication requested, but not enabled");
-	    }
-#endif
-
-#ifdef	LDAP_ENABLED
-
-	    /*
-	     * Check user+pass with LDAP server
-	     */
-
-	    if (authok && *dres->dr_AuthDef->au_LDAP && *user &&
-				*dreq->dr_AuthPass) {
-		stprintf("dns auth ldap %s@%s", user, ipname);
-		aa.conf = dres->dr_AuthDef->au_LDAP;
-		aa.realm = realm;
-		AuthReader = AuthCall(AC_LDAP, &aa, dres);
-		if (dres->dr_AuthTimeout)
-		    goto authtimeout;
-		stprintf("dns auth search %s", ipname);
-		if (AuthReader != NULL && *AuthReader == '1') {
-		    Authenticated = 1;
-		    if (DebugOpt)
-			printf("Authenticated via LDAP\n");
-		} else {
-		    Authenticated = -1;
-		    if (DebugOpt)
-			printf("Authentication via LDAP FAILED\n");
-		}
-	    }
-#else
-	    if (authok && *dres->dr_AuthDef->au_LDAP && *user &&
-			*dreq->dr_AuthPass) {
-		Authenticated = -1;
-		if (DebugOpt)
-		    printf("Authentication via LDAP FAILED\n");
-		logit(LOG_ERR, "LDAP authentication requested, but not enabled");
 	    }
 #endif
 
@@ -4623,11 +3971,6 @@ InstallAccessCache(void) {
 			parseError = 1;
 		    continue;
 		}
-		if (*val && strcmp(opt, "ldap") == 0) {
-		    if (accessValue(authdef.au_LDAP, sizeof(authdef.au_LDAP), val, opt, linecount, 0) < 0)
-			parseError = 1;
-		    continue;
-		}
 		if (*val && strcmp(opt, "perl") == 0) {
 		    if (accessValue(authdef.au_Perl, sizeof(authdef.au_Perl), val, opt, linecount, 0) < 0)
 			parseError = 1;
@@ -5724,7 +5067,6 @@ PrintAuthDetails(DnsRes *dres)
    printf(" au_External: %s\n", dres->dr_AuthDef->au_External);
    printf(" au_Radius: %s\n", dres->dr_AuthDef->au_Radius);
    printf(" au_NetRemote: %s\n", dres->dr_AuthDef->au_NetRemote);
-   printf(" au_LDAP: %s\n", dres->dr_AuthDef->au_LDAP);
    printf(" au_Perl: %s\n", dres->dr_AuthDef->au_Perl);
    printf(" au_PAM: %s\n", dres->dr_AuthDef->au_PAM);
    printf(" au_User: %s\n", dres->dr_AuthDef->au_User);
