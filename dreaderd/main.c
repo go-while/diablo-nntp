@@ -3078,15 +3078,15 @@ HandleDnsThread(ForkDesc *desc)
 	if (p[0] == '6' && p[1] == '0' && p[2] == '0') {
 	    /* 
 	     * Deep six a user via authentication 
-	     * Return: 110 600 <time-in-mins> 500 Your connection is rejected
+	     * Return: 110 600 <time-in-mins> 502 Your connection is rejected
 	     * Perpetuating the ugly return code chaining
 	     * Requires reader ban lists to actually work,
 	     * and actually only tweaks the host banned count.
 	     * The fields are separated by white space (AuthFieldSpace()),
 	     * a CR or LF ends the answer.  A bare "600" bans nobody; the
 	     * client gets the generic refusal line.  The code after the
-	     * minutes goes out only if a refusal may have it (the "500" of
-	     * the example becomes 502, see AuthRefusalLine()).
+	     * minutes goes out only if a refusal may have it (an old "500"
+	     * becomes 502, see AuthRefusalLine()).
 	     */
 
 	    for (p += 3; AuthFieldSpace(*p); p++) {
