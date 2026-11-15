@@ -589,12 +589,24 @@ main(int ac, char **av)
      * which 'readerxover trackonly' doesn't store.  Mode 'none' refuses every
      * cancel before it needs a header, and 'all' checks nothing.
      */
-    if (DOpts.ReaderXOverMode == 2 && DOpts.ReaderCanLock != CANLOCK_ALL &&
+    {
+	int sm = (DOpts.ReaderSupersedeLock == CANLOCK_INHERIT) ?
+		DOpts.ReaderCanLock : DOpts.ReaderSupersedeLock;
+
+	if (DOpts.ReaderXOverMode == 2 && DOpts.ReaderCanLock != CANLOCK_ALL &&
 				DOpts.ReaderCanLock != CANLOCK_NONE) {
-	fprintf(stderr, "dreaderd: readercanlock %s needs article headers, "
-	    "but readerxover is trackonly; set readercanlock all or none\n",
-	    CanLockModeName(DOpts.ReaderCanLock));
-	exit(1);
+	    fprintf(stderr, "dreaderd: readercanlock %s needs article headers, "
+		"but readerxover is trackonly; set readercanlock all or none\n",
+		CanLockModeName(DOpts.ReaderCanLock));
+	    exit(1);
+	}
+	if (DOpts.ReaderXOverMode == 2 && sm != CANLOCK_ALL &&
+				sm != CANLOCK_NONE) {
+	    fprintf(stderr, "dreaderd: readersupersedelock %s needs article "
+		"headers, but readerxover is trackonly; set readersupersedelock "
+		"all or none\n", CanLockModeName(sm));
+	    exit(1);
+	}
     }
 
     /*
@@ -620,14 +632,27 @@ main(int ac, char **av)
      * Without libcanlock no Cancel-Key can be verified: say what the mode
      * then does, so that a build without the library is not a surprise.
      */
-    if (DOpts.ReaderCanLock == CANLOCK_REQUIRE_AUTH ||
-				DOpts.ReaderCanLock == CANLOCK_AUTH) {
-	logit(LOG_WARNING, "readercanlock %s: this build has no libcanlock "
-	    "(CANLOCK_ENABLED), so no Cancel-Key can be verified and %s",
-	    CanLockModeName(DOpts.ReaderCanLock),
-	    (DOpts.ReaderCanLock == CANLOCK_AUTH) ?
-		"only articles without a Cancel-Lock can be cancelled" :
-		"no cancel or supersede is executed");
+    {
+	int sm = (DOpts.ReaderSupersedeLock == CANLOCK_INHERIT) ?
+		DOpts.ReaderCanLock : DOpts.ReaderSupersedeLock;
+	int i;
+
+	for (i = 0; i < 2; ++i) {
+	    int mode = (i == 0) ? DOpts.ReaderCanLock : sm;
+	    const char *opt = (i == 0) ? "readercanlock" :
+		(DOpts.ReaderSupersedeLock == CANLOCK_INHERIT) ? NULL :
+		"readersupersedelock";
+
+	    if (opt == NULL ||
+		(mode != CANLOCK_REQUIRE_AUTH && mode != CANLOCK_AUTH))
+		continue;
+	    logit(LOG_WARNING, "%s %s: this build has no libcanlock "
+		"(CANLOCK_ENABLED), so no Cancel-Key can be verified and %s",
+		opt, CanLockModeName(mode),
+		(mode == CANLOCK_AUTH) ?
+		    "only articles without a Cancel-Lock can be cancelled" :
+		    "no cancel or supersede is executed");
+	}
     }
 #endif
 

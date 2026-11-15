@@ -142,6 +142,7 @@ initDOpts(void)
     DOpts.ReaderCacheHashSize = 4096;
     DOpts.ReaderXOverMode = 1;
     DOpts.ReaderCanLock = CANLOCK_REQUIRE_AUTH;	/* as INN's docancels */
+    DOpts.ReaderSupersedeLock = CANLOCK_INHERIT;	/* as readercanlock */
     DOpts.ReaderAutoAddToActive = 0;
     DOpts.FeederAutoAddToActive = 0;
     DOpts.ReaderDetailLog = 1;
@@ -742,6 +743,22 @@ SetCommand(FILE *fo, char *cmd, char *opt, int *cmdErr)
 		else
 		    optErr = 1;
 	    }
+	} else if (strcasecmp(cmd, "readersupersedelock") == 0) {
+	    if (opt) {
+		optErr = 0;
+		if (strcasecmp(opt, "require-auth") == 0 ||
+					strcasecmp(opt, "require") == 0)
+		    DOpts.ReaderSupersedeLock = CANLOCK_REQUIRE_AUTH;
+		else if (strcasecmp(opt, "auth") == 0)
+		    DOpts.ReaderSupersedeLock = CANLOCK_AUTH;
+		else if (strcasecmp(opt, "none") == 0)
+		    DOpts.ReaderSupersedeLock = CANLOCK_NONE;
+		else if (strcasecmp(opt, "all") == 0 ||
+					strcasecmp(opt, "off") == 0)
+		    DOpts.ReaderSupersedeLock = CANLOCK_ALL;
+		else
+		    optErr = 1;
+	    }
 	} else if (strcasecmp(cmd, "feederrtstats") == 0) {
 	    if (opt) {
 		if (strcasecmp(opt, "none") == 0)
@@ -1083,6 +1100,13 @@ dumpConfigReader(FILE *fo, char *cmd)
     }
     if (cmd == NULL || strcasecmp(cmd, "readercanlock") == 0)
 	fprintf(fo, "readercanlock: %s\n", CanLockModeName(DOpts.ReaderCanLock));
+    if (cmd == NULL || strcasecmp(cmd, "readersupersedelock") == 0) {
+	if (DOpts.ReaderSupersedeLock == CANLOCK_INHERIT)
+	    fprintf(fo, "readersupersedelock: (as readercanlock)\n");
+	else
+	    fprintf(fo, "readersupersedelock: %s\n",
+				CanLockModeName(DOpts.ReaderSupersedeLock));
+    }
     if (cmd == NULL || strcasecmp(cmd, "readercrash") == 0)
 	fprintf(fo, "readercrash: %s\n",
 				safestr(DOpts.ReaderCrashHandler, NULL));
