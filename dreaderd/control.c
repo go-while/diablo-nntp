@@ -726,57 +726,6 @@ PerformControl(Connection *conn, Control *ctl, const char **cmd, const char *art
  */
 
 /*
- * canLockDecide() - whether a cancel or supersede of the article artNo in ov
- * may be executed under readercanlock (RFC 8315).  ckey is the Cancel-Key
- * value of the cancelling article, or NULL.  Returns 1 to execute, -1 to
- * refuse, and sets *why for the log.
- */
-static int
-canLockDecide(OverInfo *ov, artno_t artNo, const char *ckey, const char **why)
-{
-    const char *data;
-    int hlen = 0;
-    char lock[1024];
-    int r;
-
-    switch (DOpts.ReaderCanLock) {
-    case CANLOCK_ALL:
-	*why = "not checked (readercanlock all)";
-	return(1);
-    case CANLOCK_NONE:
-	*why = "refused (readercanlock none)";
-	return(-1);
-    }
-    if ((data = GetOverRecord(ov, artNo, &hlen, NULL, NULL, NULL, NULL)) == NULL) {
-	*why = "refused, headers of the target not available";
-	return(-1);
-    }
-    r = CanLockFindHeader(data, hlen, "Cancel-Lock", lock, sizeof(lock));
-    if (r < 0) {
-	*why = "refused, Cancel-Lock of the target too long";
-	return(-1);
-    }
-    if (r == 0) {
-	if (DOpts.ReaderCanLock == CANLOCK_AUTH) {
-	    *why = "target has no Cancel-Lock, executed (readercanlock auth)";
-	    return(1);
-	}
-	*why = "refused, target has no Cancel-Lock";
-	return(-1);
-    }
-    if (ckey == NULL) {
-	*why = "refused, no Cancel-Key";
-	return(-1);
-    }
-    if (CanLockVerify(ckey, lock)) {
-	*why = "Cancel-Key verified";
-	return(1);
-    }
-    *why = "refused, Cancel-Key does not match";
-    return(-1);
-}
-
-/*
  * While ExecuteSupersedes() runs its dummy cancel: the Message-ID of the
  * superseding article, so that CtlCancel() logs the decision as
  * "supersede <old> by <new>" instead of "cancel <old>" (D-205).
@@ -794,6 +743,81 @@ cancelWhat(char *buf, size_t size, const char *id)
     return(buf);
 }
 
+/*
+ * The Cancel-Lock mode that applies to the request being run: a supersede
+ * (ExecuteSupersedes() running its dummy cancel) uses readersupersedelock if
+ * that is set and readercanlock otherwise; a cancel always uses readercanlock.
+ * *opt gets the name of the option in force, for the log.
+ */
+static int
+canLockMode(const char **opt)
+{
+    if (SupersedeBy != NULL && DOpts.ReaderSupersedeLock != CANLOCK_INHERIT) {
+	*opt = "readersupersedelock";
+	return(DOpts.ReaderSupersedeLock);
+    }
+    *opt = "readercanlock";
+    return(DOpts.ReaderCanLock);
+}
+
+/*
+ * canLockDecide() - whether a cancel or supersede of the article artNo in ov
+ * may be executed under readercanlock (RFC 8315).  ckey is the Cancel-Key
+ * value of the cancelling article, or NULL.  Returns 1 to execute, -1 to
+ * refuse, and sets *why for the log.
+ */
+static int
+canLockDecide(OverInfo *ov, artno_t artNo, const char *ckey, const char **why)
+{
+    const char *data;
+    int hlen = 0;
+    char lock[1024];
+    int r;
+    const char *opt;
+    int mode = canLockMode(&opt);
+    static char whyBuf[96];
+
+    switch (mode) {
+    case CANLOCK_ALL:
+	snprintf(whyBuf, sizeof(whyBuf), "not checked (%s all)", opt);
+	*why = whyBuf;
+	return(1);
+    case CANLOCK_NONE:
+	snprintf(whyBuf, sizeof(whyBuf), "refused (%s none)", opt);
+	*why = whyBuf;
+	return(-1);
+    }
+    if ((data = GetOverRecord(ov, artNo, &hlen, NULL, NULL, NULL, NULL)) == NULL) {
+	*why = "refused, headers of the target not available";
+	return(-1);
+    }
+    r = CanLockFindHeader(data, hlen, "Cancel-Lock", lock, sizeof(lock));
+    if (r < 0) {
+	*why = "refused, Cancel-Lock of the target too long";
+	return(-1);
+    }
+    if (r == 0) {
+	if (mode == CANLOCK_AUTH) {
+	    snprintf(whyBuf, sizeof(whyBuf),
+		"target has no Cancel-Lock, executed (%s auth)", opt);
+	    *why = whyBuf;
+	    return(1);
+	}
+	*why = "refused, target has no Cancel-Lock";
+	return(-1);
+    }
+    if (ckey == NULL) {
+	*why = "refused, no Cancel-Key";
+	return(-1);
+    }
+    if (CanLockVerify(ckey, lock)) {
+	*why = "Cancel-Key verified";
+	return(1);
+    }
+    *why = "refused, Cancel-Key does not match";
+    return(-1);
+}
+
 const char *
 CtlCancel(Connection *conn, Control *ctl, const char **cmd, const char *art, const char *body, int bodyLen, char *groups)
 {
@@ -806,15 +830,19 @@ CtlCancel(Connection *conn, Control *ctl, const char **cmd, const char *art, con
     const char *why = NULL;
     char what[2 * MAXMSGIDLEN + 32];
     const char *kind = (SupersedeBy != NULL) ? "supersede" : "cancel";
+    const char *opt;
+    int mode = canLockMode(&opt);
+    char whyBuf[96];
 
     /*
-     * readercanlock none executes no cancel or supersede (as INN's docancels
+     * readercanlock none (readersupersedelock none for a supersede) executes no cancel or supersede (as INN's docancels
      * none): refuse it here, before the overview of its groups is scanned
      * for the target (D-203).  Before, every cancel cost that scan, only to
      * be refused by canLockDecide() or, for a target not here, dropped.
      */
-    if (DOpts.ReaderCanLock == CANLOCK_NONE) {
-	why = "refused (readercanlock none)";
+    if (mode == CANLOCK_NONE) {
+	snprintf(whyBuf, sizeof(whyBuf), "refused (%s none)", opt);
+	why = whyBuf;
 	logit(LOG_NOTICE, "%s: %s, 0 item(s)",
 	    cancelWhat(what, sizeof(what), cmd[1]), why);
 	if (DebugOpt)
@@ -880,16 +908,18 @@ CtlCancel(Connection *conn, Control *ctl, const char **cmd, const char *art, con
      */
 
     if (isValidCancel == 0) {
-	if (validGroups && DOpts.ReaderCanLock == CANLOCK_ALL) {
+	if (validGroups && mode == CANLOCK_ALL) {
 	    EnterCancelCache(cmd[1]);
 	    why = "target not here yet, pre-cancel cached";
 	} else if (validGroups) {
-	    why = "target not here yet, dropped (readercanlock)";
+	    snprintf(whyBuf, sizeof(whyBuf),
+		"target not here yet, dropped (%s)", opt);
+	    why = whyBuf;
 	} else {
 	    why = "no valid groups, nothing canceled";
 	}
     }
-    if (DOpts.ReaderCanLock != CANLOCK_ALL)
+    if (mode != CANLOCK_ALL)
 	logit((isValidCancel > 0) ? LOG_INFO : LOG_NOTICE,
 	    "%s: %s, %d item(s)", cancelWhat(what, sizeof(what), cmd[1]), why,
 	    (isValidCancel > 0) ? count : 0);

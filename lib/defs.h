@@ -252,6 +252,7 @@ struct DiabloOpts {
     int ReaderCacheHashSize;
     int ReaderXOverMode;
     int ReaderCanLock;		/* readercanlock: CANLOCK_* */
+    int ReaderSupersedeLock;	/* readersupersedelock: CANLOCK_*, or CANLOCK_INHERIT */
     int ReaderAutoAddToActive;
     int ReaderDetailLog;
     int RememberSecs;
@@ -701,6 +702,7 @@ typedef struct OverExpire {
 #define	CANLOCK_REQUIRE_AUTH	1	/* only locked articles, valid key */
 #define	CANLOCK_AUTH		2	/* locked: valid key; unlocked: always */
 #define	CANLOCK_NONE		3	/* none */
+#define	CANLOCK_INHERIT		-1	/* readersupersedelock only: as readercanlock */
 
 /* canlockadmin and canlockuser secrets of a vserverdef (dreader.access) */
 #define	CANLOCK_MAXSECRETS	4	/* lines of each kind */
