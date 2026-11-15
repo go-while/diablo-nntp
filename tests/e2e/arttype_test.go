@@ -1247,7 +1247,9 @@ func offerOn(t *testing.T, p *client.Conn, lines []string) string {
 // uuencode, BinHex or base64 runs, without line ends) is not refused in a non-binary group, as
 // in early groups where small files were posted with their discussion. An article that is only
 // a binary (also one whose "text" is white space, part headers, a MIME delimiter or short runs
-// of encoded lines), one with its text only after the binary, one whose binary is over the
+// of encoded lines) is refused. Text after the binary counts as well (a signature after a file,
+// as in the parts of a split posting): such an article is not refused, unless its binary is
+// over the limit. One whose binary is over the
 // limit (also one cut into runs of 8 lines, or a base64 part that is not text), a yEnc binary
 // and an article the label also filters for another type (html, in the article header or in a
 // part after the binary) are refused as before.
@@ -1334,7 +1336,18 @@ func TestIncomingFilterTextBinary(t *testing.T) {
 		{"text with base64 lines", art(cat(text, atLines(12, 64, b64Alphabet, ""))), "235"},
 		{"text with a uuencoded file over the limit", art(cat(text, uu(100))), "437"},
 		{"a uuencoded file alone", art(uu(12)), "437"},
-		{"a uuencoded file with the text after it", art(cat(uu(12), text)), "437"},
+		// text after the binary counts too: a signature after a uuencoded file
+		{"a uuencoded file with the text after it", art(cat(uu(12), text)), "235"},
+		{"a uuencoded file with a signature after it", art(cat(uu(12), []string{"-- ", "A. Poster", "Some University"})), "235"},
+		{"a part of a split posting, no begin line, a signature after it", art(cat(uuRaw(12), []string{"`", "end", "", "-- ", "A. Poster"})), "235"},
+		{"a BinHex file with the text after it", art(cat(binhex, text)), "235"},
+		{"a uuencoded file over the limit with the text after it", art(cat(uu(100), text)), "437"},
+		{"a uuencoded file with only white space after it", art(cat(uu(12), []string{" ", "", "\t"})), "437"},
+		{"an image part, then a text part", mime("multipart/mixed; boundary=b",
+			mpBody("b", imagePart(atLines(12, 76, b64Alphabet, "")), plain(text...))), "235"},
+		{"an image part alone", mime("multipart/mixed; boundary=b",
+			mpBody("b", imagePart(atLines(12, 76, b64Alphabet, "")))), "437"},
+		{"a uuencoded file, then text and a yEnc file", art(cat(uu(12), text, []string{"=ybegin line=128 size=6 name=a.bin", "abcdef", "=yend size=6"})), "437"},
 		{"a uuencoded file with its last short lines, no text", art(append(append(uu(12)[:13], "&9F%L<V4*", "`"), "end")), "437"},
 		{"text with a uuencoded file and its last short lines", art(cat(text, append(append(uu(12)[:13], "&9F%L<V4*", "`"), "end"))), "235"},
 		// 1: after the binary every encoded line counts, whatever the length of its run
@@ -1496,6 +1509,8 @@ func TestTextBinaryArtType(t *testing.T) {
 		{"text, 1830 bytes of uuencode", atArticle(nil, cat(text, uu(30))), []string{"fbig"}},
 		{"text, 8 KB of uuencode", atArticle(nil, cat(text, uu(130))), nil},
 		{"uuencode, no text", atArticle(nil, uu(12)), nil},
+		{"uuencode, then text", atArticle(nil, cat(uu(12), text)), []string{"fbig", "fsmall"}},
+		{"8 KB of uuencode, then text", atArticle(nil, cat(uu(130), text)), nil},
 		{"text, small uuencode, yEnc", atArticle(nil, cat(text, uu(12), []string{"=ybegin line=128 size=6 name=a.bin", "abcdef", "=yend size=6"})), nil},
 	} {
 		if got := matched(c.lines); !slices.Equal(got, c.want) {
@@ -1511,6 +1526,7 @@ func TestTextBinaryArtType(t *testing.T) {
 		{"text, small uuencoded file", atArticle(nil, cat(text, uu(12))), fmt.Sprintf("%06x", atDefault)},
 		{"text, uuencoded file over the limit", atArticle(nil, cat(text, uu(100))), "none"},
 		{"uuencoded file only", atArticle(nil, uu(12)), "none"},
+		{"uuencoded file, then text", atArticle(nil, cat(uu(12), text)), fmt.Sprintf("%06x", atDefault)},
 		{"multipart, text with a small uuencoded file, then an HTML part",
 			mix("multipart/alternative; boundary=b", txt(cat(text, uu(12))...), html),
 			fmt.Sprintf("%06x", atMIME|atMultipart|atHTML)},
@@ -1575,7 +1591,7 @@ var textBinFeeds = func() string {
 // the binary of an article with text before a binary of at most <size> bytes of encoded data
 // (the feeds here have arttypes !binary). The article goes through the master as diablo
 // takes it in, with no IFILTER label: a feed without the option, a binary over the feed's
-// limit, a binary with no text before it and one with a yEnc file after it do not get it.
+// limit, a binary with no text at all and one with a yEnc file after it do not get it.
 func TestTextBinaryOutgoingFeed(t *testing.T) {
 	s := NewSite(t, SiteOptions{Newsfeeds: textBinFeeds})
 	text := []string{"Here is the small program I mentioned, uuencoded."}
@@ -1599,6 +1615,7 @@ func TestTextBinaryOutgoingFeed(t *testing.T) {
 		{"text, 1830 bytes of uuencode", cat(text, uu(30)), []string{"fbig"}},
 		{"text, 8 KB of uuencode", cat(text, uu(130)), nil},
 		{"uuencode, no text", uu(12), nil},
+		{"uuencode, then text", cat(uu(12), text), []string{"fbig", "fsmall"}},
 		{"text, small uuencode, yEnc", cat(text, uu(12), []string{"=ybegin line=128 size=6 name=a.bin", "abcdef", "=yend size=6"}), nil},
 	}
 	ids := make([]string, len(arts))

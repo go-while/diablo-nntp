@@ -105,29 +105,31 @@ static int PieceMore = 0;	/* the last call was a piece: the line goes on */
 
 /*
  * A binary in a text article (the 'textbinary' option of the IFILTER label
- * and of the feeds in dnewsfeeds).  With TextBinMax set, the text before the article
- * becomes a binary is counted: the lines of a body that is not MIME, or of
- * a text part, except lines with only white space, part headers and MIME
- * delimiters, the begin and end lines of a uuencoded or BinHex file and
- * encoded lines (a run of fewer than 9 of them is not text either).  An
- * article with such text is read on to its end, to measure its encoded
- * data: the lines of each run of 9 or more uuencode, BinHex or base64
- * lines, from the first line of the run, and the last short lines after
- * it; once the article is a binary every encoded line counts, whatever the
- * length of its run, and so does every line of a part sent as base64 that
- * is not text.  Text after the binary does not count.  The type the caller
- * gets stays the one the article had when it became a binary, as without
- * the option.  An article with no text before its binary, and a binary of
- * another kind (yEnc, an application/octet-stream part, base64 or
- * quoted-printable text that decodes to binary data, X-Bommanews,
- * X-UnidataEncoding), is not measured (TBOther), and neither is one whose
- * encoded data is over the limit: such an article is not read on.
+ * and of the feeds in dnewsfeeds).  With TextBinMax set, the text of the
+ * article is counted, before or after its binary (a signature after the
+ * file is the usual text of a part of a split posting): the lines of a body
+ * that is not MIME, or of a text part, except lines with only white space,
+ * part headers and MIME delimiters, the begin and end lines of a uuencoded
+ * or BinHex file and encoded lines (a run of fewer than 9 of them is not
+ * text either).  A binary article is read on to its end, to measure its
+ * encoded data and to see whether text comes after it: the lines of each
+ * run of 9 or more uuencode, BinHex or base64 lines, from the first line
+ * of the run, and the last short lines after it; once the article is a
+ * binary every encoded line counts, whatever the length of its run, and so
+ * does every line of a part sent as base64 that is not text.  The type the
+ * caller gets stays the one the article had when it became a binary, as
+ * without the option.  A binary of another kind (yEnc, an
+ * application/octet-stream part, base64 or quoted-printable text that
+ * decodes to binary data, X-Bommanews, X-UnidataEncoding) is not measured
+ * (TBOther), and neither is one whose encoded data is over the limit: such
+ * an article is not read on.  An article that ends with no text at all is
+ * not within the limit.
  */
 static int TextBinMax = 0;	/* the limit in bytes, 0 = off */
 static int TBFrozen = 0;	/* the type the article had when it became a binary */
 static int TBOther = 0;		/* a binary that is not runs of encoded lines */
 static long TBEnc = 0;		/* bytes of encoded data */
-static long TBText = 0;		/* bytes of text before the article became a binary */
+static long TBText = 0;		/* bytes of text, before or after the binary */
 static long TBPending = 0;	/* bytes of the run being read, not yet 9 lines */
 static long TBShort = 0;	/* bytes of the runs of fewer than 9 lines that ended before the binary */
 static int TBRunKind = 0;	/* UUE, BHX or B64: a run of 9 or more lines is being read */
@@ -787,13 +789,14 @@ tbLine(const char *ptr, int len, int kind, int count)
 	    return;
 	}
 	TBTrailLeft = 0;
-	if (TBFrozen) {
-	    if (TBRawB64 && !tbBlank(ptr, len))
+	if (TBFrozen && TBRawB64) {
+	    if (!tbBlank(ptr, len))
 		TBEnc += len;
 	    return;
 	}
 	if (delim || tbFraming(ptr, len) || tbBlank(ptr, len))
 	    return;
+	/* a line after the binary is text as well: a signature */
 	if (!HdrBlock && (!CTSeen || CTText))
 	    TBText += len;
 	return;
@@ -1428,7 +1431,7 @@ decodedLineTypes(char *ptr, int len)
      * not 0), nor what frames an encoded file (tbFraming), nor white
      * space.  Only whether there is any is asked.
      */
-    if (TBACTIVE() && !TBFrozen && len > 0 && DecUUencode == 0 &&
+    if (TBACTIVE() && len > 0 && DecUUencode == 0 &&
 		DecBinHex == 0 && DecBase64 == 0 && !tbFraming(ptr, len)) {
 	int i;
 
@@ -1640,10 +1643,8 @@ tbResult(int t)
      * TextBinMax.
      */
     if (TextBinMax > 0 && (t & ARTTYPE_BINARY) && !HdrBlock) {
+	/* text may still come after the binary: it is read on to see */
 	TBFrozen = t;
-	/* no text before the binary: it is not measured, nor read on */
-	if (TBText <= 0)
-	    TBOther = 1;
     }
     return(t);
 }
