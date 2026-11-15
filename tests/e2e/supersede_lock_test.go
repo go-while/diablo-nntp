@@ -117,3 +117,44 @@ func TestSupersedeLockTrackonly(t *testing.T) {
 		}
 	}
 }
+
+// TestSupersedeLockWarningNoLibcanlock: in a build without libcanlock the warning at start says
+// what each option does to its own requests: readercanlock to cancels, readersupersedelock to
+// supersedes (it said "no cancel or supersede is executed" for either). Skipped with libcanlock.
+func TestSupersedeLockWarningNoLibcanlock(t *testing.T) {
+	skipWithoutCanLockMode(t)
+	skipWithCanLock(t)
+	for _, tc := range []struct {
+		name         string
+		cfg          map[string]string
+		want, notWant string
+	}{
+		{"cancels require-auth, supersedes all",
+			map[string]string{"readercanlock": "require-auth", "readersupersedelock": "all"},
+			"readercanlock require-auth: this build has no libcanlock (CANLOCK_ENABLED), so no Cancel-Key can be verified and no cancel is executed",
+			"readersupersedelock"},
+		{"cancels all, supersedes require-auth",
+			map[string]string{"readercanlock": "all", "readersupersedelock": "require-auth"},
+			"readersupersedelock require-auth: this build has no libcanlock (CANLOCK_ENABLED), so no Cancel-Key can be verified and no supersede is executed",
+			"readercanlock "},
+		{"supersedes unset",
+			map[string]string{"readercanlock": "require-auth"},
+			"readercanlock require-auth: this build has no libcanlock (CANLOCK_ENABLED), so no Cancel-Key can be verified and no cancel or supersede is executed",
+			"readersupersedelock"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := supersedeLockSite(t, tc.cfg)
+			var log string
+			testkit.WaitFor(t, 5*time.Second, "the warning in the general log", func() bool {
+				log = generalLog(s)
+				return strings.Contains(log, "no libcanlock")
+			})
+			if !strings.Contains(log, tc.want) {
+				t.Errorf("general log lacks %q:\n%s", tc.want, log)
+			}
+			if strings.Contains(log, tc.notWant+" ") && strings.Contains(log, tc.notWant+" "+tc.cfg[strings.TrimSpace(tc.notWant)]+": this build") {
+				t.Errorf("general log has a warning for %s:\n%s", tc.notWant, log)
+			}
+		})
+	}
+}

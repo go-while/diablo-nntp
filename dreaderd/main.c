@@ -636,6 +636,7 @@ main(int ac, char **av)
 	int sm = (DOpts.ReaderSupersedeLock == CANLOCK_INHERIT) ?
 		DOpts.ReaderCanLock : DOpts.ReaderSupersedeLock;
 	int i;
+	char effect[128];
 
 	for (i = 0; i < 2; ++i) {
 	    int mode = (i == 0) ? DOpts.ReaderCanLock : sm;
@@ -643,15 +644,22 @@ main(int ac, char **av)
 		(DOpts.ReaderSupersedeLock == CANLOCK_INHERIT) ? NULL :
 		"readersupersedelock";
 
+	    /* what the option decides: cancels, supersedes or both */
+	    const char *what = (i == 1) ? "supersede" :
+		(DOpts.ReaderSupersedeLock == CANLOCK_INHERIT) ?
+		"cancel or supersede" : "cancel";
+
 	    if (opt == NULL ||
 		(mode != CANLOCK_REQUIRE_AUTH && mode != CANLOCK_AUTH))
 		continue;
+	    if (mode == CANLOCK_AUTH)
+		snprintf(effect, sizeof(effect), "only articles without a "
+		    "Cancel-Lock can be withdrawn by a %s", what);
+	    else
+		snprintf(effect, sizeof(effect), "no %s is executed", what);
 	    logit(LOG_WARNING, "%s %s: this build has no libcanlock "
 		"(CANLOCK_ENABLED), so no Cancel-Key can be verified and %s",
-		opt, CanLockModeName(mode),
-		(mode == CANLOCK_AUTH) ?
-		    "only articles without a Cancel-Lock can be cancelled" :
-		    "no cancel or supersede is executed");
+		opt, CanLockModeName(mode), effect);
 	}
     }
 #endif
