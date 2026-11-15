@@ -7,13 +7,13 @@ import (
 )
 
 // TestReaderAuthRejectKeepsMaster: the login of a user whose entry in a file auth backend
-// carries a numeric reject string gets the intended 500 reply and the dreaderd master keeps
+// carries a numeric reject string gets the intended 502 reply and the dreaderd master keeps
 // running and serves the next client. Repeated with a fresh dreaderd each time.
 func TestReaderAuthRejectKeepsMaster(t *testing.T) {
 	for i := 0; i < 8; i++ {
 		_, spool := spoolStore(t)
 		s := NewReaderSite(t, ReaderOptions{Spool: spool, NoStart: true})
-		s.WriteFile(t, "userpass", "bad:pw:600 1 500 Your connection is rejected\ngood:pw2\n")
+		s.WriteFile(t, "userpass", "bad:pw:600 1 502 Your connection is rejected\ngood:pw2\n")
 		s.WriteFile(t, "dreader.access", `vserverdef DEFAULT
     hostname `+PathHost+`
 end
@@ -32,8 +32,8 @@ access 127.0.0.1 rf
 		c.ExpectCmd(381, "AUTHINFO USER bad")
 		c.MustSend("AUTHINFO PASS pw\r\n")
 		code, line, err := c.ReadStatus()
-		if err == nil && code != 500 {
-			t.Errorf("attempt %d: %d %q, want 500", i, code, line)
+		if err == nil && code != 502 {
+			t.Errorf("attempt %d: %d %q, want 502", i, code, line)
 		}
 		c.Close()
 		time.Sleep(500 * time.Millisecond)

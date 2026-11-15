@@ -9,7 +9,7 @@ import (
 )
 
 // TestReaderFileAuthRejectString: a file auth entry whose third field is a reject string
-// ("600 <minutes> 500 <text>") turns the login away with that reply, and the dreaderd master
+// ("600 <minutes> 502 <text>") turns the login away with that reply, and the dreaderd master
 // survives it, login after login. Before the fix the master logged the rejection through the
 // vserver pointer of the DNS worker's reply, which is only valid in the master after
 // SetAuthDetails() (the reject path skips it). dreader.access is changed before each
@@ -18,7 +18,7 @@ import (
 func TestReaderFileAuthRejectString(t *testing.T) {
 	_, spool := spoolStore(t)
 	s := NewReaderSite(t, ReaderOptions{Spool: spool, NoStart: true,
-		Files: map[string]string{"userpass": "fred:fredspass\nbanned:pw:600 1 500 You are banned\n"}})
+		Files: map[string]string{"userpass": "fred:fredspass\nbanned:pw:600 1 502 You are banned\n"}})
 	access := `vserverdef DEFAULT
     hostname ` + PathHost + `
 end
@@ -46,7 +46,7 @@ access 127.0.0.1 userfile
 		// The cache's lock file has a one-second timestamp: wait for the next second.
 		time.Sleep(1100 * time.Millisecond)
 		s.WriteFile(t, "dreader.access", access+fmt.Sprintf("# change %d\n", i))
-		c.ExpectCmd(500, "AUTHINFO PASS pw")
+		c.ExpectCmd(502, "AUTHINFO PASS pw")
 		c.Close()
 	}
 
