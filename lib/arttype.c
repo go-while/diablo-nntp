@@ -193,6 +193,20 @@ static int CTTrunc;	/* CTBuf overflowed */
 static int CTCont = 0;	/* gathering a Content-Type header */
 
 /*
+ * The value of a Content-Transfer-Encoding header of a header block, its
+ * folded lines unfolded, is gathered in CTEBuf and read at the end of the
+ * header (cteFinish) for CTEIdentity: the token without the comments
+ * around it, which have no meaning (RFC 2045 sections 1 and 6.1; RFC 5322
+ * section 2.2.3).
+ */
+#define	CTEBUF_MAX	256	/* a longer value is not an identity encoding */
+
+static char CTEBuf[CTEBUF_MAX];
+static int CTELen;
+static int CTETrunc;	/* CTEBuf overflowed */
+static int CTECont = 0;	/* gathering a Content-Transfer-Encoding header */
+
+/*
  * The boundaries of the multiparts we are in, innermost on top.  A
  * closing "--boundary--" line pops its multipart (and any left open
  * inside it).  A multipart nested deeper than BND_NUM is not pushed: the
@@ -641,6 +655,7 @@ InitArticleType(void)
     QPPart = 0;
     HdrBlock = 1;
     CTCont = 0;
+    CTECont = 0;
     BndTop = 0;
     QPEsc = 0;
     PieceMore = 0;
@@ -1119,6 +1134,53 @@ ctFinish(void)
 	    return;
 	}
     }
+}
+
+/*
+ * Gather the value of a Content-Transfer-Encoding header (from its first
+ * line, more=0, or a continuation line, more=1), as ctGather() does.
+ */
+static void
+cteGather(const char *p, int len, int more)
+{
+    while (len > 0 && (p[len - 1] == '\n' || p[len - 1] == '\r'))
+	--len;
+    if (!more) {
+	CTELen = 0;
+	CTETrunc = 0;
+	CTECont = 1;
+    }
+    if (len > CTEBUF_MAX - CTELen) {
+	CTETrunc = 1;
+	len = CTEBUF_MAX - CTELen;
+    }
+    memcpy(CTEBuf + CTELen, p, len);
+    CTELen += len;
+}
+
+/*
+ * The end of a gathered Content-Transfer-Encoding header: the encoding is
+ * an identity one (7bit, 8bit or binary, without case) when that token is
+ * all there is but white space and comments.  Anything else, an unknown
+ * encoding too, is not.
+ */
+static void
+cteFinish(void)
+{
+    const char *p = CTEBuf, *e = CTEBuf + CTELen, *a;
+    int n;
+
+    CTECont = 0;
+    p = mimeSkip(p, e);
+    for (a = p; p < e && *p != ' ' && *p != '\t' && *p != '(' &&
+					*p != '\r' && *p != '\n'; ++p)
+	;
+    n = (int)(p - a);
+    p = mimeSkip(p, e);
+    CTEIdentity = (!CTETrunc && p >= e &&
+	((n == 4 && (strncasecmp(a, "7bit", 4) == 0 ||
+		     strncasecmp(a, "8bit", 4) == 0)) ||
+	 (n == 6 && strncasecmp(a, "binary", 6) == 0)));
 }
 
 /*
@@ -1647,6 +1709,7 @@ partReset(void)
     QPPart = 0;
     QPEsc = 0;
     CTCont = 0;
+    CTECont = 0;
     TBRawB64 = 0;
 }
 
@@ -1750,6 +1813,8 @@ articleType(char *line, int len, int inheader)
 	    B64Blank = 1;
 	if (CTCont)
 	    ctFinish();
+	if (CTECont)
+	    cteFinish();
 	/*
 	 * An octet-stream part sent without a transfer encoding is read as
 	 * lines (B64_ARTTYPE_IS_TEXT); one sent encoded is a binary.  The
@@ -1809,6 +1874,13 @@ articleType(char *line, int len, int inheader)
 	    ctGather(ptr, len, 1);
 	else
 	    ctFinish();
+    }
+    /* and a folded Content-Transfer-Encoding header */
+    if (CTECont) {
+	if (HdrBlock && (*ptr == ' ' || *ptr == '\t'))
+	    cteGather(ptr, len, 1);
+	else
+	    cteFinish();
     }
 
     /*
@@ -1879,12 +1951,8 @@ articleType(char *line, int len, int inheader)
 	if (ce != NULL) {
 	    int celen = len - (int)(ce - ptr);
 
-	    int elen = celen;
-	    while (elen > 0 && (ce[elen - 1] == ' ' || ce[elen - 1] == '\t' || ce[elen - 1] == '\r'))
-		--elen;
-	    CTEIdentity = ((elen == 4 && (strncasecmp(ce, "7bit", 4) == 0 ||
-		strncasecmp(ce, "8bit", 4) == 0)) ||
-		(elen == 6 && strncasecmp(ce, "binary", 6) == 0));
+	    /* identity or not: at the end of the header (cteFinish) */
+	    cteGather(ce, celen, 0);
 
 	    /* a part's encoding is in its header block, not in its text */
 	    if (HdrBlock && hdrPrefix(ce, celen, "base64"))
