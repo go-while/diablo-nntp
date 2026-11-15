@@ -1,0 +1,1 @@
+- dreaderd: the "Listening on ..." lines of the general log (and the warnings logged before them) now start with "dreaderd:" like the other lines; the log identity was set only after the listen sockets were opened.
