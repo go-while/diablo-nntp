@@ -25,9 +25,10 @@ func TestReaderAccessLongLineRefused(t *testing.T) {
 		Config: map[string]string{"path_generallog": "%s/general.log"}})
 	startReaderNoWait(t, s)
 	var log string
+	// the refusal comes first, "not updating" after it: wait for both
 	testkit.WaitFor(t, 5*time.Second, "the refusal in the log", func() bool {
 		log = generalLog(s)
-		return strings.Contains(log, "line 2 is longer than")
+		return strings.Contains(log, "line 2 is longer than") && strings.Contains(log, "not updating")
 	})
 	if !strings.Contains(log, "not updating") {
 		t.Errorf("dreader.access with the long line was not refused:\n%s", log)

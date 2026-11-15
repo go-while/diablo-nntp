@@ -51,7 +51,9 @@ func TestReaderdefUnknownGroupList(t *testing.T) {
 			var log string
 			testkit.WaitFor(t, 5*time.Second, "the unknown group list in the log", func() bool {
 				log = generalLog(s)
-				return strings.Contains(log, "testonlx")
+				// the error comes first, "not installed"/"not updating" after it: wait for both
+				return strings.Contains(log, "testonlx") &&
+					(strings.Contains(log, "not installed") || strings.Contains(log, "not updating"))
 			})
 			if !strings.Contains(log, "not installed") && !strings.Contains(log, "not updating") {
 				t.Errorf("the log does not say the file was refused:\n%s", log)
@@ -96,7 +98,8 @@ func TestReaderdefUnknownOption(t *testing.T) {
 		var log string
 		testkit.WaitFor(t, 5*time.Second, "the invalid option in the log", func() bool {
 			log = generalLog(s)
-			return strings.Contains(log, "maxconperhost")
+			// the error comes first, "not updating" after it: wait for both
+			return strings.Contains(log, "maxconperhost") && strings.Contains(log, "not updating")
 		})
 		if !strings.Contains(log, "not updating") {
 			t.Errorf("the log does not say the file was refused:\n%s", log)
@@ -133,7 +136,8 @@ func TestAccessDefUnknownOption(t *testing.T) {
 			var log string
 			testkit.WaitFor(t, 5*time.Second, "the invalid option in the log", func() bool {
 				log = generalLog(s)
-				return strings.Contains(log, "Invalid "+tc.name+" option")
+				// the error comes first, "not updating" after it: wait for both
+				return strings.Contains(log, "Invalid "+tc.name+" option") && strings.Contains(log, "not updating")
 			})
 			if !strings.Contains(log, "not updating") {
 				t.Errorf("the log does not say the file was refused:\n%s", log)

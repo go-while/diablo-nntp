@@ -86,9 +86,14 @@ func TestReaderStatusFileWriteRate(t *testing.T) {
 	// command goes to the file at once and the "(idle)" that follows it in the same second
 	// is held back: the file shows the command first and "(idle)" about a second later.
 	// (When the two fall into different seconds nothing is held back; try again.)
+	// The quiet time is 3 s, not 1.2 s: the last write before it is the held-back
+	// "(idle)" of the command before, about a second after that command, and a command
+	// in the same wall-clock second as that write is held back too. With 1.2 s a try
+	// hit only a short window, and a busy runner could miss it in all 8 tries
+	// (almalinux-10 at f8116a2e).
 	held := false
 	for try := 0; try < 8 && !held; try++ {
-		time.Sleep(1200 * time.Millisecond)
+		time.Sleep(3 * time.Second)
 		c.ExpectCmd(111, "DATE")
 		if lineWith("DATE") == "" {
 			continue

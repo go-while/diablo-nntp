@@ -26,9 +26,11 @@ func TestAccessLongClusterNameRefused(t *testing.T) {
 		Config: map[string]string{"path_generallog": "%s/general.log"}})
 	startReaderNoWait(t, s)
 	var log string
+	// the refusal comes first, "not updating" after it: wait for both
 	testkit.WaitFor(t, 5*time.Second, "the refusal in the log", func() bool {
 		log = generalLog(s)
-		return strings.Contains(log, "value of clustername in line 2 is too long")
+		return strings.Contains(log, "value of clustername in line 2 is too long") &&
+			strings.Contains(log, "not updating")
 	})
 	if !strings.Contains(log, "not updating") {
 		t.Errorf("dreader.access with the long clustername was not refused:\n%s", log)
