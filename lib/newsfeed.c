@@ -1294,7 +1294,7 @@ LoadNewsFeed(time_t t, int force, const char *hlabel)
 
 	    if (DebugOpt) {
 		printf("Reloading dnewsfeeds file hlabel=%s\n",
-		    ((SaveHLabel) ? SaveHLabel : "?")	/* not hlabel: (void *)-1 keeps the mode */
+		    ((hlabel) ? hlabel : "?")
 		);
 	    }
 

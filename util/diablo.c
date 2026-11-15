@@ -2233,11 +2233,13 @@ DoSession(int fd, int count)
 	 * command is answered.  Until now the process reloaded only when
 	 * it received an article (LoadArticle(), FeedAdd()), so a peer
 	 * whose offers are all refused kept the rules of its connect time.
-	 * (const char *)-1 keeps the load mode (its own label, or all
-	 * labels once an article was received).  LoadNewsFeed() uses
-	 * strtok(): call it before the command line is split.
+	 * The same load as LoadArticle() and FeedAdd() make (all labels,
+	 * hlabel NULL): a label-only load here would use up the minute's
+	 * check, and the article would be measured with the largest
+	 * textbinary limit of the master's older file.  LoadNewsFeed()
+	 * uses strtok(): call it before the command line is split.
 	 */
-	LoadNewsFeed(time(NULL), 0, (const char *)-1);
+	LoadNewsFeed(time(NULL), 0, NULL);
 
 	cmd = strtok(buf, " \t\r\n");
 
