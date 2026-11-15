@@ -2227,6 +2227,18 @@ DoSession(int fd, int count)
 	    continue;
 	}
 
+	/*
+	 * A long-lived connection takes dnewsfeeds changes (GLOBAL and
+	 * IFILTER entries, its own label) within a minute, before this
+	 * command is answered.  Until now the process reloaded only when
+	 * it received an article (LoadArticle(), FeedAdd()), so a peer
+	 * whose offers are all refused kept the rules of its connect time.
+	 * (const char *)-1 keeps the load mode (its own label, or all
+	 * labels once an article was received).  LoadNewsFeed() uses
+	 * strtok(): call it before the command line is split.
+	 */
+	LoadNewsFeed(time(NULL), 0, (const char *)-1);
+
 	cmd = strtok(buf, " \t\r\n");
 
 	if (cmd == NULL)
