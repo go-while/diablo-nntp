@@ -241,13 +241,48 @@ func TestArticleTypes(t *testing.T) {
 		{"control cancel", []string{"Control: cancel <x@y>"}, []string{"cancel"}, atControl | atCancel, ""},
 		{"control newgroup", []string{"Control: newgroup e2e.new"}, []string{"newgroup"}, atControl, ""},
 		{"postscript", []string{"Mime-Version: 1.0", "Content-Type: application/postscript"}, []string{"%!PS"}, atMIME | atPS, ""},
-		{"octet-stream", []string{"Mime-Version: 1.0", "Content-Type: application/octet-stream"}, []string{"data"}, atMIME | atBinary, ""},
+		// An octet-stream part sent without a transfer encoding holds lines: it is judged by
+		// them (Pine 3 attached text files that way), and by its bytes that are not text,
+		// B64_ARTTYPE_IS_TEXT (8) of them making it a binary. Sent encoded it is a binary.
+		{"octet-stream, text", []string{"Mime-Version: 1.0", "Content-Type: application/octet-stream"}, []string{"data"}, atMIME, ""},
+		{"octet-stream, 7bit text", []string{"Mime-Version: 1.0", "Content-Type: application/octet-stream", "Content-Transfer-Encoding: 7bit"}, []string{"data"}, atMIME, ""},
+		{"octet-stream, 8bit text", []string{"Mime-Version: 1.0", "Content-Transfer-Encoding: 8bit", "Content-Type: application/octet-stream"}, []string{"Stra\u00dfe"}, atMIME, "the encoding before the type"},
+		{"octet-stream, binary encoding, text", []string{"Mime-Version: 1.0", "Content-Type: application/octet-stream", "Content-Transfer-Encoding: binary"}, []string{"data"}, atMIME, ""},
+		// review of chatgpt-1: the encoding is its token; comments and folding have no
+		// meaning (RFC 2045 sections 1 and 6.1, RFC 5322 section 2.2.3)
+		{"octet-stream, 7bit with a comment after it", []string{"Mime-Version: 1.0", "Content-Type: application/octet-stream", "Content-Transfer-Encoding: 7bit (plain text)"}, []string{"Plain text notes."}, atMIME, ""},
+		{"octet-stream, a comment before 7bit", []string{"Mime-Version: 1.0", "Content-Type: application/octet-stream", "Content-Transfer-Encoding: (old client) 7bit"}, []string{"Plain text notes."}, atMIME, ""},
+		{"octet-stream, 7bit on a folded line", []string{"Mime-Version: 1.0", "Content-Type: application/octet-stream", "Content-Transfer-Encoding:", " 7bit"}, []string{"Plain text notes."}, atMIME, ""},
+		{"octet-stream, 7bit folded after a comment", []string{"Mime-Version: 1.0", "Content-Type: application/octet-stream", "Content-Transfer-Encoding: (old", "\tclient) 7BIT"}, []string{"Plain text notes."}, atMIME, ""},
+		{"octet-stream, 8bit with a comment", []string{"Mime-Version: 1.0", "Content-Type: application/octet-stream", "Content-Transfer-Encoding: 8bit (x)"}, []string{"Plain text notes."}, atMIME, ""},
+		{"octet-stream, binary with a comment", []string{"Mime-Version: 1.0", "Content-Type: application/octet-stream", "Content-Transfer-Encoding: binary (y)"}, []string{"Plain text notes."}, atMIME, ""},
+		{"octet-stream, 7bit with words after it", []string{"Mime-Version: 1.0", "Content-Type: application/octet-stream", "Content-Transfer-Encoding: 7bit plain"}, []string{"Plain text notes."}, atMIME | atBinary, "not an identity encoding"},
+		{"octet-stream, x-uuencode with a comment", []string{"Mime-Version: 1.0", "Content-Type: application/octet-stream", "Content-Transfer-Encoding: x-uuencode (z)"}, []string{"data"}, atMIME | atBinary, ""},
+		{"octet-stream, 7bit in an unclosed comment", []string{"Mime-Version: 1.0", "Content-Type: application/octet-stream", "Content-Transfer-Encoding: (7bit"}, []string{"data"}, atMIME | atBinary, "no token"},
+		{"octet-stream, 7bit and an unclosed comment", []string{"Mime-Version: 1.0", "Content-Type: application/octet-stream", "Content-Transfer-Encoding: 7bit (plain text"}, []string{"Plain text notes."}, atMIME | atBinary, "review of chatgpt-1: a comment left open"},
+		{"octet-stream, 7bit and an unclosed outer comment", []string{"Mime-Version: 1.0", "Content-Type: application/octet-stream", "Content-Transfer-Encoding: 7bit (a (b)"}, []string{"Plain text notes."}, atMIME | atBinary, ""},
+		{"octet-stream, 7bit and an escaped parenthesis in a comment", []string{"Mime-Version: 1.0", "Content-Type: application/octet-stream", "Content-Transfer-Encoding: 7bit (a \\) b)"}, []string{"Plain text notes."}, atMIME, "a quoted pair does not close it"},
+		{"octet-stream, 7 control bytes", []string{"Mime-Version: 1.0", "Content-Type: application/octet-stream"}, []string{"a\x01b\x02c\x03d", "e\x04f\x05g\x06h\x7f"}, atMIME, "stray bytes of a text"},
+		{"octet-stream, 8 control bytes", []string{"Mime-Version: 1.0", "Content-Type: application/octet-stream"}, []string{"a\x01b\x02c\x03d", "e\x04f\x05g\x06h\x7f", "\x1a"}, atMIME | atBinary, "the 8th is on the next line"},
+		{"octet-stream, a uuencoded file", []string{"Mime-Version: 1.0", "Content-Type: application/octet-stream"}, append([]string{"begin 644 a.bin"}, atLines(12, 60, uuAlphabet, "M")...), atMIME | atBinary | atUUencode, ""},
+		{"octet-stream, base64", []string{"Mime-Version: 1.0", "Content-Type: application/octet-stream", "Content-Transfer-Encoding: base64"}, []string{"ZGF0YQ=="}, atMIME | atBinary | atBase64, ""},
+		{"octet-stream, quoted-printable", []string{"Mime-Version: 1.0", "Content-Type: application/octet-stream", "Content-Transfer-Encoding: quoted-printable"}, []string{"data"}, atMIME | atBinary, ""},
+		{"octet-stream, x-uuencode", []string{"Mime-Version: 1.0", "Content-Type: application/octet-stream", "Content-Transfer-Encoding: x-uuencode"}, []string{"data"}, atMIME | atBinary, "an encoding that is not 7bit, 8bit or binary"},
+		{"Pine 3 text attachment", []string{"Mime-Version: 1.0", "Content-Type: MULTIPART/MIXED; BOUNDARY=\"0-1234-5678:#99\""},
+			[]string{"--0-1234-5678:#99", "Content-Type: TEXT/PLAIN; charset=US-ASCII", "", "The script is attached.", "",
+				"--0-1234-5678:#99", "Content-Type: APPLICATION/octet-stream; name=\"tool.pl\"", "Content-ID: <Pine.3.05.0000.A99@e2e.test>", "Content-Description: a script", "",
+				"#!/usr/bin/perl", "", "sub main {", "\tlocal($x) = @_;", "\tprint \"$x\\n\";", "}", "", "1;", "", "--0-1234-5678:#99--"},
+			atMIME | atMultipart, ""},
+		{"Pine 3 text attachment, the type before the parts' text", []string{"Mime-Version: 1.0", "Content-Type: MULTIPART/MIXED; BOUNDARY=\"0-1234-5678:#99\""},
+			[]string{"--0-1234-5678:#99", "Content-Type: TEXT/PLAIN; charset=US-ASCII", "", "--0-1234-5678:#99", "Content-Type: APPLICATION/octet-stream; name=\"note.txt\"", "Content-Description:", "",
+				"I am looking for daily weather data of the 1880s.", "Thanks for any help.", "", "--0-1234-5678:#99--"},
+			atMIME | atMultipart, "an empty text part, the text in the attachment"},
 		{"message/partial", []string{"Mime-Version: 1.0", "Content-Type: message/partial; id=x; number=1; total=2"}, []string{"data"}, atMIME | atPartial, ""},
 		{"x-bommanews", []string{"Mime-Version: 1.0", "Content-Transfer-Encoding: X-Bommanews"}, []string{"data"}, atMIME | atBommaNews | atBinary, ""},
 		{"x-unidata", []string{"Mime-Version: 1.0", "Content-Transfer-Encoding: X-UnidataEncoding"}, []string{"data"}, atMIME | atUnidata | atBinary, ""},
 		{"multipart with base64 attachment", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=XX"},
 			append(append([]string{"--XX", "Content-Type: text/plain", "", "text", "--XX", "Content-Type: application/octet-stream", "Content-Transfer-Encoding: base64", ""}, b64...), "--XX--"),
-			atMIME | atMultipart | atBinary, ""},
+			atMIME | atMultipart | atBinary | atBase64, "the encoding after the octet-stream type is read too"},
 		{"base64 attachment", []string{"Mime-Version: 1.0", "Content-Type: image/png", "Content-Transfer-Encoding: base64"}, b64, atMIME | atBinary | atBase64, ""},
 		{"uuencode", nil, append([]string{"begin 644 file.bin"}, atLines(12, 60, uuAlphabet, "M")...), atUUencode | atBinary, ""},
 		{"binhex", []string{"Mime-Version: 1.0", "Content-Type: application/mac-binhex40"}, append([]string{"(This file must be converted with BinHex 4.0)"}, binhexLines(12)...), atMIME | atBinHex | atBinary, ""},
@@ -378,15 +413,26 @@ func TestArticleTypes(t *testing.T) {
 		// escape of a byte that is not text makes a binary, as in a base64 one.
 		{"quoted-printable lines in image/png", []string{"Mime-Version: 1.0", "Content-Type: image/png"}, qpLines(12), atMIME | atBinary | atBase64, ""},
 		{"quoted-printable lines in image/png, declared", []string{"Mime-Version: 1.0", "Content-Type: image/png", "Content-Transfer-Encoding: quoted-printable"}, qpLines(12), atMIME | atBinary | atBase64, ""},
-		{"quoted-printable lines in application/octet-stream", []string{"Mime-Version: 1.0", "Content-Type: application/octet-stream"}, qpLines(12), atMIME | atBinary, ""},
+		{"quoted-printable lines in application/octet-stream", []string{"Mime-Version: 1.0", "Content-Type: application/octet-stream"}, qpLines(12), atMIME | atBinary | atBase64, "not declared: the lines count as base64"},
 		{"quoted-printable lines in application/octet-stream, declared", []string{"Mime-Version: 1.0", "Content-Type: application/octet-stream", "Content-Transfer-Encoding: quoted-printable"}, qpLines(12), atMIME | atBinary, ""},
-		{"quoted-printable text with =00", hdrQP, []string{"Hello=00world, a NUL byte", "and more text"}, atMIME | atBinary, ""},
-		{"quoted-printable text with =7F", hdrQP, []string{"Hello=7Fworld, a DEL byte"}, atMIME | atBinary, ""},
+		// B64_ARTTYPE_IS_TEXT (8) escapes of bytes that are not text make a binary; fewer are
+		// stray bytes of a text: a DEL in a table of characters, a Ctrl-Z at the end of a file.
+		{"quoted-printable text with =00", hdrQP, []string{"Hello=00world, a NUL byte", "and more text"}, atMIME, ""},
+		{"quoted-printable text with =7F", hdrQP, []string{"Hello=7Fworld, a DEL byte"}, atMIME, ""},
+		{"quoted-printable table with =7F", []string{"Mime-Version: 1.0", "Content-Type: text/plain; charset=ISO-8859-1", "Content-Transfer-Encoding: quoted-printable"},
+			[]string{"Hex Dec Ch Name", "0x7E 126 '~' Tilde", "0x7F 127 '=7F' Delete", "0xE4 228 '=E4' Latin small letter a with diaeresis"}, atMIME, ""},
+		{"quoted-printable text ending in =0C=1A", []string{"Mime-Version: 1.0", "Content-Type: TEXT/PLAIN; charset=US-ASCII", "Content-Transfer-Encoding: QUOTED-PRINTABLE"},
+			[]string{"Last page of the paper.", "=0C=1A"}, atMIME, "a form feed and a DOS end of file"},
+		{"quoted-printable text with 7 escapes of NUL", hdrQP, []string{"a=00b=00c=00d", "e=00f=00g=00h=00"}, atMIME, ""},
+		{"quoted-printable text with 8 escapes of NUL", hdrQP, []string{"a=00b=00c=00d", "e=00f=00g=00h=00", "=7F"}, atMIME | atBinary, "the 8th is on the next line"},
+		{"quoted-printable parts count apart", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=XX"},
+			[]string{"--XX", "Content-Type: text/plain", "Content-Transfer-Encoding: quoted-printable", "", "a=00b=00c=00d=00",
+				"--XX", "Content-Type: text/plain", "Content-Transfer-Encoding: quoted-printable", "", "e=00f=00g=00h=00", "--XX--"}, atMIME | atMultipart, "4 in each part"},
 		{"quoted-printable text with =0C and =1B", hdrQP, []string{"Page one=0C", "=1B$B$3$s$K$A$O=1B(B"}, atMIME, "FF and ESC (ISO-2022-JP) are text"},
 		// A line longer than dfeedtest's 64 KiB buffer comes in pieces: an escape cut at the end
 		// of one is finished in the next.
-		{"quoted-printable =00 cut after its =", hdrQP, []string{strings.Repeat("A", 65534) + "=00" + strings.Repeat("A", 100)}, atMIME | atBinary, ""},
-		{"quoted-printable =00 cut after its =0", hdrQP, []string{strings.Repeat("A", 65533) + "=00" + strings.Repeat("A", 100)}, atMIME | atBinary, ""},
+		{"quoted-printable =00 cut after its =", hdrQP, []string{strings.Repeat("=00", 7) + strings.Repeat("A", 65534-21) + "=00" + strings.Repeat("A", 100)}, atMIME | atBinary, "the 8th escape is cut"},
+		{"quoted-printable =00 cut after its =0", hdrQP, []string{strings.Repeat("=00", 7) + strings.Repeat("A", 65533-21) + "=00" + strings.Repeat("A", 100)}, atMIME | atBinary, "the 8th escape is cut"},
 		{"quoted-printable text, an escape cut", hdrQP, []string{strings.Repeat("A", 65534) + "=C3=A4" + strings.Repeat("A", 100)}, atMIME, ""},
 		{"quoted-printable lines escaping NUL, not declared", nil, edit(qpLines(12), func(l string) string { return "=00" + l[3:] }), atBinary | atBase64, "not text: the lines count as base64"},
 		// MIME parts.
@@ -467,7 +513,7 @@ func TestArticleTypes(t *testing.T) {
 		{"pgp/mime encrypted, protocol on the next line", []string{"Mime-Version: 1.0", "Content-Type: multipart/encrypted;", "\tprotocol=\"application/pgp-encrypted\"; boundary=XX"},
 			append(append([]string{"--XX", "Content-Type: application/pgp-encrypted", "", "Version: 1", "--XX", "Content-Type: application/octet-stream", ""}, pgp("MESSAGE", 4)...), "--XX--"), atMIME | atMultipart | atPGP, "the protocol is on a folded line; the encrypted part's own Content-Type gives the PGP flag and the exemption of its octet-stream"},
 		{"octet-stream attachment next to a pgp signature", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=XX"},
-			append(append([]string{"--XX", "Content-Type: application/octet-stream", "", "data", "--XX", "Content-Type: application/pgp-signature", ""}, pgp("SIGNATURE", 4)...), "--XX--"), atMIME | atMultipart | atBinary, "an octet-stream attachment is still a binary (and, as for any binary, the scan stops there, so the later pgp-signature part adds no flag)"},
+			append(append(append(append([]string{"--XX", "Content-Type: application/octet-stream", "Content-Transfer-Encoding: base64", ""}, b64...), "--XX", "Content-Type: application/pgp-signature", ""), pgp("SIGNATURE", 4)...), "--XX--"), atMIME | atMultipart | atBinary | atBase64, "a base64 octet-stream attachment is still a binary (and, as for any binary, the scan stops there, so the later pgp-signature part adds no flag)"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			got := artTypeOf(t, s, atArticle(c.extra, c.body))
@@ -802,7 +848,11 @@ func TestBase64TextNotRejectedAsBinary(t *testing.T) {
 		{"base64 text part in multipart", []string{"Mime-Version: 1.0", "Content-Type: multipart/mixed; boundary=XX"},
 			append(append([]string{"--XX", "Content-Type: text/x-patch", "Content-Transfer-Encoding: base64", ""}, b64Text(30)...), "--XX--"), "235"},
 		{"text quoting an octet-stream header", []string{"Content-Type: text/plain"}, []string{"An example header:", "Content-Type: application/octet-stream", "", "Ordinary text."}, "235"},
-		{"real octet-stream header", []string{"Content-Type: application/octet-stream"}, []string{"payload"}, "437"},
+		{"real octet-stream header", []string{"Content-Type: application/octet-stream", "Content-Transfer-Encoding: base64"}, atLines(3, 76, b64Alphabet, ""), "437"},
+		{"octet-stream text without a transfer encoding", []string{"Mime-Version: 1.0", "Content-Type: application/octet-stream; name=\"notes.txt\""}, []string{"Plain text notes,", "attached by an old mail client."}, "235"},
+		{"octet-stream text, 7bit with a comment", []string{"Mime-Version: 1.0", "Content-Type: application/octet-stream", "Content-Transfer-Encoding: 7bit (plain text)"}, []string{"Plain text notes from an old client."}, "235"},
+		{"quoted-printable text with one =7F", hdrQP, []string{"0x7F 127 '=7F' Delete"}, "235"},
+		{"quoted-printable text with one =1A", hdrQP, []string{"The end.", "=1A"}, "235"},
 		{"base64 image", image, atLines(3, 40, b64Alphabet, ""), "437"},
 		{"base64 random data in text/plain", text, b64Wrap(randBytes(1140, 9), 76), "437"},
 		{"base64 random data in text/plain, one long line", text, b64Wrap(randBytes(12000, 10), 20000), "437"},
@@ -850,10 +900,10 @@ func TestQuotedPrintableNotRejectedAsBinary(t *testing.T) {
 		// diablo reads a line longer than its buffer (about 4 KiB) in pieces: an escape cut
 		// at the end of one is finished in the next, wherever the cut falls.
 		{"quoted-printable text, a long line with escapes", hdrQP, []string{strings.Repeat("Stra=C3=9Fe ", 2000)}, "235"},
-		{"quoted-printable =00 at 4026 in a long line", hdrQP, []string{strings.Repeat("A", 4026) + "=00" + strings.Repeat("A", 6000)}, "437"},
-		{"quoted-printable =00 at 4027 in a long line", hdrQP, []string{strings.Repeat("A", 4027) + "=00" + strings.Repeat("A", 6000)}, "437"},
-		{"quoted-printable =00 at 4028 in a long line", hdrQP, []string{strings.Repeat("A", 4028) + "=00" + strings.Repeat("A", 6000)}, "437"},
-		{"quoted-printable =00 at 4029 in a long line", hdrQP, []string{strings.Repeat("A", 4029) + "=00" + strings.Repeat("A", 6000)}, "437"},
+		{"quoted-printable =00 at 4026 in a long line", hdrQP, []string{strings.Repeat("=00", 7) + strings.Repeat("A", 4026-21) + "=00" + strings.Repeat("A", 6000)}, "437"},
+		{"quoted-printable =00 at 4027 in a long line", hdrQP, []string{strings.Repeat("=00", 7) + strings.Repeat("A", 4027-21) + "=00" + strings.Repeat("A", 6000)}, "437"},
+		{"quoted-printable =00 at 4028 in a long line", hdrQP, []string{strings.Repeat("=00", 7) + strings.Repeat("A", 4028-21) + "=00" + strings.Repeat("A", 6000)}, "437"},
+		{"quoted-printable =00 at 4029 in a long line", hdrQP, []string{strings.Repeat("=00", 7) + strings.Repeat("A", 4029-21) + "=00" + strings.Repeat("A", 6000)}, "437"},
 	} {
 		if line := offerHeaders(t, s, "talk.test", c.extra, c.body); !strings.HasPrefix(line, c.want) {
 			t.Errorf("IHAVE with %s: %q, want %s", c.name, line, c.want)
@@ -1215,7 +1265,8 @@ func TestNestedMessageHeaderScope(t *testing.T) {
 		}
 	}
 	body := append([]string{"--outer", "Content-Type: message/rfc822", "", "Subject: forwarded", "Content-Type: text/plain", "Content-Transfer-Encoding: base64", ""}, b64Text(30)...)
-	body = append(body, "--outer", "Content-Type: application/octet-stream", "", "binary attachment", "--outer--")
+	body = append(body, "--outer", "Content-Type: application/octet-stream", "Content-Transfer-Encoding: base64", "")
+	body = append(append(body, b64Wrap(randBytes(1140, 13), 76)...), "--outer--")
 	if got := artTypeOf(t, s, atArticle([]string{"Content-Type: multipart/mixed; boundary=outer"}, body)); got&atBinary == 0 {
 		t.Errorf("outer binary sibling: ArtType=%06x, want binary", got)
 	}
@@ -1313,6 +1364,11 @@ func TestIncomingFilterTextBinary(t *testing.T) {
 		return []string{"Content-Type: text/plain; charset=UTF-8", "Content-Transfer-Encoding: base64", "",
 			base64.StdEncoding.EncodeToString([]byte(s))}
 	}
+	octet := func(body []string) []string { // a body sent as application/octet-stream, no encoding
+		a := art(body)
+		i := slices.Index(a, "")
+		return slices.Insert(a, i, "Mime-Version: 1.0", "Content-Type: application/octet-stream")
+	}
 	nestedEmpty := append([]string{"Content-Type: multipart/mixed; boundary=i", ""}, mpBody("i", plain())...)
 	imagePart := func(data []string) []string {
 		return append([]string{"Content-Type: image/jpeg", "Content-Transfer-Encoding: base64", ""}, data...)
@@ -1336,6 +1392,9 @@ func TestIncomingFilterTextBinary(t *testing.T) {
 		{"text with base64 lines", art(cat(text, atLines(12, 64, b64Alphabet, ""))), "235"},
 		{"text with a uuencoded file over the limit", art(cat(text, uu(100))), "437"},
 		{"a uuencoded file alone", art(uu(12)), "437"},
+		// the text of an octet-stream part sent without a transfer encoding counts
+		{"octet-stream text with a small uuencoded file", octet(cat(text, uu(12))), "235"},
+		{"a uuencoded file alone as octet-stream", octet(uu(12)), "437"},
 		// text after the binary counts too: a signature after a uuencoded file
 		{"a uuencoded file with the text after it", art(cat(uu(12), text)), "235"},
 		{"a uuencoded file with a signature after it", art(cat(uu(12), []string{"-- ", "A. Poster", "Some University"})), "235"},

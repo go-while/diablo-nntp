@@ -87,6 +87,26 @@ int Armor = 0;	/* lines left, negative PGP armor state, or 0 outside armor */
 #define	B64_NOCTYPE_IS_TEXT	1
 
 /*
+ * A part that is text by its encoding, though one may not expect it, is a
+ * binary only once it has this many bytes that are not text (NOTTEXT): the
+ * escapes of a quoted-printable text part, and the bytes of an
+ * application/octet-stream part sent without a transfer encoding (7bit,
+ * 8bit, binary or none).  Fewer are stray bytes of a text: a DEL in a table
+ * of the ISO 8859-1 characters, a Ctrl-Z at the end of a DOS file.  Binary
+ * data has about one in nine.  1 makes the first one a binary, as it was
+ * for quoted-printable text before.
+ * (tests/e2e/arttype_test.go pins it in the "not text" cases.)
+ *
+ * An octet-stream part is "arbitrary binary data" (RFC 2046 section
+ * 4.5.1), but one without a transfer encoding can hold only lines (RFC
+ * 2045 sections 2.7 to 2.9): Pine 3 attached text files that way.  Such a
+ * part gets the checks of an unencoded body (runs of uuencode, BinHex and
+ * base64 lines) and this count, not a binary by its header.  Sent as
+ * base64 or quoted-printable it is a binary, as before.
+ */
+#define	B64_ARTTYPE_IS_TEXT	8
+
+/*
  * A base64 text part is decoded instead of counting its lines as base64:
  * see b64Decode().  The base64 group (B64Bits, B64NBits, B64Quad, B64Pad)
  * carries across lines and calls, so the line width of the encoding or a
@@ -97,6 +117,9 @@ int Armor = 0;	/* lines left, negative PGP armor state, or 0 outside armor */
 #define	DLINE_MAX	1024	/* a longer decoded line is checked by its start */
 
 static int CTSeen = 0;	/* the part has a Content-Type */
+static int CTOctet = 0;	/* the part's Content-Type is application/octet-stream (not PGP/MIME data) */
+static int OctetPart = 0;	/* in the body of an octet-stream part sent without a transfer encoding */
+static int NotText = 0;	/* bytes of the part that are not text (B64_ARTTYPE_IS_TEXT) */
 static int CTEQP = 0;	/* a quoted-printable Content-Transfer-Encoding is waiting for the end of its header block */
 static int QPPart = 0;	/* in the body of a part declared quoted-printable */
 static int QPEsc = 0;	/* an escape cut at the end of a piece: 1 = "=", 2 = "=H" */
@@ -108,7 +131,8 @@ static int PieceMore = 0;	/* the last call was a piece: the line goes on */
  * and of the feeds in dnewsfeeds).  With TextBinMax set, the text of the
  * article is counted, before or after its binary (a signature after the
  * file is the usual text of a part of a split posting): the lines of a body
- * that is not MIME, or of a text part, except lines with only white space,
+ * that is not MIME, of a text part or of an octet-stream part sent without
+ * a transfer encoding (B64_ARTTYPE_IS_TEXT), except lines with only white space,
  * part headers and MIME delimiters, the begin and end lines of a uuencoded
  * or BinHex file and encoded lines (a run of fewer than 9 of them is not
  * text either).  A binary article is read on to its end, to measure its
@@ -118,9 +142,10 @@ static int PieceMore = 0;	/* the last call was a piece: the line goes on */
  * binary every encoded line counts, whatever the length of its run, and so
  * does every line of a part sent as base64 that is not text.  The type the
  * caller gets stays the one the article had when it became a binary, as
- * without the option.  A binary of another kind (yEnc, an
+ * without the option.  A binary of another kind (yEnc, an encoded
  * application/octet-stream part, base64 or quoted-printable text that
- * decodes to binary data, X-Bommanews, X-UnidataEncoding) is not measured
+ * decodes to binary data, an octet-stream part with bytes that are not
+ * text, X-Bommanews, X-UnidataEncoding) is not measured
  * (TBOther), and neither is one whose encoded data is over the limit: such
  * an article is not read on.  An article that ends with no text at all is
  * not within the limit.
@@ -166,6 +191,20 @@ static char CTBuf[CTBUF_MAX];
 static int CTLen;
 static int CTTrunc;	/* CTBuf overflowed */
 static int CTCont = 0;	/* gathering a Content-Type header */
+
+/*
+ * The value of a Content-Transfer-Encoding header of a header block, its
+ * folded lines unfolded, is gathered in CTEBuf and read at the end of the
+ * header (cteFinish) for CTEIdentity: the token without the comments
+ * around it, which have no meaning (RFC 2045 sections 1 and 6.1; RFC 5322
+ * section 2.2.3).
+ */
+#define	CTEBUF_MAX	256	/* a longer value is not an identity encoding */
+
+static char CTEBuf[CTEBUF_MAX];
+static int CTELen;
+static int CTETrunc;	/* CTEBuf overflowed */
+static int CTECont = 0;	/* gathering a Content-Transfer-Encoding header */
 
 /*
  * The boundaries of the multiparts we are in, innermost on top.  A
@@ -607,12 +646,16 @@ InitArticleType(void)
     CTEIdentity = 1;
     CTEBase64 = 0;
     CTSeen = 0;
+    CTOctet = 0;
+    OctetPart = 0;
+    NotText = 0;
     B64Part = 0;
     B64Blank = 0;
     CTEQP = 0;
     QPPart = 0;
     HdrBlock = 1;
     CTCont = 0;
+    CTECont = 0;
     BndTop = 0;
     QPEsc = 0;
     PieceMore = 0;
@@ -797,7 +840,7 @@ tbLine(const char *ptr, int len, int kind, int count)
 	if (delim || tbFraming(ptr, len) || tbBlank(ptr, len))
 	    return;
 	/* a line after the binary is text as well: a signature */
-	if (!HdrBlock && (!CTSeen || CTText))
+	if (!HdrBlock && (!CTSeen || CTText || OctetPart))
 	    TBText += len;
 	return;
     }
@@ -971,10 +1014,12 @@ ctGather(const char *p, int len, int more)
 }
 
 /*
- * Skip white space and comments ("(...)", nested, with quoted pairs).
+ * Skip white space and comments ("(...)", nested, with quoted pairs).  A
+ * comment left open runs to the end; *unclosed (when not NULL) is set to 1
+ * then.
  */
 static const char *
-mimeSkip(const char *p, const char *e)
+mimeSkipOpen(const char *p, const char *e, int *unclosed)
 {
     int depth;
 
@@ -993,7 +1038,15 @@ mimeSkip(const char *p, const char *e)
 		break;
 	    }
 	}
+	if (depth > 0 && unclosed != NULL)
+	    *unclosed = 1;
     }
+}
+
+static const char *
+mimeSkip(const char *p, const char *e)
+{
+    return(mimeSkipOpen(p, e, NULL));
 }
 
 /*
@@ -1094,6 +1147,54 @@ ctFinish(void)
 }
 
 /*
+ * Gather the value of a Content-Transfer-Encoding header (from its first
+ * line, more=0, or a continuation line, more=1), as ctGather() does.
+ */
+static void
+cteGather(const char *p, int len, int more)
+{
+    while (len > 0 && (p[len - 1] == '\n' || p[len - 1] == '\r'))
+	--len;
+    if (!more) {
+	CTELen = 0;
+	CTETrunc = 0;
+	CTECont = 1;
+    }
+    if (len > CTEBUF_MAX - CTELen) {
+	CTETrunc = 1;
+	len = CTEBUF_MAX - CTELen;
+    }
+    memcpy(CTEBuf + CTELen, p, len);
+    CTELen += len;
+}
+
+/*
+ * The end of a gathered Content-Transfer-Encoding header: the encoding is
+ * an identity one (7bit, 8bit or binary, without case) when that token is
+ * all there is but white space and closed comments.  Anything else, an
+ * unknown encoding or a comment left open too, is not.
+ */
+static void
+cteFinish(void)
+{
+    const char *p = CTEBuf, *e = CTEBuf + CTELen, *a;
+    int n, unclosed = 0;
+
+    CTECont = 0;
+    p = mimeSkipOpen(p, e, &unclosed);
+    for (a = p; p < e && *p != ' ' && *p != '\t' && *p != '(' &&
+					*p != '\r' && *p != '\n'; ++p)
+	;
+    n = (int)(p - a);
+    p = mimeSkipOpen(p, e, &unclosed);
+    /* a comment left open is malformed: not an identity encoding */
+    CTEIdentity = (!CTETrunc && !unclosed && p >= e &&
+	((n == 4 && (strncasecmp(a, "7bit", 4) == 0 ||
+		     strncasecmp(a, "8bit", 4) == 0)) ||
+	 (n == 6 && strncasecmp(a, "binary", 6) == 0)));
+}
+
+/*
  * Is this line (after its "--") the delimiter of a multipart we are in,
  * innermost first?  Returns 1 for one that starts a part, 2 for the
  * closing one ("--boundary--"), which pops that multipart and any left
@@ -1188,11 +1289,12 @@ qpLine(const char *p, int len, int declared)
 }
 
 /*
- * Has a line of a part declared quoted-printable text an escape of a byte
- * that is not text (=00 to =1F but =09, =0A, =0C, =0D and =1B; =7F)?
- * Then the part is a binary, as decoded base64 text is (b64Decode).  An
- * escape cut at the end of a piece of a long line (ArticleTypePiece) is
- * finished in the next piece (QPEsc).
+ * Count the escapes of bytes that are not text (=00 to =1F but =09, =0A,
+ * =0C, =0D and =1B; =7F) in a line of a part declared quoted-printable
+ * text.  Returns 1 when the part has B64_ARTTYPE_IS_TEXT of them: then it
+ * is a binary, as decoded base64 text is (b64Decode).  An escape cut at
+ * the end of a piece of a long line (ArticleTypePiece) is finished in the
+ * next piece (QPEsc).
  */
 static int
 qpBad(const char *p, int len)
@@ -1203,7 +1305,8 @@ qpBad(const char *p, int len)
 	c = (unsigned char)p[i];
 	if (QPEsc == 2) {
 	    QPEsc = 0;
-	    if (QPHEX(c) && NOTTEXT(QPEscHi * 16 + QPVAL(c)))
+	    if (QPHEX(c) && NOTTEXT(QPEscHi * 16 + QPVAL(c)) &&
+					++NotText >= B64_ARTTYPE_IS_TEXT)
 		return(1);
 	} else if (QPEsc == 1) {
 	    QPEsc = 0;
@@ -1214,6 +1317,24 @@ qpBad(const char *p, int len)
 	}
 	if (QPEsc == 0 && c == '=')
 	    QPEsc = 1;
+    }
+    return(0);
+}
+
+/*
+ * Count the bytes that are not text (NOTTEXT) in a line of an
+ * application/octet-stream part sent without a transfer encoding.  Returns
+ * 1 when the part has B64_ARTTYPE_IS_TEXT of them: then it is a binary.
+ */
+static int
+octetBad(const char *p, int len)
+{
+    int i;
+
+    for (i = 0; i < len; i++) {
+	if (NOTTEXT((unsigned char)p[i]) &&
+				++NotText >= B64_ARTTYPE_IS_TEXT)
+	    return(1);
     }
     return(0);
 }
@@ -1591,11 +1712,15 @@ partReset(void)
     CTMessage = 0;
     CTEIdentity = 1;
     CTSeen = 0;
+    CTOctet = 0;
+    OctetPart = 0;
+    NotText = 0;
     CTEBase64 = 0;
     CTEQP = 0;
     QPPart = 0;
     QPEsc = 0;
     CTCont = 0;
+    CTECont = 0;
     TBRawB64 = 0;
 }
 
@@ -1699,6 +1824,22 @@ articleType(char *line, int len, int inheader)
 	    B64Blank = 1;
 	if (CTCont)
 	    ctFinish();
+	if (CTECont)
+	    cteFinish();
+	/*
+	 * An octet-stream part sent without a transfer encoding is read as
+	 * lines (B64_ARTTYPE_IS_TEXT); one sent encoded is a binary.  The
+	 * encoding can come after the type.
+	 */
+	if (HdrBlock && CTOctet) {
+	    if (CTEIdentity) {
+		OctetPart = 1;
+	    } else {
+		Type |= ARTTYPE_BINARY;
+		TBOther = 1;
+	    }
+	    CTOctet = 0;
+	}
 	if (HdrBlock && CTEBase64) {
 	    if (CTText || CTArmorPGP || (!CTSeen && B64_NOCTYPE_IS_TEXT)) {
 		/* a text part: decode it (b64Decode) */
@@ -1744,6 +1885,13 @@ articleType(char *line, int len, int inheader)
 	    ctGather(ptr, len, 1);
 	else
 	    ctFinish();
+    }
+    /* and a folded Content-Transfer-Encoding header */
+    if (CTECont) {
+	if (HdrBlock && (*ptr == ' ' || *ptr == '\t'))
+	    cteGather(ptr, len, 1);
+	else
+	    cteFinish();
     }
 
     /*
@@ -1806,22 +1954,16 @@ articleType(char *line, int len, int inheader)
 		    (hdrPrefix(cv, cvlen, "multipart/encrypted") &&
 		     lineHas(cv, cvlen, "application/pgp-encrypted")))
 		PGPMime = 1;
-	    if (hdrPrefix(cv, cvlen, "application/octet-stream") && !PGPMime) {
-		Type |= ARTTYPE_BINARY;
-		TBOther = 1;
-	    }
+	    /* a binary, or text in lines: at the end of the header block */
+	    CTOctet = (hdrPrefix(cv, cvlen, "application/octet-stream") && !PGPMime);
 	    if (hdrPrefix(cv, cvlen, "message/partial"))
 		Type |= ARTTYPE_PARTIAL;
 	}
 	if (ce != NULL) {
 	    int celen = len - (int)(ce - ptr);
 
-	    int elen = celen;
-	    while (elen > 0 && (ce[elen - 1] == ' ' || ce[elen - 1] == '\t' || ce[elen - 1] == '\r'))
-		--elen;
-	    CTEIdentity = ((elen == 4 && (strncasecmp(ce, "7bit", 4) == 0 ||
-		strncasecmp(ce, "8bit", 4) == 0)) ||
-		(elen == 6 && strncasecmp(ce, "binary", 6) == 0));
+	    /* identity or not: at the end of the header (cteFinish) */
+	    cteGather(ce, celen, 0);
 
 	    /* a part's encoding is in its header block, not in its text */
 	    if (HdrBlock && hdrPrefix(ce, celen, "base64"))
@@ -1902,7 +2044,8 @@ articleType(char *line, int len, int inheader)
 		 */
 		return(Type);
 	    }
-	} else if (QPPart && QPTEXT() && qpBad(ptr, len)) {
+	} else if ((QPPart && QPTEXT() && qpBad(ptr, len)) ||
+				(OctetPart && octetBad(ptr, len))) {
 	    Type |= ARTTYPE_BINARY;
 	    Type &= ~ARTTYPE_DEFAULT;
 	    TBOther = 1;
