@@ -2468,12 +2468,15 @@ Transact(int cfd, const char *relPath, char *msgId, off_t off, int size, int cSi
 	return(T_REJECTED);
     }
 
-    /*
-     * 437 is no answer to the offer, only to the article (RFC 3977
-     * 6.3.2): like any code IHAVE does not have, it fails the connection.
-     */
     switch(commandResponse(cfd, &ptr, "ihave %s\r\n", msgId)) {
     case CONT_XFER:
+	break;
+    case ERR_XFERRJCT:
+	/*
+	 * 437 belongs to the article (RFC 3977 6.3.2), but some servers
+	 * answer the offer with it: a one-line reject.
+	 */
+	r = T_REJECTED;
 	break;
     case ERR_GOTIT:
 	r = T_REFUSED;
@@ -2947,6 +2950,7 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
      *
      * check command response:	  OK_STRMCHECK, ERR_STRMCHECK, ERR_RESEND
      * takethis command response: OK_STRMTAKE,  ERR_STRMTAKE
+     *				  (also ERR_RESEND, ERR_XFERRJCT: see below)
      * misc:			  ERR_GOODBYE
      */
 
@@ -2956,19 +2960,35 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 	char *ptr = NULL;
 	Stream *s = NULL;
 	int delMe = 0;
-	int code;
 
-	/*
-	 * TAKETHIS answers 239 or 439, CHECK 238, 431 or 438 (RFC 4644).
-	 * A 431 for an article sent with TAKETHIS is no answer to it: fail
-	 * the connection as for any other code, the article stays queued.
-	 */
-	code = commandResponse(cfd, &ptr, NULL);
-	if (code == ERR_RESEND && LocateStream(ptr, STATE_POSTED) != NULL)
-	    code = ERR_UNKNOWN;
-
-	switch(code) {
+	switch(commandResponse(cfd, &ptr, NULL)) {
 	case ERR_RESEND:
+	    /*
+	     * 431 to TAKETHIS is not in RFC 4644, but Diablo's feeder sends
+	     * it (history busy or failed).  A one-line reply: defer the
+	     * article once, as for CHECK below; while the defers are sent,
+	     * take it as a reject.
+	     */
+	    if ((s = LocateStream(ptr, STATE_POSTED)) != NULL) {
+		delMe = 1;
+		StrnCpyNull(msgId, s->st_MsgId, 1024);
+		if (STAGE_UNSET(stage))
+		    StrnCpyNull(stage, (defers? "resend-stream": "stream"), MAXREASON);
+		StrnCpyNull(reason, ptr, MAXREASON);
+		if (defers) {
+		    r = T_REJECTED;
+		} else {
+		    char cst[32];
+
+		    r = T_DEFERIT;
+		    streamFlags(s, cst, sizeof(cst));
+		    /* buf is the caller's queue line buffer (QLINESIZE) */
+		    snprintf(buf, QLINESIZE, "%s %s %lld,%d %c%s\n", s->st_RelPath, s->st_MsgId,
+			(long long)s->st_Off, s->st_Size,
+			HeaderOnlyFeed ? 'H' : ' ', cst);
+		}
+		break;
+	    }
 	    if (!defers && ((s = LocateStream(ptr, STATE_CHECK)) != NULL)) {
 		char cst[32];
 		delMe = 1;
@@ -3075,9 +3095,10 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 #endif
 	    break;
 	case ERR_STRMTAKE:
+	case ERR_XFERRJCT:
 	    /*
-	     * 437 is no answer to TAKETHIS or CHECK (RFC 4644): it fails
-	     * the connection in the default case, like any unknown code.
+	     * 437 is not a TAKETHIS reply (RFC 4644), but some servers send
+	     * it for a rejected article: take it as a 439.
 	     */
 	    if ((s = LocateStream(ptr, STATE_POSTED)) != NULL) {
 		delMe = 1;
