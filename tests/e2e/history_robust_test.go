@@ -53,8 +53,20 @@ func libdiabloDriver(t *testing.T, src, name, what string) string {
 	}
 	if b, err := os.ReadFile(filepath.Join(root, "config.mk")); err == nil {
 		for _, l := range strings.Split(string(b), "\n") {
-			if v, ok := strings.CutPrefix(strings.TrimSpace(l), "LDLIBS +="); ok {
+			l = strings.TrimSpace(l)
+			if v, ok := strings.CutPrefix(l, "LDLIBS +="); ok {
 				libs = append(libs, strings.Fields(v)...)
+			}
+			// Perl's ccopts put the distribution's hardening spec in CPPFLAGS and its ldopts
+			// the matching link spec in LDLIBS. On Rocky and Fedora redhat-hardened-ld links a
+			// PIE and redhat-hardened-cc1 makes the objects position independent: a driver
+			// compiled without it has absolute relocations and does not link.
+			if v, ok := strings.CutPrefix(l, "CPPFLAGS +="); ok {
+				for _, f := range strings.Fields(v) {
+					if strings.HasPrefix(f, "-specs=") {
+						cflags = append(cflags, f)
+					}
+				}
 			}
 		}
 	}
