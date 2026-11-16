@@ -29,7 +29,7 @@
 
 #include "defs.h"
 
-#define OVHSIZE		64
+#define OVHSIZE		1024
 #define OVHMASK		(OVHSIZE-1)
 
 #define HMAPALIGN	(1024 * 64)
@@ -81,6 +81,7 @@ gzHeaderLen(const unsigned char *p, size_t n)
 
 Prototype void NNFeedOverview(Connection *conn);
 Prototype void FlushOverCache(void);
+Prototype int OverCacheLimit(void);
 Prototype OverInfo *GetOverInfo(const char *group);
 Prototype void PutOverInfo(OverInfo *ov);
 Prototype const char *GetOverRecord(OverInfo *ov, artno_t artno, int *plen, int *aleno, int *plines, TimeRestrict *tr, int *TimeRcvd);
@@ -175,6 +176,129 @@ OverWriteV(int fd, const struct iovec *iov, int count)
 
 OverInfo *OvHash[OVHSIZE];
 int	  NumOverInfo;
+
+/*
+ * The groups in OvHash, most recently used first.  When the cache is full,
+ * GetOverInfo() closes the least recently used group nobody holds.  Busy
+ * feeds post across thousands of groups, so dropping half of the cache at
+ * a time (as before) or a small cache reopens almost every group.
+ */
+static OverInfo *OvLruHead;
+static OverInfo *OvLruTail;
+static int	OvCacheMax;
+
+static void
+OvLruUnlink(OverInfo *ov)
+{
+    if (ov->ov_LruPrev)
+	ov->ov_LruPrev->ov_LruNext = ov->ov_LruNext;
+    else
+	OvLruHead = ov->ov_LruNext;
+    if (ov->ov_LruNext)
+	ov->ov_LruNext->ov_LruPrev = ov->ov_LruPrev;
+    else
+	OvLruTail = ov->ov_LruPrev;
+    ov->ov_LruPrev = ov->ov_LruNext = NULL;
+}
+
+static void
+OvLruPushHead(OverInfo *ov)
+{
+    ov->ov_LruPrev = NULL;
+    ov->ov_LruNext = OvLruHead;
+    if (OvLruHead)
+	OvLruHead->ov_LruPrev = ov;
+    else
+	OvLruTail = ov;
+    OvLruHead = ov;
+}
+
+/* remove a cached group from the hash and the LRU list, and close it */
+static void
+OvCacheDrop(OverInfo *ov)
+{
+    OverInfo **pov = &OvHash[shash(ov->ov_Group) & OVHMASK];
+
+    while (*pov != ov)
+	pov = &(*pov)->ov_Next;
+    *pov = ov->ov_Next;
+    OvLruUnlink(ov);
+    FreeOverInfo(ov);
+    --NumOverInfo;
+}
+
+/* close the least recently used group nobody holds; 0 if there is none */
+static int
+OvCacheEvictOne(void)
+{
+    OverInfo *ov;
+
+    for (ov = OvLruTail; ov; ov = ov->ov_LruPrev) {
+	if (ov->ov_Refs == 0) {
+	    OvCacheDrop(ov);
+	    return(1);
+	}
+    }
+    return(0);
+}
+
+/*
+ * An open() failed with err.  If the process is out of descriptors, close
+ * a quarter of the cached groups (at least one) so the caller can retry.
+ * Returns the number closed, with errno still err.
+ */
+static int
+OvCacheReclaim(int err)
+{
+    int n = NumOverInfo / 4;
+    int freed = 0;
+
+    if (err != EMFILE && err != ENFILE)
+	return(0);
+    if (n < 1)
+	n = 1;
+    while (freed < n && OvCacheEvictOne())
+	++freed;
+    if (freed)
+	logit(LOG_NOTICE, "out of descriptors: closed %d cached overview groups",
+	    freed);
+    errno = err;
+    return(freed);
+}
+
+/*
+ * OverCacheLimit() - the number of groups a fork keeps open: readerovcache,
+ * lowered so the descriptors fit.  Each cached group holds its over.* file
+ * and usually one data.* file, sometimes more.  The forks select() on their
+ * clients, so all descriptors must stay below FD_SETSIZE as well as below
+ * RLIMIT_NOFILE; room is left for the clients, the spool servers and the
+ * log files.  Computed once (dreaderd calls it at startup, before it forks).
+ */
+int
+OverCacheLimit(void)
+{
+    if (OvCacheMax == 0) {
+	struct rlimit rl;
+	long lim = FD_SETSIZE;
+	long cap;
+
+	if (getrlimit(RLIMIT_NOFILE, &rl) == 0 &&
+	    rl.rlim_cur != RLIM_INFINITY && rl.rlim_cur < (rlim_t)lim)
+	    lim = (long)rl.rlim_cur;
+	cap = (lim - 2L * DOpts.ReaderThreads - 64) / 3;
+	if (cap < OV_CACHE_MAX)
+	    cap = OV_CACHE_MAX;
+	OvCacheMax = DOpts.ReaderOvCache;
+	if (OvCacheMax < 1)
+	    OvCacheMax = OV_CACHE_MAX;
+	if (OvCacheMax > cap) {
+	    logit(LOG_NOTICE, "readerovcache %d lowered to %ld (descriptor limit %ld)",
+		OvCacheMax, cap, lim);
+	    OvCacheMax = (int)cap;
+	}
+    }
+    return(OvCacheMax);
+}
 
 void
 NNFeedOverview(Connection *conn)
@@ -904,25 +1028,13 @@ WriteOverview(Connection *conn, ArtNumAss *an, const char *group, const char *xr
 
 void FlushOverCache(void)
 {
-    OverInfo **pov;
     OverInfo *ov;
-    int i;
-    static int OI = 0;
+    OverInfo *next;
 
-    for (i = 0; i < OVHSIZE; ++i) {
-	int ai = OI;
-	OI = (ai + 1) & OVHMASK;
-
-	pov = &OvHash[ai];
-	while ((ov = *pov) != NULL) {
-	    if (ov->ov_Refs == 0) {
-		*pov = ov->ov_Next;
-		FreeOverInfo(ov);
-		--NumOverInfo;
-	    } else {
-		pov = &ov->ov_Next;
-	    }
-	}
+    for (ov = OvLruHead; ov; ov = next) {
+	next = ov->ov_LruNext;
+	if (ov->ov_Refs == 0)
+	    OvCacheDrop(ov);
     }
 }
 
@@ -937,6 +1049,10 @@ GetOverInfo(const char *group)
 	    break;
 	pov = &ov->ov_Next;
     }
+    if (ov != NULL && ov != OvLruHead) {
+	OvLruUnlink(ov);
+	OvLruPushHead(ov);
+    }
     if (ov == NULL) {
 	OverExpire save;
 	struct stat st;
@@ -948,33 +1064,13 @@ GetOverInfo(const char *group)
 	bzero(&st, sizeof(st));
 
 	/*
-	 * If our cache has grown too large, attempt to free up
-	 * a bunch of overview structures.  Depending on the load,
-	 * we may not be able to.
+	 * If the cache is full, close the least recently used groups.
+	 * Groups still held stay open, so it may grow past the limit for a
+	 * while.
 	 */
 
-	if (NumOverInfo >= OV_CACHE_MAX) {
-	    int i;
-	    int freeup = OV_CACHE_MAX / 2;
-	    static int OI = 0;
-
-	    for (i = 0; i < OVHSIZE && freeup; ++i) {
-		int ai = OI;
-		OI = (ai + 1) & OVHMASK;
-
-		pov = &OvHash[ai];
-		while ((ov = *pov) != NULL) {
-		    if (ov->ov_Refs == 0) {
-			*pov = ov->ov_Next;
-			FreeOverInfo(ov);
-			--NumOverInfo;
-			--freeup;
-		    } else {
-			pov = &ov->ov_Next;
-		    }
-		}
-	    }
-	}
+	while (NumOverInfo >= OverCacheLimit() && OvCacheEvictOne())
+	    ;
 	ov = zalloc(&SysMemPool, sizeof(OverInfo));
 	ov->ov_Group = zallocStr(&SysMemPool, group);
 	/*
@@ -1011,7 +1107,8 @@ again:
 	    if (MakeGroupDirectory(path) == -1)
 		logit(LOG_ERR, "Error on overview dir open/create: %s (%s)",
 						path, strerror(errno));
-	    else
+	    else if ((ov->ov_OFd = xopen(O_RDWR|O_CREAT, 0644, "%s", path)) < 0 &&
+		     OvCacheReclaim(errno))
 		ov->ov_OFd = xopen(O_RDWR|O_CREAT, 0644, "%s", path);
 	}
 	if (ov->ov_OFd < 0) {
@@ -1160,6 +1257,7 @@ again:
 		pov = &OvHash[shash(group) & OVHMASK];
 		ov->ov_Next = *pov;
 		*pov = ov;
+		OvLruPushHead(ov);
 	    }
 	}
 	zfree(&SysMemPool, path, pathSize);
@@ -1690,6 +1788,13 @@ MakeOverHFile(OverInfo *ov, artno_t artNo, int create)
 	*pod = od = zalloc(&SysMemPool, sizeof(OverData));
         errno = 0;
 	hfd = xopen(O_RDWR|create, 0644, "%s/%s", MyGroupHome, gfname);
+	/*
+	 * Only the feed (create) closes other groups here: a reader may still
+	 * use a record of a group it released (see PutOverInfo()), and
+	 * GetOverInfo() is where that was always allowed to go.
+	 */
+	if (hfd < 0 && create && OvCacheReclaim(errno))
+	    hfd = xopen(O_RDWR|create, 0644, "%s/%s", MyGroupHome, gfname);
 #ifdef USE_ZLIB
 	/* a data file dexpireover -z compressed (not without zlib) */
 	if (hfd < 0 && ! create) {
