@@ -143,6 +143,42 @@ func TestDnewslinkTakethis431Defers(t *testing.T) {
 	}
 }
 
+// TestDnewslinkCheck431Twice: a peer that answers every CHECK with 431 (Diablo's feeder does
+// while another connection has the article in progress). dnewslink defers the article once;
+// offered again, the second 431 counts as 238 and the article goes with TAKETHIS (taken, 239)
+// on the same connection. Fails on main: the reply to the second CHECK comes when the defer
+// replay is over, the article was deferred again and offered again without end.
+func TestDnewslinkCheck431Twice(t *testing.T) {
+	const id = "<rcu-check431@e2e.test>"
+	s := NewSite(t, SiteOptions{NoStart: true})
+	dnlSpool(t, s)
+	srv := fakeserver.New(t, fakeserver.Options{Greeting: "200 fake", Handler: fakeserver.LineHandler(func(_ *fakeserver.Conn, line string) ([]string, bool) {
+		l := strings.ToLower(strings.TrimSpace(line))
+		switch {
+		case strings.HasPrefix(l, "mode stream"):
+			return []string{"203 stream ok"}, false
+		case strings.HasPrefix(l, "check "):
+			return []string{"431 " + id + " later"}, false
+		case strings.HasPrefix(l, "takethis "):
+			return []string{"239 " + id}, false
+		case strings.HasPrefix(l, "quit"):
+			return []string{"205 bye"}, true
+		}
+		return nil, false
+	})})
+	rcuDnewslink(t, s, srv, id)
+	if c, tk := srv.Count("CHECK"), srv.Count("TAKETHIS"); c != 2 || tk != 1 {
+		t.Errorf("CHECK sent %d times and TAKETHIS %d, want 2 and 1 (deferred once, then sent)", c, tk)
+	}
+	log := rcuFeedlog(s)
+	for _, want := range []string{id + " deferred", id + " accepted"} {
+		if !strings.Contains(log, want) {
+			t.Errorf("feedlog has no %q:\n%s", want, log)
+		}
+	}
+	rcuSent(t, s, srv, id)
+}
+
 // TestDnewslinkModeReplyOutOfStep: a reply to MODE STREAM or MODE COMPRESS that the command does
 // not have (here a code with lines after it) ends the connection; dnewslink does not go on
 // without the mode on the same stream, where the left-over line would be read as the answer to

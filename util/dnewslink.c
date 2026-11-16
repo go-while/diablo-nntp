@@ -244,6 +244,7 @@ typedef struct Stream {
     int32 st_Size;		/* file size	*/
     int32 st_CompSize;		/* compressed file size	*/
     int32 st_Lines;		/* body lines (L), -1: none */
+    int st_Defers;		/* a deferred entry, sent again: no second defer */
 } Stream;
 
 int connectTo(const char *hostName, const char *serviceName, int defPort);
@@ -2903,6 +2904,11 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 	s->st_Size = size;
 	s->st_CompSize = cSize;
 	s->st_Lines = lines;
+	/*
+	 * The reply comes later, when deferbegin may be reset already:
+	 * the entry keeps whether it is a defer sent again.
+	 */
+	s->st_Defers = defers;
 	if (NoCheckOpt) {
 	    ArtMap am;
 
@@ -2973,9 +2979,9 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 		delMe = 1;
 		StrnCpyNull(msgId, s->st_MsgId, 1024);
 		if (STAGE_UNSET(stage))
-		    StrnCpyNull(stage, (defers? "resend-stream": "stream"), MAXREASON);
+		    StrnCpyNull(stage, (s->st_Defers? "resend-stream": "stream"), MAXREASON);
 		StrnCpyNull(reason, ptr, MAXREASON);
-		if (defers) {
+		if (s->st_Defers) {
 		    r = T_REJECTED;
 		} else {
 		    char cst[32];
@@ -2989,7 +2995,7 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 		}
 		break;
 	    }
-	    if (!defers && ((s = LocateStream(ptr, STATE_CHECK)) != NULL)) {
+	    if ((s = LocateStream(ptr, STATE_CHECK)) != NULL && !s->st_Defers) {
 		char cst[32];
 		delMe = 1;
 		StrnCpyNull(msgId, s->st_MsgId, 1024);
