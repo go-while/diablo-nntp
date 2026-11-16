@@ -339,12 +339,14 @@ typedef struct HistHead {
 /*
  * Version 3 is version 2 with msgidHash set: its entries are hashed with
  * that msgidhash method.  It has its own magic, HMAGIC3, so that every
- * program from before it refuses the file as not a history: diablo also
- * refuses a newer version, but the old dhisexpire, didump and diload only
- * warn, and would rewrite it as a version 2 file of the other method.  A
- * history with msgidhash hash is still written as version 2 with HMAGIC,
- * and in a version 2 file msgidHash is not read (the header's padding
- * until then).  The field takes no room: sizeof(HistHead) stays 16.
+ * program from before it refuses the file as not a history: diablo and
+ * diload also refuse a newer version, but the old dhisexpire and didump only
+ * warn, and dhisexpire -a (or didump into a new diload) would rewrite it as
+ * a version 2 file of the other method.  HistHeadMagicOK() checks that the
+ * magic goes with the version.  A history with msgidhash hash is still
+ * written as version 2 with HMAGIC, and in a version 2 file msgidHash is
+ * not read (the header's padding until then).  The field takes no room:
+ * sizeof(HistHead) stays 16.
  */
 #define HVERSION	3
 #define HVERSION_HASH	2	/* the version written for msgidhash hash */

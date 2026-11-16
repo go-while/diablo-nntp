@@ -254,7 +254,7 @@ main(int ac, char **av)
 		fprintf(stderr, "corrupted history file\n");
 		exit(1);
 	    }
-	    if (!HMAGIC_OK(hh.hmagic)) {
+	    if (!HistHeadMagicOK(&hh)) {
 		fprintf(stderr, "corrupted history file\n");
 		exit(1);
 	    }

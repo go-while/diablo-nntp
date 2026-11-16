@@ -248,7 +248,7 @@ main(int ac, char **av)
 	    perror("Corrupted history file");
 	    exit(1);
 	}
-	if (!HMAGIC_OK(hh.hmagic)) {
+	if (!HistHeadMagicOK(&hh)) {
 	    fprintf(stderr, "Corrupted history file - bad magic\n");
 	    exit(1);
 	}

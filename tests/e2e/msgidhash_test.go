@@ -375,9 +375,11 @@ func TestMsgIdHashDumpLoad(t *testing.T) {
 	}
 }
 
-// TestMsgIdHashMagicVersion: a version 3 history carries the magic a1b2c3d5; with the magic of
-// version 2 (a1b2c3d4) its header is damaged and the history is refused, instead of read as a
-// version 3 file by this Diablo and taken by older programs.
+// TestMsgIdHashMagicVersion: a version 3 history carries the magic a1b2c3d5, a version 2 one
+// a1b2c3d4. A header with the magic of the other version is damaged: dhisctl refuses it
+// through HistoryOpen(), and dhisexpire, didump, dspoolrefeed and dexpire, which read the
+// header themselves, refuse it too, instead of reading the file as the version it says (and
+// dhisexpire marking it dead and making it live again with the magic of its version).
 func TestMsgIdHashMagicVersion(t *testing.T) {
 	s := NewSite(t, SiteOptions{Config: map[string]string{"msgidhash": "siphash"}})
 	id := msgID(t)
@@ -399,13 +401,123 @@ func TestMsgIdHashMagicVersion(t *testing.T) {
 	if order.Uint32(b) != 0xa1b2c3d5 {
 		t.Fatalf("magic of a siphash history: %x, want a1b2c3d5", b[:4])
 	}
-	order.PutUint32(b, 0xa1b2c3d4)
-	bad := filepath.Join(s.Dir, "dhistory.badmagic")
-	if err := os.WriteFile(bad, b, 0o644); err != nil {
+	for _, c := range []struct {
+		name    string
+		magic   uint32
+		version uint16 // HistHead.version, at offset 8
+	}{
+		{"v3-magic2", 0xa1b2c3d4, 3},
+		{"v2-magic3", 0xa1b2c3d5, 2},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h := bytes.Clone(b)
+			order.PutUint32(h, c.magic)
+			order.PutUint16(h[8:], c.version)
+			bad := filepath.Join(s.Dir, "dhistory."+c.name)
+			if err := os.WriteFile(bad, h, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			want := fmt.Sprintf("DHistory magic 0x%x does not match its version %d: damaged header", c.magic, c.version)
+			if out, err := s.TryRun("dhisctl", "-h", bad); err == nil || !strings.Contains(out, want) {
+				t.Errorf("dhisctl -h of a version %d history with the magic %x: err=%v, want %q:\n%s", c.version, c.magic, err, want, out)
+			}
+			for _, r := range []struct {
+				prog string
+				args []string
+				want string
+			}{
+				{"dhisexpire", []string{bad, bad + ".new"}, "Corrupted history file - bad magic"},
+				{"didump", []string{bad}, "corrupted history file"},
+				{"dspoolrefeed", []string{"-q", bad}, "dspoolrefeed: " + bad + ": not a history file"},
+				// -k: read the history, but change no entry (and without -a no article)
+				{"dexpire", []string{"-k", "-f", bad}, fmt.Sprintf("corrupted history file or old version of history file: %x", c.magic)},
+			} {
+				if out, err := s.TryRun(r.prog, r.args...); err == nil || !strings.Contains(out, r.want) {
+					t.Errorf("%s %v on a version %d history with the magic %x: err=%v, want %q:\n%s",
+						r.prog, r.args, c.version, c.magic, err, r.want, out)
+				}
+			}
+			if fileExists(bad + ".new") {
+				t.Errorf("dhisexpire wrote %s.new for a damaged header", bad)
+			}
+			if got, err := os.ReadFile(bad); err != nil || len(got) < 4 || order.Uint32(got) != c.magic {
+				t.Errorf("%s after the refusals: err=%v, magic changed (want %x)", bad, err, c.magic)
+			}
+		})
+	}
+}
+
+// histMagic returns the magic at the start of the history file hist, in the host's byte
+// order, as the header is written.
+func histMagic(t *testing.T, hist string) uint32 {
+	t.Helper()
+	f, err := os.Open(hist)
+	if err != nil {
 		t.Fatal(err)
 	}
-	want := "DHistory magic 0xa1b2c3d4 does not match its version 3: damaged header"
-	if out, err := s.TryRun("dhisctl", "-h", bad); err == nil || !strings.Contains(out, want) {
-		t.Errorf("dhisctl -h of a version 3 history with the version 2 magic: err=%v, want %q:\n%s", err, want, out)
+	defer f.Close()
+	var m [4]byte
+	if _, err := f.ReadAt(m[:], 0); err != nil {
+		t.Fatalf("magic of %s: %v", hist, err)
+	}
+	return binary.NativeEndian.Uint32(m[:])
+}
+
+// TestMsgIdHashDhisexpire: dhisexpire on a version 3 (msgidhash siphash) history while diablo
+// runs. Without -a the old history stays marked dead (deadf5e6), and dhisexpire -u makes it
+// live again with the version 3 magic a1b2c3d5, not the version 2 one, so that diablo opens it
+// again. With -a the new history is version 3 too, and the feeder of a connection that had
+// the old one open (its CHECK found the article) reopens the new file: it finds the article
+// there and adds the next one to it.
+func TestMsgIdHashDhisexpire(t *testing.T) {
+	const hmagic3, hdead = 0xa1b2c3d5, 0xdeadf5e6
+	s := NewSite(t, SiteOptions{Config: map[string]string{"msgidhash": "siphash"}})
+	hist := filepath.Join(s.Dir, "dhistory")
+	ids := []string{msgID(t), msgID(t)}
+	p := s.Peer(t)
+	if code := offer(t, p, ids[0], newArticle(ids[0], "e2e.test", "before dhisexpire", "body")); code != 235 {
+		t.Fatalf("IHAVE %s: %d, want 235", ids[0], code)
+	}
+	p.ExpectCmd(205, "QUIT")
+	if m := histMagic(t, hist); m != hmagic3 {
+		t.Fatalf("magic of a siphash history: %08x, want %08x", m, hmagic3)
+	}
+
+	// without -a: the old history stays marked dead until dhisexpire -u
+	if out, err := s.TryRun("dhisexpire", hist, hist+".new"); err != nil || !strings.Contains(out, "stays marked dead") {
+		t.Fatalf("dhisexpire without -a: err=%v\n%s", err, out)
+	}
+	if m := histMagic(t, hist); m != hdead {
+		t.Errorf("magic after dhisexpire without -a: %08x, want the dead marker %08x", m, hdead)
+	}
+	if out, err := s.TryRun("dhisexpire", "-u", hist); err != nil {
+		t.Fatalf("dhisexpire -u: %v\n%s", err, out)
+	}
+	if m := histMagic(t, hist); m != hmagic3 {
+		t.Fatalf("magic after dhisexpire -u: %08x, want %08x (version 3)", m, hmagic3)
+	}
+	// the -a run below makes its own new history
+	if err := os.Remove(hist + ".new"); err != nil {
+		t.Fatal(err)
+	}
+
+	// with -a, while a connection's feeder has the history open
+	p = s.Peer(t)
+	p.ExpectCmd(438, "CHECK %s", ids[0])
+	if out, err := s.TryRun("dhisexpire", "-a", hist); err != nil {
+		t.Fatalf("dhisexpire -a: %v\n%s", err, out)
+	}
+	if m := histMagic(t, hist); m != hmagic3 {
+		t.Errorf("magic of the new history: %08x, want %08x", m, hmagic3)
+	}
+	p.ExpectCmd(438, "CHECK %s", ids[0])
+	if code := offer(t, p, ids[1], newArticle(ids[1], "e2e.test", "after dhisexpire", "body")); code != 235 {
+		t.Fatalf("IHAVE %s after dhisexpire -a: %d, want 235", ids[1], code)
+	}
+	p.ExpectCmd(205, "QUIT")
+	for _, id := range ids {
+		if hv, found := dilookupHash(t, s, "", id); !found || hv != sipMsgIdHash(id) {
+			t.Errorf("dilookup %s in the new history: found %v, hash %q, want found under %s", id, found, hv, sipMsgIdHash(id))
+		}
 	}
 }

@@ -47,6 +47,7 @@ Prototype int HistoryStoreExp(History *h, HistIndex index);
 Prototype int HistoryExpire(const char *msgid, History *h, int unexp);
 Prototype void PrintHistory(History *h);
 Prototype int HistHeadMsgIdHash(const HistHead *hh);
+Prototype int HistHeadMagicOK(const HistHead *hh);
 
 Prototype uint32 NewHSize;
 
@@ -515,7 +516,7 @@ HistoryOpen(const char *fileName, int hflags)
      * paths compare the mapped header with HMagic to see a dead history.
      */
     HMagic = HLIVEMAGIC(&HHead);
-    if (HMAGIC_OK(HHead.hmagic) && HHead.hmagic != HMagic) {
+    if (HMAGIC_OK(HHead.hmagic) && !HistHeadMagicOK(&HHead)) {
 	logit(LOG_ERR, "DHistory magic 0x%x does not match its version %d: damaged header",
 	    (unsigned)HHead.hmagic, HHead.version);
 	fprintf(stderr, "DHistory magic 0x%x does not match its version %d: damaged header\n",
@@ -1251,4 +1252,15 @@ int
 HistHeadMsgIdHash(const HistHead *hh)
 {
     return((hh->version >= 3) ? hh->msgidHash : MSGIDHASH_HASH);
+}
+
+/*
+ * HistHeadMagicOK() - is the header's magic the live magic of its version
+ * (HMAGIC3 for version 3, HMAGIC before)?  A dead history (HDEADMAGIC)
+ * and a version 3 file with HMAGIC, or an older one with HMAGIC3, are not.
+ */
+int
+HistHeadMagicOK(const HistHead *hh)
+{
+    return(hh->hmagic == HLIVEMAGIC(hh));
 }
