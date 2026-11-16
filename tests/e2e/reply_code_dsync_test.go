@@ -1,9 +1,11 @@
 package e2e
 
-// Reply codes in dsyncgroups: the whole three-digit code, compared with the codes the command
-// defines; 281 to AUTHINFO USER is a login, an unknown reply ends the session.
+// Reply codes in dsyncgroups and dclient: the whole three-digit code, compared with the codes the
+// command defines; 281 to AUTHINFO USER is a login, an unknown reply ends the session.
 
 import (
+	"errors"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -86,6 +88,46 @@ func TestDsyncgroupsModeReaderReply(t *testing.T) {
 			}
 			if !tc.ok && (err == nil || !strings.Contains(out, "Unexpected reply to mode reader")) {
 				t.Errorf("dsyncgroups after %q to MODE READER: err=%v, want exit 1 at MODE READER:\n%s", tc.reply, err, out)
+			}
+		})
+	}
+}
+
+// TestDclientReplyCodes: dclient reads a reply code as the whole number. A reply without one
+// stops it (exit 2): it cannot tell whether lines follow. QUIT is answered by 205 only, also a
+// bare "205" with no text. Fails on main: atoi() took the line without a code as 0, a reply
+// without lines, and dclient went on (exit 0); the bare "205" was refused (exit 2).
+func TestDclientReplyCodes(t *testing.T) {
+	for _, tc := range []struct {
+		name, date, quit string
+		exit             int
+		out              string
+	}{
+		{"reply without a code", "x no code here", "205 bye", 2, "Unexpected response from server"},
+		{"bare 205 to QUIT", "111 20261116000000", "205", 0, "111 20261116000000"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := NewSite(t, SiteOptions{NoStart: true})
+			srv := fakeserver.New(t, fakeserver.Options{Greeting: "200 fake", Handler: fakeserver.LineHandler(func(_ *fakeserver.Conn, line string) ([]string, bool) {
+				l := strings.ToLower(strings.TrimSpace(line))
+				switch {
+				case strings.HasPrefix(l, "date"):
+					return []string{tc.date}, false
+				case strings.HasPrefix(l, "quit"):
+					return []string{tc.quit}, true
+				}
+				return []string{"500 what?"}, false
+			})})
+			out, err := s.TryRun("dclient", "-p", strconv.Itoa(srv.Port()), "127.0.0.1", "DATE")
+			code := 0
+			var ee *exec.ExitError
+			if errors.As(err, &ee) {
+				code = ee.ExitCode()
+			} else if err != nil {
+				t.Fatalf("dclient: %v\n%s", err, out)
+			}
+			if code != tc.exit || !strings.Contains(out, tc.out) {
+				t.Errorf("dclient DATE: exit %d, want %d, and output %q, want %q in it", code, tc.exit, out, tc.out)
 			}
 		})
 	}
