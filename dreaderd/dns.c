@@ -2032,7 +2032,8 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
 		*dres->dr_AuthDef->au_Cdb ||
 		*dres->dr_AuthDef->au_Db ||
 		*dres->dr_AuthDef->au_External ||
-		*dres->dr_AuthDef->au_User)
+		*dres->dr_AuthDef->au_User ||
+		*dres->dr_AuthDef->au_LDAP)	/* only from an older cache, see below */
 	    AuthNeeded = 1;
 
 	if (dres->dr_AuthDef->au_Ident > 0 && !DoneIdent &&
@@ -2320,6 +2321,20 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
 		logit(LOG_ERR, "NetRemote authentication requested, but not enabled");
 	    }
 #endif
+
+	    /*
+	     * LDAP is gone, but a cache.authdef that an older dreaderd wrote
+	     * (read when the start-up rebuild fails) may still name it: the
+	     * login is required (AuthNeeded above) and refused, as a build
+	     * without LDAP did, never let through without authentication.
+	     */
+	    if (authok && *dres->dr_AuthDef->au_LDAP && *user &&
+			*dreq->dr_AuthPass) {
+		Authenticated = -1;
+		if (DebugOpt)
+		    printf("Authentication via LDAP FAILED\n");
+		logit(LOG_ERR, "LDAP authentication requested, but no longer supported, login refused");
+	    }
 
 #ifdef	PERL_ENABLED
 	    if (authok && *dres->dr_AuthDef->au_Perl && *user &&

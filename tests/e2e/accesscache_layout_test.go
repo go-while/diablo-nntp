@@ -47,9 +47,10 @@ access 127.0.0.1 userfile
 			st.Size(), 2*authDefSize, authDefSize)
 	}
 
-	// the authdef is still in force: no read access without logging in
+	// the authdef is still in force: GROUP needs a login first, which works
 	c := s.Reader(t)
 	defer c.Close()
+	c.ExpectCmd(480, "GROUP e2e.test")
 	c.ExpectCmd(381, "AUTHINFO USER fred")
 	c.ExpectCmd(281, "AUTHINFO PASS fredspass")
 }

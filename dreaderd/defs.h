@@ -170,7 +170,7 @@ typedef struct AuthDef {		/* Define an authentication type */
     char au_Realm[255];
     char au_AddRealm[255];
     char au_NetRemote[255];
-    char au_LDAP[255];		/* unused (LDAP is gone); keeps the access-cache layout */
+    char au_LDAP[255];		/* LDAP is gone: keeps the access-cache layout; set only in an older cache, then logins are refused */
     char au_Perl[255];
     char au_PAM[255];
     int au_Ident;
