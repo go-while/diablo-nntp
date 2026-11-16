@@ -103,23 +103,16 @@ func TestDeepRevDrcmdDrippingClient(t *testing.T) {
 // that sent most of its bytes before the close, and Go then counts 0 bytes, so that a count of
 // drcmdMaxLine or more cannot be asked for. That the refusal came from the length of the
 // line is what the callers check in the log. For any other line the whole write must go through.
-// sndbuf > 0 sets the client's send buffer (a small one makes the write break off).
-func drcmdSend(t *testing.T, sock, raw string, refused bool, sndbuf int) (text string, closed, broke bool) {
+func drcmdSend(t *testing.T, sock, raw string, refused bool) (text string, closed, broke bool) {
 	t.Helper()
 	c, err := net.DialTimeout("unix", sock, 10*time.Second)
 	if err != nil {
 		t.Fatalf("connect to the control socket: %v", err)
 	}
 	defer c.Close()
-	if sndbuf > 0 {
-		if err := c.(*net.UnixConn).SetWriteBuffer(sndbuf); err != nil {
-			t.Fatal(err)
-		}
-	}
 	c.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	if n, err := c.Write([]byte(raw)); err != nil {
-		if refused && (errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) ||
-			errors.Is(err, syscall.ENOTCONN)) {
+		if refused && drcmdClosedErr(err) {
 			text, closed = readToEOF(c, 8*time.Second)
 			return text, closed, true
 		}
@@ -128,6 +121,35 @@ func drcmdSend(t *testing.T, sock, raw string, refused bool, sndbuf int) (text s
 	c.(*net.UnixConn).CloseWrite()
 	text, closed = readToEOF(c, 8*time.Second)
 	return text, closed, false
+}
+
+// drcmdClosedErr: the error of a write to a unix socket whose peer has closed.
+func drcmdClosedErr(err error) bool {
+	return errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ENOTCONN)
+}
+
+// drcmdWriteAfterClose sends first on a new control connection and reads until dreaderd has
+// closed it, then writes more. The peer is gone, so that write must fail (EPIPE, ECONNRESET, on
+// FreeBSD ENOTCONN) on every system, whatever its socket buffers hold. It returns what came
+// back, whether the connection was closed (EOF or reset, not the read deadline) and the error
+// of the second write (nil: it went through).
+func drcmdWriteAfterClose(t *testing.T, sock, first, more string) (text string, closed bool, err error) {
+	t.Helper()
+	c, err := net.DialTimeout("unix", sock, 10*time.Second)
+	if err != nil {
+		t.Fatalf("connect to the control socket: %v", err)
+	}
+	defer c.Close()
+	c.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	// dreaderd closes at the first byte past the buffer: where the kernel does not hold all of
+	// first until then, this write may already fail
+	if _, err := c.Write([]byte(first)); err != nil && !drcmdClosedErr(err) {
+		t.Fatalf("write of %d bytes: %v", len(first), err)
+	}
+	text, closed = readToEOF(c, 8*time.Second)
+	c.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	_, err = c.Write([]byte(more))
+	return text, closed, err
 }
 
 // drcmdMaxLine is the buffer of a control command line, its NUL included (MAXLINE, lib/defs.h).
@@ -142,7 +164,7 @@ func TestDeepRevDrcmdLongLineAndEOF(t *testing.T) {
 	sock := filepath.Join(s.Dir, "run", ".dreadersock")
 
 	t.Run("longer than the buffer", func(t *testing.T) {
-		text, eof, _ := drcmdSend(t, sock, "status "+strings.Repeat("x", 20000), true, 0)
+		text, eof, _ := drcmdSend(t, sock, "status "+strings.Repeat("x", 20000), true)
 		if !eof || text != "" {
 			t.Errorf("a command line of 20007 bytes without a newline: got %q (closed: %v), want nothing and the close", text, eof)
 		}
@@ -150,23 +172,26 @@ func TestDeepRevDrcmdLongLineAndEOF(t *testing.T) {
 			t.Errorf("the refused long line is not in the log")
 		}
 	})
-	// a send buffer of 2 KB and 200000 bytes: the write cannot be done when dreaderd closes,
-	// so this takes the branch for a write that broke off (as on FreeBSD), on any system
-	t.Run("longer than the buffer, the write breaks off", func(t *testing.T) {
+	// once dreaderd has closed, a write fails: the branch for a write that broke off (as on
+	// FreeBSD), on any system and whatever the socket buffers are (no send buffer is set: illumos
+	// does not apply SO_SNDBUF to a unix socket and took a write of 200000 bytes now and then)
+	t.Run("longer than the buffer, a write after the close fails", func(t *testing.T) {
 		refusals := strings.Count(generalLog(s), "drcmd: command line longer than")
-		text, closed, broke := drcmdSend(t, sock, "status "+strings.Repeat("x", 200000), true, 2048)
-		if !broke {
-			t.Fatalf("the write of 200000 bytes with a 2 KB send buffer went through: the branch for a broken-off write was not taken")
-		}
+		text, closed, err := drcmdWriteAfterClose(t, sock, "status "+strings.Repeat("x", 20000), strings.Repeat("y", 4096))
 		if !closed || text != "" {
-			t.Errorf("a command line of 200007 bytes, write broken off: got %q (closed: %v), want nothing and the close", text, closed)
+			t.Errorf("a command line of 20007 bytes, then more: got %q (closed: %v), want nothing and the close", text, closed)
+		}
+		if err == nil {
+			t.Errorf("a write after dreaderd closed the connection went through")
+		} else if !drcmdClosedErr(err) {
+			t.Errorf("a write after dreaderd closed the connection: %v, want EPIPE, ECONNRESET or ENOTCONN", err)
 		}
 		testkit.WaitFor(t, 5*time.Second, "the refusal in the log", func() bool {
 			return strings.Count(generalLog(s), "drcmd: command line longer than") > refusals
 		})
 	})
 	t.Run("last line at EOF", func(t *testing.T) {
-		if text, _, _ := drcmdSend(t, sock, "status", false, 0); !strings.Contains(text, "Connect=") {
+		if text, _, _ := drcmdSend(t, sock, "status", false); !strings.Contains(text, "Connect=") {
 			t.Errorf("\"status\" without a newline, then EOF: got %q, want the status line", text)
 		}
 	})
@@ -193,7 +218,7 @@ func TestDeepRevDrcmdLineBoundary(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			refusals := strings.Count(generalLog(s), "drcmd: command line longer than")
-			text, closed, _ := drcmdSend(t, sock, tc.raw, !tc.run, 0)
+			text, closed, _ := drcmdSend(t, sock, tc.raw, !tc.run)
 			if ran := strings.Contains(text, "Connect="); ran != tc.run {
 				t.Errorf("%s: answer %q, run %v, want %v", tc.name, text, ran, tc.run)
 			}
