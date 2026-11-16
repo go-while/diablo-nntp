@@ -308,7 +308,8 @@ func TestReaderPostInjectionInfo(t *testing.T) {
 	})
 
 	t.Run("the poster's Injection-Date is kept", func(t *testing.T) {
-		const own = "Mon, 02 Nov 2026 10:00:00 +0000"
+		// an hour ago: a fixed date grows older than the site's accept age (441 too old)
+		own := time.Now().Add(-time.Hour).UTC().Format(time.RFC1123Z)
 		head := postHead(t, access, "Injection-Date: "+own)
 		var dates []string
 		for _, l := range head {
