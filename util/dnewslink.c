@@ -2972,8 +2972,9 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 	    /*
 	     * 431 to TAKETHIS is not in RFC 4644, but Diablo's feeder sends
 	     * it (history busy or failed).  A one-line reply: defer the
-	     * article once, as for CHECK below; while the defers are sent,
-	     * take it as a reject.
+	     * article once, as for CHECK below; while the defers are sent
+	     * (no second defer is taken then) or for a deferred one, take it
+	     * as a reject.
 	     */
 	    if ((s = LocateStream(ptr, STATE_POSTED)) != NULL) {
 		delMe = 1;
@@ -2981,7 +2982,7 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 		if (STAGE_UNSET(stage))
 		    StrnCpyNull(stage, (s->st_Defers? "resend-stream": "stream"), MAXREASON);
 		StrnCpyNull(reason, ptr, MAXREASON);
-		if (s->st_Defers) {
+		if (defers || s->st_Defers) {
 		    r = T_REJECTED;
 		} else {
 		    char cst[32];
@@ -2995,7 +2996,7 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 		}
 		break;
 	    }
-	    if ((s = LocateStream(ptr, STATE_CHECK)) != NULL && !s->st_Defers) {
+	    if (!defers && (s = LocateStream(ptr, STATE_CHECK)) != NULL && !s->st_Defers) {
 		char cst[32];
 		delMe = 1;
 		StrnCpyNull(msgId, s->st_MsgId, 1024);
