@@ -1,0 +1,1 @@
+- dreaderd: new diablo.config option `readernewnewsmaxlen <bytes>`: a NEWNEWS whose newsgroups wildmat is longer gets "501 Argument too long", as INN's nnrpd answers an argument over 497 bytes. 0, the default, sets no limit, so nothing changes without the option.
