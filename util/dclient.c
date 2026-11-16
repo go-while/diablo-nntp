@@ -168,7 +168,6 @@ newscommand(char *command) {
 
 /* set by dodumpfile(): replies to the dumped commands were not read */
 static int dumped = 0;
-#define DUMPQUITWAIT	10	/* seconds per line after QUIT in -f mode */
 
 void
 dodumpfile(char *filename)
@@ -196,37 +195,22 @@ dodumpfile(char *filename)
 void
 newsquit(void) {
     char line[512];
+    int code;
 
     fflush(fp);
     fprintf(fp,"QUIT\r\n");
     rewind(fp);
-    if (dumped) {
-	/*
-	 * After -f the replies to the dumped commands were not read, so the
-	 * reply to QUIT cannot be told by its code (a line of an article
-	 * may start with one): read up to the end of the connection, which
-	 * the server closes after QUIT (RFC 3977 5.4), waiting at most
-	 * DUMPQUITWAIT seconds for each line; the last line must be the 205.
-	 */
-	struct timeval tv;
-	char next[512];
-
-	tv.tv_sec = DUMPQUITWAIT;
-	tv.tv_usec = 0;
-	(void)setsockopt(fileno(fp), SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    if (fgets((char *)&line, 512, fp) == NULL)
 	line[0] = 0;
-	while (fgets(next, sizeof(next), fp) != NULL) {
-	    if (verbose)
-		printf("%s", next);
-	    memcpy(line, next, sizeof(line));
-	}
-    } else {
-	if (fgets((char *)&line, 512, fp) == NULL)
-	    line[0] = 0;
-	if (verbose)
-	    printf("%s", line);
-    }
-    if (NntpCode(line) != 205) {
+    if (verbose)
+	printf("%s", line);
+    /*
+     * After -f the replies to the dumped commands were not read, so this
+     * line is the reply to the first of them, not to QUIT: as before, a
+     * 238 (a dumped CHECK) counts too.
+     */
+    code = NntpCode(line);
+    if (code != 205 && !(dumped && code == 238)) {
 	printf("Unexpected response from server: %s", line);
 	exit(2);
     }
