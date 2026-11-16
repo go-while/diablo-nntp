@@ -221,6 +221,7 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-205](#d-205-a-supersede-is-logged-as-a-cancel) | Low | A supersede is logged as a cancel | fixed (#351) |
 | [D-206](#d-206-white-space-between-two-newsgroups-names-hides-the-names-after-it) | Low | White space between two Newsgroups names hides the names after it | fixed (#358) |
 | [D-207](#d-207-post-refuses-white-space-after-a-comma-in-newsgroups) | Low | POST refuses white space after a comma in Newsgroups | fixed |
+| [D-208](#d-208-the-feeder-reads-only-the-first-line-of-a-folded-newsgroups-header) | Medium | The feeder reads only the first line of a folded Newsgroups header | fixed |
 
 Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315), [F-02 configure script](#f-02-configure-script-for-the-build-options), [F-03 refeed a whole spool](#f-03-refeed-a-whole-spool-to-another-server), [F-04 NoCeM notices](#f-04-nocem-notices), [F-05 init scripts](#f-05-init-scripts-and-adm-script-replacements), [F-06 Perl authentication](#f-06-perl-authentication-for-dreaderd), [F-07 POST as an injecting agent](#f-07-dreaderd-post-as-an-rfc-55365537-injecting-agent), [F-08 smaller overview](#f-08-smaller-overview-overview-fields-only-one-copy-per-article).
 
@@ -1296,6 +1297,10 @@ Fixed (#358): `NormalizeNewsgroups()` (`lib/subs.c`) rewrites the value as a pla
 ### D-207 POST refuses white space after a comma in Newsgroups
 `dreaderd/post.c`: RFC 5536 3.1.4 allows white space on both sides of the commas in the `Newsgroups:` list, but POST compared the trimmed value with the value whose white space after commas was removed and, without `POST_CLEANUPNEWSGROUPSLINE` (defined nowhere), refused any difference with 441 Invalid newsgroup(s) line. So `a, b` was refused while `a ,b` was accepted (after D-206). Found by jesse/cc-1 in the review of #358.
 Fixed: the comparison is gone; the list is checked by its plain comma list (D-206), and `POST_CLEANUPNEWSGROUPSLINE` only decides whether the header is rewritten as that list. Test: `TestReaderPostNewsgroupsSpace`.
+
+### D-208 The feeder reads only the first line of a folded Newsgroups header
+`util/diablo.c`: RFC 5536 3.1.4 allows folding white space around the commas of the `Newsgroups:` list, so the header may go on over continuation lines. `LoadArticle()` copied only the first line into its group list and wrote the continuation lines thru, so the groups on them were missing from the active check, the moderation check, `Xref:`, feed matching, the incoming filter and spool choice. With `activedrop yes` an article whose only groups in the active file were on a continuation line was refused NotInActive, and an unapproved article with a moderated group there was accepted. dreaderd was not affected: its header scan joins the continuation lines. Found by Jesse on a 1995 article from the archive feed (`<21D51CD4H0002871FH@cvm.groenld.sb.sub.de>`, 26 groups over two lines).
+Fixed: `ngAddFolded()` adds each continuation line of `Newsgroups:` to the list, with a comma before it, and normalizes it again (D-206); a name that does not fit whole in the list is left out. Tests: `TestNewsgroupsFoldedActive`, `TestNewsgroupsFoldedXref`.
 
 ## Feature requests
 
