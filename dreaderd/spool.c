@@ -121,7 +121,7 @@ NNGetLocal1(Connection *conn)
 	    snprintf(smaxage, sizeof(smaxage), " a%d", sreq->sr_MaxAge);
 	}
 
-	if (strtol(buf, NULL, 10) == 223) {
+	if (NntpCode(buf) == 223) {
 	    /*
 	     * sr_CConn may be NULL if client was terminated while
 	     * server operation was still in progress.
@@ -335,20 +335,23 @@ NNSpoolResponse1(Connection *conn)
     ServReq *sreq = conn->co_SReq;
     char *buf;
     int len;
+    int code;
+    int unexpected;
 
     conn->co_Func = NNSpoolResponse1;
     conn->co_State = "spres1";
 
     if ((len = MBReadLine(&conn->co_RMBuf, &buf)) > 0) {
 	conn->co_ServerByteCount += len;
-	if (sreq->sr_HeadOnly && strtol(buf, NULL, 10) == 221) {
+	code = NntpCode(buf);
+	if (sreq->sr_HeadOnly && code == 221) {
 	    if (sreq->sr_CConn)
 		MBFree(&sreq->sr_CConn->co_ArtBuf);
 	    conn->co_BytesHeader = 0;
 	    NNSpoolHdrResponse(conn);
 	    return;
 	}
-	if (!sreq->sr_HeadOnly && strtol(buf, NULL, 10) == 220) {
+	if (!sreq->sr_HeadOnly && code == 220) {
 	    sreq->sr_AccLen = 0;
 	    sreq->sr_AccIn = 0;
 	    sreq->sr_AccCut = 0;
@@ -412,12 +415,26 @@ NNSpoolResponse1(Connection *conn)
 	    NNSpoolResponse2(conn);
 	    return;
 	}
-	else if (strtol(buf, NULL, 10) == 430) {
+	else if (code == 430) {
 	  conn->co_ServerArticleNotFoundErrorCount++;
 	}
 	else {
 	  conn->co_ServerArticleMiscErrorCount++;
 	}
+
+	/*
+	 * Only a one-line refusal leaves the stream in step.  Anything else
+	 * (a malformed status line, or a code with a text block after it,
+	 * such as a 220 to HEAD) leaves lines unread that the next request
+	 * would take for its reply: the client gets its refusal, and the
+	 * connection to the spool server is closed.
+	 */
+	unexpected = !(code == 430 || code == 423 || code == 412 ||
+		code == 420 || code == 480 || code == 500 || code == 501 ||
+		code == 502 || code == 503);
+	if (unexpected)
+	    logit(LOG_ERR, "spool server %s: unexpected reply to %s: %.80s, closing it",
+		conn->co_Desc->d_Id, sreq->sr_MsgId, buf);
 
 	if (sreq->sr_CConn == NULL)
 	    NNFinishSReq(conn, NULL, 0);
@@ -427,6 +444,8 @@ NNSpoolResponse1(Connection *conn)
             NNFinishSReq(conn, "423 No such article number in this group\r\n", 1);
 	else
             NNFinishSReq(conn, "430 No such article\r\n", 1);
+	if (unexpected)
+	    NNServerTerminate(conn);
     } else if (len < 0) {
 	NNServerTerminate(conn);
     } else {

@@ -1479,9 +1479,16 @@ NNPostResponse1(Connection *conn)
     conn->co_State = "pores1";
 
     if ((len = MBReadLine(&conn->co_RMBuf, &buf)) > 0) {
+	int code;
+
 	LogCmd(conn, '<', buf);
-	if (strtol(buf, NULL, 10) == 335) {
+	code = NntpCode(buf);
+	if (code == 335) {
 	    NNPostArticle1(conn);
+	} else if (code < 0) {
+	    /* not a reply code at all: the server is broken */
+	    logit(LOG_ERR, "ihave(%s) bad reply: %s", conn->co_Desc->d_Id, buf);
+	    NNServerTerminate(conn);
 	} else {
 	    char errMsg[256];
 
@@ -1554,16 +1561,23 @@ NNPostResponse2(Connection *conn)
     conn->co_State = "pores2";
 
     if ((len = MBReadLine(&conn->co_RMBuf, &buf)) > 0) {
+	int code;
+
 	LogCmd(conn, '<', buf);
+	code = NntpCode(buf);
 	if (conn->co_SReq == NULL || conn->co_SReq->sr_CConn == NULL) {
 	    /* Client has gone away. we don't care any more */
 	    NNFinishSReq(conn, NULL, 0);
-	} else if (strtol(buf, NULL, 10) == 235) {
+	} else if (code == 235) {
 	    char msgbuf[1024];
 	    snprintf(msgbuf, sizeof(msgbuf), "240 %s Article posted\r\n",
 			conn->co_SReq->sr_CConn->co_IHaveMsgId != NULL ?
 				conn->co_SReq->sr_CConn->co_IHaveMsgId : "");
 	    NNFinishSReq(conn, msgbuf, 0);
+	} else if (code < 0) {
+	    /* not a reply code at all: the server is broken */
+	    logit(LOG_ERR, "post(%s) bad reply: %s", conn->co_Desc->d_Id, buf);
+	    NNServerTerminate(conn);
 	} else {
 	    char errMsg[256];
 

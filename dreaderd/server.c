@@ -970,8 +970,9 @@ NNServerPrime2(Connection *conn)
     conn->co_State = "prime2";
 
     if ((len = MBReadLine(&conn->co_RMBuf, &ptr)) != 0) {
-	int code = strtol(ptr, NULL, 10);
-	if (code >= 200 && code <= 299) {
+	int code = NntpCode(ptr);
+	/* 200 or 201 only */
+	if (code == 200 || code == 201) {
 	    logit(LOG_INFO, "mode-reader(%s) %s", conn->co_Desc->d_Id, ptr);
 	    NNServerStart(conn);
 	} else {
@@ -1010,8 +1011,9 @@ NNServerPrime4(Connection *conn)
     conn->co_State = "prime4";
 
     if ((len = MBReadLine(&conn->co_RMBuf, &ptr)) != 0) {
-	int code = strtol(ptr, NULL, 10);
-	if (code >= 200 && code <= 299)
+	int code = NntpCode(ptr);
+	/* the Diablo feeder answers 250 */
+	if (code == 250)
 	    logit(LOG_INFO, "mode-readonly(%s) %s", conn->co_Desc->d_Id, ptr);
 	else
 	    logit(LOG_ERR, "mode-readonly(%s) failed: %s", conn->co_Desc->d_Id, ptr);
@@ -1029,11 +1031,15 @@ NNServerPrimeAuth1(Connection *conn)
     conn->co_State = "primeauth1";
 
     if ((len = MBReadLine(&conn->co_RMBuf, &ptr)) != 0) {
-	int code = strtol(ptr, NULL, 10);
-	if (code >= 300 && code <= 399) {
+	int code = NntpCode(ptr);
+	if (code == 381) {
 	    MBPrintf(&conn->co_TMBuf, "authinfo pass %s\r\n", conn->co_Auth.dr_AuthPass);
 
 	    NNServerPrimeAuth2(conn);
+	} else if (code == 281) {
+	    /* accepted without a password */
+	    logit(LOG_INFO, "authinfo-user(%s) %s", conn->co_Desc->d_Id, ptr);
+	    NNServerStart(conn);
 	} else {
 	    logit(LOG_ERR, "authinfo-user(%s) failed: %s", conn->co_Desc->d_Id, ptr);
 	    NNServerTerminate(conn);
@@ -1051,8 +1057,8 @@ NNServerPrimeAuth2(Connection *conn)
     conn->co_State = "primeauth2";
 
     if ((len = MBReadLine(&conn->co_RMBuf, &ptr)) != 0) {
-	int code = strtol(ptr, NULL, 10);
-	if (code >= 200 && code <= 299) {
+	int code = NntpCode(ptr);
+	if (code == 281) {
 	    logit(LOG_INFO, "authinfo-pass(%s) %s", conn->co_Desc->d_Id, ptr);
 	    NNServerStart(conn);
 	} else {
@@ -1239,7 +1245,7 @@ NNServerConnect(Connection *conn)
     }
 
     ptr = buf;
-    code = strtol(ptr, NULL, 10);
+    code = NntpCode(ptr);
     if (code == 200) {
 	logit(LOG_INFO, "connect(%s) %s", conn->co_Desc->d_Id, buf);
     } else if (code == 201) {
