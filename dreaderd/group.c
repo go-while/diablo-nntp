@@ -706,7 +706,7 @@ WriteOverview(Connection *conn, ArtNumAss *an, const char *group, const char *xr
 	off_t pos;
 	OverInfo *ov;
 	const OverArt *oa;
-	hash_t hv = hhash(msgid);
+	hash_t hv = msgidhash(msgid);
 	int actLen = 0;
 	int iovLen = 0;
 	int prealloc_ov, prealloc_oh;
@@ -1533,7 +1533,7 @@ FindCanceledMsg(const char *group, const char *msgid, artno_t *partNo, int *pval
 	++*pvalidGroups;
 
 	if ((ov = GetOverInfo(group)) != NULL) {
-	    hash_t hv = hhash(msgid);
+	    hash_t hv = msgidhash(msgid);
 
 	    if ((rec = KPDBReadRecord(KDBActive, group, KP_LOCK_RO, &recLen)) != NULL) {
 		artno_t artBeg;
@@ -1605,7 +1605,7 @@ FindMsgInGroup(const char *group, const char *msgid, artno_t *partNo, artno_t ma
 	artBeg = artEnd - ov->ov_MaxArts;
     if (maxScan > 0 && artEnd - artBeg >= maxScan)
 	artBeg = artEnd - maxScan + 1;
-    hv = hhash(msgid);
+    hv = msgidhash(msgid);
     for (; artEnd >= artBeg; --artEnd) {
 	off_t ovpos = 0;
 	const OverArt *oa = GetOverArt(ov, artEnd, &ovpos);

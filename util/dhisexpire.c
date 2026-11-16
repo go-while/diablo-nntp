@@ -97,7 +97,7 @@ sigDead(int sigNo)
 
     if (DeadFd >= 0 && pread(DeadFd, &hh, sizeof(hh), 0) == sizeof(hh) &&
 						hh.hmagic == HDEADMAGIC) {
-	hh.hmagic = HMAGIC;
+	hh.hmagic = HLIVEMAGIC(&hh);
 	/* a failure cannot be reported from here; a cast does not silence gcc */
 	n = pwrite(DeadFd, &hh, sizeof(hh), 0);
 	(void)n;
@@ -248,7 +248,7 @@ main(int ac, char **av)
 	    perror("Corrupted history file");
 	    exit(1);
 	}
-	if (hh.hmagic != HMAGIC) {
+	if (!HistHeadMagicOK(&hh)) {
 	    fprintf(stderr, "Corrupted history file - bad magic\n");
 	    exit(1);
 	}
@@ -256,9 +256,19 @@ main(int ac, char **av)
 	    perror("History lock failed");
 	    exit(1);
 	}
-	if (hh.version != HVERSION) {
-	    fprintf(stderr, "WARNING! Version mismatch file V%d, expecting V%d\n", hh.version, HVERSION);
+	if (hh.version < HVERSION_HASH || hh.version > HVERSION) {
+	    fprintf(stderr, "WARNING! Version mismatch file V%d, expecting V%d to V%d\n", hh.version, HVERSION_HASH, HVERSION);
 	    fprintf(stderr, "dump may be invalid\n");
+	}
+	/*
+	 * The new history is created with diablo.config's msgidhash and the
+	 * entries are copied with their hashes, so both must be the same.
+	 */
+	if (HistHeadMsgIdHash(&hh) != DOpts.MsgIdHashMethod) {
+	    fprintf(stderr, "%s is hashed with msgidhash %s, diablo.config has msgidhash %s: not expired\n",
+		FileName, MsgIdHashName(HistHeadMsgIdHash(&hh)),
+		MsgIdHashName(DOpts.MsgIdHashMethod));
+	    exit(1);
 	}
 	/*
 	 * A damaged header must not make the record size 0 (division by
@@ -309,11 +319,11 @@ DoUnDead(int fd)
 	fprintf(stderr, "History file not marked as dead\n");
 	return;
     }
-    if (hh.version != HVERSION) {
-	 fprintf(stderr, "ERROR! Version mismatch file V%d, expecting V%d\n", hh.version, HVERSION);
+    if (hh.version < HVERSION_HASH || hh.version > HVERSION) {
+	 fprintf(stderr, "ERROR! Version mismatch file V%d, expecting V%d to V%d\n", hh.version, HVERSION_HASH, HVERSION);
 	return;
     }
-    hh.hmagic = HMAGIC;
+    hh.hmagic = HLIVEMAGIC(&hh);
     if (lseek(fd, 0, SEEK_SET) == -1) {
 	perror("Unable to seek to pos 0 in history");
 	return;

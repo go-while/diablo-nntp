@@ -23,6 +23,9 @@
 
 Prototype int quickhash(const char *st);
 Prototype hash_t hhash(const char *msgid);
+Prototype uint64_t siphash24(const void *in, size_t len, uint64_t k0, uint64_t k1);
+Prototype hash_t msgidhash(const char *msgid);
+Prototype const char *MsgIdHashName(int method);
 Prototype void bhash_init(void);
 Prototype void bhash_update(const char *p, int len);
 Prototype void bhash_final(md5hash_t *h);
@@ -159,6 +162,113 @@ hhash(const char *msgid)
 	t.h2 = (int32)(((uint32)h2 ^ ((uint32)hv << 20)) & 0x7FFFFFFF);
     }
     return(t);
+}
+
+/*
+ * siphash24() - SipHash-2-4 (Aumasson and Bernstein) of len bytes with the
+ * key k0, k1.  The bytes are read as little-endian words on every host, so
+ * the result does not depend on the byte order.
+ */
+#define SIP_ROTL(x, b)	(((x) << (b)) | ((x) >> (64 - (b))))
+#define SIP_ROUND do {						\
+	v0 += v1; v1 = SIP_ROTL(v1, 13); v1 ^= v0;		\
+	v0 = SIP_ROTL(v0, 32);					\
+	v2 += v3; v3 = SIP_ROTL(v3, 16); v3 ^= v2;		\
+	v0 += v3; v3 = SIP_ROTL(v3, 21); v3 ^= v0;		\
+	v2 += v1; v1 = SIP_ROTL(v1, 17); v1 ^= v2;		\
+	v2 = SIP_ROTL(v2, 32);					\
+    } while (0)
+
+uint64_t
+siphash24(const void *in, size_t len, uint64_t k0, uint64_t k1)
+{
+    const unsigned char *p = in;
+    const unsigned char *end = p + (len & ~(size_t)7);
+    uint64_t v0 = 0x736f6d6570736575ULL ^ k0;
+    uint64_t v1 = 0x646f72616e646f6dULL ^ k1;
+    uint64_t v2 = 0x6c7967656e657261ULL ^ k0;
+    uint64_t v3 = 0x7465646279746573ULL ^ k1;
+    uint64_t b = (uint64_t)len << 56;
+    uint64_t m;
+
+    for (; p != end; p += 8) {
+	m = (uint64_t)p[0] | (uint64_t)p[1] << 8 | (uint64_t)p[2] << 16 |
+	    (uint64_t)p[3] << 24 | (uint64_t)p[4] << 32 |
+	    (uint64_t)p[5] << 40 | (uint64_t)p[6] << 48 |
+	    (uint64_t)p[7] << 56;
+	v3 ^= m;
+	SIP_ROUND;
+	SIP_ROUND;
+	v0 ^= m;
+    }
+    switch (len & 7) {
+	case 7: b |= (uint64_t)p[6] << 48;	/* FALLTHROUGH */
+	case 6: b |= (uint64_t)p[5] << 40;	/* FALLTHROUGH */
+	case 5: b |= (uint64_t)p[4] << 32;	/* FALLTHROUGH */
+	case 4: b |= (uint64_t)p[3] << 24;	/* FALLTHROUGH */
+	case 3: b |= (uint64_t)p[2] << 16;	/* FALLTHROUGH */
+	case 2: b |= (uint64_t)p[1] << 8;	/* FALLTHROUGH */
+	case 1: b |= (uint64_t)p[0];
+    }
+    v3 ^= b;
+    SIP_ROUND;
+    SIP_ROUND;
+    v0 ^= b;
+    v2 ^= 0xff;
+    SIP_ROUND;
+    SIP_ROUND;
+    SIP_ROUND;
+    SIP_ROUND;
+    return(v0 ^ v1 ^ v2 ^ v3);
+}
+
+/*
+ * msgidhash() - the hash of a Message-ID for the history, the overview
+ * index (oa_MsgHash) and the Message-ID caches (D-210).
+ *
+ * MSGIDHASH_HASH (msgidhash hash, the default) is hhash(), the method of the
+ * "hash" option, as before.  With hash crc its fold loses bit 0 of h1, so two
+ * Message-IDs of the same length that differ only in bit 0 of the 5th byte
+ * from the end share a hash about half the time; the history keeps only the
+ * hash, so the second one is refused as a duplicate.
+ *
+ * MSGIDHASH_SIPHASH (msgidhash siphash) is SipHash-2-4 with a fixed key, so
+ * every site gets the same hash for a Message-ID (a history file can move
+ * between hosts) and needs no key of its own.  The 64 bits are kept as 62 in
+ * the hash_t layout of the crc method: bit 31 of h1 set, bit 31 of h2 clear.
+ * It is about three times faster than hhash() crc.
+ *
+ * The group-name hashes (GFHash() and the names made from it) stay on
+ * hhash(): they name the reader's files on disk.
+ */
+#define MSGID_K0	0x6d206f6c62616944ULL	/* "Diablo m", little-endian */
+#define MSGID_K1	0x79656b2064696773ULL	/* "sgid key" */
+
+hash_t
+msgidhash(const char *msgid)
+{
+    hash_t t;
+
+    if (DOpts.MsgIdHashMethod == MSGIDHASH_SIPHASH) {
+	uint64_t m = siphash24(msgid, strlen(msgid), MSGID_K0, MSGID_K1);
+
+	t.h1 = (int32)((uint32)(m >> 32) | 0x80000000);
+	t.h2 = (int32)((uint32)m & 0x7FFFFFFF);
+	return(t);
+    }
+    return(hhash(msgid));
+}
+
+const char *
+MsgIdHashName(int method)
+{
+    switch (method) {
+	case MSGIDHASH_HASH:
+	    return("hash");
+	case MSGIDHASH_SIPHASH:
+	    return("siphash");
+    }
+    return("unknown");
 }
 
 /*

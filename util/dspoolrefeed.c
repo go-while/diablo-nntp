@@ -135,7 +135,7 @@ main(int ac, char **av)
 	fprintf(stderr, "dspoolrefeed: %s: %s\n", fileName, strerror(errno));
 	exit(1);
     }
-    if (read(fd, &hh, sizeof(hh)) != sizeof(hh) || hh.hmagic != HMAGIC) {
+    if (read(fd, &hh, sizeof(hh)) != sizeof(hh) || !HistHeadMagicOK(&hh)) {
 	fprintf(stderr, "dspoolrefeed: %s: not a history file\n", fileName);
 	exit(1);
     }
@@ -145,6 +145,8 @@ main(int ac, char **av)
 	exit(1);
     }
     rsize = hh.henSize;
+    /* the Message-ID check below hashes with the method of the entries */
+    DOpts.MsgIdHashMethod = HistHeadMsgIdHash(&hh);
     if (lseek(fd, (off_t)hh.headSize + (off_t)hh.hashSize * sizeof(HistIndex) + rsize, 0) < 0) {
 	fprintf(stderr, "dspoolrefeed: %s: %s\n", fileName, strerror(errno));
 	exit(1);
@@ -204,7 +206,7 @@ main(int ac, char **av)
 	    }
 	    snprintf(msgid, sizeof(msgid), "%s", MsgId(msgid, NULL));
 	    /* the offset must still hold this history entry's article */
-	    hv = hhash(msgid);
+	    hv = msgidhash(msgid);
 	    if (hv.h1 != h.hv.h1 || hv.h2 != h.hv.h2) {
 		++mismatch;
 		continue;

@@ -52,7 +52,7 @@ void
 EnterCancelCache(const char *msgid)
 {
     if (CCacheAry) {
-	hash_t hv = hhash(msgid);
+	hash_t hv = msgidhash(msgid);
 	int hi = ((hv.h1 ^ hv.h2) & 0x7FFFFFFF) % C_HSIZE;
 
 	CCacheAry[hi] = hv;
@@ -63,7 +63,7 @@ int
 FindCancelCache(const char *msgid)
 {
     if (CCacheAry) {
-	hash_t hv = hhash(msgid);
+	hash_t hv = msgidhash(msgid);
 	hash_t *hp;
 	int hi = ((hv.h1 ^ hv.h2) & 0x7FFFFFFF) % C_HSIZE;
 

@@ -197,8 +197,15 @@ main(int ac, char **av)
 	Usage();
     }
 
+    /*
+     * -H and -h hash with the msgidhash method of this file's entries,
+     * whatever diablo.config says (HGF_FILEHASH); so does the dump below,
+     * from the header it reads.
+     */
     if (VerifyHistory || FindHash != NULL)
-	HistoryOpen(fileName, HGF_READONLY);
+	HistoryOpen(fileName, HGF_READONLY | HGF_FILEHASH);
+    if (OldOpt)		/* no header: entries from before msgidhash */
+	DOpts.MsgIdHashMethod = MSGIDHASH_HASH;
 
     if (VerboseOpt)
 	LoadSpoolCtl(0, 1);
@@ -247,7 +254,7 @@ main(int ac, char **av)
 		fprintf(stderr, "corrupted history file\n");
 		exit(1);
 	    }
-	    if (hh.hmagic != HMAGIC) {
+	    if (!HistHeadMagicOK(&hh)) {
 		fprintf(stderr, "corrupted history file\n");
 		exit(1);
 	    }
@@ -256,6 +263,8 @@ main(int ac, char **av)
 		fprintf(stderr, "dump may be invalid\n");
 	    }
 	    HistoryVersion = hh.version;
+	    /* -f hashes a Message-ID with the method of this file's entries */
+	    DOpts.MsgIdHashMethod = HistHeadMsgIdHash(&hh);
 	    /*
 	     * A damaged header must not make the record size 0 or smaller
 	     * than a record (pieces of records dumped as entries, a read
@@ -282,7 +291,7 @@ main(int ac, char **av)
 	} else if (FindHash != NULL) {
 	    hash_t hv;
 	    if (*FindHash == '<')
-		hv = hhash(FindHash);
+		hv = msgidhash(FindHash);
 	    else
 		sscanf(FindHash, "%x.%x", &hv.h1, &hv.h2);
 	    DumpChain(fd, hsize, rsize, &hv);
@@ -444,6 +453,14 @@ DumpQuick(int fd, int hsize, int rsize)
 	if (EntriesOpt)
 	    printf("ENTRIES %u\n", totalentries);
     }
+    /*
+     * diload loads the hashes as they are, into a history of its own
+     * msgidhash method: say which method they are of.  Not for msgidhash
+     * hash, so that such a dump stays as it was (and older diloads read it),
+     * and not with -m, whose hash list is read by dilookup -s.
+     */
+    if (!DumpHashOnly && DOpts.MsgIdHashMethod != MSGIDHASH_HASH)
+	printf("MSGIDHASH %s\n", MsgIdHashName(DOpts.MsgIdHashMethod));
 
     if (!QuietOpt)
 	fprintf(stderr, "@%lld  %u records (%d bytes per record)\n",
