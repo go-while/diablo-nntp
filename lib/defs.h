@@ -250,6 +250,7 @@ struct DiabloOpts {
     int ReaderDnsWait;		/* readerdnswait: seconds a request may wait */
     int ReaderCacheMode;
     int ReaderCacheHashSize;
+    int ReaderNewnewsMaxLen;	/* readernewnewsmaxlen: longest NEWNEWS wildmat, 0 = no limit */
     int ReaderXOverMode;
     int ReaderCanLock;		/* readercanlock: CANLOCK_* */
     int ReaderSupersedeLock;	/* readersupersedelock: CANLOCK_*, or CANLOCK_INHERIT */

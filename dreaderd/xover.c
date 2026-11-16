@@ -69,6 +69,18 @@ NNTPNewNews(Connection *conn, char **pptr)
 	}
 	extra = parseword(pptr, " \t");
     }
+    /*
+     * readernewnewsmaxlen: the wildmat is matched against every active
+     * group (ListActiveGroups()), so its length bounds that work.  INN's
+     * nnrpd refuses an argument over 497 bytes the same way.  0 (the
+     * default) sets no limit.
+     */
+    if (newsgroups != NULL && DOpts.ReaderNewnewsMaxLen > 0 &&
+		strlen(newsgroups) > (size_t)DOpts.ReaderNewnewsMaxLen) {
+	MBLogPrintf(conn, &conn->co_TMBuf, "501 Argument too long\r\n");
+	NNCommand(conn);
+	return;
+    }
     if (newsgroups == NULL || extra != NULL ||
 	(distributions && (strlen(distributions) < 3 || distributions[0] != '<' ||
 	 distributions[strlen(distributions) - 1] != '>')) ||

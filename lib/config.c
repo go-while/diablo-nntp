@@ -140,6 +140,7 @@ initDOpts(void)
     DOpts.ReaderDnsWait = 5;
     DOpts.ReaderCacheMode = 1;
     DOpts.ReaderCacheHashSize = 4096;
+    DOpts.ReaderNewnewsMaxLen = 0;	/* no limit */
     DOpts.ReaderXOverMode = 1;
     DOpts.ReaderCanLock = CANLOCK_REQUIRE_AUTH;	/* as INN's docancels */
     DOpts.ReaderSupersedeLock = CANLOCK_INHERIT;	/* as readercanlock */
@@ -716,6 +717,9 @@ SetCommand(FILE *fo, char *cmd, char *opt, int *cmdErr)
 		    optErr = 0;
 		}
 	    }
+	} else if (strcasecmp(cmd, "readernewnewsmaxlen") == 0) {
+	    if (opt && confRange(opt, 0, 1000000, &DOpts.ReaderNewnewsMaxLen))
+		optErr = 0;
 	} else if (strcasecmp(cmd, "readerxover") == 0) {
 	    if (opt) {
 		if (strcasecmp(opt, "trackonly") == 0) {
@@ -1087,6 +1091,9 @@ dumpConfigReader(FILE *fo, char *cmd)
 	fprintf(fo, "readercache: %d\n", DOpts.ReaderCacheMode);
     if (cmd == NULL || strcasecmp(cmd, "readercachehashsize") == 0) {
 	fprintf(fo, "readercachehashsize: %d\n", DOpts.ReaderCacheHashSize);
+    }
+    if (cmd == NULL || strcasecmp(cmd, "readernewnewsmaxlen") == 0) {
+	fprintf(fo, "readernewnewsmaxlen: %d\n", DOpts.ReaderNewnewsMaxLen);
     }
     if (cmd == NULL || strcasecmp(cmd, "readerxover") == 0) {
 	switch (DOpts.ReaderXOverMode) {
