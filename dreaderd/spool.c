@@ -108,6 +108,7 @@ NNGetLocal1(Connection *conn)
     long offset;
     long size;
     char smaxage[32];
+    int wcode;
 
     conn->co_Func = NNGetLocal1;
     conn->co_State = "getlcl1";
@@ -121,7 +122,8 @@ NNGetLocal1(Connection *conn)
 	    snprintf(smaxage, sizeof(smaxage), " a%d", sreq->sr_MaxAge);
 	}
 
-	if (strtol(buf, NULL, 10) == 223) {
+	wcode = NntpCode(buf);
+	if (wcode == 223) {
 	    /*
 	     * sr_CConn may be NULL if client was terminated while
 	     * server operation was still in progress.
@@ -305,13 +307,34 @@ NNGetLocal1(Connection *conn)
 		MBPrintf(&conn->co_TMBuf, "article %s%s\r\n", sreq->sr_MsgId, smaxage);
 		NNSpoolResponse1(conn);
 	    }
-	} else {
+	} else if (wcode == 430 || wcode == 443 || wcode == 480 ||
+		    wcode == 500 || wcode == 501 || wcode == 502 || wcode == 503) {
 	    /*
-	     * whereis request failed, try the normal way
+	     * whereis request failed (or the server doesn't know it), try
+	     * the normal way
 	     */
 	    MBPrintf(&conn->co_TMBuf, "article %s%s\r\n", sreq->sr_MsgId, smaxage);
 	    conn->co_ServerArticleRequestedCount++;
 	    NNSpoolResponse1(conn);
+	} else {
+	    /*
+	     * Not a reply whereis can get: lines may follow that the article
+	     * request would read as its reply.  Handled as in
+	     * NNSpoolResponse1(): the request goes elsewhere or is refused,
+	     * and the connection is closed (COF_BROKEN, NNServerIdle()).
+	     */
+	    logit(LOG_ERR, "spool server %s: unexpected reply to whereis %s: %.80s, closing it",
+		conn->co_Desc->d_Id, sreq->sr_MsgId, buf);
+	    conn->co_Flags |= COF_BROKEN;
+	    conn->co_ServerArticleMiscErrorCount++;
+	    if (sreq->sr_CConn == NULL)
+		NNFinishSReq(conn, NULL, 0);
+	    else if (sreq->sr_CConn->co_ArtMode == COM_BODYNOSTAT)
+		NNFinishSReq(conn, "(article not available)\r\n.\r\n", 1);
+	    else if (sreq->sr_CConn->co_RequestFlags == ARTFETCH_ARTNO)
+		NNFinishSReq(conn, "423 No such article number in this group\r\n", 1);
+	    else
+		NNFinishSReq(conn, "430 No such article\r\n", 1);
 	}
     } else if (len < 0) {
 	NNServerTerminate(conn);
@@ -335,20 +358,23 @@ NNSpoolResponse1(Connection *conn)
     ServReq *sreq = conn->co_SReq;
     char *buf;
     int len;
+    int code;
+    int unexpected;
 
     conn->co_Func = NNSpoolResponse1;
     conn->co_State = "spres1";
 
     if ((len = MBReadLine(&conn->co_RMBuf, &buf)) > 0) {
 	conn->co_ServerByteCount += len;
-	if (sreq->sr_HeadOnly && strtol(buf, NULL, 10) == 221) {
+	code = NntpCode(buf);
+	if (sreq->sr_HeadOnly && code == 221) {
 	    if (sreq->sr_CConn)
 		MBFree(&sreq->sr_CConn->co_ArtBuf);
 	    conn->co_BytesHeader = 0;
 	    NNSpoolHdrResponse(conn);
 	    return;
 	}
-	if (!sreq->sr_HeadOnly && strtol(buf, NULL, 10) == 220) {
+	if (!sreq->sr_HeadOnly && code == 220) {
 	    sreq->sr_AccLen = 0;
 	    sreq->sr_AccIn = 0;
 	    sreq->sr_AccCut = 0;
@@ -412,11 +438,29 @@ NNSpoolResponse1(Connection *conn)
 	    NNSpoolResponse2(conn);
 	    return;
 	}
-	else if (strtol(buf, NULL, 10) == 430) {
+	else if (code == 430) {
 	  conn->co_ServerArticleNotFoundErrorCount++;
 	}
 	else {
 	  conn->co_ServerArticleMiscErrorCount++;
+	}
+
+	/*
+	 * Only a one-line refusal leaves the stream in step.  Anything else
+	 * (a malformed status line, or a code with a text block after it,
+	 * such as a 220 to HEAD) leaves lines unread that the next request
+	 * would take for its reply: the client gets its refusal, and the
+	 * connection to the spool server is closed.
+	 */
+	/* 443: the Diablo feeder's "Bad Message-ID" / "Bad Command Options" */
+	unexpected = !(code == 430 || code == 423 || code == 412 ||
+		code == 420 || code == 443 || code == 480 || code == 500 ||
+		code == 501 || code == 502 || code == 503);
+	if (unexpected) {
+	    logit(LOG_ERR, "spool server %s: unexpected reply to %s: %.80s, closing it",
+		conn->co_Desc->d_Id, sreq->sr_MsgId, buf);
+	    /* NNFinishSReq() goes on to NNServerIdle(), which closes it */
+	    conn->co_Flags |= COF_BROKEN;
 	}
 
 	if (sreq->sr_CConn == NULL)

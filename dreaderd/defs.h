@@ -613,6 +613,7 @@ typedef struct Connection {
 #define	COF_AUTHINFO	0x04000000	/* logged in with AUTHINFO (281)	*/
 #define	COF_POSTXREF	0x08000000	/* the post had an Xref: header	*/
 #define	COF_POSTINJDATE	0x10000000	/* we added the post's Injection-Date */
+#define	COF_BROKEN	0x20000000	/* server reply out of step: close, take no new request */
 
 #define	CON_RFC3977	0		/* RFC3977 numbering behaviour	*/
 #define	CON_RFC977	1		/* RFC977 numbering behaviour	*/

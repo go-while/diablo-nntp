@@ -611,6 +611,21 @@ DnsTask(int fd, const char *id)
 }
 
 /*
+ * AuthOK() - true if an auth backend answer is a success: the full code 100,
+ *	      or "110 <readerdef>".  Anything else ("199 no", "1", "0",
+ *	      "100x", "110" without a space) is a failure.
+ */
+static int
+AuthOK(const char *r)
+{
+    int code = NntpCode(r);
+
+    if (code == 100)
+	return(1);
+    return(code == 110 && r[3] == ' ');
+}
+
+/*
  * Search a file of username:password pairs for a matching username/passord
  *
  * Returns:	NULL	failure
@@ -1112,8 +1127,9 @@ dbAuthenticate(char *user, char *pass, char *conf)
  * integer.  Client responds with a packet length as a 12-digit integer,
  * and a DES-encrypted packet containing a random number, the server-sent 
  * time, the encryption password, username being auth'd, and password 
- * being auth'd.  The server then returns 1-digit integer, 0 or 1, for
- * status.
+ * being auth'd.  The server then returns a line for status: "1" or
+ * "100 Success" (accepted), "110 readerdef" (accepted, with a readerdef);
+ * anything else, "0" included, is a refusal.
  *
  * Returns:	NULL	failure
  *		 "100 Sucess"	success
@@ -1428,26 +1444,48 @@ netRemoteAuthenticate(char *user, char *pass, char *conf, char *localip, char *r
 	return(NULL);
     }
 
-    /* Read the server's response.  1 byte int plus \n */
-    n = -1;
-    while (n < 0 && AuthWait(fd, POLLIN, deadline) > 0) {
-	n = read(fd, buffer, sizeof(buffer) - 1);
-	if (n < 0 && errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK)
+    /*
+     * Read the server's response, one line ("1", "100 Success" or
+     * "110 readerdef" and a newline), up to its newline or the end of the
+     * connection: a read can return part of it.
+     */
+    n = 0;
+    while (n < (int)sizeof(buffer) - 1 && memchr(buffer, '\n', n) == NULL &&
+				AuthWait(fd, POLLIN, deadline) > 0) {
+	int k = read(fd, buffer + n, sizeof(buffer) - 1 - n);
+
+	if (k > 0)
+	    n += k;
+	else if (k == 0)
+	    break;		/* the end of the connection */
+	else if (errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK)
 	    break;
     }
     close(fd);
-    if (n < 2)
+    if (n < 1)
 	return(NULL);
     buffer[n] = 0;
 
-    if (*buffer == '1') {
-	snprintf(result, sizeof(result), "%s", buffer);
-	if ((r = strchr(result, '\n'))) {
-		*r = '\0';
-	}
+    /*
+     * The line ends at its LF (or at the end of the data); one CR right
+     * before it belongs to the line end.  A CR anywhere else is part of
+     * the answer, so "100<CR>junk" is not "100".
+     */
+    if ((ptr = strchr(buffer, '\n')) != NULL)
+	*ptr = 0;
+    n = strlen(buffer);
+    if (n > 0 && buffer[n - 1] == '\r')
+	buffer[--n] = 0;
+
+    if (strcmp(buffer, "1") == 0) {
+	/* the one-digit answer: 1 is a success */
+	strcpy(result, "100 Success");
 	r = result;
-    } else
-	r = NULL;
+    } else {
+	/* else it must be "100 Success" or "110 readerdef" */
+	snprintf(result, sizeof(result), "%s", buffer);
+	r = AuthOK(result) ? result : NULL;
+    }
     return(r);
 }
 #endif
@@ -2159,7 +2197,7 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
 		AuthReader = fileAuthenticate(user, dreq->dr_AuthPass,
 						dres->dr_AuthDef->au_File);
 		stprintf("dns auth search %s", ipname);
-		if (AuthReader != NULL && *AuthReader == '1') {
+		if (AuthOK(AuthReader)) {
 		    if (*dres->dr_AuthDef->au_File != '!')
 			Authenticated = 1;
 		    if (DebugOpt)
@@ -2189,7 +2227,7 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
 			ipname, (dres->dr_Flags & DF_ISPROXIED) > 0,
 			dres->dr_AuthDef->au_Radius);
 		stprintf("dns auth search %s", ipname);
-		if (AuthReader != NULL && *AuthReader == '1') {
+		if (AuthOK(AuthReader)) {
 		    Authenticated = 1;
 		    if (DebugOpt)
 			printf("Authenticated via radius\n");
@@ -2221,7 +2259,7 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
 		AuthReader = cdbAuthenticate(user, dreq->dr_AuthPass,
 					dres->dr_AuthDef->au_Cdb);
 		stprintf("dns auth search %s", ipname);
-		if (AuthReader != NULL && *AuthReader == '1') {
+		if (AuthOK(AuthReader)) {
 		    if (*dres->dr_AuthDef->au_Cdb != '!')
 			Authenticated = 1;
 		    if (DebugOpt)
@@ -2260,7 +2298,7 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
 		AuthReader = dbAuthenticate(user, dreq->dr_AuthPass,
 					dres->dr_AuthDef->au_Db);
 		stprintf("dns auth search %s", ipname);
-		if (AuthReader != NULL && *AuthReader == '1') {
+		if (AuthOK(AuthReader)) {
 		    if (*dres->dr_AuthDef->au_Db != '!')
 			Authenticated = 1;
 		    if (DebugOpt)
@@ -2302,7 +2340,7 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
 		if (dres->dr_AuthTimeout)
 		    goto authtimeout;
 		stprintf("dns auth search %s", ipname);
-		if (AuthReader != NULL && *AuthReader == '1') {
+		if (AuthOK(AuthReader)) {
 		    Authenticated = 1;
 		    if (DebugOpt)
 			printf("Authenticated via NetRemote: %s\n", AuthReader);
@@ -2345,7 +2383,7 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
 		if (dres->dr_AuthTimeout)
 		    goto authtimeout;
 		stprintf("dns auth search %s", ipname);
-		if (AuthReader != NULL && *AuthReader == '1') {
+		if (AuthOK(AuthReader)) {
 		    Authenticated = 1;
 		    if (DebugOpt)
 			printf("Authenticated via Perl\n");
@@ -2379,7 +2417,7 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
 		if (dres->dr_AuthTimeout)
 		    goto authtimeout;
 		stprintf("dns auth search %s", ipname);
-		if (AuthReader != NULL && *AuthReader == '1') {
+		if (AuthOK(AuthReader)) {
 		    Authenticated = 1;
 		    if (DebugOpt)
 			printf("Authenticated via PAM\n");

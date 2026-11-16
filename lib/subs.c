@@ -53,6 +53,7 @@ Prototype int DiabHashFeedBad(const HashFeed_MatchList *hf);
 Prototype int MoveFile(char *from, char *to);
 Prototype int TimeSpec(char *t, char *def);
 Prototype int ParseIntRange(const char *str, int base, long min, long max, int *out);
+Prototype int NntpCode(const char *line);
 
 u_long ascToAddr(const char *str);
 u_long ascToMask(const char *str);
@@ -1298,4 +1299,29 @@ AddrConfigFlag(const char *host)
 #else
     return(0);
 #endif
+}
+
+/*
+ * NntpCode() - the reply code at the start of an NNTP reply line, or -1.
+ *		Exactly three digits, the first one 1 to 5, then a space
+ *		or the end of the line (CR LF, LF or the end of the string;
+ *		a CR with text after it is no end).  No white space or sign
+ *		in front, no more digits, no tab, no text glued to the code.
+ *		The caller compares the whole number with the codes its
+ *		command defines; any other code is an error, not a class.
+ */
+int
+NntpCode(const char *line)
+{
+    if (line == NULL)
+	return(-1);
+    if (line[0] < '1' || line[0] > '5')
+	return(-1);
+    if (line[1] < '0' || line[1] > '9' || line[2] < '0' || line[2] > '9')
+	return(-1);
+    /* a space, or the end of the line (CR LF, LF, or the end of the string) */
+    if (line[3] != ' ' && line[3] != 0 && line[3] != '\n' &&
+	!(line[3] == '\r' && (line[4] == 0 || line[4] == '\n')))
+	return(-1);
+    return((line[0] - '0') * 100 + (line[1] - '0') * 10 + (line[2] - '0'));
 }

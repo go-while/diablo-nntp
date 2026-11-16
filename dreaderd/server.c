@@ -970,8 +970,9 @@ NNServerPrime2(Connection *conn)
     conn->co_State = "prime2";
 
     if ((len = MBReadLine(&conn->co_RMBuf, &ptr)) != 0) {
-	int code = strtol(ptr, NULL, 10);
-	if (code >= 200 && code <= 299) {
+	int code = NntpCode(ptr);
+	/* 200 or 201 only */
+	if (code == 200 || code == 201) {
 	    logit(LOG_INFO, "mode-reader(%s) %s", conn->co_Desc->d_Id, ptr);
 	    NNServerStart(conn);
 	} else {
@@ -1010,12 +1011,23 @@ NNServerPrime4(Connection *conn)
     conn->co_State = "prime4";
 
     if ((len = MBReadLine(&conn->co_RMBuf, &ptr)) != 0) {
-	int code = strtol(ptr, NULL, 10);
-	if (code >= 200 && code <= 299)
+	int code = NntpCode(ptr);
+	/*
+	 * The Diablo feeder answers 250.  A server that doesn't know the
+	 * command refuses it in one line, and is used as before.  Any other
+	 * reply may have lines after it: close the connection.
+	 */
+	if (code == 250) {
 	    logit(LOG_INFO, "mode-readonly(%s) %s", conn->co_Desc->d_Id, ptr);
-	else
+	    NNServerStart(conn);
+	} else if (code == 480 || code == 500 || code == 501 || code == 502 ||
+								code == 503) {
 	    logit(LOG_ERR, "mode-readonly(%s) failed: %s", conn->co_Desc->d_Id, ptr);
-	NNServerStart(conn);
+	    NNServerStart(conn);
+	} else {
+	    logit(LOG_ERR, "mode-readonly(%s) unexpected reply: %s", conn->co_Desc->d_Id, ptr);
+	    NNServerTerminate(conn);
+	}
     }
 }
 
@@ -1029,11 +1041,15 @@ NNServerPrimeAuth1(Connection *conn)
     conn->co_State = "primeauth1";
 
     if ((len = MBReadLine(&conn->co_RMBuf, &ptr)) != 0) {
-	int code = strtol(ptr, NULL, 10);
-	if (code >= 300 && code <= 399) {
+	int code = NntpCode(ptr);
+	if (code == 381) {
 	    MBPrintf(&conn->co_TMBuf, "authinfo pass %s\r\n", conn->co_Auth.dr_AuthPass);
 
 	    NNServerPrimeAuth2(conn);
+	} else if (code == 281) {
+	    /* accepted without a password */
+	    logit(LOG_INFO, "authinfo-user(%s) %s", conn->co_Desc->d_Id, ptr);
+	    NNServerStart(conn);
 	} else {
 	    logit(LOG_ERR, "authinfo-user(%s) failed: %s", conn->co_Desc->d_Id, ptr);
 	    NNServerTerminate(conn);
@@ -1051,8 +1067,8 @@ NNServerPrimeAuth2(Connection *conn)
     conn->co_State = "primeauth2";
 
     if ((len = MBReadLine(&conn->co_RMBuf, &ptr)) != 0) {
-	int code = strtol(ptr, NULL, 10);
-	if (code >= 200 && code <= 299) {
+	int code = NntpCode(ptr);
+	if (code == 281) {
 	    logit(LOG_INFO, "authinfo-pass(%s) %s", conn->co_Desc->d_Id, ptr);
 	    NNServerStart(conn);
 	} else {
@@ -1103,6 +1119,15 @@ NNServerIdle(Connection *conn)
 
     conn->co_Func  = NNServerIdle;
     conn->co_State = "sidle";
+
+    /*
+     * A reply that was out of step (COF_BROKEN) may have left lines unread:
+     * the next request would take them for its reply.  Close instead.
+     */
+    if (conn->co_Flags & COF_BROKEN) {
+	NNServerTerminate(conn);
+	return;
+    }
 
     /*
      * Check for an unexpected condition on server, i.e. data or
@@ -1239,7 +1264,7 @@ NNServerConnect(Connection *conn)
     }
 
     ptr = buf;
-    code = strtol(ptr, NULL, 10);
+    code = NntpCode(ptr);
     if (code == 200) {
 	logit(LOG_INFO, "connect(%s) %s", conn->co_Desc->d_Id, buf);
     } else if (code == 201) {
