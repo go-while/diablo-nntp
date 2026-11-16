@@ -66,6 +66,23 @@ func TestDsyncgroupsAuthinfoUser281(t *testing.T) {
 	}
 }
 
+// TestDsyncgroupsAuthinfoUser381NoPassword: 381 to AUTHINFO USER asks for a password; without one
+// (-u) dsyncgroups ends the session (exit 1) and sends no AUTHINFO PASS.
+func TestDsyncgroupsAuthinfoUser381NoPassword(t *testing.T) {
+	s := NewSite(t, SiteOptions{NoStart: true})
+	srv := rcuSyncPeer(t, []string{"381 password please"}, []string{"200 reader"})
+	out, err := s.TryRun("dsyncgroups", "-h", "127.0.0.1", "-p", strconv.Itoa(srv.Port()),
+		"-F", filepath.Join(s.Dir, "dactive.kp"), "-z", "-U", "fred")
+	if err == nil || !strings.Contains(out, "authinfo wants a password") {
+		t.Errorf("dsyncgroups after 381 without a password: err=%v, want exit 1 with \"authinfo wants a password\":\n%s", err, out)
+	}
+	for _, l := range srv.Lines() {
+		if strings.HasPrefix(strings.ToLower(l), "authinfo pass") || strings.HasPrefix(strings.ToLower(l), "list") {
+			t.Errorf("%q sent after 381 without a password (lines %q)", l, srv.Lines())
+		}
+	}
+}
+
 // TestDsyncgroupsModeReaderReply: a one-line refusal of MODE READER (501) lets dsyncgroups go on
 // as before; a code MODE READER does not have (280) ends the session with exit 1, since lines
 // that come with it would be read as the reply to LIST ACTIVE. Fails on main for 280: every
@@ -95,20 +112,22 @@ func TestDsyncgroupsModeReaderReply(t *testing.T) {
 
 // TestDclientReplyCodes: dclient reads a reply code as the whole number. A reply without one
 // stops it (exit 2): it cannot tell whether lines follow. QUIT is answered by 205 only, also a
-// bare "205" with no text. Fails on main: atoi() took the line without a code as 0, a reply
-// without lines, and dclient went on (exit 0); the bare "205" was refused (exit 2).
+// bare "205" with no text; a bare "200" greeting is a greeting. Fails on main: atoi() took the
+// line without a code as 0, a reply without lines, and dclient went on (exit 0); the bare "205"
+// and the bare "200" were refused (exit 2).
 func TestDclientReplyCodes(t *testing.T) {
 	for _, tc := range []struct {
-		name, date, quit string
-		exit             int
-		out              string
+		name, greeting, date, quit string
+		exit                       int
+		out                        string
 	}{
-		{"reply without a code", "x no code here", "205 bye", 2, "Unexpected response from server"},
-		{"bare 205 to QUIT", "111 20261116000000", "205", 0, "111 20261116000000"},
+		{"reply without a code", "200 fake", "x no code here", "205 bye", 2, "Unexpected response from server"},
+		{"bare 205 to QUIT", "200 fake", "111 20261116000000", "205", 0, "111 20261116000000"},
+		{"bare 200 greeting", "200", "111 20261116000000", "205 bye", 0, "111 20261116000000"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := NewSite(t, SiteOptions{NoStart: true})
-			srv := fakeserver.New(t, fakeserver.Options{Greeting: "200 fake", Handler: fakeserver.LineHandler(func(_ *fakeserver.Conn, line string) ([]string, bool) {
+			srv := fakeserver.New(t, fakeserver.Options{Greeting: tc.greeting, Handler: fakeserver.LineHandler(func(_ *fakeserver.Conn, line string) ([]string, bool) {
 				l := strings.ToLower(strings.TrimSpace(line))
 				switch {
 				case strings.HasPrefix(l, "date"):

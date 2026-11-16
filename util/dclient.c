@@ -99,7 +99,7 @@ connectnews(char *hostname, char *port) {
     }
     if (verbose)
 	printf("%s", line);
-    if (strncmp(line, "200 ", 4) != 0 && strncmp(line, "201 ", 4) != 0) {
+    if (NntpCode(line) != 200 && NntpCode(line) != 201) {
 	printf("Unexpected response from server: %s", line);
 	exit(2);
     }
