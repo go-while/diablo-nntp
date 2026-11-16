@@ -163,7 +163,7 @@ GrpCtlMassCancel(char *group)
 	if (*workbuf != '<' || *(workbuf + strlen(workbuf) - 1) != '>') {
 	    printf(">> masscancel: invalid message-id: %s\n", workbuf);
 	} else {
-	    hv = hhash(workbuf);
+	    hv = msgidhash(workbuf);
 	    loc = hv.h2 % MASSCANCELHASHSIZ;
 	    if (! ((elem = (CancelArt *)malloc(sizeof(CancelArt))))) {
 		printf(">> masscancel: malloc fail\n");

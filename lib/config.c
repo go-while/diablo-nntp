@@ -116,6 +116,7 @@ initDOpts(void)
     memset(&DOpts, 0, sizeof(DOpts));
     DOpts.HashMethod = HASH_CRC;
     DOpts.CompatHashMethod = HASH_CRC;
+    DOpts.MsgIdHashMethod = MSGIDHASH_HASH;
     DOpts.ReaderGroupHashMethod.gh_type = HASHGRP_CRC;
     DOpts.ReaderGroupHashMethod.gh_sigbytes = 20;
     DOpts.ReaderGroupHashMethod.gh_dirtype = HASHGRP_DIR_BIT;
@@ -285,6 +286,14 @@ LoadDiabloConfig(int ac, char **av)
 		    optErr = SetHashMethod(opt, &DOpts.HashMethod);
 		    if (p2)
 			optErr = SetHashMethod(p2, &DOpts.CompatHashMethod);
+		} else if (strcasecmp(cmd, "msgidhash") == 0) {
+		    optErr = 0;
+		    if (strcasecmp(opt, "hash") == 0)
+			DOpts.MsgIdHashMethod = MSGIDHASH_HASH;
+		    else if (strcasecmp(opt, "siphash") == 0)
+			DOpts.MsgIdHashMethod = MSGIDHASH_SIPHASH;
+		    else
+			optErr = 1;
 		} else if (strcasecmp(cmd, "readergrouphash") == 0) {
 		    optErr = SetGroupHashMethod(opt, &DOpts.ReaderGroupHashMethod);
 		    if (optErr != 0)
@@ -953,6 +962,8 @@ dumpConfigFeeder(FILE *fo, char *cmd)
 	}
 	fprintf(fo, "\n");
     }
+    if (cmd == NULL || strcasecmp(cmd, "msgidhash") == 0)
+	fprintf(fo, "*msgidhash: %s\n", MsgIdHashName(DOpts.MsgIdHashMethod));
     if (cmd == NULL || strcasecmp(cmd, "hsize") == 0)
 	fprintf(fo, "*hsize: %d\n", DOpts.HashSize);
     if (cmd == NULL || strcasecmp(cmd, "feederactive") == 0)

@@ -136,6 +136,18 @@ main(int ac, char **av)
     if (FileName == NULL)
 	Usage();
 
+    /*
+     * Work with the msgidhash method of this file's entries, whatever
+     * diablo.config says: -h shows it, and the entry lookups need it.
+     */
+    if ((HistoryFd = open(FileName, O_RDONLY)) >= 0) {
+	HistHead hh;
+
+	if (read(HistoryFd, &hh, sizeof(hh)) == sizeof(hh) &&
+	    (hh.hmagic == HMAGIC || hh.hmagic == HDEADMAGIC))
+	    DOpts.MsgIdHashMethod = HistHeadMsgIdHash(&hh);
+	close(HistoryFd);
+    }
     HistoryOpen(FileName, 0);
     if ((HistoryFd = open(FileName, O_RDWR)) == -1) {
 	perror("history open");
@@ -165,7 +177,8 @@ DumpHeader(int fd)
     printf("HashSize  : %d\n", hh.hashSize);
     printf("Version   : %d\n", hh.version);
     printf("EntrySize : %d\n", hh.henSize);
-    printf("HeaderSize: %d\n\n", hh.headSize);
+    printf("HeaderSize: %d\n", hh.headSize);
+    printf("MsgIdHash : %s\n\n", MsgIdHashName(HistHeadMsgIdHash(&hh)));
     {
 	struct stat sb;
 	if (fstat(fd, &sb) == -1)
@@ -222,7 +235,7 @@ DoEntry(char *msgid)
     char *p;
 
     if (msgid[0] == '<' && (p = strchr(msgid, '>')) != NULL)
-        hv = hhash(msgid);
+        hv = msgidhash(msgid);
     else if (sscanf(msgid, "%x.%x", &hv.h1, &hv.h2) != 2) {
 	fprintf(stderr, "Invalid msgid/hash: %s\n", msgid);
 	exit(1);

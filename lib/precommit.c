@@ -138,7 +138,7 @@ PreCommit(const char *msgid, int flags)
 	PCFd = -1;
     }
     if (PCHAry) {
-	hash_t hv = hhash(msgid);
+	hash_t hv = msgidhash(msgid);
 	int i = (hv.h1 ^ hv.h2) & PCHMask;
 	pchash_t *pc = &PCHAry[i];
 	time_t t = time(NULL);

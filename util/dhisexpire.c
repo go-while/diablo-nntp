@@ -256,9 +256,19 @@ main(int ac, char **av)
 	    perror("History lock failed");
 	    exit(1);
 	}
-	if (hh.version != HVERSION) {
-	    fprintf(stderr, "WARNING! Version mismatch file V%d, expecting V%d\n", hh.version, HVERSION);
+	if (hh.version < HVERSION_HASH || hh.version > HVERSION) {
+	    fprintf(stderr, "WARNING! Version mismatch file V%d, expecting V%d to V%d\n", hh.version, HVERSION_HASH, HVERSION);
 	    fprintf(stderr, "dump may be invalid\n");
+	}
+	/*
+	 * The new history is created with diablo.config's msgidhash and the
+	 * entries are copied with their hashes, so both must be the same.
+	 */
+	if (HistHeadMsgIdHash(&hh) != DOpts.MsgIdHashMethod) {
+	    fprintf(stderr, "%s is hashed with msgidhash %s, diablo.config has msgidhash %s: not expired\n",
+		FileName, MsgIdHashName(HistHeadMsgIdHash(&hh)),
+		MsgIdHashName(DOpts.MsgIdHashMethod));
+	    exit(1);
 	}
 	/*
 	 * A damaged header must not make the record size 0 (division by
@@ -309,8 +319,8 @@ DoUnDead(int fd)
 	fprintf(stderr, "History file not marked as dead\n");
 	return;
     }
-    if (hh.version != HVERSION) {
-	 fprintf(stderr, "ERROR! Version mismatch file V%d, expecting V%d\n", hh.version, HVERSION);
+    if (hh.version < HVERSION_HASH || hh.version > HVERSION) {
+	 fprintf(stderr, "ERROR! Version mismatch file V%d, expecting V%d to V%d\n", hh.version, HVERSION_HASH, HVERSION);
 	return;
     }
     hh.hmagic = HMAGIC;

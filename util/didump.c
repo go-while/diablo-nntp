@@ -197,6 +197,21 @@ main(int ac, char **av)
 	Usage();
     }
 
+    /*
+     * Hash with the msgidhash method of this file's entries (-H, -h, and
+     * the MSGIDHASH line for diload), whatever diablo.config says.
+     */
+    if (OldOpt == 0) {
+	int hfd = open(fileName, O_RDONLY);
+	HistHead hh;
+
+	if (hfd >= 0) {
+	    if (read(hfd, &hh, sizeof(hh)) == sizeof(hh) && hh.hmagic == HMAGIC)
+		DOpts.MsgIdHashMethod = HistHeadMsgIdHash(&hh);
+	    close(hfd);
+	}
+    }
+
     if (VerifyHistory || FindHash != NULL)
 	HistoryOpen(fileName, HGF_READONLY);
 
@@ -256,6 +271,8 @@ main(int ac, char **av)
 		fprintf(stderr, "dump may be invalid\n");
 	    }
 	    HistoryVersion = hh.version;
+	    /* -f hashes a Message-ID with the method of this file's entries */
+	    DOpts.MsgIdHashMethod = HistHeadMsgIdHash(&hh);
 	    /*
 	     * A damaged header must not make the record size 0 or smaller
 	     * than a record (pieces of records dumped as entries, a read
@@ -282,7 +299,7 @@ main(int ac, char **av)
 	} else if (FindHash != NULL) {
 	    hash_t hv;
 	    if (*FindHash == '<')
-		hv = hhash(FindHash);
+		hv = msgidhash(FindHash);
 	    else
 		sscanf(FindHash, "%x.%x", &hv.h1, &hv.h2);
 	    DumpChain(fd, hsize, rsize, &hv);
@@ -444,6 +461,13 @@ DumpQuick(int fd, int hsize, int rsize)
 	if (EntriesOpt)
 	    printf("ENTRIES %u\n", totalentries);
     }
+    /*
+     * diload loads the hashes as they are, into a history of its own
+     * msgidhash method: say which method they are of.  Not for msgidhash
+     * hash, so that such a dump stays as it was (and older diloads read it).
+     */
+    if (DOpts.MsgIdHashMethod != MSGIDHASH_HASH)
+	printf("MSGIDHASH %s\n", MsgIdHashName(DOpts.MsgIdHashMethod));
 
     if (!QuietOpt)
 	fprintf(stderr, "@%lld  %u records (%d bytes per record)\n",

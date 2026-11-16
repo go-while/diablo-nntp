@@ -3162,7 +3162,7 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
     int CompressLvl = -1;
     SpoolArtHdr artHdr;
 
-    h.hv = hhash(msgid);
+    h.hv = msgidhash(msgid);
 
     if (rejBuf)
 	strncpy(rejBuf, "0 000000 UnknownReject", REJMSGSIZE);
@@ -3939,7 +3939,7 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 					sizeof(spamInfo.PostingHostHash));
 		}
 		spamInfo.Lines = bodyLines;
-		spamInfo.MsgIdHash = hhash(msgid);
+		spamInfo.MsgIdHash = msgidhash(msgid);
 		rv = SpamFilter(t, &spamInfo, &how);
 	    }
 

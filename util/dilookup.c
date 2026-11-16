@@ -121,7 +121,7 @@ DILookup(char *id)
 
     if (id[0] == '<' && (p = strchr(id, '>')) != NULL) {
 	*++p = 0;
-	hv = hhash(id);
+	hv = msgidhash(id);
     } else if (id[0] == 'D' && id[1] == '.') {
 	int32 dummy;
 	char *p = strchr(id, '/');
@@ -132,7 +132,7 @@ DILookup(char *id)
 	     */
 	    if ((id = strchr(p, '<')) != NULL && strchr(id, '>') != NULL) {
 		*(strchr(id, '>') + 1) = 0;
-		hv = hhash(id);
+		hv = msgidhash(id);
 	    } else {
 		fprintf(stderr, "argument error: %s\n", id);
 		exit(1);

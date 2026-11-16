@@ -62,6 +62,7 @@ main(int ac, char **av)
     int verbose = 0;
     char *fileName = NULL;
     int totalentries = 0;
+    int haveLine = 0;		/* buf holds a line not yet taken */
 
     LoadDiabloConfig(ac, av);
 
@@ -136,15 +137,48 @@ main(int ac, char **av)
 	    flags &= ~HGF_NOSEARCH;
     }
 
+    /*
+     * The lines before the first entry: ENTRIES, and MSGIDHASH from a
+     * didump of a history whose entries are not of msgidhash hash (D-210).
+     * The hashes are loaded as they are, so a dump of another method than
+     * diablo.config's is refused, before the history is opened or made.
+     */
+    {
+	int dumpHash = MSGIDHASH_HASH;
+	char name[32];
+
+	while ((haveLine = (fgets(buf, sizeof(buf), stdin) != NULL)) != 0) {
+	    if (sscanf(buf, "MSGIDHASH %31s", name) == 1) {
+		if (strcmp(name, MsgIdHashName(MSGIDHASH_SIPHASH)) == 0)
+		    dumpHash = MSGIDHASH_SIPHASH;
+		else if (strcmp(name, MsgIdHashName(MSGIDHASH_HASH)) == 0)
+		    dumpHash = MSGIDHASH_HASH;
+		else {
+		    fprintf(stderr, "diload: unknown msgidhash %s in the input\n", name);
+		    exit(1);
+		}
+	    } else if (sscanf(buf, "ENTRIES %d", &totalentries) != 1) {
+		break;
+	    }
+	}
+	if (dumpHash != DOpts.MsgIdHashMethod) {
+	    fprintf(stderr, "diload: the input is hashed with msgidhash %s, diablo.config has msgidhash %s: not loaded\n",
+		MsgIdHashName(dumpHash), MsgIdHashName(DOpts.MsgIdHashMethod));
+	    exit(1);
+	}
+    }
+
     HistoryOpen(fileName, flags);
 
-    while (fgets(buf, sizeof(buf), stdin) != NULL) {
+    while (haveLine || fgets(buf, sizeof(buf), stdin) != NULL) {
 	History h = { 0 };
 	int n;
 	int iter = 0;
 	int exp = 0;
 	int pos = 0;
 	char f1 = 0;
+
+	haveLine = 0;		/* the line read above is taken now */
 
 	if (buf[0] == '.') {
 	    r = 0;

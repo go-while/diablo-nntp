@@ -175,6 +175,10 @@ typedef	long long	artno_t;
 #define HASH_CRC	1
 #define HASH_OCRC	2
 
+/* msgidhash: the hash of Message-IDs (msgidhash(), lib/hash.c; D-210) */
+#define MSGIDHASH_HASH		0	/* hhash(), the "hash" method (default) */
+#define MSGIDHASH_SIPHASH	1	/* SipHash-2-4, fixed key */
+
 #define	CONF_FEEDER	0x01
 #define	CONF_READER	0x02
 
@@ -297,6 +301,7 @@ struct DiabloOpts {
     GroupHashType ReaderGroupHashMethod;
     char *PgpVerifyArgs[10];
     char *PostXFilter;
+    int MsgIdHashMethod;	/* msgidhash: MSGIDHASH_* */
 };
 
 /* One shared definition is provided by lib/global.c. */
@@ -322,12 +327,21 @@ typedef struct HistHead {
     uint16	version;	/* version of history file	*/
     uint16	henSize;	/* size of history entry	*/
     uint16	headSize;	/* size of history header	*/
+    uint16	msgidHash;	/* version 3: MSGIDHASH_* of the entries */
 } HistHead;
 
 #define HMAGIC		((uint32)0xA1B2C3D4)
 #define HDEADMAGIC	((uint32)0xDEADF5E6)
 #define HDEADLOCK	8	/* dhisexpire locks bytes 8-11 while it is dead */
-#define HVERSION	2
+/*
+ * Version 3 is version 2 with msgidHash set: its entries are hashed with
+ * that msgidhash method, and binaries from before it refuse the file.  A
+ * history with msgidhash hash is still written as version 2, and in a
+ * version 2 file msgidHash is not read (the header's padding until then).
+ * The field takes no room: sizeof(HistHead) stays 16.
+ */
+#define HVERSION	3
+#define HVERSION_HASH	2	/* the version written for msgidhash hash */
 
 /*
  * Dreaderd cache scoreboard

@@ -260,7 +260,7 @@ DoIt(int Action, int count, ForkMap *smap)
     for (i = 0; i < count; i++) {
 	sprintf(msgid,"<%d%08lx$%08lx@%08lx.%08lx.%08lx>", i,
 			random(), random(), random(), random(), random());
-	hv = hhash(msgid);
+	hv = msgidhash(msgid);
 	if (Action == 1) {
 	    HistoryLookupByHash(hv, NULL);
 	} else if (Action == 2) {

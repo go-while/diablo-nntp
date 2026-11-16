@@ -546,7 +546,7 @@ ScanSpoolFileMap(const char *base, int bytes, int gmt, int iter, char *dpath, ui
 	    const char *id = MsgId(msgId, NULL);
 	    History h = { 0 };
 
-	    h.hv = hhash(id);
+	    h.hv = msgidhash(id);
 	    h.iter = iter;
 	    h.gmt = gmt;
 	    h.exp = 100 + spoolobj;
@@ -640,7 +640,7 @@ ScanSpoolFileMapOld(const char *base, int bytes, int gmt, int iter, char *dpath,
 	    const char *id = MsgId(msgId, NULL);
 	    History h = { 0 };
 
-	    h.hv = hhash(id);
+	    h.hv = msgidhash(id);
 	    h.iter = iter;
 	    h.gmt = gmt;
 	    h.exp = 100 + spoolobj;

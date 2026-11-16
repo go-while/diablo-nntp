@@ -46,6 +46,7 @@ Prototype int HistoryStore(History *h);
 Prototype int HistoryStoreExp(History *h, HistIndex index);
 Prototype int HistoryExpire(const char *msgid, History *h, int unexp);
 Prototype void PrintHistory(History *h);
+Prototype int HistHeadMsgIdHash(const HistHead *hh);
 
 Prototype uint32 NewHSize;
 
@@ -386,7 +387,9 @@ HistoryOpen(const char *fileName, int hflags)
 	    bzero(&HHead, sizeof(HHead));
 
 	    HHead.hashSize = NewHSize;
-	    HHead.version  = HVERSION;
+	    HHead.version  = (DOpts.MsgIdHashMethod == MSGIDHASH_HASH) ?
+				HVERSION_HASH : HVERSION;
+	    HHead.msgidHash = DOpts.MsgIdHashMethod;
 	    HHead.henSize  = sizeof(History);
 	    HHead.headSize = sizeof(HHead);
 
@@ -484,6 +487,23 @@ HistoryOpen(const char *fileName, int hflags)
 	fprintf(stderr, "DHistory entry size %d or header size %d does not match this build (%d, %d); use the biweekly adm script to regenerate the history file\n",
 	    (int)HHead.henSize, (int)HHead.headSize,
 	    (int)sizeof(History), (int)sizeof(HHead));
+	exit(1);
+    }
+    /*
+     * The entries hold the hashes of one msgidhash method.  With the other
+     * one every lookup would miss (and the old collisions would come back
+     * through the gaps), so the history is refused: rebuild it, or set
+     * msgidhash back.
+     */
+    if (HistHeadMsgIdHash(&HHead) != DOpts.MsgIdHashMethod) {
+	logit(LOG_ERR, "DHistory is hashed with msgidhash %s, diablo.config has msgidhash %s: rebuild the history (and the reader overview) or set msgidhash %s",
+	    MsgIdHashName(HistHeadMsgIdHash(&HHead)),
+	    MsgIdHashName(DOpts.MsgIdHashMethod),
+	    MsgIdHashName(HistHeadMsgIdHash(&HHead)));
+	fprintf(stderr, "DHistory is hashed with msgidhash %s, diablo.config has msgidhash %s: rebuild the history (and the reader overview) or set msgidhash %s\n",
+	    MsgIdHashName(HistHeadMsgIdHash(&HHead)),
+	    MsgIdHashName(DOpts.MsgIdHashMethod),
+	    MsgIdHashName(HistHeadMsgIdHash(&HHead)));
 	exit(1);
     }
     if (HHead.hmagic != HMAGIC) {
@@ -682,7 +702,7 @@ HistoryLookup(const char *msgid, History *nh)
     if (HHeadMap->hmagic != HMAGIC)
 	historyReOpen();
 
-    hv = hhash(msgid);
+    hv = msgidhash(msgid);
     hi = (hv.h1 ^ hv.h2) & HMask;
     pindex = HHead.headSize + hi * sizeof(HistIndex);
     index = HAry[hi];
@@ -721,7 +741,8 @@ HistoryLookup(const char *msgid, History *nh)
     /*
      * On failure, try alternate hash method (for lookup only)
      */
-    if (r < 0 && DOpts.CompatHashMethod >= 0 &&
+    if (r < 0 && DOpts.MsgIdHashMethod == MSGIDHASH_HASH &&
+	DOpts.CompatHashMethod >= 0 &&
 	DOpts.CompatHashMethod != DOpts.HashMethod &&
 	HLAlt == 0 && !statfailed
     ) {
@@ -1183,7 +1204,7 @@ HistoryExpire(const char *msgid, History *h, int unexp)
     if (msgid == NULL)
 	hv = h->hv;
     else
-	hv = hhash(msgid);
+	hv = msgidhash(msgid);
     do {
 	if ((chainlock = lockChain(hv)) < 0)
 	    return(-1);
@@ -1204,4 +1225,14 @@ HistoryExpire(const char *msgid, History *h, int unexp)
     if (index == (HistIndex)-1)
 	return(found ? 2 : 0);
     return(1);
+}
+
+/*
+ * HistHeadMsgIdHash() - the msgidhash method of a history's entries: the
+ * header's msgidHash in a version 3 file, the "hash" method before.
+ */
+int
+HistHeadMsgIdHash(const HistHead *hh)
+{
+    return((hh->version >= 3) ? hh->msgidHash : MSGIDHASH_HASH);
 }
