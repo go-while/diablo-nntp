@@ -96,11 +96,15 @@ filter_failed(char *reason, char *fpath)
 	int delay;
 	time_t now = time(NULL);
 
-	/* Yeah, yeah, it's hokey. */
+	/*
+	 * Failures close together back off longer (count squared, at most
+	 * 900 s); after five quiet minutes it starts again at 1 s.  It
+	 * counted down before, below zero, so rare failures grew the delay.
+	 */
 	if (now - filter_last_fail < 300) {
 		filter_fail_count++;
 	} else {
-		filter_fail_count--;
+		filter_fail_count = 1;
 	}
 	filter_last_fail = now;
 	delay = filter_fail_count * filter_fail_count;
