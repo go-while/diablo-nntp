@@ -475,7 +475,10 @@ func TestSpoolArticleReplyCode(t *testing.T) {
 			if !backendUsed(srv) {
 				t.Errorf("dreaderd did not ask the spool server for the article")
 			}
-			// the next request is not answered by the lines left over from the bad reply
+			// the next request is not answered by the lines left over from the bad reply. It
+			// waits for a new connection to the spool server: dreaderd closed the only one,
+			// and opens it again at its next server check (every few seconds)
+			c.Deadline = 40 * time.Second
 			c.ExpectCmd(221, "HEAD %s", id2)
 			c.ReadDotLines()
 		})
