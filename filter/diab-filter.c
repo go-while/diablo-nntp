@@ -405,14 +405,23 @@ DiabFilter(char *fpath, char *loc, int wireformat)
 
 	filter_abuf[rval] = '\0';
 
-	if (*filter_abuf == '3') {
+	/*
+	 * The whole code, as IHAVE has it: 335 takes the article, 435
+	 * and 437 mark it as spam.  Any other answer (400, 436, a line
+	 * without a code) is a failed filter, not spam: it is out of
+	 * step, so restart it rather than read its next answer.
+	 */
+	switch (NntpCode(filter_abuf)) {
+	case 335:
 		return(0);
-	}
-	if (*filter_abuf == '4') {
+	case 435:
+	case 437:
 		return(1);
 	}
 	logit(LOG_ERR, "filter read failure: got unknown response: %s",
 			filter_abuf);
+	filter_failed("unknown response", fpath);
+	DiabFilterClose(1);
 	return(-1);
 }
 
