@@ -1462,11 +1462,13 @@ netRemoteAuthenticate(char *user, char *pass, char *conf, char *localip, char *r
 	    break;
     }
     close(fd);
-    if (n < 2)
+    if (n < 1)
 	return(NULL);
     buffer[n] = 0;
 
-    if (buffer[0] == '1' && (buffer[1] == '\n' || buffer[1] == '\r')) {
+    /* buffer[1] is the 0 after the data when the answer is "1" and the end */
+    if (buffer[0] == '1' &&
+		(buffer[1] == 0 || buffer[1] == '\n' || buffer[1] == '\r')) {
 	/* the one-digit answer: 1 is a success */
 	strcpy(result, "100 Success");
 	r = result;

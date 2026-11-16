@@ -1012,12 +1012,22 @@ NNServerPrime4(Connection *conn)
 
     if ((len = MBReadLine(&conn->co_RMBuf, &ptr)) != 0) {
 	int code = NntpCode(ptr);
-	/* the Diablo feeder answers 250 */
-	if (code == 250)
+	/*
+	 * The Diablo feeder answers 250.  A server that doesn't know the
+	 * command refuses it in one line, and is used as before.  Any other
+	 * reply may have lines after it: close the connection.
+	 */
+	if (code == 250) {
 	    logit(LOG_INFO, "mode-readonly(%s) %s", conn->co_Desc->d_Id, ptr);
-	else
+	    NNServerStart(conn);
+	} else if (code == 480 || code == 500 || code == 501 || code == 502 ||
+								code == 503) {
 	    logit(LOG_ERR, "mode-readonly(%s) failed: %s", conn->co_Desc->d_Id, ptr);
-	NNServerStart(conn);
+	    NNServerStart(conn);
+	} else {
+	    logit(LOG_ERR, "mode-readonly(%s) unexpected reply: %s", conn->co_Desc->d_Id, ptr);
+	    NNServerTerminate(conn);
+	}
     }
 }
 

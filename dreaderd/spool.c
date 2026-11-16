@@ -108,6 +108,7 @@ NNGetLocal1(Connection *conn)
     long offset;
     long size;
     char smaxage[32];
+    int wcode;
 
     conn->co_Func = NNGetLocal1;
     conn->co_State = "getlcl1";
@@ -121,7 +122,8 @@ NNGetLocal1(Connection *conn)
 	    snprintf(smaxage, sizeof(smaxage), " a%d", sreq->sr_MaxAge);
 	}
 
-	if (NntpCode(buf) == 223) {
+	wcode = NntpCode(buf);
+	if (wcode == 223) {
 	    /*
 	     * sr_CConn may be NULL if client was terminated while
 	     * server operation was still in progress.
@@ -305,13 +307,34 @@ NNGetLocal1(Connection *conn)
 		MBPrintf(&conn->co_TMBuf, "article %s%s\r\n", sreq->sr_MsgId, smaxage);
 		NNSpoolResponse1(conn);
 	    }
-	} else {
+	} else if (wcode == 430 || wcode == 480 || wcode == 500 ||
+		    wcode == 501 || wcode == 502 || wcode == 503) {
 	    /*
-	     * whereis request failed, try the normal way
+	     * whereis request failed (or the server doesn't know it), try
+	     * the normal way
 	     */
 	    MBPrintf(&conn->co_TMBuf, "article %s%s\r\n", sreq->sr_MsgId, smaxage);
 	    conn->co_ServerArticleRequestedCount++;
 	    NNSpoolResponse1(conn);
+	} else {
+	    /*
+	     * Not a reply whereis can get: lines may follow that the article
+	     * request would read as its reply.  Handled as in
+	     * NNSpoolResponse1(): the request goes elsewhere or is refused,
+	     * and the connection is closed (COF_BROKEN, NNServerIdle()).
+	     */
+	    logit(LOG_ERR, "spool server %s: unexpected reply to whereis %s: %.80s, closing it",
+		conn->co_Desc->d_Id, sreq->sr_MsgId, buf);
+	    conn->co_Flags |= COF_BROKEN;
+	    conn->co_ServerArticleMiscErrorCount++;
+	    if (sreq->sr_CConn == NULL)
+		NNFinishSReq(conn, NULL, 0);
+	    else if (sreq->sr_CConn->co_ArtMode == COM_BODYNOSTAT)
+		NNFinishSReq(conn, "(article not available)\r\n.\r\n", 1);
+	    else if (sreq->sr_CConn->co_RequestFlags == ARTFETCH_ARTNO)
+		NNFinishSReq(conn, "423 No such article number in this group\r\n", 1);
+	    else
+		NNFinishSReq(conn, "430 No such article\r\n", 1);
 	}
     } else if (len < 0) {
 	NNServerTerminate(conn);

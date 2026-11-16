@@ -131,14 +131,17 @@ func TestBackendModeReaderCode(t *testing.T) {
 }
 
 // TestBackendModeReadonlyCode: MODE READONLY (flag R, the Diablo feeder's command) is good
-// with 250, which the Diablo feeder answers; the backend is used either way, but any other
-// answer is logged as a failure. Before, every 2xx counted as good.
+// with 250, which the Diablo feeder answers. A server that doesn't know the command refuses
+// it in one line (500): logged as a failure, and the backend is used as before. Any other
+// answer ("299 x", "200 x") may have lines after it: the connection is closed. Before, every
+// 2xx counted as good.
 func TestBackendModeReadonlyCode(t *testing.T) {
 	ro := func(answer string) map[string][]string { return map[string][]string{"MODE readonly": {answer}} }
 	runBackendCases(t, []backendCase{
 		{name: "250", flags: "R", lines: ro("250 Mode Command OK."), ok: true, tag: "mode-readonly"},
-		{name: "299", flags: "R", lines: ro("299 x"), ok: true, tag: "mode-readonly", fail: "failed: 299 x"},
-		{name: "200", flags: "R", lines: ro("200 x"), ok: true, tag: "mode-readonly", fail: "failed: 200 x"},
+		{name: "500", flags: "R", lines: ro("500 what?"), ok: true, tag: "mode-readonly", fail: "failed: 500 what?"},
+		{name: "299", flags: "R", lines: ro("299 x"), tag: "mode-readonly", fail: "unexpected reply: 299 x"},
+		{name: "200", flags: "R", lines: ro("200 x"), tag: "mode-readonly", fail: "unexpected reply: 200 x"},
 	})
 }
 
@@ -284,7 +287,16 @@ func netRemoteAnswering(t *testing.T) (port int, set func(answer string)) {
 				mu.Lock()
 				a := answer
 				mu.Unlock()
-				io.WriteString(c, a)
+				// "|" splits the answer into writes 100 ms apart (a read gets part of it)
+				parts := strings.Split(a, "|")
+				for i, p := range parts {
+					if _, err := io.WriteString(c, p); err != nil {
+						return
+					}
+					if i < len(parts)-1 {
+						time.Sleep(100 * time.Millisecond)
+					}
+				}
 			}(c)
 		}
 	}()
@@ -308,6 +320,8 @@ func TestNetRemoteAnswerFullCode(t *testing.T) {
 		ok     bool
 	}{
 		{"1\n", true},
+		{"1", true}, // then the end of the connection
+		{"10|0 Success\n", true},
 		{"100 Success\n", true},
 		{"100 Success\r\n", true},
 		{"0\n", false},
