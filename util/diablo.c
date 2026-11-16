@@ -92,7 +92,7 @@ void ArticleFileClose(int i);
 void ArticleFileTrunc(int artFd, off_t bpos);
 void ArticleFileSetSize(int artFd);
 void ngAddControl(char *nglist, int ngSize, const char *ctl);
-void ngAddFolded(char *nglist, int ngSize, const char *s, int n);
+void ngAddFolded(char *nglist, int ngSize, const char *s, int n, int lineEnd);
 void writePath(time_t t, char *path);
 
 void writeFeedOut(const char *label, const char *file, const char *msgid, const char *offSize, int rt, int headOnly, const char *artType, int lines, const char *cSize);
@@ -3469,7 +3469,7 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		 */
 		if (bytes && (p[0] == ' ' || p[0] == '\t')) {
 		    if (ngFolded)
-			ngAddFolded(nglist, sizeof(nglist), p, bytes);
+			ngAddFolded(nglist, sizeof(nglist), p, bytes, thisNl);
 		} else {
 		    ngFolded = 0;
 		}
@@ -4498,10 +4498,13 @@ ngAddControl(char *nglist, int ngSize, const char *ctl)
  * it, as the fold may stand for one: NormalizeNewsgroups() also takes
  * white space between two names as a separator (D-206).  A name that
  * does not fit whole is left out, so a cut name is never taken for
- * another group.
+ * another group.  lineEnd is 0 when s is only the first piece of a line
+ * longer than the input buffer: the rest of the line is written thru and
+ * not added (D-209), so the name at the end of the piece may be cut and
+ * is left out as well.
  */
 void
-ngAddFolded(char *nglist, int ngSize, const char *s, int n)
+ngAddFolded(char *nglist, int ngSize, const char *s, int n, int lineEnd)
 {
     int l = strlen(nglist);
     int start = l;
@@ -4517,7 +4520,8 @@ ngAddFolded(char *nglist, int ngSize, const char *s, int n)
 	    break;
 	nglist[l++] = s[i];
     }
-    if (i < n && s[i] != ',' && s[i] != ' ' && s[i] != '\t') {
+    if ((i < n && s[i] != ',' && s[i] != ' ' && s[i] != '\t') ||
+						(i == n && !lineEnd)) {
 	while (l > start && nglist[l-1] != ',' && nglist[l-1] != ' ' &&
 						nglist[l-1] != '\t')
 	    --l;
