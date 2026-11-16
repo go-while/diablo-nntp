@@ -65,7 +65,7 @@ On SmartOS (pkgsrc), install the following before building:
 pkgin -y install gcc13 gmake db4 openssl libradius libcanlock
 ```
 
-`db4` (Berkeley DB), `libradius` (RADIUS) and `libcanlock` (Cancel-Lock) are optional: `./configure` turns on the features whose libraries are installed. `cdb`, `libldap` and `p5-*` are not in the list; install the OpenLDAP package (`openldap-client`) for LDAP authentication.
+`db4` (Berkeley DB), `libradius` (RADIUS) and `libcanlock` (Cancel-Lock) are optional: `./configure` turns on the features whose libraries are installed. `cdb` and `p5-*` are not in the list.
 
 This list was tested on a fresh `base-64-lts` 25.4.0 zone: `gmake -j8` built all 39 programs with no warnings.
 
@@ -104,13 +104,12 @@ All of these options are `#undef` in `lib/vendor.h` as shipped, so a build witho
 | `DB_ENABLED`, `REJECT_DB` | `db` | Berkeley DB with the 1.85 interface, `dbopen()`: `db_185.h` and `-ldb` (`db4`, `db5`) on Linux and illumos, the C library on FreeBSD | DB authentication and the reject database |
 | `CDB_ENABLED` | `cdb` | a cdb library with `cdb_seek()`: tinycdb (`libcdb-dev` on Debian and Ubuntu); the cdb of FreeBSD ports and pkgsrc no longer has it | CDB authentication |
 | `PAM_ENABLED` | `pam` | `security/pam_appl.h`, `-lpam` | PAM authentication |
-| `LDAP_ENABLED` | `ldap` | OpenLDAP (`ldap.h`, `libldap`, `liblber`) | LDAP authentication |
 | `PERL_ENABLED` | `perl` | an embeddable perl (`perl.h`, `libperl`; Debian `libperl-dev`) | Perl authentication (an authdef `perl <script>`) |
 | `RADIUS_ENABLED`, `RADIUS_RADCLI` | `radius` | the BSD `radlib.h` with `libradius` (FreeBSD base, `libradius` on SmartOS), or radcli (`radcli/radcli.h`; Debian and Ubuntu `libradcli-dev`, Fedora `radcli-devel`, openSUSE `radcli radcli-devel`, Alpine `radcli-dev`, Arch `radcli`) | RADIUS authentication |
 
-`./configure --without-NAME` leaves an option off without looking, `./configure --with-NAME` stops with an error if the host cannot build it, `./configure --with-radcli` uses radcli even where libradius is found, and `./configure -n` only reports. For example `./configure --without-perl --without-ldap`.
+`./configure --without-NAME` leaves an option off without looking, `./configure --with-NAME` stops with an error if the host cannot build it, `./configure --with-radcli` uses radcli even where libradius is found, and `./configure -n` only reports. For example `./configure --without-perl --without-pam`.
 
-On Linux, zlib and OpenSSL are the only packages `make` needs; the optional ones you install are picked up. A typical Debian or Ubuntu set is `libdb-dev libcanlock-dev libradcli-dev libpam0g-dev libldap-dev libperl-dev libcdb-dev`.
+On Linux, zlib and OpenSSL are the only packages `make` needs; the optional ones you install are picked up. A typical Debian or Ubuntu set is `libdb-dev libcanlock-dev libradcli-dev libpam0g-dev libperl-dev libcdb-dev`.
 
 **Perl authentication against an htpasswd file.** `contrib/htpasswd-auth.pl` is a ready-made `perl` script for an authdef (`PERL_ENABLED`): it checks the user and password against an Apache `htpasswd` file, which it reads again on every login attempt, so a new user, a changed password or a removed one counts at once. It checks `$apr1$` (Apache MD5), `{SHA}` and `{SSHA}` itself and gives everything else to the C library's `crypt(3)`, so the schemes of the platform work: DES, `$1$`, `$5$`, `$6$`, bcrypt (`$2y$`, `htpasswd -B`) and yescrypt where the library has them. Copy it to `/news` and use `authdef webusers` / `perl /news/htpasswd-auth.pl -f /news/htpasswd` in `dreader.access`: the words after the script are its arguments (`-f FILE`, and `--plaintext` to accept plain text entries; double quotes keep a path with spaces together), and an authdef with another `-f` file has its own interpreter. The header of the script has an example. A change of the script itself needs a restart of dreaderd. DES crypt looks at the first 8 characters of the password only.
 

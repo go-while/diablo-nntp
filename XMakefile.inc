@@ -61,8 +61,6 @@
 #ifdef sun
 /*
  * some sun systems use -lsocket, some don't.  complain to sun
- *
- * Add -lldap to end of LFLAGS if you have LDAP_ENABLED
  */
 .set LFLAGS	"-L$(BD)obj" -lfilter -ldiablo -lm -lnsl -lsocket -lposix4
 .set CFLAGS	-g -O2 -Wall -Wstrict-prototypes "-I$(BD)" $(CDEFINES) -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64

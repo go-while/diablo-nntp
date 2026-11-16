@@ -7,7 +7,7 @@ maps do not see pwrite() there (ISSUES.md D-171).
 README.md lists the build requirements and the packages to install.
 Run ./configure first, then make (gmake on illumos and on FreeBSD with GNU
 Make).  ./configure looks for the optional libraries (zlib, libcanlock for
-Cancel-Lock, Berkeley DB, cdb, PAM, LDAP, Perl, and the RADIUS libraries
+Cancel-Lock, Berkeley DB, cdb, PAM, Perl, and the RADIUS libraries
 libradius or radcli), sets the matching options in lib/vendor.h, which are
 all #undef as shipped, and writes config.mk with the compiler and linker
 flags.  Install the libraries you want first; ./configure --help lists the

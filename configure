@@ -14,7 +14,6 @@
 #   cdb       CDB_ENABLED       a cdb library with cdb_seek (D. J. Bernstein's or tinycdb), for CDB
 #                               authentication
 #   pam       PAM_ENABLED       PAM, for PAM authentication
-#   ldap      LDAP_ENABLED      OpenLDAP, for LDAP authentication
 #   perl      PERL_ENABLED      an embeddable perl, for Perl authentication
 #   radius    RADIUS_ENABLED    RADIUS authentication, with the BSD libradius (radlib.h) of
 #                               FreeBSD and SmartOS, or with radcli (RADIUS_RADCLI) elsewhere
@@ -41,7 +40,7 @@ fi
 PERL=${PERL:-perl}
 vendor=lib/vendor.h
 mk=config.mk
-features="zlib canlock db cdb pam ldap perl radius"
+features="zlib canlock db cdb pam perl radius"
 dry=0
 radcli_only=0
 
@@ -176,16 +175,6 @@ probe_pam() {
 int main(void) { pam_handle_t *h = 0; return pam_end(h, 0); }
 EOT
     try_link pam "$tmp/pam.c" "-lpam"
-}
-
-probe_ldap() {
-    cat > "$tmp/l.c" <<'EOT'
-#define LDAP_DEPRECATED 1
-#include <lber.h>
-#include <ldap.h>
-int main(void) { LDAP *ld = ldap_init("localhost", 389); return ld == 0; }
-EOT
-    try_link ldap "$tmp/l.c" "-lldap -llber"
 }
 
 probe_perl() {
@@ -343,10 +332,6 @@ else set_option CDB_ENABLED off; fi
 if decide pam probe_pam; then
     note "pam: on"; set_option PAM_ENABLED on; add_flags pam
 else set_option PAM_ENABLED off; fi
-
-if decide ldap probe_ldap; then
-    note "ldap: on"; set_option LDAP_ENABLED on; add_flags ldap
-else set_option LDAP_ENABLED off; fi
 
 if decide perl probe_perl; then
     note "perl: on"; set_option PERL_ENABLED on; add_flags perl
