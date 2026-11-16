@@ -153,14 +153,23 @@ func TestDclientReplyCodes(t *testing.T) {
 	}
 }
 
-// TestDclientDumpFileQuit: dclient -f sends the commands of a file without reading their replies;
-// at QUIT it skips those replies up to the reply to QUIT (205), so a working session ends with
-// exit 0. Fails on main for DATE: the first reply read at QUIT was the 111 to DATE, refused
-// (exit 2); main took only 238 (a CHECK) there as a stand-in.
+// TestDclientDumpFileQuit: dclient -f sends the commands of a file without reading their replies,
+// so at QUIT it reads up to the end of the connection (the server closes after QUIT) and takes
+// the last line as the reply to QUIT: a working session ends with exit 0. A QUIT answered with
+// something else is exit 2, also when a line of an article starts with "205 " and when the
+// server keeps the connection open (dclient waits at most 10 s for a line, not without end).
+// Fails on main for DATE: the 111 was read as the reply to QUIT (main took only a 238 there).
 func TestDclientDumpFileQuit(t *testing.T) {
-	for _, tc := range []struct{ name, cmds string }{
-		{"CHECK", "CHECK <dump1@e2e.test>\nCHECK <dump2@e2e.test>\n"},
-		{"DATE", "DATE\n"},
+	for _, tc := range []struct {
+		name, cmds string
+		quit       []string
+		closeQuit  bool
+		exit       int
+	}{
+		{"CHECK", "CHECK <dump1@e2e.test>\nCHECK <dump2@e2e.test>\n", []string{"205 bye"}, true, 0},
+		{"DATE", "DATE\n", []string{"205 bye"}, true, 0},
+		{"205 line in an article", "ARTICLE <dump3@e2e.test>\n", []string{"500 no"}, true, 2},
+		{"QUIT refused, connection kept", "DATE\n", []string{"500 no"}, false, 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := NewSite(t, SiteOptions{NoStart: true})
@@ -170,10 +179,12 @@ func TestDclientDumpFileQuit(t *testing.T) {
 				switch {
 				case strings.HasPrefix(l, "check ") && len(f) > 1:
 					return []string{"238 " + f[1]}, false
+				case strings.HasPrefix(l, "article ") && len(f) > 1:
+					return []string{"220 0 " + f[1], "Subject: x", "", "205 ordinary text", "."}, false
 				case strings.HasPrefix(l, "date"):
 					return []string{"111 20261116000000"}, false
 				case strings.HasPrefix(l, "quit"):
-					return []string{"205 bye"}, true
+					return tc.quit, tc.closeQuit
 				}
 				return []string{"500 what?"}, false
 			})})
@@ -182,8 +193,15 @@ func TestDclientDumpFileQuit(t *testing.T) {
 				t.Fatal(err)
 			}
 			out, err := s.TryRun("dclient", "-f", file, "-p", strconv.Itoa(srv.Port()), "127.0.0.1")
-			if err != nil {
-				t.Errorf("dclient -f with %q: %v, want exit 0 after the 205 to QUIT:\n%s", tc.cmds, err, out)
+			code := 0
+			var ee *exec.ExitError
+			if errors.As(err, &ee) {
+				code = ee.ExitCode()
+			} else if err != nil {
+				t.Fatalf("dclient -f: %v (hung?)\n%s", err, out)
+			}
+			if code != tc.exit {
+				t.Errorf("dclient -f with %q: exit %d, want %d:\n%s", tc.cmds, code, tc.exit, out)
 			}
 		})
 	}
