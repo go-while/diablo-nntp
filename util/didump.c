@@ -204,6 +204,8 @@ main(int ac, char **av)
      */
     if (VerifyHistory || FindHash != NULL)
 	HistoryOpen(fileName, HGF_READONLY | HGF_FILEHASH);
+    if (OldOpt)		/* no header: entries from before msgidhash */
+	DOpts.MsgIdHashMethod = MSGIDHASH_HASH;
 
     if (VerboseOpt)
 	LoadSpoolCtl(0, 1);
@@ -454,9 +456,10 @@ DumpQuick(int fd, int hsize, int rsize)
     /*
      * diload loads the hashes as they are, into a history of its own
      * msgidhash method: say which method they are of.  Not for msgidhash
-     * hash, so that such a dump stays as it was (and older diloads read it).
+     * hash, so that such a dump stays as it was (and older diloads read it),
+     * and not with -m, whose hash list is read by dilookup -s.
      */
-    if (DOpts.MsgIdHashMethod != MSGIDHASH_HASH)
+    if (!DumpHashOnly && DOpts.MsgIdHashMethod != MSGIDHASH_HASH)
 	printf("MSGIDHASH %s\n", MsgIdHashName(DOpts.MsgIdHashMethod));
 
     if (!QuietOpt)

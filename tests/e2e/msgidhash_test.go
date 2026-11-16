@@ -303,7 +303,8 @@ func runWithStdin(s *Site, stdin, name string, args ...string) (string, string, 
 
 // TestMsgIdHashDumpLoad: diload loads the hashes of a didump as they are, so a dump must say
 // which method they are of. didump of a siphash history writes "MSGIDHASH siphash" before
-// the entries (a dump of a hash history is unchanged), and diload refuses a dump of another
+// the entries (a dump of a hash history, and didump -m for dilookup -s, are unchanged), and
+// diload refuses a dump of another
 // method than its diablo.config's before it makes a history; a dump of its own method loads
 // into a history of that method with the same entries.
 func TestMsgIdHashDumpLoad(t *testing.T) {
@@ -333,6 +334,18 @@ func TestMsgIdHashDumpLoad(t *testing.T) {
 			}
 			if strings.Contains(dump, "MSGIDHASH hash") {
 				t.Errorf("didump of a %s history writes a MSGIDHASH hash line:\n%s", c.method, dump)
+			}
+
+			// didump -m (hashes only) is read by dilookup -s, not by diload: no MSGIDHASH line
+			hashes, stderr, err := runWithStdin(s, "", "didump", "-m", filepath.Join(s.Dir, "dhistory"))
+			if err != nil || strings.Contains(hashes, "MSGIDHASH") {
+				t.Errorf("didump -m of a %s history: err=%v, want only hashes:\n%s%s", c.method, err, hashes, stderr)
+			}
+			// dilookup -s looks the stored hash up. Its status is not checked: it counts the
+			// misses, and it ends with "argument error: ." for didump's last line, as before.
+			if out, stderr, _ := runWithStdin(s, hashes, "dilookup", "-s"); !strings.Contains(out, " hv=") ||
+				strings.Contains(out+stderr, "MSGIDHASH") || strings.Contains(stderr, "argument error: siphash") {
+				t.Errorf("didump -m | dilookup -s on a %s history: want the stored entry looked up:\n%s%s", c.method, out, stderr)
 			}
 
 			refused := filepath.Join(s.Dir, "dhistory.refused")
