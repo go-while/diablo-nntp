@@ -328,6 +328,8 @@ func TestNetRemoteAnswerFullCode(t *testing.T) {
 		{"1garbage\n", false},
 		{"12\n", false},
 		{"1 x\n", false},
+		{"100\rjunk\n", false},
+		{"1\rjunk\n", false},
 		{"199 no\n", false},
 		{"110\n", false},
 	} {

@@ -1466,17 +1466,24 @@ netRemoteAuthenticate(char *user, char *pass, char *conf, char *localip, char *r
 	return(NULL);
     buffer[n] = 0;
 
-    /* buffer[1] is the 0 after the data when the answer is "1" and the end */
-    if (buffer[0] == '1' &&
-		(buffer[1] == 0 || buffer[1] == '\n' || buffer[1] == '\r')) {
+    /*
+     * The line ends at its LF (or at the end of the data); one CR right
+     * before it belongs to the line end.  A CR anywhere else is part of
+     * the answer, so "100<CR>junk" is not "100".
+     */
+    if ((ptr = strchr(buffer, '\n')) != NULL)
+	*ptr = 0;
+    n = strlen(buffer);
+    if (n > 0 && buffer[n - 1] == '\r')
+	buffer[--n] = 0;
+
+    if (strcmp(buffer, "1") == 0) {
 	/* the one-digit answer: 1 is a success */
 	strcpy(result, "100 Success");
 	r = result;
     } else {
 	/* else it must be "100 Success" or "110 readerdef" */
 	snprintf(result, sizeof(result), "%s", buffer);
-	if ((r = strpbrk(result, "\r\n")))
-	    *r = '\0';
 	r = AuthOK(result) ? result : NULL;
     }
     return(r);
