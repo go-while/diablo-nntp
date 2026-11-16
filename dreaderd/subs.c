@@ -302,6 +302,9 @@ GenerateMessageID(Connection *conn)
     ++MsgIdCounter;
     if (DebugOpt)
 	printf("Generated Message-ID: %s\n", msgid);
+    /* the id of an earlier post that was refused before it was sent */
+    if (conn->co_IHaveMsgId)
+	zfreeStr(&conn->co_MemPool, &conn->co_IHaveMsgId);
     conn->co_IHaveMsgId = zallocStr(&conn->co_MemPool, msgid);
 }
 

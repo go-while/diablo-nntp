@@ -1,0 +1,1 @@
+- dreaderd: a POST that waited in the queue of the outgoing server behind another one was answered "240  Article posted" without its Message-ID: when a post was answered, the Message-ID of the next queued post was freed instead of its own. The Message-ID of an answered or refused post is now freed, too; it stayed allocated until the connection closed.
