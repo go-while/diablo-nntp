@@ -606,7 +606,6 @@ typedef struct Connection {
 #define COF_INPROGRESS	0x00080000	/* operation in progress	*/
 #define COF_ININIT	0x00100000	/* see server.c			*/
 #define COF_MAYNOTCLOSE 0x00200000	/* may not close the connection	*/
-#define COF_BROKEN	0x00400000	/* server reply out of step: close, take no new request */
 #define	COF_READONLY	0x00400000	/* send ``mode readonly''	*/
 #define	COF_LOGIN	0x00800000	/* send ``authinfo'' to log in	*/
 #define	COF_POSTTOOBIG	0x01000000	/* posted article is too big	*/
@@ -614,6 +613,7 @@ typedef struct Connection {
 #define	COF_AUTHINFO	0x04000000	/* logged in with AUTHINFO (281)	*/
 #define	COF_POSTXREF	0x08000000	/* the post had an Xref: header	*/
 #define	COF_POSTINJDATE	0x10000000	/* we added the post's Injection-Date */
+#define	COF_BROKEN	0x20000000	/* server reply out of step: close, take no new request */
 
 #define	CON_RFC3977	0		/* RFC3977 numbering behaviour	*/
 #define	CON_RFC977	1		/* RFC977 numbering behaviour	*/
