@@ -1444,11 +1444,21 @@ netRemoteAuthenticate(char *user, char *pass, char *conf, char *localip, char *r
 	return(NULL);
     }
 
-    /* Read the server's response.  1 byte int plus \n */
-    n = -1;
-    while (n < 0 && AuthWait(fd, POLLIN, deadline) > 0) {
-	n = read(fd, buffer, sizeof(buffer) - 1);
-	if (n < 0 && errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK)
+    /*
+     * Read the server's response, one line ("1", "100 Success" or
+     * "110 readerdef" and a newline), up to its newline or the end of the
+     * connection: a read can return part of it.
+     */
+    n = 0;
+    while (n < (int)sizeof(buffer) - 1 && memchr(buffer, '\n', n) == NULL &&
+				AuthWait(fd, POLLIN, deadline) > 0) {
+	int k = read(fd, buffer + n, sizeof(buffer) - 1 - n);
+
+	if (k > 0)
+	    n += k;
+	else if (k == 0)
+	    break;		/* the end of the connection */
+	else if (errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK)
 	    break;
     }
     close(fd);

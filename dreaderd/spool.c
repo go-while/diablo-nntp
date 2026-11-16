@@ -432,9 +432,12 @@ NNSpoolResponse1(Connection *conn)
 	unexpected = !(code == 430 || code == 423 || code == 412 ||
 		code == 420 || code == 480 || code == 500 || code == 501 ||
 		code == 502 || code == 503);
-	if (unexpected)
+	if (unexpected) {
 	    logit(LOG_ERR, "spool server %s: unexpected reply to %s: %.80s, closing it",
 		conn->co_Desc->d_Id, sreq->sr_MsgId, buf);
+	    /* NNFinishSReq() goes on to NNServerIdle(), which closes it */
+	    conn->co_Flags |= COF_BROKEN;
+	}
 
 	if (sreq->sr_CConn == NULL)
 	    NNFinishSReq(conn, NULL, 0);
@@ -444,8 +447,6 @@ NNSpoolResponse1(Connection *conn)
             NNFinishSReq(conn, "423 No such article number in this group\r\n", 1);
 	else
             NNFinishSReq(conn, "430 No such article\r\n", 1);
-	if (unexpected)
-	    NNServerTerminate(conn);
     } else if (len < 0) {
 	NNServerTerminate(conn);
     } else {

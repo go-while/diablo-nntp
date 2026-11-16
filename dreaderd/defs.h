@@ -606,6 +606,7 @@ typedef struct Connection {
 #define COF_INPROGRESS	0x00080000	/* operation in progress	*/
 #define COF_ININIT	0x00100000	/* see server.c			*/
 #define COF_MAYNOTCLOSE 0x00200000	/* may not close the connection	*/
+#define COF_BROKEN	0x00400000	/* server reply out of step: close, take no new request */
 #define	COF_READONLY	0x00400000	/* send ``mode readonly''	*/
 #define	COF_LOGIN	0x00800000	/* send ``authinfo'' to log in	*/
 #define	COF_POSTTOOBIG	0x01000000	/* posted article is too big	*/

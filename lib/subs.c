@@ -1303,9 +1303,10 @@ AddrConfigFlag(const char *host)
 
 /*
  * NntpCode() - the reply code at the start of an NNTP reply line, or -1.
- *		Exactly three digits, the first one 1 to 5, then a space,
- *		a tab, CR, LF or the end of the line.  No white space or
- *		sign in front, no more digits, no text glued to the code.
+ *		Exactly three digits, the first one 1 to 5, then a space
+ *		or the end of the line (CR LF, LF or the end of the string;
+ *		a CR with text after it is no end).  No white space or sign
+ *		in front, no more digits, no tab, no text glued to the code.
  *		The caller compares the whole number with the codes its
  *		command defines; any other code is an error, not a class.
  */
@@ -1318,8 +1319,9 @@ NntpCode(const char *line)
 	return(-1);
     if (line[1] < '0' || line[1] > '9' || line[2] < '0' || line[2] > '9')
 	return(-1);
-    if (line[3] != ' ' && line[3] != '\t' && line[3] != '\r' &&
-	line[3] != '\n' && line[3] != 0)
+    /* a space, or the end of the line (CR LF, LF, or the end of the string) */
+    if (line[3] != ' ' && line[3] != 0 && line[3] != '\n' &&
+	!(line[3] == '\r' && (line[4] == 0 || line[4] == '\n')))
 	return(-1);
     return((line[0] - '0') * 100 + (line[1] - '0') * 10 + (line[2] - '0'));
 }

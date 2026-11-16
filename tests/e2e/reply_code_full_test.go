@@ -387,10 +387,11 @@ func postVia(t *testing.T, post *fakeserver.Server, wait time.Duration) (int, st
 }
 
 // TestPostBackendReplyCodes: the outgoing server must answer IHAVE with 335 and the article
-// with 235 as whole codes. A line that is no reply code ("335junk", " 235") ends the connection
-// (the article is queued again), it is not taken for 335 or 235. Before, strtol() read both,
-// and the client got "240 Article posted". Another valid code still gives "441" with the
-// server's line.
+// with 235 as whole codes. A line that is no reply code ("335junk", " 235", "235<TAB>ok"), or a
+// code the command does not define ("211 x"), gives the client "441" with the server's line and
+// closes the connection; it is not taken for 335 or 235, and the article is not sent again (it
+// is gone from the client's buffer once sent). Before, strtol() read them, and the client got
+// "240 Article posted". A refusal the command has (435, 437) still gives "441".
 func TestPostBackendReplyCodes(t *testing.T) {
 	for _, tc := range []struct {
 		name, ihave, end string
@@ -400,10 +401,12 @@ func TestPostBackendReplyCodes(t *testing.T) {
 		{"good", "335 go", "235 ok", 240, true},
 		{"ihave-435", "435 have it", "235 ok", 441, false},
 		{"article-437", "335 go", "437 rejected", 441, true},
-		{"ihave-glued", "335junk", "235 ok", 0, false},
-		{"ihave-leading-space", " 335 go", "235 ok", 0, false},
-		{"article-glued", "335 go", "235junk", 0, true},
-		{"article-leading-space", "335 go", " 235 ok", 0, true},
+		{"ihave-glued", "335junk", "235 ok", 441, false},
+		{"ihave-leading-space", " 335 go", "235 ok", 441, false},
+		{"ihave-undefined", "211 x", "235 ok", 441, false},
+		{"article-glued", "335 go", "235junk", 441, true},
+		{"article-leading-space", "335 go", " 235 ok", 441, true},
+		{"article-tab", "335 go", "235\tok", 441, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			post, n := ihaveBackend(t, tc.ihave, tc.end)
@@ -417,6 +420,9 @@ func TestPostBackendReplyCodes(t *testing.T) {
 			if !tc.sent && n() != 0 {
 				t.Errorf("the outgoing server got an article after the reply %q to IHAVE", tc.ihave)
 			}
+			if n() > 1 {
+				t.Errorf("the outgoing server got the article %d times", n())
+			}
 		})
 	}
 }
@@ -424,7 +430,8 @@ func TestPostBackendReplyCodes(t *testing.T) {
 // TestSpoolArticleReplyCode: the spool server's answer to ARTICLE is 220 as a whole code. Before,
 // strtol() read "220junk" and " 220 x" as 220 and the client got the lines as an article. They are
 // not an article now. The lines after such a reply would be read as the reply to the next
-// request on the connection: dreaderd closes it, so a HEAD that follows gets its own 221.
+// request on the connection: dreaderd closes it, so a HEAD of another article that follows
+// gets its own 221.
 func TestSpoolArticleReplyCode(t *testing.T) {
 	for _, tc := range []struct{ name, answer string }{
 		{"glued-text", "220junk 1 <x@e2e.test>"},
@@ -435,10 +442,12 @@ func TestSpoolArticleReplyCode(t *testing.T) {
 			st := fakeserver.NewStore()
 			st.AddGroup("e2e.test", "e2e test group")
 			id := msgID(t)
+			id2 := msgID(t)
 			srv := fakeserver.New(t, fakeserver.Options{Store: st, Faults: fakeserver.Faults{
 				OverrideLine: map[string][]string{"ARTICLE " + id: {answer, "Subject: x", "", "body", "."}}}})
 			s := NewReaderSite(t, ReaderOptions{Spool: srv})
 			feedReader(t, s, st, "e2e.test", newArticle(id, "e2e.test", "reply codes", "body"))
+			feedReader(t, s, st, "e2e.test", newArticle(id2, "e2e.test", "reply codes 2", "body"))
 			c := s.Reader(t)
 			defer c.Close()
 			c.Deadline = 10 * time.Second
@@ -451,7 +460,7 @@ func TestSpoolArticleReplyCode(t *testing.T) {
 				t.Errorf("dreaderd did not ask the spool server for the article")
 			}
 			// the next request is not answered by the lines left over from the bad reply
-			c.ExpectCmd(221, "HEAD %s", id)
+			c.ExpectCmd(221, "HEAD %s", id2)
 			c.ReadDotLines()
 		})
 	}

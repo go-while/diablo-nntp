@@ -1485,12 +1485,19 @@ NNPostResponse1(Connection *conn)
 	code = NntpCode(buf);
 	if (code == 335) {
 	    NNPostArticle1(conn);
-	} else if (code < 0) {
-	    /* not a reply code at all: the server is broken */
-	    logit(LOG_ERR, "ihave(%s) bad reply: %s", conn->co_Desc->d_Id, buf);
-	    NNServerTerminate(conn);
 	} else {
 	    char errMsg[256];
+
+	    /*
+	     * Not a refusal IHAVE has (or no code at all): lines may follow
+	     * that the next post would read as its reply.  The client gets
+	     * the 441, and the connection is closed (COF_BROKEN).
+	     */
+	    if (!(code == 435 || code == 436 || code == 400 || code == 480 ||
+		    code == 500 || code == 501 || code == 502 || code == 503)) {
+		logit(LOG_ERR, "ihave(%s) unexpected reply: %s", conn->co_Desc->d_Id, buf);
+		conn->co_Flags |= COF_BROKEN;
+	    }
 
 	    MBFree(&conn->co_ArtBuf);
 
@@ -1565,6 +1572,18 @@ NNPostResponse2(Connection *conn)
 
 	LogCmd(conn, '<', buf);
 	code = NntpCode(buf);
+	/*
+	 * Neither 235 nor a refusal the end of a post has (or no code at
+	 * all): lines may follow that the next post would read as its reply.
+	 * The client gets a 441, never a retry (its article was sent and is
+	 * gone from its buffer), and the connection is closed (COF_BROKEN).
+	 */
+	if (!(code == 235 || code == 435 || code == 436 || code == 437 ||
+		code == 400 || code == 480 || code == 500 || code == 501 ||
+		code == 502 || code == 503)) {
+	    logit(LOG_ERR, "post(%s) unexpected reply: %s", conn->co_Desc->d_Id, buf);
+	    conn->co_Flags |= COF_BROKEN;
+	}
 	if (conn->co_SReq == NULL || conn->co_SReq->sr_CConn == NULL) {
 	    /* Client has gone away. we don't care any more */
 	    NNFinishSReq(conn, NULL, 0);
@@ -1574,10 +1593,6 @@ NNPostResponse2(Connection *conn)
 			conn->co_SReq->sr_CConn->co_IHaveMsgId != NULL ?
 				conn->co_SReq->sr_CConn->co_IHaveMsgId : "");
 	    NNFinishSReq(conn, msgbuf, 0);
-	} else if (code < 0) {
-	    /* not a reply code at all: the server is broken */
-	    logit(LOG_ERR, "post(%s) bad reply: %s", conn->co_Desc->d_Id, buf);
-	    NNServerTerminate(conn);
 	} else {
 	    char errMsg[256];
 

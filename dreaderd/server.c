@@ -1111,6 +1111,15 @@ NNServerIdle(Connection *conn)
     conn->co_State = "sidle";
 
     /*
+     * A reply that was out of step (COF_BROKEN) may have left lines unread:
+     * the next request would take them for its reply.  Close instead.
+     */
+    if (conn->co_Flags & COF_BROKEN) {
+	NNServerTerminate(conn);
+	return;
+    }
+
+    /*
      * Check for an unexpected condition on server, i.e. data or
      * EOF on the input where we didn't expect any.
      */
