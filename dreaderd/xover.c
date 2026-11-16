@@ -70,8 +70,8 @@ NNTPNewNews(Connection *conn, char **pptr)
 	extra = parseword(pptr, " \t");
     }
     /*
-     * readernewnewsmaxlen: the wildmat is matched against the groups of
-     * every article in the time, so its length bounds the work.  INN's
+     * readernewnewsmaxlen: the wildmat is matched against every active
+     * group (ListActiveGroups()), so its length bounds that work.  INN's
      * nnrpd refuses an argument over 497 bytes the same way.  0 (the
      * default) sets no limit.
      */
