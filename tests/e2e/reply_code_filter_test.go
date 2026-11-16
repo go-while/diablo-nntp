@@ -27,8 +27,8 @@ done
 
 // TestDiabFilterAnswerCodes: the external spam filter's answer is a whole code: 335 takes the
 // article, 435 (and 437) mark it as spam, and any other answer is a failed filter, which marks
-// nothing. The outgoing feed has "nospam": it gets the articles the filter took (335) and the
-// one it failed on ("400 filter broken"), not the spam (435). Fails on main: every answer that
+// nothing. The "nospam" feed gets the articles the filter took (335) and the one it failed on
+// ("400 filter broken"), not the spam (435); the "onlyspam" feed gets only the spam. Fails on main: every answer that
 // started with 4 was spam, so the "400" article was not queued.
 func TestDiabFilterAnswerCodes(t *testing.T) {
 	newsfeeds := GlobalLabel + `label peer
@@ -41,6 +41,12 @@ label ` + OutLabel + `
     alias e2e.fake
     addgroup *
     nospam
+end
+label spamonly
+    hostname 127.0.0.1
+    alias e2e.spamonly
+    addgroup *
+    onlyspam
 end
 label ESPAM
     addgroup *
@@ -60,6 +66,12 @@ end
 	for i, want := range []bool{true, false, true} {
 		if got := strings.Contains(q, ids[i]); got != want {
 			t.Errorf("article %d (%s) queued for the nospam feed: %v, want %v; queue:\n%s", i+1, ids[i], got, want, q)
+		}
+	}
+	sq := strings.Join(s.waitQueue(t, "spamonly", 1), "\n")
+	for i, want := range []bool{false, true, false} {
+		if got := strings.Contains(sq, ids[i]); got != want {
+			t.Errorf("article %d (%s) queued for the onlyspam feed: %v, want %v; queue:\n%s", i+1, ids[i], got, want, sq)
 		}
 	}
 }
