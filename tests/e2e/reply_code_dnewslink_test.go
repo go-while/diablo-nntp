@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -177,6 +178,66 @@ func TestDnewslinkCheck431Twice(t *testing.T) {
 		}
 	}
 	rcuSent(t, s, srv, id)
+}
+
+// TestDnewslinkCheck431DuringReplay: the peer answers the first CHECK of every article with 431.
+// After 80 defers (MAXDEFER 100 less 20) dnewslink starts sending the deferred ones while other
+// articles still wait for their reply; a 431 to one of those comes while the defers are sent,
+// when no second defer is taken. It counts as 238 then and the article goes with TAKETHIS:
+// all 120 articles reach the peer and none is dropped as "error-doubledefer". Fails on 1d9180c4
+// (an earlier head of this change), where such a 431 asked for a defer and the article was lost.
+func TestDnewslinkCheck431DuringReplay(t *testing.T) {
+	const n = 120
+	s := NewSite(t, SiteOptions{NoStart: true})
+	dnlSpool(t, s)
+	var mu sync.Mutex
+	seen := map[string]bool{}
+	taken := map[string]bool{}
+	srv := fakeserver.New(t, fakeserver.Options{Greeting: "200 fake", Handler: fakeserver.LineHandler(func(_ *fakeserver.Conn, line string) ([]string, bool) {
+		l := strings.ToLower(strings.TrimSpace(line))
+		f := strings.Fields(l)
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case strings.HasPrefix(l, "mode stream"):
+			return []string{"203 stream ok"}, false
+		case strings.HasPrefix(l, "check ") && len(f) > 1:
+			if !seen[f[1]] {
+				seen[f[1]] = true
+				return []string{"431 " + f[1] + " later"}, false
+			}
+			return []string{"238 " + f[1]}, false
+		case strings.HasPrefix(l, "takethis ") && len(f) > 1:
+			taken[f[1]] = true
+			return []string{"239 " + f[1]}, false
+		case strings.HasPrefix(l, "quit"):
+			return []string{"205 bye"}, true
+		}
+		return nil, false
+	})})
+	var q strings.Builder
+	for i := 1; i <= n; i++ {
+		q.WriteString("D.00000001/B.0001 <rcu-replay" + strconv.Itoa(i) + "@e2e.test> " + strconv.Itoa(i*100) + ",100\n")
+	}
+	if err := os.WriteFile(filepath.Join(s.Dir, "dqueue", "out.S00000"), []byte(q.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := s.TryRun("dnewslink", "-Aall", "-N", "1", "-S", "0", "-b", "out.S%05d", "-h", "127.0.0.1",
+		"-P", strconv.Itoa(srv.Port()), "-t", "5", "-w", "1", "-M", "20")
+	t.Logf("dnewslink: err=%v\n%s", err, out)
+	log := rcuFeedlog(s)
+	if strings.Contains(log, "doubledefer") {
+		t.Errorf("an article was dropped as a second defer during the replay:\n%s", log)
+	}
+	mu.Lock()
+	got := len(taken)
+	mu.Unlock()
+	if got != n {
+		t.Errorf("%d of the %d articles reached the peer with TAKETHIS, want all", got, n)
+	}
+	if left := dnlQueue(t, s, "out.S00000"); !strings.HasPrefix(left, "<missing") && strings.TrimSpace(left) != "" {
+		t.Errorf("queue file should be empty or gone, it holds: %.300q", left)
+	}
 }
 
 // TestDnewslinkModeReplyOutOfStep: a reply to MODE STREAM or MODE COMPRESS that the command does
