@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -80,6 +81,41 @@ func TestNewsgroupsFoldedXref(t *testing.T) {
 	x := deepRevXref(t, p, id, foldedArticle(id, []string{"e2e.test,", " e2e.other,", "\te2e.third"}))
 	if want := PathHost + " e2e.test:1 e2e.other:1 e2e.third:1"; x != want {
 		t.Errorf("Xref of an article with a folded Newsgroups: header: %q, want %q", x, want)
+	}
+	p.ExpectCmd(205, "QUIT")
+}
+
+// TestNewsgroupsFoldedLongLine: a continuation line of Newsgroups: longer than the feeder's input
+// buffer (one page with the default feederbuffersize) comes in pieces, and only the first piece is
+// added to the list (D-209). The name at the end of that piece is cut, so it is left out: a cut
+// name must not be taken for another group. Here e2e.test.missing, cut after "e2e.test", would
+// make the article accepted into e2e.test. The padding walks the cut over the name at every
+// offset around the page size.
+func TestNewsgroupsFoldedLongLine(t *testing.T) {
+	s := NewSite(t, SiteOptions{
+		Config: map[string]string{
+			"active":     "on",
+			"activedrop": "yes",
+			"xrefhost":   PathHost,
+		},
+		Setup: func(tb testing.TB, s *Site) {
+			s.WriteFile(tb, "dactive.kp", "")
+			s.Run(tb, "dgrpctl", "-s", "newgroup", OpenGroup, "y")
+		},
+	})
+	p := s.Peer(t)
+	ps := os.Getpagesize()
+	for pad := ps - 512; pad <= ps+64; pad++ {
+		id := msgID(t)
+		p.ExpectCmd(335, "IHAVE %s", id)
+		p.MustSend(client.Stuff(foldedArticle(id, []string{"e2e.nogroup,", strings.Repeat(" ", pad) + OpenGroup + ".missing"})))
+		line, err := p.ReadLine()
+		if err != nil {
+			t.Fatalf("padding %d: %v", pad, err)
+		}
+		if !strings.HasPrefix(line, "437") {
+			t.Errorf("padding %d: %q, want 437 (neither group is in the active file)", pad, line)
+		}
 	}
 	p.ExpectCmd(205, "QUIT")
 }
