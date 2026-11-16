@@ -103,7 +103,12 @@ access 127.0.0.1 userfile
 		rec[i] = 0
 	}
 	copy(rec[ldapOff:ldapOff+254], "ldap://127.0.0.1/ou=users\x00")
-	if err := os.WriteFile(path, b, 0o600); err != nil {
+	// a new file and a rename, as dreaderd installs its caches: the processes map the old
+	// file (MAP_SHARED) and only see the new one when they load the caches again
+	if err := os.WriteFile(path+".tmp", b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(path+".tmp", path); err != nil {
 		t.Fatal(err)
 	}
 	future := time.Now().Add(time.Hour)
