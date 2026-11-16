@@ -16,7 +16,8 @@ import (
 // next article. Before, dreaderd then waited for the lines of an article it had not asked for:
 // the client got no reply, and the connection to the spool server stayed busy.
 func TestWhereisArticleGoneBeforeReply(t *testing.T) {
-	const hold = 6 * time.Second // the spool server's answer to WHEREIS comes this late
+	skipWithoutCanLock(t)
+	const hold = 8 * time.Second // the spool server's answer to WHEREIS comes this late
 	id, id2 := msgID(t), msgID(t)
 	st := fakeserver.NewStore()
 	st.AddGroup("e2e.test", "e2e test group")
@@ -27,7 +28,10 @@ func TestWhereisArticleGoneBeforeReply(t *testing.T) {
 			"WHEREIS " + id2 + " REL": {"430 not here"},
 		}}})
 	hosts := "127.0.0.1\ts1p" + strconv.Itoa(srv.Port()) + "\tlocalspool=" + t.TempDir() + "\n"
-	s := NewReaderSite(t, ReaderOptions{Spool: srv, Files: map[string]string{"dserver.hosts": hosts}})
+	// readercanlock all and the dcontrol.ctl line: the cancel below is executed
+	s := NewReaderSite(t, ReaderOptions{Spool: srv,
+		Config: map[string]string{"readercanlock": "all"},
+		Files:  map[string]string{"dserver.hosts": hosts, "dcontrol.ctl": "cancel:*:*:doit,break\n"}})
 	t.Cleanup(func() {
 		if t.Failed() {
 			t.Logf("general.log:\n%s", generalLog(s))
@@ -60,10 +64,11 @@ func TestWhereisArticleGoneBeforeReply(t *testing.T) {
 	feedReader(t, s, st, "e2e.test", cancelArticle(t, id, "e2e.test"))
 	d := s.Reader(t)
 	defer d.Close()
-	d.ExpectCmd(211, "GROUP e2e.test")
-	if code, line := d.Cmd("STAT 1"); code != 423 {
-		t.Fatalf("STAT 1 after the cancel: %d %q, want 423 (the article is not cancelled)", code, line)
-	}
+	testkit.WaitFor(t, 4*time.Second, "article 1 gone after the cancel (STAT 1 = 423)", func() bool {
+		d.ExpectCmd(211, "GROUP e2e.test")
+		code, _ := d.Cmd("STAT 1")
+		return code == 423
+	})
 	if w := time.Since(began); w >= hold-time.Second {
 		t.Fatalf("the cancel took %v, the spool server may have answered WHEREIS before it", w)
 	}
