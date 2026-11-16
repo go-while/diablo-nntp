@@ -477,7 +477,7 @@ func TestSpoolArticleReplyCode(t *testing.T) {
 			}
 			// the next request is not answered by the lines left over from the bad reply. It
 			// waits for a new connection to the spool server: dreaderd closed the only one,
-			// and opens it again at its next server check (every few seconds)
+			// and opens it again at its next server check (within about 20 s when idle)
 			c.Deadline = 40 * time.Second
 			c.ExpectCmd(221, "HEAD %s", id2)
 			c.ReadDotLines()
@@ -534,7 +534,10 @@ func TestSpoolWhereisReplyCode(t *testing.T) {
 					t.Errorf("no \"unexpected reply to whereis\" in the log")
 				}
 			}
-			// the next article on this server gets its own reply
+			// the next article on this server gets its own reply. After an unexpected reply
+			// it waits for a new connection: dreaderd closed the only one and opens it again
+			// at its next server check (within about 20 s when idle)
+			c.Deadline = 40 * time.Second
 			c.ExpectCmd(220, "ARTICLE %s", id2)
 			if got := strings.Join(c.ReadDotLines(), "\n"); strings.Contains(got, "stale") {
 				t.Errorf("the next article got the left-over lines: %q", got)
