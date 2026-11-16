@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-while/nntp-testkit/fakeserver"
 )
+
 // rcuSyncPeer is a remote end for dsyncgroups: user is the answer to AUTHINFO USER, mode the one
 // to MODE READER; AUTHINFO PASS gets 502 (RFC 4643: after a login), LIST ACTIVE one group.
 func rcuSyncPeer(t *testing.T, user, mode []string) *fakeserver.Server {
@@ -89,18 +90,3 @@ func TestDsyncgroupsModeReaderReply(t *testing.T) {
 		})
 	}
 }
-
-// rcuFilter is an external filter (feederfilter): it answers each article after its "." line,
-// 335 (take it) in general, "435 spam" for the article with the subject "injected 2" and
-// "400 filter broken" for the one with "injected 3".
-const rcuFilter = `#!/bin/sh
-cr=$(printf '\r')
-ans=335
-while IFS= read -r line; do
-    case "$line" in
-    "Subject: injected 2$cr") ans="435 spam" ;;
-    "Subject: injected 3$cr") ans="400 filter broken" ;;
-    ".$cr") echo "$ans"; ans=335 ;;
-    esac
-done
-`

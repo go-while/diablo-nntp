@@ -500,7 +500,7 @@ main(int ac, char **av)
 	case 200: case 201:
 	    printf("Entering reader mode: %s\n", line);
 	    break;
-	case 480: case 500: case 501: case 502: case 503:
+	case 400: case 480: case 500: case 501: case 502: case 503:
 	    /* a one-line refusal: the server may still list its groups */
 	    printf("Unable to switch to reader mode: %s\n", line);
 	    printf("Going on anyway\n");
