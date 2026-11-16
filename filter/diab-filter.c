@@ -97,12 +97,17 @@ filter_failed(char *reason, char *fpath)
 	time_t now = time(NULL);
 
 	/*
-	 * Failures close together back off longer (count squared, at most
-	 * 900 s); after five quiet minutes it starts again at 1 s.  It
-	 * counted down before, below zero, so rare failures grew the delay.
+	 * The delay is the failure count squared, at most 900 s.  A failure
+	 * within the last delay plus five minutes continues the series (a
+	 * filter that stays broken fails again right after its delay); after
+	 * a longer quiet time it starts again at 1 s.  It counted down before,
+	 * below zero, so rare failures grew the delay.
 	 */
-	if (now - filter_last_fail < 300) {
-		filter_fail_count++;
+	delay = filter_fail_count * filter_fail_count;
+	delay = (delay > 900) ? 900 : delay;
+	if (filter_fail_count > 0 && now - filter_last_fail < 300 + delay) {
+		if (filter_fail_count < 30)
+			filter_fail_count++;
 	} else {
 		filter_fail_count = 1;
 	}
