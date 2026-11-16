@@ -127,9 +127,8 @@ access 127.0.0.1 userfile
 	c := s.Reader(t)
 	defer c.Close()
 	c.ExpectCmd(381, "AUTHINFO USER fred")
-	if code, line, err := c.TryCmd("AUTHINFO PASS fredspass"); err == nil && code == 281 {
-		t.Errorf("the login against an authdef that only names LDAP was accepted: %q", line)
-	}
+	// refused as a failed login (481), not accepted and not a dropped connection
+	c.ExpectCmd(481, "AUTHINFO PASS fredspass")
 	if !strings.Contains(generalLog(s), "LDAP authentication requested, but no longer supported") {
 		t.Errorf("no refusal of the LDAP authdef in the log:\n%s", generalLog(s))
 	}
