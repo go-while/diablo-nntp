@@ -232,7 +232,7 @@
 # The radius option specifies a radius configuration file. This option
 # needs to be enabled at compile time - see lib/vendor.h
 # Its timeout and tries per server come from that file, not from
-# "readerauthtimeout" in diablo.config, which bounds the netremote, ldap,
+# "readerauthtimeout" in diablo.config, which bounds the netremote,
 # pam and perl options below.  A login whose backend runs out of time is
 # refused, and no later access line is tried for it.
 #
@@ -251,9 +251,6 @@
 # The netremote option specifies a NetRemote server for username/pass
 # authentication.  This option needs to be enabled at compile time - see
 # lib/vendor.h
-#
-# The ldap option specifies an LDAP URL for username/pass authentication.
-# This option needs to be enabled at compile time - see lib/vendor.h
 #
 # The pam option specifies a PAM service for username/pass authentication.
 # This option needs to be enabled at compile time - see lib/vendor.h
@@ -278,7 +275,6 @@
 #  addrealm	domain
 #  realm	domain
 #  ident	yes
-#  ldap		ldap://hostname.example.com/dc=example.com?username?sub?(&(objectclass=inetLocalNewsUser)(username=%25s))
 #  pam		nntp
 #  perl		/news/dbin/ckpasswd.pl
 #end

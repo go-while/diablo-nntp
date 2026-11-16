@@ -146,49 +146,6 @@
 #undef	NETREMOTE_ENABLED
 
 /*
- * Enable LDAP authentication.  Requires the OpenLDAP development files
- * (ldap.h, libldap and liblber); the Makefile adds the libraries.
- * ./configure turns this on where they are found.
- */
-
-#undef	LDAP_ENABLED
-
-/*
- * Enable a new and more flexible form of LDAP authentication.
- * (Requires LDAP_ENABLED)
- *
- * Configuration is done via an LDAP URL of the form:
- *
- * ldap://hostname[:port]/dn?userPassword?scope?filter [username:passwd]
- *
- * where:
- *	userPassword is the attribute that contains the clear text password,
- *	usually called "userPassword".
- *
- *	scope is probably normally "sub" or "base".
- *
- * 	filter consists of the username and password attributes and any
- *	other site specific search options required to narrow a search
- *	to a single user. The following values can be used and will
- *	be replaced by the corresponding value supplied from Diablo.
- *
- *		$USER$		username
- *		$PASS$		password
- *		$REALM$		authentication domain, if realms are used
- *
- *	username:passwd is the username and password with which to
- *	authenticate to the LDAP server. If they are not specified,
- *	anonymous authentication is done.
- *
- * Example:
- *
- * ldap://host.example.com/dc=$REALM$,dn=example.com?userPassword?sub?(userName=$USER$)
- *
- */
-
-#undef	NEW_LDAP
-
-/*
  * Enable PAM authentication. Requires a PAM library (security/pam_appl.h
  * and -lpam); ./configure turns this on where they are found. This has
  * been confirmed to work on Linux and appears to work on FreeBSD. The pam_unix.so module

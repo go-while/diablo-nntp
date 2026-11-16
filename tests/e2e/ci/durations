@@ -35,9 +35,6 @@ TestArticleTypes 0.18
 TestArticleTypesCRLF 0.01
 TestArticleTypesRoutedByArttypes 2.03
 TestArticleTypeStateNotCarriedOver 2.03
-TestAuthTimeoutLDAPNoAccept 2.53
-TestAuthTimeoutLDAPSilent 4.04
-TestAuthTimeoutLDAPSlowSteps 8.16
 TestAuthTimeoutNetRemoteNoAccept 0.00
 TestAuthTimeoutNetRemoteSilent 0.00
 TestAuthTimeoutPAM 4.58

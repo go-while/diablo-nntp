@@ -9,7 +9,7 @@
 ##  (OmniOS) with pkg, OpenBSD with pkg_add and NetBSD with pkgin are
 ##  supported; the package manager is chosen from the system.  This copy's lib/vendor.h is set by ./configure from the libraries the system
 ##  has: zlib, libcanlock, Berkeley DB (the 1.85 API, db_185.h; several distributions
-##  dropped it), cdb, PAM, LDAP, Perl and RADIUS (radcli on Linux, libradius on FreeBSD).
+##  dropped it), cdb, PAM, Perl and RADIUS (radcli on Linux, libradius on FreeBSD).
 ##  The binaries end up in dbin/.  The news user and group are created when
 ##  missing (diablo switches to them at startup).  With E2E_FAKE_SENDMAIL=1
 ##  the moderation tests' fake sendmail is installed as /usr/sbin/sendmail
@@ -137,9 +137,9 @@ fi
 # radcli).  Cancel-Lock needs libcanlock (3.3.0 or later); Arch has no package for it in its
 # official repositories.  With E2E_NO_CANLOCK=1 the feature is left out on purpose, so that
 # the tests of the build without libcanlock (TestCancelLockWithoutLibcanlock) run: CI does
-# one build of each.  On Debian and Ubuntu PAM, LDAP, Perl and cdb are installed too, so
+# one build of each.  On Debian and Ubuntu PAM, Perl and cdb are installed too, so
 # that their code is built and TestReaderPerlAuth and TestReaderCdbAuth run.
-pkgs_apt="libradcli-dev libperl-dev libldap-dev libpam0g-dev libcdb-dev"
+pkgs_apt="libradcli-dev libperl-dev libpam0g-dev libcdb-dev"
 [ "${E2E_NO_CANLOCK:-}" = 1 ] || pkgs_apt="libcanlock-dev $pkgs_apt"
 if command -v apt-get >/dev/null; then
     for pk in $pkgs_apt; do apt-get -qq install -y $pk >/dev/null 2>&1 || true; done
@@ -226,8 +226,7 @@ FreeBSD)
     # feature, and the tests of it, out): libcanlock (Cancel-Lock, dcanlock), perl5
     # (Perl authentication), gnupg (gpgv, for pgpverify) and tinycdb (CDB
     # authentication). ./configure finds them under /usr/local.
-    # openldap26-client: LDAP authentication (NetBSD gets it from pkgsrc already).
-    pk="perl5 gnupg tinycdb openldap26-client"
+    pk="perl5 gnupg tinycdb"
     [ "${E2E_NO_CANLOCK:-}" = 1 ] || pk="libcanlock $pk"
     for p in $pk; do
         pkg install -y "$p" >/dev/null 2>&1 || echo "build-on-host: package $p not installed"
@@ -298,7 +297,7 @@ esac
 fi
 
 # ./configure sets the options in lib/vendor.h from the libraries this host has (zlib, libcanlock,
-# Berkeley DB, cdb, PAM, LDAP, Perl, RADIUS) and writes config.mk.  The summary goes to the log.
+# Berkeley DB, cdb, PAM, Perl, RADIUS) and writes config.mk.  The summary goes to the log.
 cfgargs=
 [ "${E2E_NO_CANLOCK:-}" != 1 ] || cfgargs="--without-canlock"
 sh ./configure $cfgargs
