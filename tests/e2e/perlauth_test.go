@@ -8,7 +8,7 @@ import (
 )
 
 // TestReaderPerlAuth: with PERL_ENABLED, an authdef with "perl <script>" calls the script's
-// checkuser(user, pass) in an embedded perl; a result starting with 1 logs the user in and
+// checkuser(user, pass) in an embedded perl; a result "100 ..." or "110 <readerdef>" logs the user in and
 // anything else is refused. Skipped when dreaderd is built without Perl support
 // (./configure turns it on where perl can be embedded).
 func TestReaderPerlAuth(t *testing.T) {

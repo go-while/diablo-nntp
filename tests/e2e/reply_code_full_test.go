@@ -505,8 +505,9 @@ func TestSpoolWhereisReplyCode(t *testing.T) {
 			s, st, _ := backendSite(t, backendCase{
 				opts: "localspool=" + t.TempDir(),
 				lines: map[string][]string{
-					"WHEREIS " + id:  tc.answer,
-					"WHEREIS " + id2: {"430 not here"},
+					// with a localspool other than "/" dreaderd sends "whereis <id> REL"
+					"WHEREIS " + id + " REL":  tc.answer,
+					"WHEREIS " + id2 + " REL": {"430 not here"},
 				}})
 			feedReader(t, s, st, "e2e.test",
 				newArticle(id, "e2e.test", "whereis", "body"),

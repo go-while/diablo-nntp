@@ -307,8 +307,8 @@ NNGetLocal1(Connection *conn)
 		MBPrintf(&conn->co_TMBuf, "article %s%s\r\n", sreq->sr_MsgId, smaxage);
 		NNSpoolResponse1(conn);
 	    }
-	} else if (wcode == 430 || wcode == 480 || wcode == 500 ||
-		    wcode == 501 || wcode == 502 || wcode == 503) {
+	} else if (wcode == 430 || wcode == 443 || wcode == 480 ||
+		    wcode == 500 || wcode == 501 || wcode == 502 || wcode == 503) {
 	    /*
 	     * whereis request failed (or the server doesn't know it), try
 	     * the normal way
@@ -452,9 +452,10 @@ NNSpoolResponse1(Connection *conn)
 	 * would take for its reply: the client gets its refusal, and the
 	 * connection to the spool server is closed.
 	 */
+	/* 443: the Diablo feeder's "Bad Message-ID" / "Bad Command Options" */
 	unexpected = !(code == 430 || code == 423 || code == 412 ||
-		code == 420 || code == 480 || code == 500 || code == 501 ||
-		code == 502 || code == 503);
+		code == 420 || code == 443 || code == 480 || code == 500 ||
+		code == 501 || code == 502 || code == 503);
 	if (unexpected) {
 	    logit(LOG_ERR, "spool server %s: unexpected reply to %s: %.80s, closing it",
 		conn->co_Desc->d_Id, sreq->sr_MsgId, buf);
