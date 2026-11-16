@@ -209,17 +209,18 @@ func TestMsgIdHashNeighbours(t *testing.T) {
 }
 
 // TestMsgIdHashMismatch: the history header records the method of its entries. A history
-// of msgidhash hash is written as version 2, as before; one of msgidhash siphash as version
-// 3 (refused by older binaries). A program whose diablo.config has the other method refuses
+// of msgidhash hash is written as version 2 with the magic a1b2c3d4, as before; one of
+// msgidhash siphash as version 3 with its own magic a1b2c3d5, so that every older program
+// refuses it (the older dhisexpire and didump only warned about a newer version). A program whose diablo.config has the other method refuses
 // the history instead of missing every entry, and dhisexpire refuses to copy the entries
 // into a history of the other method. dhisctl -h shows the file's method whatever
 // diablo.config says.
 func TestMsgIdHashMismatch(t *testing.T) {
 	for _, c := range []struct {
-		method, other, version string
+		method, other, version, magic string
 	}{
-		{"hash", "siphash", "2"},
-		{"siphash", "hash", "3"},
+		{"hash", "siphash", "2", "0xa1b2c3d4"},
+		{"siphash", "hash", "3", "0xa1b2c3d5"},
 	} {
 		t.Run(c.method, func(t *testing.T) {
 			s := NewSite(t, SiteOptions{Config: map[string]string{"msgidhash": c.method}})
@@ -236,9 +237,10 @@ func TestMsgIdHashMismatch(t *testing.T) {
 
 			for _, args := range [][]string{{"-C", other}, nil} {
 				out := s.Run(t, "dhisctl", append(args, "-h", hist)...)
-				if !strings.Contains(out, "Version   : "+c.version+"\n") ||
+				if !strings.Contains(out, "Magic     : "+c.magic+"\n") ||
+					!strings.Contains(out, "Version   : "+c.version+"\n") ||
 					!strings.Contains(out, "MsgIdHash : "+c.method+"\n") {
-					t.Errorf("dhisctl %v -h: want Version %s and MsgIdHash %s:\n%s", args, c.version, c.method, out)
+					t.Errorf("dhisctl %v -h: want Magic %s, Version %s and MsgIdHash %s:\n%s", args, c.magic, c.version, c.method, out)
 				}
 			}
 
@@ -370,5 +372,40 @@ func TestMsgIdHashDumpLoad(t *testing.T) {
 				t.Errorf("didump of the loaded history: err=%v, differs from the original dump:\n%s\nwant:\n%s%s", err, again, dump, stderr)
 			}
 		})
+	}
+}
+
+// TestMsgIdHashMagicVersion: a version 3 history carries the magic a1b2c3d5; with the magic of
+// version 2 (a1b2c3d4) its header is damaged and the history is refused, instead of read as a
+// version 3 file by this Diablo and taken by older programs.
+func TestMsgIdHashMagicVersion(t *testing.T) {
+	s := NewSite(t, SiteOptions{Config: map[string]string{"msgidhash": "siphash"}})
+	id := msgID(t)
+	p := s.Peer(t)
+	if code := offer(t, p, id, newArticle(id, "e2e.test", "magic", "body")); code != 235 {
+		t.Fatalf("IHAVE %s: %d, want 235", id, code)
+	}
+	p.ExpectCmd(205, "QUIT")
+
+	b, err := os.ReadFile(filepath.Join(s.Dir, "dhistory"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// the header is in the host's byte order
+	var order binary.ByteOrder = binary.LittleEndian
+	if binary.BigEndian.Uint32(b) == 0xa1b2c3d5 {
+		order = binary.BigEndian
+	}
+	if order.Uint32(b) != 0xa1b2c3d5 {
+		t.Fatalf("magic of a siphash history: %x, want a1b2c3d5", b[:4])
+	}
+	order.PutUint32(b, 0xa1b2c3d4)
+	bad := filepath.Join(s.Dir, "dhistory.badmagic")
+	if err := os.WriteFile(bad, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	want := "DHistory magic 0xa1b2c3d4 does not match its version 3: damaged header"
+	if out, err := s.TryRun("dhisctl", "-h", bad); err == nil || !strings.Contains(out, want) {
+		t.Errorf("dhisctl -h of a version 3 history with the version 2 magic: err=%v, want %q:\n%s", err, want, out)
 	}
 }

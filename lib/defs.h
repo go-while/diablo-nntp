@@ -330,15 +330,21 @@ typedef struct HistHead {
     uint16	msgidHash;	/* version 3: MSGIDHASH_* of the entries */
 } HistHead;
 
-#define HMAGIC		((uint32)0xA1B2C3D4)
+#define HMAGIC		((uint32)0xA1B2C3D4)	/* versions 1 and 2 */
+#define HMAGIC3		((uint32)0xA1B2C3D5)	/* version 3 (msgidhash siphash) */
+#define HMAGIC_OK(m)	((m) == HMAGIC || (m) == HMAGIC3)
+#define HLIVEMAGIC(hh)	(((hh)->version >= 3) ? HMAGIC3 : HMAGIC)
 #define HDEADMAGIC	((uint32)0xDEADF5E6)
 #define HDEADLOCK	8	/* dhisexpire locks bytes 8-11 while it is dead */
 /*
  * Version 3 is version 2 with msgidHash set: its entries are hashed with
- * that msgidhash method, and binaries from before it refuse the file.  A
- * history with msgidhash hash is still written as version 2, and in a
- * version 2 file msgidHash is not read (the header's padding until then).
- * The field takes no room: sizeof(HistHead) stays 16.
+ * that msgidhash method.  It has its own magic, HMAGIC3, so that every
+ * program from before it refuses the file as not a history: diablo also
+ * refuses a newer version, but the old dhisexpire, didump and diload only
+ * warn, and would rewrite it as a version 2 file of the other method.  A
+ * history with msgidhash hash is still written as version 2 with HMAGIC,
+ * and in a version 2 file msgidHash is not read (the header's padding
+ * until then).  The field takes no room: sizeof(HistHead) stays 16.
  */
 #define HVERSION	3
 #define HVERSION_HASH	2	/* the version written for msgidhash hash */

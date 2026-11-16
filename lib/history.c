@@ -68,6 +68,7 @@ int		HBlkGood;
 char		HistoryFileName[PATH_MAX];
 int		DoingReOpen = 0;
 static int	ReOpenLockError = 0;	/* errno of a failed lock in a reopen */
+static uint32	HMagic = HMAGIC;	/* magic of the open history while it is alive */
 static void	reopenWait(void);
 
 /*
@@ -260,7 +261,7 @@ HistoryOpen(const char *fileName, int hflags)
 
     if (st.st_size == 0 || 
 	read(fd, &HHead, sizeof(HHead)) != sizeof(HHead) ||
-	HHead.hmagic != HMAGIC
+	!HMAGIC_OK(HHead.hmagic)
     ) {
 	/*
 	 * Is this history an old one and we need to wait for a new one?
@@ -332,7 +333,7 @@ HistoryOpen(const char *fileName, int hflags)
 	     */
 	    if ((HFlags & HGF_READONLY) ||
 		(pread(fd, &hh, sizeof(hh), 0) == sizeof(hh) &&
-		hh.hmagic == HMAGIC) ||
+		HMAGIC_OK(hh.hmagic)) ||
 		fstat(fd, &st) < 0 || st.st_size > 0) {
 		openLock = XLOCK_SH;
 		break;
@@ -348,7 +349,7 @@ HistoryOpen(const char *fileName, int hflags)
 
 	if (st.st_size == 0 || 
 	    read(fd, &HHead, sizeof(HHead)) != sizeof(HHead) ||
-	    HHead.hmagic != HMAGIC
+	    !HMAGIC_OK(HHead.hmagic)
 	) {
 	    uint32 n;
 	    uint32 b;
@@ -426,7 +427,7 @@ HistoryOpen(const char *fileName, int hflags)
 		HistoryFatalIO("initial sync");
 
 	    /* Mark the database valid only after its contents are complete. */
-	    HHead.hmagic = HMAGIC;
+	    HHead.hmagic = HLIVEMAGIC(&HHead);
 	    if (HistoryWriteAt(fd, &HHead, sizeof(HHead), 0) < 0)
 		HistoryFatalIO("final header write");
 	    if (fsync(fd) < 0)
@@ -509,7 +510,19 @@ HistoryOpen(const char *fileName, int hflags)
 	    MsgIdHashName(HistHeadMsgIdHash(&HHead)));
 	exit(1);
     }
-    if (HHead.hmagic != HMAGIC) {
+    /*
+     * The magic goes with the version (HMAGIC3 for version 3); the hot
+     * paths compare the mapped header with HMagic to see a dead history.
+     */
+    HMagic = HLIVEMAGIC(&HHead);
+    if (HMAGIC_OK(HHead.hmagic) && HHead.hmagic != HMagic) {
+	logit(LOG_ERR, "DHistory magic 0x%x does not match its version %d: damaged header",
+	    (unsigned)HHead.hmagic, HHead.version);
+	fprintf(stderr, "DHistory magic 0x%x does not match its version %d: damaged header\n",
+	    (unsigned)HHead.hmagic, HHead.version);
+	exit(1);
+    }
+    if (HHead.hmagic != HMagic) {
 	logit(LOG_NOTICE, "DHistory magic mismatch");
 	fprintf(stderr, "DHistory magic mismatch\n");
     }
@@ -702,7 +715,7 @@ HistoryLookup(const char *msgid, History *nh)
     int counter = 0;
     int statfailed = 0;
 
-    if (HHeadMap->hmagic != HMAGIC)
+    if (HHeadMap->hmagic != HMagic)
 	historyReOpen();
 
     hv = msgidhash(msgid);
@@ -777,7 +790,7 @@ HistoryLookupByHash(hash_t hv, History *h)
     off_t off;
     int counter = 0;
 
-    if (HHeadMap->hmagic != HMAGIC)
+    if (HHeadMap->hmagic != HMagic)
 	historyReOpen();
 
     hi = (hv.h1 ^ hv.h2) & HMask;
@@ -867,7 +880,7 @@ HistoryPosLookupByHash(hash_t hv, History *h)
 static int
 updateLost(void)
 {
-    return((HFlags & HGF_FAST) == 0 && HHeadMap->hmagic != HMAGIC);
+    return((HFlags & HGF_FAST) == 0 && HHeadMap->hmagic != HMagic);
 }
 
 /* File offset of the record at index. */
@@ -920,7 +933,7 @@ lockChain(hash_t hv)
     for (;;) {
 	off_t chainlock;
 
-	if (HHeadMap->hmagic != HMAGIC)
+	if (HHeadMap->hmagic != HMagic)
 	    historyReOpen();
 	if (HFlags & HGF_FAST)
 	    return(0);
@@ -939,7 +952,7 @@ lockChain(hash_t hv)
 	    errno = error;
 	    return(-1);
 	}
-	if (HHeadMap->hmagic == HMAGIC)
+	if (HHeadMap->hmagic == HMagic)
 	    return(chainlock);
 	unlockChain(chainlock);
     }

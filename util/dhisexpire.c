@@ -97,7 +97,7 @@ sigDead(int sigNo)
 
     if (DeadFd >= 0 && pread(DeadFd, &hh, sizeof(hh), 0) == sizeof(hh) &&
 						hh.hmagic == HDEADMAGIC) {
-	hh.hmagic = HMAGIC;
+	hh.hmagic = HLIVEMAGIC(&hh);
 	/* a failure cannot be reported from here; a cast does not silence gcc */
 	n = pwrite(DeadFd, &hh, sizeof(hh), 0);
 	(void)n;
@@ -248,7 +248,7 @@ main(int ac, char **av)
 	    perror("Corrupted history file");
 	    exit(1);
 	}
-	if (hh.hmagic != HMAGIC) {
+	if (!HMAGIC_OK(hh.hmagic)) {
 	    fprintf(stderr, "Corrupted history file - bad magic\n");
 	    exit(1);
 	}
@@ -323,7 +323,7 @@ DoUnDead(int fd)
 	 fprintf(stderr, "ERROR! Version mismatch file V%d, expecting V%d to V%d\n", hh.version, HVERSION_HASH, HVERSION);
 	return;
     }
-    hh.hmagic = HMAGIC;
+    hh.hmagic = HLIVEMAGIC(&hh);
     if (lseek(fd, 0, SEEK_SET) == -1) {
 	perror("Unable to seek to pos 0 in history");
 	return;

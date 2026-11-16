@@ -135,7 +135,7 @@ main(int ac, char **av)
 	fprintf(stderr, "dspoolrefeed: %s: %s\n", fileName, strerror(errno));
 	exit(1);
     }
-    if (read(fd, &hh, sizeof(hh)) != sizeof(hh) || hh.hmagic != HMAGIC) {
+    if (read(fd, &hh, sizeof(hh)) != sizeof(hh) || !HMAGIC_OK(hh.hmagic)) {
 	fprintf(stderr, "dspoolrefeed: %s: not a history file\n", fileName);
 	exit(1);
     }
