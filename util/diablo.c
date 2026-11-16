@@ -92,6 +92,7 @@ void ArticleFileClose(int i);
 void ArticleFileTrunc(int artFd, off_t bpos);
 void ArticleFileSetSize(int artFd);
 void ngAddControl(char *nglist, int ngSize, const char *ctl);
+void ngAddFolded(char *nglist, int ngSize, const char *s, int n);
 void writePath(time_t t, char *path);
 
 void writeFeedOut(const char *label, const char *file, const char *msgid, const char *offSize, int rt, int headOnly, const char *artType, int lines, const char *cSize);
@@ -3205,6 +3206,7 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 	int hdrNewsgroups = 0;
 	int hdrMessageId = 0;
 	int haveApproved = 0;
+	int ngFolded = 0;	/* the header line before was Newsgroups: or its continuation (D-208) */
 	int bytes;
 	int compressedSize = -1;
 	int zstore = 0;		/* the article went to the spool gzipped */
@@ -3459,6 +3461,19 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		    continue;
 		}
 
+		/*
+		 * A line that begins with white space continues the header
+		 * before it.  When that is Newsgroups:, its names are part
+		 * of the list (D-208).  The line itself is written thru: it
+		 * matches none of the headers below.
+		 */
+		if (bytes && (p[0] == ' ' || p[0] == '\t')) {
+		    if (ngFolded)
+			ngAddFolded(nglist, sizeof(nglist), p, bytes);
+		} else {
+		    ngFolded = 0;
+		}
+
 		hch = tolower((unsigned char)*p);
 		if (bytes <= 2 && thisNl &&
 			(p[0] == '\n' || (p[0] == '\r' && p[1] == '\n'))) {
@@ -3660,6 +3675,7 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		} else if (hch == 'n' && bytes >= 11 &&
 			   strncasecmp(p, "Newsgroups:", 11) == 0) {
 		    hdrNewsgroups++;
+		    ngFolded = 1;
 		    diablo_strlcpynl(nglist, p + 11, bytes - 11 - aflen, MAXLINE);
 		    /* white space between names separates them (D-206) */
 		    NormalizeNewsgroups(nglist);
@@ -4472,6 +4488,42 @@ ngAddControl(char *nglist, int ngSize, const char *ctl)
 
     if (strlen(ctl) + l < ngSize - 11)
 	sprintf(nglist + l, ",control.%s", ctl);
+}
+
+/*
+ * ngAddFolded() - add a continuation line of a folded Newsgroups: header
+ * (n bytes at s, with its line end) to nglist and normalize the list
+ * again.  RFC 5536 3.1.4 allows folding white space around the commas,
+ * so the line holds more names of the list (D-208).  A comma goes before
+ * it, as the fold may stand for one: NormalizeNewsgroups() also takes
+ * white space between two names as a separator (D-206).  A name that
+ * does not fit whole is left out, so a cut name is never taken for
+ * another group.
+ */
+void
+ngAddFolded(char *nglist, int ngSize, const char *s, int n)
+{
+    int l = strlen(nglist);
+    int start = l;
+    int i;
+
+    if (l + 2 >= ngSize)
+	return;
+    nglist[l++] = ',';
+    for (i = 0; i < n; ++i) {
+	if (s[i] == '\r' || s[i] == '\n')
+	    continue;
+	if (l + 1 >= ngSize)
+	    break;
+	nglist[l++] = s[i];
+    }
+    if (i < n && s[i] != ',' && s[i] != ' ' && s[i] != '\t') {
+	while (l > start && nglist[l-1] != ',' && nglist[l-1] != ' ' &&
+						nglist[l-1] != '\t')
+	    --l;
+    }
+    nglist[l] = 0;
+    NormalizeNewsgroups(nglist);
 }
 
 
