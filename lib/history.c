@@ -493,8 +493,11 @@ HistoryOpen(const char *fileName, int hflags)
      * The entries hold the hashes of one msgidhash method.  With the other
      * one every lookup would miss (and the old collisions would come back
      * through the gaps), so the history is refused: rebuild it, or set
-     * msgidhash back.
+     * msgidhash back.  HGF_FILEHASH (dhisctl, didump: tools for one named
+     * file) takes the file's method instead.
      */
+    if (HFlags & HGF_FILEHASH)
+	DOpts.MsgIdHashMethod = HistHeadMsgIdHash(&HHead);
     if (HistHeadMsgIdHash(&HHead) != DOpts.MsgIdHashMethod) {
 	logit(LOG_ERR, "DHistory is hashed with msgidhash %s, diablo.config has msgidhash %s: rebuild the history (and the reader overview) or set msgidhash %s",
 	    MsgIdHashName(HistHeadMsgIdHash(&HHead)),

@@ -198,22 +198,12 @@ main(int ac, char **av)
     }
 
     /*
-     * Hash with the msgidhash method of this file's entries (-H, -h, and
-     * the MSGIDHASH line for diload), whatever diablo.config says.
+     * -H and -h hash with the msgidhash method of this file's entries,
+     * whatever diablo.config says (HGF_FILEHASH); so does the dump below,
+     * from the header it reads.
      */
-    if (OldOpt == 0) {
-	int hfd = open(fileName, O_RDONLY);
-	HistHead hh;
-
-	if (hfd >= 0) {
-	    if (read(hfd, &hh, sizeof(hh)) == sizeof(hh) && hh.hmagic == HMAGIC)
-		DOpts.MsgIdHashMethod = HistHeadMsgIdHash(&hh);
-	    close(hfd);
-	}
-    }
-
     if (VerifyHistory || FindHash != NULL)
-	HistoryOpen(fileName, HGF_READONLY);
+	HistoryOpen(fileName, HGF_READONLY | HGF_FILEHASH);
 
     if (VerboseOpt)
 	LoadSpoolCtl(0, 1);

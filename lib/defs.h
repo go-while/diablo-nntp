@@ -579,6 +579,7 @@ typedef struct ArtTypeList {
 #define HGF_MLOCK	0x10
 #define HGF_READONLY	0x04
 #define HGF_EXCHECK	0x08
+#define HGF_FILEHASH	0x20	/* take the file's msgidhash method, not refuse it */
 
 typedef struct Node {
     struct Node		*no_Next;

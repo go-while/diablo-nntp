@@ -138,17 +138,9 @@ main(int ac, char **av)
 
     /*
      * Work with the msgidhash method of this file's entries, whatever
-     * diablo.config says: -h shows it, and the entry lookups need it.
+     * diablo.config says (HGF_FILEHASH): the entry lookups need it.
      */
-    if ((HistoryFd = open(FileName, O_RDONLY)) >= 0) {
-	HistHead hh;
-
-	if (read(HistoryFd, &hh, sizeof(hh)) == sizeof(hh) &&
-	    (hh.hmagic == HMAGIC || hh.hmagic == HDEADMAGIC))
-	    DOpts.MsgIdHashMethod = HistHeadMsgIdHash(&hh);
-	close(HistoryFd);
-    }
-    HistoryOpen(FileName, 0);
+    HistoryOpen(FileName, HGF_FILEHASH);
     if ((HistoryFd = open(FileName, O_RDWR)) == -1) {
 	perror("history open");
 	exit(1);
