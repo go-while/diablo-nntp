@@ -68,6 +68,11 @@ end
 			t.Errorf("article %d (%s) queued for the nospam feed: %v, want %v; queue:\n%s", i+1, ids[i], got, want, q)
 		}
 	}
+	// the unknown answer restarts the filter (filter_failed), so the next answer is not read
+	// out of step
+	if log := s.logOutput(); !strings.Contains(log, "filter failed, unknown response") {
+		t.Errorf("no filter restart logged after the \"400\" answer; log:\n%s", log)
+	}
 	sq := strings.Join(s.waitQueue(t, "spamonly", 1), "\n")
 	for i, want := range []bool{false, true, false} {
 		if got := strings.Contains(sq, ids[i]); got != want {
