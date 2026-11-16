@@ -50,6 +50,10 @@ dgrpctl \- add, delete and modify newsgroups in the active file.
 [\fB-s\fR]
 .B listgrouphashfile \fR[\fIwildmat\fR[\fIhash\fR]]
 .PP
+.B dgrpctl
+.B masscancel
+.I newsgroup
+.PP
 .PP
 .B dgrpctl -V
 
@@ -156,6 +160,16 @@ For example:
 061/03f/xyat0c03sp0wc5yi1zqkx.0.o.32.0 tnn.forum.soft-sys.tippler
 .fi
 .in -0.5i
+
+.B masscancel
+reads Message-IDs from stdin, one per line, and cancels those articles in
+the reader's overview of \fInewsgroup\fR in one pass: it walks the group's
+overview index from the highest article number down (at most the size of
+the index) and marks every entry whose Message-ID hash matches one of the
+list as cancelled.  Each cancelled article is printed as
+\fB>> cancelled\fR \fInewsgroup\fR\fB:\fR\fInumber\fR; a line that is not
+a Message-ID in angle brackets is reported and skipped.  The spool and the
+history are not changed.
 
 .SH WILDMAT PATTERNS
 Similar to those found in the \fBfind\fR(1) command.  Patterns are

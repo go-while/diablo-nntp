@@ -195,7 +195,8 @@ GrpCtlMassCancel(char *group)
 
 		    oa = GetOverArt(ov, artEnd, &ovpos);
 
-		    if (oa && oa->oa_ArtNo == artEnd) {
+		    /* the slot keeps 31 bits of the number (D-220) */
+		    if (oa && OA_ARTNOEQ(artEnd, oa->oa_ArtNo)) {
 			int found = 0;
 
 		        /* Copy the hv into a more friendly form */
