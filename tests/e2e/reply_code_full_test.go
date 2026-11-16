@@ -481,3 +481,60 @@ func TestSpoolArticleReplyCode(t *testing.T) {
 		})
 	}
 }
+
+// TestSpoolWhereisReplyCode: with localspool= the reader asks the spool server WHEREIS first.
+// A one-line refusal (500 from a server that doesn't know the command, 430) falls back to
+// ARTICLE on the same connection, and the article is served. Any other reply, such as a
+// 220 with a text block after it, would leave lines that the fallback ARTICLE reads as its
+// reply: the client gets no article from those lines, and a later article on the same server
+// is served right (its own reply, not left-over lines). Before, every reply but 223 sent
+// ARTICLE on the same stream.
+func TestSpoolWhereisReplyCode(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		answer []string
+		served bool // the article is served after the WHEREIS answer
+	}{
+		{"refused-500", []string{"500 what?"}, true},
+		{"refused-430", []string{"430 not here"}, true},
+		{"unexpected-220-block", []string{"220 1 <stale@e2e.test>", "Subject: stale", "", "stale body", "."}, false},
+		{"malformed", []string{"223junk 1 2 3"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			id, id2 := msgID(t), msgID(t)
+			s, st, _ := backendSite(t, backendCase{
+				opts: "localspool=" + t.TempDir(),
+				lines: map[string][]string{
+					"WHEREIS " + id:  tc.answer,
+					"WHEREIS " + id2: {"430 not here"},
+				}})
+			feedReader(t, s, st, "e2e.test",
+				newArticle(id, "e2e.test", "whereis", "body"),
+				newArticle(id2, "e2e.test", "whereis 2", "body"))
+			c := s.Reader(t)
+			defer c.Close()
+			c.Deadline = 20 * time.Second
+			c.ExpectCmd(211, "GROUP e2e.test")
+			code, line, err := c.TryCmd("ARTICLE %s", id)
+			if tc.served {
+				if err != nil || code != 220 {
+					t.Fatalf("ARTICLE after the WHEREIS answer %q: %d %q %v, want 220", tc.answer[0], code, line, err)
+				}
+				c.ReadDotLines()
+			} else {
+				if err == nil && code == 220 {
+					body := c.ReadDotLines()
+					t.Errorf("ARTICLE after the WHEREIS answer %q was served: %q %q", tc.answer[0], line, body)
+				}
+				if !strings.Contains(generalLog(s), "unexpected reply to whereis") {
+					t.Errorf("no \"unexpected reply to whereis\" in the log")
+				}
+			}
+			// the next article on this server gets its own reply
+			c.ExpectCmd(220, "ARTICLE %s", id2)
+			if got := strings.Join(c.ReadDotLines(), "\n"); strings.Contains(got, "stale") {
+				t.Errorf("the next article got the left-over lines: %q", got)
+			}
+		})
+	}
+}
