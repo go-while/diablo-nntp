@@ -107,12 +107,17 @@ connectnews(char *hostname, char *port) {
 
 /*
  * RFC 3977 replies that are followed by a multi-line block.  211 is
- * multi-line only after LISTGROUP.
+ * multi-line only after LISTGROUP.  -1: the line has no reply code
+ * (three digits, then a space or the end of the line).
  */
 static int
 MultiLineReply(const char *cmd, const char *line)
 {
-    switch (atoi(line)) {
+    int code = NntpCode(line);
+
+    if (code < 0)
+	return(-1);
+    switch (code) {
     case 100: case 101: case 215: case 220: case 221: case 222:
     case 202: case 224: case 225: case 230: case 231: case 282:
 	return(1);
@@ -145,6 +150,11 @@ newscommand(char *command) {
 	    printf("%s", line);
 	    if (multi < 0) {
 		multi = MultiLineReply(cmd, line);
+		if (multi < 0) {
+		    /* what follows could not be told from the next reply */
+		    printf("Unexpected response from server\n");
+		    exit(2);
+		}
 		if (multi == 0)
 		    break;
 	    } else if (strncmp(line, ".\r\n", 3) == 0) {
@@ -189,7 +199,7 @@ newsquit(void) {
 	line[0] = 0;
     if (verbose)
 	printf("%s", line);
-    if (strncmp(line, "205 ", 4) != 0 && strncmp(line, "238 ", 4) != 0) {
+    if (NntpCode(line) != 205) {
 	printf("Unexpected response from server: %s", line);
 	exit(2);
     }
