@@ -5,6 +5,7 @@ package e2e
 
 import (
 	"errors"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -147,6 +148,42 @@ func TestDclientReplyCodes(t *testing.T) {
 			}
 			if code != tc.exit || !strings.Contains(out, tc.out) {
 				t.Errorf("dclient DATE: exit %d, want %d, and output %q, want %q in it", code, tc.exit, out, tc.out)
+			}
+		})
+	}
+}
+
+// TestDclientDumpFileQuit: dclient -f sends the commands of a file without reading their replies;
+// at QUIT it skips those replies up to the reply to QUIT (205), so a working session ends with
+// exit 0. Fails on main for DATE: the first reply read at QUIT was the 111 to DATE, refused
+// (exit 2); main took only 238 (a CHECK) there as a stand-in.
+func TestDclientDumpFileQuit(t *testing.T) {
+	for _, tc := range []struct{ name, cmds string }{
+		{"CHECK", "CHECK <dump1@e2e.test>\nCHECK <dump2@e2e.test>\n"},
+		{"DATE", "DATE\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := NewSite(t, SiteOptions{NoStart: true})
+			srv := fakeserver.New(t, fakeserver.Options{Greeting: "200 fake", Handler: fakeserver.LineHandler(func(_ *fakeserver.Conn, line string) ([]string, bool) {
+				l := strings.ToLower(strings.TrimSpace(line))
+				f := strings.Fields(line)
+				switch {
+				case strings.HasPrefix(l, "check ") && len(f) > 1:
+					return []string{"238 " + f[1]}, false
+				case strings.HasPrefix(l, "date"):
+					return []string{"111 20261116000000"}, false
+				case strings.HasPrefix(l, "quit"):
+					return []string{"205 bye"}, true
+				}
+				return []string{"500 what?"}, false
+			})})
+			file := filepath.Join(s.Dir, "dump.txt")
+			if err := os.WriteFile(file, []byte(tc.cmds), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			out, err := s.TryRun("dclient", "-f", file, "-p", strconv.Itoa(srv.Port()), "127.0.0.1")
+			if err != nil {
+				t.Errorf("dclient -f with %q: %v, want exit 0 after the 205 to QUIT:\n%s", tc.cmds, err, out)
 			}
 		})
 	}

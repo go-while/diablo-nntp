@@ -166,6 +166,9 @@ newscommand(char *command) {
     }
 }
 
+/* set by dodumpfile(): replies to the dumped commands were not read */
+static int dumped = 0;
+
 void
 dodumpfile(char *filename)
 {
@@ -186,6 +189,7 @@ dodumpfile(char *filename)
 	}
     }
     fclose(f);
+    dumped = 1;
 }
 
 void
@@ -199,6 +203,16 @@ newsquit(void) {
 	line[0] = 0;
     if (verbose)
 	printf("%s", line);
+    /*
+     * After -f the replies to the dumped commands come first: skip them
+     * up to the reply to QUIT (the connection ends after it).
+     */
+    while (dumped && line[0] != 0 && NntpCode(line) != 205) {
+	if (fgets((char *)&line, 512, fp) == NULL)
+	    line[0] = 0;
+	else if (verbose)
+	    printf("%s", line);
+    }
     if (NntpCode(line) != 205) {
 	printf("Unexpected response from server: %s", line);
 	exit(2);
