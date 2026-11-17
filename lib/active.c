@@ -378,11 +378,21 @@ FirstModeratedGroup(const char *nglist, char *buf, int bufLen)
  * UpdateActiveNX - update the active file NX field based on Xref: data
  *  This is useful for slaving Xref: data, but also maintaining
  *  the NX field in case this machine needs to become the Xref: master.
+ *
+ *  A group that is not in the active file is skipped; the groups after
+ *  it are still updated.  An entry whose number is empty, not all digits
+ *  or too large leaves that group's NX as it is (the group still counts
+ *  as found).
+ *
+ *  Returns -1 if there is no Xref: data, 0 if the Xref: line names
+ *  groups but none of them is in the active file, and 1 otherwise.
  */
 int
 UpdateActiveNX(char *xrefdata)
 {
     char *p, *artnum, group[MAXGNAME];
+    int named = 0;
+    int found = 0;
 
     /* Throw away the first part of the line */
     p=strtok(xrefdata, " \t\n");
@@ -401,6 +411,7 @@ UpdateActiveNX(char *xrefdata)
 
 	    group[artnum-group]='\0';
 	    artnum++;	
+	    ++named;
 		
 	    if (DebugOpt)
 		ddprintf("XREF UPDATE %s %s\n",group, artnum);
@@ -409,16 +420,22 @@ UpdateActiveNX(char *xrefdata)
 	    if (rec != NULL) {
 		artno_t n;
 		char buf[20];
+		char *end;
 
-		n = (strtoll(artnum, NULL, 10)) & 0x7FFFFFFFFFFFFFFFLL;
-		sprintf(buf, "%010lld", n);
-		KPDBWrite(DActiveDB, group, "NX", buf, KP_UNLOCK);
-	    } else {
-		return(0);
+		++found;
+		errno = 0;
+		n = strtoll(artnum, &end, 10);
+		if (*artnum < '0' || *artnum > '9' || *end != '\0' ||
+								errno == ERANGE) {
+		    KPDBUnlock(DActiveDB, rec);
+		} else {
+		    sprintf(buf, "%010lld", n);
+		    KPDBWrite(DActiveDB, group, "NX", buf, KP_UNLOCK);
+		}
 	    }
 	}
 	p=strtok(NULL, " \t\n");
     }
-    return(1);
+    return((named > 0 && found == 0) ? 0 : 1);
 }
 
