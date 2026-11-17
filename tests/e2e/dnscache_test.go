@@ -10,6 +10,7 @@ package e2e
 // timeout (see the shim).
 
 import (
+	"embed"
 	"net"
 	"os"
 	"os/exec"
@@ -41,23 +42,60 @@ type dnsShim struct {
 	so, log string
 }
 
-// buildDNSShim compiles the resolver shim, or skips (it needs glibc's LD_PRELOAD).
+// shimSources are the C sources of the LD_PRELOAD shims, taken into the test binary so
+// that building a shim does not depend on the directory the binary runs in.
+//
+//go:embed testdata/dnsshim/dnsshim.c testdata/tmrshim/tmrshim.c testdata/streamipc/streamipc.c
+var shimSources embed.FS
+
+// shimCC finds the C compiler for a shim. A host that runs these tests has built Diablo and
+// so has one: without it the test fails, unless E2E_NO_CC=1 says the host has none on
+// purpose, which skips it.
+func shimCC(t *testing.T) string {
+	t.Helper()
+	for _, c := range []string{os.Getenv("CC"), "cc", "gcc", "clang"} {
+		if c == "" {
+			continue
+		}
+		if p, err := exec.LookPath(c); err == nil {
+			return p
+		}
+	}
+	if os.Getenv("E2E_NO_CC") == "1" {
+		t.Skip("no C compiler (cc/gcc/clang) on PATH, and E2E_NO_CC=1")
+	}
+	t.Fatal("no C compiler (cc/gcc/clang) on PATH for the LD_PRELOAD shim; set E2E_NO_CC=1 to skip the tests that need one")
+	return ""
+}
+
+// buildTestdataShim compiles the shim testdata/<name>/<name>.c into <dir>/<name>.so. A
+// compile error fails the test: a skip would let a broken shim pass unnoticed.
+func buildTestdataShim(t *testing.T, dir, name string) string {
+	t.Helper()
+	cc := shimCC(t)
+	b, err := shimSources.ReadFile("testdata/" + name + "/" + name + ".c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(dir, name+".c")
+	so := filepath.Join(dir, name+".so")
+	if err := os.WriteFile(src, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(cc, append([]string{"-O2", "-shared", "-fPIC", "-o", so, src}, shimLibs()...)...).CombinedOutput(); err != nil {
+		t.Fatalf("cannot build the shim %s: %v\n%s", name, err, out)
+	}
+	return so
+}
+
+// buildDNSShim compiles the resolver shim, or skips where LD_PRELOAD shims do not run.
 func buildDNSShim(t *testing.T) *dnsShim {
 	t.Helper()
 	if !preloadHost(false) {
 		t.Skip("the resolver shim needs LD_PRELOAD of getnameinfo/getaddrinfo (Linux, FreeBSD, NetBSD)")
 	}
-	cc := wmCC(t)
 	dir := t.TempDir()
-	so := filepath.Join(dir, "dnsshim.so")
-	src, err := filepath.Abs(filepath.Join("testdata", "dnsshim", "dnsshim.c"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out, err := exec.Command(cc, append([]string{"-O2", "-shared", "-fPIC", "-o", so, src}, shimLibs()...)...).CombinedOutput(); err != nil {
-		t.Skipf("cannot build the resolver shim: %v\n%s", err, out)
-	}
-	return &dnsShim{so: so, log: filepath.Join(dir, "lookups.log")}
+	return &dnsShim{so: buildTestdataShim(t, dir, "dnsshim"), log: filepath.Join(dir, "lookups.log")}
 }
 
 // startDNSCacheReader writes a reader site with the shim preloaded and starts dreaderd on
