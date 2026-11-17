@@ -7,6 +7,7 @@ package e2e
 // answered 423 and dropped out of OVER.
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -145,6 +146,93 @@ func TestReaderRepeatedGroupOneNumber(t *testing.T) {
 	c.ExpectCmd(221, "HEAD 12")
 	if got := headerValue(c.ReadDotLines(), "Newsgroups"); got != rep {
 		t.Errorf("HEAD 12: Newsgroups of %d bytes, want the %d bytes the peer sent", len(got), len(rep))
+	}
+	c.ExpectCmd(205, "QUIT")
+}
+
+// TestReaderRepeatedGroupNotActive: a name that is not in the active file, listed three times
+// between repeats of two groups that are. It gets no number and no record (GROUP answers 411,
+// the Xref leaves it out); the other two groups get one number each, and the next article
+// takes the next number.
+func TestReaderRepeatedGroupNotActive(t *testing.T) {
+	st, spool := spoolStore(t)
+	s := NewReaderSite(t, ReaderOptions{Spool: spool})
+	id1, id2 := msgID(t), msgID(t)
+	feedReader(t, s, st, "e2e.test",
+		newArticle(id1, "e2e.none,e2e.test,e2e.none,e2e.other,e2e.none,e2e.test,e2e.other", "unknown group three times", "body"),
+		newArticle(id2, "e2e.test", "next", "body"))
+
+	c := s.Reader(t)
+	testkit.WaitFor(t, testkit.Deadline(), "the second article in GROUP e2e.test", func() bool {
+		_, line := c.Cmd("GROUP e2e.test")
+		f := strings.Fields(line)
+		return len(f) > 3 && f[0] == "211" && f[3] != "0" && f[3] != "1"
+	})
+	if line := c.ExpectCmd(211, "GROUP e2e.test"); !strings.HasPrefix(line, "211 2 1 2 ") {
+		t.Errorf("GROUP e2e.test: %q, want 211 2 1 2: the repeated name took more than one number", line)
+	}
+	c.ExpectCmd(224, "OVER 1-2")
+	over := c.ReadDotLines()
+	if len(over) != 2 || !strings.Contains(over[0], id1) || !strings.Contains(over[1], id2) {
+		t.Fatalf("OVER 1-2 in e2e.test: %.300q, want %s and %s", over, id1, id2)
+	}
+	got := overXref(t, over[0])
+	if len(got) != 2 || !slices.Contains(got, "e2e.test:1") || !slices.Contains(got, "e2e.other:1") {
+		t.Errorf("Xref of article 1: %q, want e2e.test:1 and e2e.other:1 once each, no e2e.none", got)
+	}
+	if line := c.ExpectCmd(211, "GROUP e2e.other"); !strings.HasPrefix(line, "211 1 1 1 ") {
+		t.Errorf("GROUP e2e.other: %q, want 211 1 1 1", line)
+	}
+	if code, line := c.Cmd("GROUP e2e.none"); code != 411 {
+		t.Errorf("GROUP e2e.none: %q, want 411: a group that is not in the active file got created", line)
+	}
+	c.ExpectCmd(205, "QUIT")
+}
+
+// TestReaderRepeatedGroupXrefSlave: in xref slave mode (readerxrefslavehost) the numbers come
+// from the article's Xref. A group listed three times takes the one number its Xref gives, a
+// second group listed twice too, and a group listed twice that the Xref leaves out gets no
+// number (slave mode drops it), the other groups unaffected.
+func TestReaderRepeatedGroupXrefSlave(t *testing.T) {
+	st, spool := spoolStore(t)
+	s := NewReaderSite(t, ReaderOptions{Spool: spool,
+		Groups: []string{"e2e.test", "e2e.other", "e2e.third"},
+		Config: map[string]string{"readerxrefslavehost": PathHost}})
+	id1, id2 := msgID(t), msgID(t)
+	a1 := append([]string{"Xref: " + PathHost + " e2e.test:50 e2e.other:7"},
+		newArticle(id1, "e2e.test,e2e.other,e2e.third,e2e.test,e2e.other,e2e.third,e2e.test", "xref and repeats", "body")...)
+	a2 := append([]string{"Xref: " + PathHost + " e2e.test:51"},
+		newArticle(id2, "e2e.test", "next", "body")...)
+	feedReader(t, s, st, "e2e.test", a1, a2)
+
+	c := s.Reader(t)
+	testkit.WaitFor(t, testkit.Deadline(), "article 51 in GROUP e2e.test", func() bool {
+		_, line := c.Cmd("GROUP e2e.test")
+		f := strings.Fields(line)
+		return len(f) > 3 && f[0] == "211" && f[3] == "51"
+	})
+	for _, g := range []struct {
+		group string
+		nums  map[int]string
+	}{
+		{"e2e.test", map[int]string{50: id1, 51: id2}},
+		{"e2e.other", map[int]string{7: id1}},
+	} {
+		c.ExpectCmd(211, "GROUP %s", g.group)
+		c.ExpectCmd(224, "OVER 1-100")
+		over := c.ReadDotLines()
+		if len(over) != len(g.nums) {
+			t.Errorf("OVER 1-100 in %s: %d lines, want %d: %.300q", g.group, len(over), len(g.nums), over)
+		}
+		for _, l := range over {
+			n, _ := strconv.Atoi(strings.SplitN(l, "\t", 2)[0])
+			if id, ok := g.nums[n]; !ok || !strings.Contains(l, id) {
+				t.Errorf("OVER in %s: %.200q, want only %v", g.group, l, g.nums)
+			}
+		}
+	}
+	if line := c.ExpectCmd(211, "GROUP e2e.third"); !strings.HasPrefix(line, "211 0 ") {
+		t.Errorf("GROUP e2e.third: %q, want no article (the Xref does not name it)", line)
 	}
 	c.ExpectCmd(205, "QUIT")
 }
