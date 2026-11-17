@@ -47,6 +47,18 @@ func TestR2ReproTrackonlyRewrite(t *testing.T) {
 	if !strings.HasPrefix(g1, "211 20 1 20") {
 		t.Errorf("GROUP e2e.test after dexpireover -a -R: %q, want 211 20 1 20 (before: %q)", g1, g0)
 	}
+	if strings.Contains(info1, "artNoMismatch") || strings.Contains(info1, "Article not found") {
+		t.Errorf("dgrpctl groupinfo after dexpireover -a -R: the index no longer has article 1 (the entries were dropped):\n%s", info1)
+	}
+	// the next ordinary expire run takes the empty index for a group without articles
+	s.Proc.Stop()
+	out2, err2 := s.TryRun("dexpireover", "-a", "-v")
+	startReader(t, s, "[127.0.0.1]:"+strings.TrimPrefix(s.Addr, "127.0.0.1:"))
+	g2 := group()
+	t.Logf("second run dexpireover -a -v: err %v\n%s\nGROUP after it: %q", err2, out2, g2)
+	if !strings.HasPrefix(g2, "211 20 1 20") {
+		t.Errorf("GROUP e2e.test after the next dexpireover -a: %q, want 211 20 1 20", g2)
+	}
 }
 
 // TestR2ReproRewriteFullGroupBeingWritten: a group whose index is full (512 slots) while the
