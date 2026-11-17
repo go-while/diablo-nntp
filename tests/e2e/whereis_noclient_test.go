@@ -1,6 +1,9 @@
 package e2e
 
 import (
+	"errors"
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -84,8 +87,37 @@ func TestWhereisClientGoneBeforeReply(t *testing.T) {
 				}
 				return false
 			})
+			asked := time.Now()
+			// dreaderd looks at the clock only every 10 selects (2 s each when idle), so a
+			// second client keeps its loop turning for the check of all connections
+			defer whereisBusy(t, s)()
+
+			// the idle timeout must end the client before the 223 comes, else the test
+			// shows nothing: the "timeout idle" line within hold-10 s of the WHEREIS, and
+			// the client sees its 400 or EOF/a reset (not the article, not a deadline)
+			testkit.WaitFor(t, hold-10*time.Second, "the idle timeout to end the waiting client", func() bool {
+				return strings.Contains(generalLog(s), "timeout idle")
+			})
+			c.Deadline = 10 * time.Second
+			for {
+				line, err := c.ReadLine()
+				if err != nil {
+					var ne net.Error
+					if errors.As(err, &ne) && ne.Timeout() {
+						t.Fatalf("the waiting client was not closed after its idle timeout: %v", err)
+					}
+					break
+				}
+				if !strings.HasPrefix(line, "400 ") {
+					t.Fatalf("the waiting client got %q, want only the idle timeout's 400 and EOF", line)
+				}
+			}
+			if time.Since(asked) >= hold {
+				t.Fatalf("the client was ended only %v after the WHEREIS, not before the 223 at %v", time.Since(asked), hold)
+			}
+
 			// the spool server answers 223 after hold; give dreaderd time to act on it
-			time.Sleep(hold + 2*time.Second)
+			time.Sleep(time.Until(asked.Add(hold + 2*time.Second)))
 
 			// a client after it is served by the same reader process
 			d := s.Reader(t)
@@ -100,5 +132,39 @@ func TestWhereisClientGoneBeforeReply(t *testing.T) {
 				t.Errorf("the log has %d reader processes, want 1: the reader died and was started again", len(pids))
 			}
 		})
+	}
+}
+
+// whereisBusy keeps dreaderd's loop turning with a client that sends GROUP every 200 ms
+// (dreaderd looks at the clock only every 10 selects, 2 s each when idle, so its check of all
+// connections, due every 30 s, can come late on an idle process). The returned function stops
+// it and fails t if a GROUP of it failed meanwhile.
+func whereisBusy(t *testing.T, s *Site) func() {
+	t.Helper()
+	busy := s.Reader(t)
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	var berr error
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			case <-time.After(200 * time.Millisecond):
+			}
+			if code, line, err := busy.TryCmd("GROUP e2e.test"); err != nil || code != 211 {
+				berr = fmt.Errorf("GROUP on the busy client: %d %q (%v)", code, line, err)
+				return
+			}
+		}
+	}()
+	return func() {
+		close(stop)
+		<-done
+		busy.Close()
+		if berr != nil {
+			t.Errorf("%v", berr)
+		}
 	}
 }
