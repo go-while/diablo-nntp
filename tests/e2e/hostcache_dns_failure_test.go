@@ -3,6 +3,7 @@ package e2e
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -15,7 +16,8 @@ import (
 // getaddrinfo() of a host name (not a numeric address) does what the file's first byte says:
 // "N" fails with EAI_NONAME (no such name), "F" with EAI_FAIL (a failed answer), "S" with
 // EAI_SYSTEM, "C" answers 127.0.0.3 (the name has a new address), anything else fails with
-// EAI_AGAIN (the resolver does not answer).
+// EAI_AGAIN (the resolver does not answer). Its first call in each process writes the mark
+// "CALLED", so a test can tell that the shim is in use at all.
 const hostCacheGAISource = `#define _GNU_SOURCE
 #include <ctype.h>
 #include <dlfcn.h>
@@ -33,9 +35,15 @@ int
 getaddrinfo(const char *node, const char *service, const struct addrinfo *hints, struct addrinfo **res)
 {
     static int (*real)(const char *, const char *, const struct addrinfo *, struct addrinfo **);
+    static int called;
     const char *flag = getenv("HC_DNSFAIL");
     char c = 0;
     int fd;
+
+    if (!called) {
+	called = 1;
+	shim_mark("CALLED");
+    }
 
     if (real == NULL)
 	real = (int (*)(const char *, const char *, const struct addrinfo *, struct addrinfo **))
@@ -79,6 +87,9 @@ type hcSite struct {
 
 func newHCSite(t *testing.T, feeds, hosts string) *hcSite {
 	t.Helper()
+	if !preloadHost(false) {
+		t.Skip("the fault injector uses LD_PRELOAD")
+	}
 	so := preloadShim(t, "hcgai", withMark(hostCacheGAISource))
 	h := &hcSite{t: t, mark: filepath.Join(t.TempDir(), "mark"), flag: filepath.Join(t.TempDir(), "dnsfail")}
 	h.Site = NewSite(t, SiteOptions{
@@ -87,6 +98,11 @@ func newHCSite(t *testing.T, feeds, hosts string) *hcSite {
 		Env:       []string{lockFaultEnv(so), "SHIM_MARK=" + h.mark, "HC_DNSFAIL=" + h.flag},
 	})
 	h.cache = filepath.Join(h.Dir, "dhosts.cache")
+	// the start has built the host cache, which looks up localhost: the shim must have
+	// seen that, or it does not take effect here and every later wait would time out
+	if len(shimMarked(h.mark, "CALLED")) == 0 {
+		t.Fatalf("the getaddrinfo shim was never hit (no CALLED mark after the host cache was built): it does not take effect on %s", runtime.GOOS)
+	}
 	t.Cleanup(func() {
 		if t.Failed() {
 			t.Logf("marks:\n%s", strings.Join(shimMarks(h.mark), "\n"))
