@@ -37,6 +37,18 @@ time_t DNMTime = 0;
  */
 static FILE *HAOldCache = NULL;
 
+/*
+ * The (label, entry) pairs whose old addresses this rebuild has written:
+ * a name listed more than once under one label gets them once.
+ */
+typedef struct HAKept {
+    struct HAKept	*next;
+    char		label[256];
+    char		entry[256];
+} HAKept;
+
+static HAKept *HAKeptList = NULL;
+
 int convHost(char *host, HostAccess *HA, FILE *fo);
 static int keepOldHost(const char *host, HostAccess *HA, FILE *fo, const char *why);
 void loadDiabloHosts(FILE *fo, int t, int *count);
@@ -164,6 +176,12 @@ LoadHostAccess(time_t t, int force, int rebuildtime)
 	    fclose(HAOldCache);
 	    HAOldCache = NULL;
 	}
+	while (HAKeptList != NULL) {
+	    HAKept *k = HAKeptList;
+
+	    HAKeptList = k->next;
+	    free(k);
+	}
 	if (count == 0)
 	    logit(LOG_INFO, "No incoming hosts found");
 	else if (DebugOpt)
@@ -276,14 +294,16 @@ convHost(char *host, HostAccess *HA, FILE *fo)
 		}
 	    }
 	    freeaddrinfo(ai0);
-	} else if (gai != EAI_NONAME
-#ifdef EAI_NODATA
-			&& gai != EAI_NODATA
+	} else if (gai == EAI_AGAIN || gai == EAI_MEMORY
+#ifdef EAI_SYSTEM
+			|| gai == EAI_SYSTEM
 #endif
 	) {
 	    /*
-	     * No answer for now (resolver down, timeout, server failure),
-	     * not "no such name": keep the addresses the name had.
+	     * No answer for now (resolver down or timed out, no memory, a
+	     * system error): keep the addresses the name had.  Any other
+	     * error (no such name, no address, a failed answer) drops the
+	     * name as before.
 	     */
 	    found = keepOldHost(host, HA, fo, gai_strerror(gai));
 	}
@@ -301,7 +321,7 @@ convHost(char *host, HostAccess *HA, FILE *fo)
 		fwrite(HA, sizeof(*HA), 1, fo);
 		found++;
 	    }
-	} else if (h_errno == TRY_AGAIN || h_errno == NO_RECOVERY) {
+	} else if (h_errno == TRY_AGAIN) {
 	    found = keepOldHost(host, HA, fo, "temporary lookup failure");
 	}
     }
@@ -311,30 +331,69 @@ convHost(char *host, HostAccess *HA, FILE *fo)
 
 /*
  * keepOldHost() - the lookup of host gave no answer this time: write the
- * addresses the previous cache had for the same entry, with the label of
- * this entry.  Returns the number of records written (0 without a
- * previous cache or when it had none: the entry is dropped as before).
+ * addresses the previous cache had for the same label and entry, each
+ * once.  A later line of the same label and entry in this rebuild writes
+ * nothing.  Returns the number of records written (0 without a previous
+ * cache or when it had none: the entry is dropped as before).
  */
 static int
 keepOldHost(const char *host, HostAccess *HA, FILE *fo, const char *why)
 {
     HostAccess old;
+    HAKept *k;
+    char **addrs = NULL;
+    int naddrs = 0;
     int found = 0;
+    int i;
+
+    for (k = HAKeptList; k != NULL; k = k->next) {
+	if (strcmp(k->label, HA->label) == 0 &&
+					strcmp(k->entry, HA->entry) == 0)
+	    return(0);
+    }
+    if ((k = malloc(sizeof(*k))) == NULL)
+	return(0);
+    strcpy(k->label, HA->label);
+    strcpy(k->entry, HA->entry);
+    k->next = HAKeptList;
+    HAKeptList = k;
 
     if (HAOldCache != NULL) {
 	rewind(HAOldCache);
 	while (fread(&old, sizeof(old), 1, HAOldCache) == 1) {
 	    old.entry[sizeof(old.entry) - 1] = 0;
+	    old.label[sizeof(old.label) - 1] = 0;
 	    old.addrst[sizeof(old.addrst) - 1] = 0;
 	    if (old.addrst[0] == 0 || !(old.testtype & TESTTYPE_IP) ||
-					strcmp(old.entry, HA->entry) != 0)
+				strcmp(old.entry, HA->entry) != 0 ||
+				strcmp(old.label, HA->label) != 0)
 		continue;
+	    for (i = 0; i < naddrs; ++i) {
+		if (strcmp(addrs[i], old.addrst) == 0)
+		    break;
+	    }
+	    if (i < naddrs)
+		continue;
+	    {
+		char **na = realloc(addrs, (naddrs + 1) * sizeof(*addrs));
+
+		if (na == NULL || (na[naddrs] = strdup(old.addrst)) == NULL) {
+		    if (na != NULL)
+			addrs = na;
+		    break;
+		}
+		addrs = na;
+		naddrs++;
+	    }
 	    strcpy(HA->addrst, old.addrst);
 	    HA->testtype |= TESTTYPE_IP;
 	    fwrite(HA, sizeof(*HA), 1, fo);
 	    found++;
 	}
     }
+    for (i = 0; i < naddrs; ++i)
+	free(addrs[i]);
+    free(addrs);
     logit(LOG_ERR, "host cache: %s: %s, %d previous address(es) kept",
 						host, why, found);
     return(found);
