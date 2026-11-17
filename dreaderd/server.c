@@ -43,6 +43,7 @@ void NNServerPrime4(Connection *conn);
 void NNServerPrimeAuth1(Connection *conn);
 void NNServerPrimeAuth2(Connection *conn);
 void NNServerConnect(Connection *conn);
+void FreeSReq(ServReq *sreq);
 
 ServReq	*SReadBase;
 ServReq **PSRead = &SReadBase;
