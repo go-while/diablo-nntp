@@ -106,7 +106,7 @@ func firstSpoolHeader(t *testing.T, s *Site) (string, []byte) {
 // TestFilterUnreadArticlesJudged (deep review r2 M14, D-241): diab_read() failed on any NUL
 // byte in the stored article and on every record of a compressed spool object (compresslvl);
 // DiabFilter() then sent nothing and the article counted as "not spam", so it reached the
-// nospam feed unjudged (and the onlyspam feed too). rawDotFilter calls the articles with the
+// nospam feed unjudged (on main also the onlyspam feed). rawDotFilter calls the articles with the
 // subject "spam" spam and the others not. Each article must get its own verdict:
 //   - nul: a spam article with a NUL byte in its body (the spool and the filter's raw input
 //     hold the NUL) goes only to the onlyspam feed, a plain one after it only to the nospam
@@ -116,7 +116,8 @@ func firstSpoolHeader(t *testing.T, s *Site) (string, []byte) {
 //     reads when it is inflated); the filter gets its last line;
 //   - compressed-wireformat: the same with wireformat on (gzip and wire store types).
 //
-// Fails on main: the NUL article and every article on the compressed spool are in both queues.
+// Fails on main and on gw-reply-codes-filter: the NUL article and every article on the
+// compressed spool go to the nospam feed, not judged.
 func TestFilterUnreadArticlesJudged(t *testing.T) {
 	t.Run("nul", func(t *testing.T) {
 		s := filterSite(t, rawDotFilter, "", nil)
@@ -180,7 +181,8 @@ func TestFilterUnreadArticlesJudged(t *testing.T) {
 
 // TestFilterBadRecordPassesLogged (deep review r2 M14, D-241): a record diab_read() must not
 // judge, because its spool header or its gzip member is damaged, is not sent to the filter: it
-// passes as before (both feeds), "cannot read article ..., not filtered" is logged, and the
+// passes as before (to the nospam feed, not to the onlyspam feed, which gets only what the
+// filter called spam), "cannot read article ..., not filtered" is logged, and the
 // articles after it get their own verdicts. The damage is written into the spool file between
 // the store and the filter: the diablo master is stopped (SIGSTOP) while the article is
 // offered, so its SOUT line waits in the pipe; the test changes the record (the first of the
@@ -246,7 +248,7 @@ func TestFilterBadRecordPassesLogged(t *testing.T) {
 
 			injectLines(t, s, spam, newArticle(spam, "e2e.test", "spam", "body"))
 			injectLines(t, s, ham, newArticle(ham, "e2e.test", "ham", "body"))
-			filterJudged(t, s, []string{bad, spam, ham}, []bool{true, false, true}, []bool{true, true, false}, 2)
+			filterJudged(t, s, []string{bad, spam, ham}, []bool{true, false, true}, []bool{false, true, false}, 2)
 			if log := s.logOutput(); !strings.Contains(log, "cannot read article") || !strings.Contains(log, "not filtered") {
 				t.Errorf("no \"cannot read article ..., not filtered\" log line:\n%s", log)
 			}
