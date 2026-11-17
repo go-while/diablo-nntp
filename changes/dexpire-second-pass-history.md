@@ -1,0 +1,1 @@
+- dexpire: the history update of a second or later pass over the spools now uses only the directories that pass listed. Before, the list of the earlier passes was kept, so a directory listed in pass 1 and removed in pass 2 kept its history records unexpired, and the feeder answered 223 for articles whose files were gone (D-267).
