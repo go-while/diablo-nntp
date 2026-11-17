@@ -52,8 +52,9 @@ access ` + PeerIP + ` feed
 	id := msgID(t)
 	gone.MustSend("ARTICLE " + id + "\r\n")
 	// the request is queued (no spool server to give it to); the client waits, says nothing, and
-	// is closed by the idle timeout (5 s), which takes it off its request (NNTerminate)
-	for range 6 {
+	// is closed by the idle timeout (5 s), which takes it off its request (NNTerminate); the
+	// reader looks at an idle client at its next full pass, which comes every 30 s or so
+	for range 20 {
 		time.Sleep(2 * time.Second)
 		other.ExpectCmd(111, "DATE")
 	}
