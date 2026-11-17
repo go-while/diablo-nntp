@@ -43,7 +43,7 @@ Prototype void NNPostCommand1(Connection *conn);
 Prototype void PostLogRefused(Connection *conn, const char *msgid, const char *reply);
 
 void NNPostResponse1(Connection *conn);
-void NNPostArticle1(Connection *conn);
+Prototype void NNPostArticle1(Connection *conn);
 void NNPostResponse2(Connection *conn);
 int MailIfModerated(char *groups, Connection *conn, const char **perr);
 int ModeratorAddress(const char *group, char *addr, size_t addrLen);
