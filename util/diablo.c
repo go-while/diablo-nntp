@@ -2642,7 +2642,7 @@ DoSession(int fd, int count)
 			DoSpoolStats(STATS_S_HEADPRO);
 			break;
 		    }
-		    data = NULL;
+		    /* data, if any, is released below like on the other paths */
 		} else if (data && headOnly && as != AS_HEAD) {
 		    xfprintf(fo, "430 Article not found\r\n");
 		    switch(as) {
