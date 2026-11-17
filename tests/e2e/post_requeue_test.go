@@ -519,7 +519,7 @@ func isTimeout(err error) bool {
 
 // TestPostClientGoneUnqueued: a client whose connection fails (here: it is reset) while its
 // POST waits in dreaderd's queue because no post server connection can take it (the post
-// server is down here: nothing listens on its port) is let go at the next pass over all
+// server is down here: its port is reserved, bound but not listening, reservePort) is let go at the next pass over all
 // descriptors, as one whose post is at a post server already. It was held, with its
 // descriptor and article, until a post server answered. Once the post server is up, the gone
 // client's post is not sent: the next client's POST gets 240 and is the only article the post
@@ -535,10 +535,11 @@ func TestPostClientGoneUnqueued(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, spool := spoolStore(t)
-			l := listenFree(t)
-			postAddr := l.Addr().String()
-			_, postPort, _ := net.SplitHostPort(postAddr)
-			l.Close() // the post server is down until the test starts it below
+			// the post server is down until the test brings it up below; its port stays
+			// reserved meanwhile (bound, not listening: dreaderd's connect is refused, and no
+			// other test can take the port)
+			rp := reservePort(t, "127.0.0.1")
+			postPort := fmt.Sprint(rp.port)
 			hosts := "127.0.0.1\ts1p" + fmt.Sprint(spool.Port()) + "\n" +
 				"127.0.0.1\to1p" + postPort + tc.opts + "\n"
 			s := NewReaderSite(t, ReaderOptions{Spool: spool, Files: map[string]string{"dserver.hosts": hosts}})
@@ -558,7 +559,8 @@ func TestPostClientGoneUnqueued(t *testing.T) {
 			resetClose(t, c)
 			waitLetGo(t, s, tag, 44*time.Second)
 
-			sink, post := newPostSinkAt(t, postAddr)
+			sink, post := newPostSink(t, nil)
+			rp.up(t, post.Addr())
 			next := msgID(t)
 			d := s.Reader(t)
 			defer d.Close()
@@ -575,11 +577,4 @@ func TestPostClientGoneUnqueued(t *testing.T) {
 			onlyArticles(t, sink.got(), next)
 		})
 	}
-}
-
-// newPostSinkAt is newPostSink on a given address.
-func newPostSinkAt(t *testing.T, addr string) (*postSink, *fakeserver.Server) {
-	t.Helper()
-	p := &postSink{}
-	return p, fakeserver.New(t, fakeserver.Options{Addr: addr, Deadline: 120 * time.Second, Handler: p.handler})
 }
