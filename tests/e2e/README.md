@@ -439,6 +439,7 @@ sharing: they contain system/process names and test-site log contents.
 | `TestReaderOvCacheLowered` | dreaderd | `readerovcache 65536` does not fit the descriptor limit: dreaderd logs `readerovcache 65536 lowered to N` and the feed still works |
 | `TestReaderOvCacheClientReserve` | dreaderd | `readerovcache 300`, `readerthreads 16`, 56 groups with 18 data files each: 12 new feed connections still get a greeting (the fork lowers its cache when the overview files reach the descriptors left for clients) |
 | `TestKPDBSameValueNoWrite` | dkp | `dkp -w` of the value a field already has leaves the file's bytes and mtime alone; a new value of the same length is written. **Fails** on main: the same-value pwrite moves the mtime and the close stamps the header |
+| `TestHostCacheDNSFailureKeepsPeers` | diablo | peer `inhost localhost` from 127.0.0.1, with a preloaded getaddrinfo() that fails for host names while a flag file exists: a rebuild of the host cache during EAI_AGAIN keeps the peer's addresses (200 during the failure and after it, a log line names the kept addresses); a rebuild during EAI_NONAME drops it (502), and so does a rebuild that removes the label from dnewsfeeds during EAI_AGAIN. **Fails** on main before the D-236 fix: 502 after the rebuild during EAI_AGAIN, until the next rebuild. Linux, illumos, FreeBSD and NetBSD (LD_PRELOAD) |
 
 ## Running
 

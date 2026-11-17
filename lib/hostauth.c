@@ -31,7 +31,14 @@ time_t HAMTime = 0;
 time_t HACMTime = 0;
 time_t DNMTime = 0;
 
+/*
+ * The cache being replaced, open for reading in the rebuild only: the
+ * addresses of a name that does not resolve for now are taken from it.
+ */
+static FILE *HAOldCache = NULL;
+
 int convHost(char *host, HostAccess *HA, FILE *fo);
+static int keepOldHost(const char *host, HostAccess *HA, FILE *fo, const char *why);
 void loadDiabloHosts(FILE *fo, int t, int *count);
 void loadDnewsFeeds(FILE *fo, int t, int *count);
 
@@ -150,8 +157,13 @@ LoadHostAccess(time_t t, int force, int rebuildtime)
 	else
 	    printf("Rebuilding host cache\n");
 
+	HAOldCache = fopen(PatDbExpand(DHostsCachePat), "r");
 	loadDnewsFeeds(fo, t, &count);
 	loadDiabloHosts(fo, t, &count);
+	if (HAOldCache != NULL) {
+	    fclose(HAOldCache);
+	    HAOldCache = NULL;
+	}
 	if (count == 0)
 	    logit(LOG_INFO, "No incoming hosts found");
 	else if (DebugOpt)
@@ -247,9 +259,11 @@ convHost(char *host, HostAccess *HA, FILE *fo)
 	 * glibc 2.39 (EL10) then drops even a numeric IPv6 address on a
 	 * host without a global IPv6 address, so the entry was lost.
 	 */
+	int gai;
+
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_UNSPEC;
-	if (getaddrinfo(host, NULL, &hints, &ai0) == 0) {
+	if ((gai = getaddrinfo(host, NULL, &hints, &ai0)) == 0) {
 	    struct addrinfo *ai;
 
 	    for (ai = ai0; ai; ai = ai->ai_next) {
@@ -262,6 +276,16 @@ convHost(char *host, HostAccess *HA, FILE *fo)
 		}
 	    }
 	    freeaddrinfo(ai0);
+	} else if (gai != EAI_NONAME
+#ifdef EAI_NODATA
+			&& gai != EAI_NODATA
+#endif
+	) {
+	    /*
+	     * No answer for now (resolver down, timeout, server failure),
+	     * not "no such name": keep the addresses the name had.
+	     */
+	    found = keepOldHost(host, HA, fo, gai_strerror(gai));
 	}
     }
 #else
@@ -269,7 +293,7 @@ convHost(char *host, HostAccess *HA, FILE *fo)
 	struct hostent *he;
 	int i;
 
-	if ((he = gethostbyname(host)) != NULL)
+	if ((he = gethostbyname(host)) != NULL) {
 	    for (i = 0; he->h_addr_list && he->h_addr_list[i] != NULL; ++i) {
 		struct in_addr *haddr = (void *)he->h_addr_list[i];
 		strcpy(HA->addrst, inet_ntoa(*haddr));
@@ -277,8 +301,42 @@ convHost(char *host, HostAccess *HA, FILE *fo)
 		fwrite(HA, sizeof(*HA), 1, fo);
 		found++;
 	    }
+	} else if (h_errno == TRY_AGAIN || h_errno == NO_RECOVERY) {
+	    found = keepOldHost(host, HA, fo, "temporary lookup failure");
+	}
     }
 #endif
+    return(found);
+}
+
+/*
+ * keepOldHost() - the lookup of host gave no answer this time: write the
+ * addresses the previous cache had for the same entry, with the label of
+ * this entry.  Returns the number of records written (0 without a
+ * previous cache or when it had none: the entry is dropped as before).
+ */
+static int
+keepOldHost(const char *host, HostAccess *HA, FILE *fo, const char *why)
+{
+    HostAccess old;
+    int found = 0;
+
+    if (HAOldCache != NULL) {
+	rewind(HAOldCache);
+	while (fread(&old, sizeof(old), 1, HAOldCache) == 1) {
+	    old.entry[sizeof(old.entry) - 1] = 0;
+	    old.addrst[sizeof(old.addrst) - 1] = 0;
+	    if (old.addrst[0] == 0 || !(old.testtype & TESTTYPE_IP) ||
+					strcmp(old.entry, HA->entry) != 0)
+		continue;
+	    strcpy(HA->addrst, old.addrst);
+	    HA->testtype |= TESTTYPE_IP;
+	    fwrite(HA, sizeof(*HA), 1, fo);
+	    found++;
+	}
+    }
+    logit(LOG_ERR, "host cache: %s: %s, %d previous address(es) kept",
+						host, why, found);
     return(found);
 }
 
