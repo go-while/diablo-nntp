@@ -175,6 +175,10 @@ typedef	long long	artno_t;
 #define HASH_CRC	1
 #define HASH_OCRC	2
 
+/* msgidhash: the hash of Message-IDs (msgidhash(), lib/hash.c; D-210) */
+#define MSGIDHASH_HASH		0	/* hhash(), the "hash" method (default) */
+#define MSGIDHASH_SIPHASH	1	/* SipHash-2-4, fixed key */
+
 #define	CONF_FEEDER	0x01
 #define	CONF_READER	0x02
 
@@ -242,6 +246,7 @@ struct DiabloOpts {
     int ReaderForks;
     int ReaderThreads;
     int ReaderFeedForks;
+    int ReaderOvCache;		/* groups whose overview a fork keeps open */
     int ReaderDns;
     int ReaderDnsCacheTTL;	/* readerdnscachettl: seconds, 0 = off */
     int ReaderDnsCacheNegTTL;	/* readerdnscachenegttl: seconds, 0 = off */
@@ -297,6 +302,7 @@ struct DiabloOpts {
     GroupHashType ReaderGroupHashMethod;
     char *PgpVerifyArgs[10];
     char *PostXFilter;
+    int MsgIdHashMethod;	/* msgidhash: MSGIDHASH_* */
 };
 
 /* One shared definition is provided by lib/global.c. */
@@ -322,12 +328,29 @@ typedef struct HistHead {
     uint16	version;	/* version of history file	*/
     uint16	henSize;	/* size of history entry	*/
     uint16	headSize;	/* size of history header	*/
+    uint16	msgidHash;	/* version 3: MSGIDHASH_* of the entries */
 } HistHead;
 
-#define HMAGIC		((uint32)0xA1B2C3D4)
+#define HMAGIC		((uint32)0xA1B2C3D4)	/* versions 1 and 2 */
+#define HMAGIC3		((uint32)0xA1B2C3D5)	/* version 3 (msgidhash siphash) */
+#define HMAGIC_OK(m)	((m) == HMAGIC || (m) == HMAGIC3)
+#define HLIVEMAGIC(hh)	(((hh)->version >= 3) ? HMAGIC3 : HMAGIC)
 #define HDEADMAGIC	((uint32)0xDEADF5E6)
 #define HDEADLOCK	8	/* dhisexpire locks bytes 8-11 while it is dead */
-#define HVERSION	2
+/*
+ * Version 3 is version 2 with msgidHash set: its entries are hashed with
+ * that msgidhash method.  It has its own magic, HMAGIC3, so that every
+ * program from before it refuses the file as not a history: diablo and
+ * diload also refuse a newer version, but the old dhisexpire and didump only
+ * warn, and dhisexpire -a (or didump into a new diload) would rewrite it as
+ * a version 2 file of the other method.  HistHeadMagicOK() checks that the
+ * magic goes with the version.  A history with msgidhash hash is still
+ * written as version 2 with HMAGIC, and in a version 2 file msgidHash is
+ * not read (the header's padding until then).  The field takes no room:
+ * sizeof(HistHead) stays 16.
+ */
+#define HVERSION	3
+#define HVERSION_HASH	2	/* the version written for msgidhash hash */
 
 /*
  * Dreaderd cache scoreboard
@@ -565,6 +588,7 @@ typedef struct ArtTypeList {
 #define HGF_MLOCK	0x10
 #define HGF_READONLY	0x04
 #define HGF_EXCHECK	0x08
+#define HGF_FILEHASH	0x20	/* take the file's msgidhash method, not refuse it */
 
 typedef struct Node {
     struct Node		*no_Next;

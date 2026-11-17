@@ -96,7 +96,7 @@ main(int ac, char **av)
 	if (HistoryLookup(buf, NULL) != 0) {
 	    History h = { 0 };
 
-	    h.hv = hhash(buf);
+	    h.hv = msgidhash(buf);
 	    h.iter = (unsigned short)-1;
 	    h.exp |= EXPF_EXPIRED;
 	    h.gmt = gmt;

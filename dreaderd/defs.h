@@ -39,7 +39,7 @@ struct DnsRes;
 #define OVERVIEW_FMT	"Subject:\r\nFrom:\r\nDate:\r\nMessage-ID:\r\nReferences:\r\nBytes:\r\nLines:\r\nXref:full\r\n"
 #define DEFMAXARTSINGROUP		1024
 #define DEFARTSINGROUP			512
-#define OV_CACHE_MAX			8	/* open fd's for N groups */
+#define OV_CACHE_MAX			8	/* readerovcache default, and its floor */
 #define MAX_OVERVIEW_CACHE_REGIONS      2       /* 256x2 = 512 articles   */
 #define MAX_CROSS			64
 
@@ -759,6 +759,8 @@ typedef struct OverData {
 
 typedef struct OverInfo {
     struct OverInfo *ov_Next;
+    struct OverInfo *ov_LruPrev;	/* more recently used		*/
+    struct OverInfo *ov_LruNext;	/* less recently used		*/
     int		ov_Refs;
     char        *ov_Group;
     int         ov_MaxArts;     /* maximum number of articles in group  */

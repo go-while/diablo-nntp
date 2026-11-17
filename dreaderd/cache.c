@@ -135,7 +135,7 @@ int
 OpenCache(const char *msgid, int *pcfd, int *psize)
 {
     int fd;
-    hash_t hv = hhash(msgid);
+    hash_t hv = msgidhash(msgid);
     char path[PATH_MAX];
 
     *pcfd = -1;
@@ -185,7 +185,7 @@ CreateCache(Connection *conn)
 	return;
     }
 
-    hv = hhash(conn->co_SReq->sr_MsgId);
+    hv = msgidhash(conn->co_SReq->sr_MsgId);
 
     /*
      * open cache file
@@ -298,7 +298,7 @@ void
 AbortCache(int fd, const char *msgid, int closefd)
 {
     char path[PATH_MAX];
-    hash_t hv = hhash(msgid);
+    hash_t hv = msgidhash(msgid);
 
     if (cacheFile(hv, path, 0) == 0) {
 	strcat(path, ".tmp");
@@ -322,7 +322,7 @@ CommitCache(Connection *conn, int closefd)
     char path1[PATH_MAX];
     char path2[PATH_MAX];
     char *msgid = conn->co_SReq->sr_MsgId;
-    hash_t hv = hhash(msgid);
+    hash_t hv = msgidhash(msgid);
     int fd = fileno(conn->co_SReq->sr_Cache);
 
     if (cacheFile(hv, path2, 0) < 0) {

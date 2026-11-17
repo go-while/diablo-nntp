@@ -46,6 +46,8 @@ Prototype int HistoryStore(History *h);
 Prototype int HistoryStoreExp(History *h, HistIndex index);
 Prototype int HistoryExpire(const char *msgid, History *h, int unexp);
 Prototype void PrintHistory(History *h);
+Prototype int HistHeadMsgIdHash(const HistHead *hh);
+Prototype int HistHeadMagicOK(const HistHead *hh);
 
 Prototype uint32 NewHSize;
 
@@ -67,6 +69,7 @@ int		HBlkGood;
 char		HistoryFileName[PATH_MAX];
 int		DoingReOpen = 0;
 static int	ReOpenLockError = 0;	/* errno of a failed lock in a reopen */
+static uint32	HMagic = HMAGIC;	/* magic of the open history while it is alive */
 static void	reopenWait(void);
 
 /*
@@ -259,7 +262,7 @@ HistoryOpen(const char *fileName, int hflags)
 
     if (st.st_size == 0 || 
 	read(fd, &HHead, sizeof(HHead)) != sizeof(HHead) ||
-	HHead.hmagic != HMAGIC
+	!HMAGIC_OK(HHead.hmagic)
     ) {
 	/*
 	 * Is this history an old one and we need to wait for a new one?
@@ -331,7 +334,7 @@ HistoryOpen(const char *fileName, int hflags)
 	     */
 	    if ((HFlags & HGF_READONLY) ||
 		(pread(fd, &hh, sizeof(hh), 0) == sizeof(hh) &&
-		hh.hmagic == HMAGIC) ||
+		HMAGIC_OK(hh.hmagic)) ||
 		fstat(fd, &st) < 0 || st.st_size > 0) {
 		openLock = XLOCK_SH;
 		break;
@@ -347,7 +350,7 @@ HistoryOpen(const char *fileName, int hflags)
 
 	if (st.st_size == 0 || 
 	    read(fd, &HHead, sizeof(HHead)) != sizeof(HHead) ||
-	    HHead.hmagic != HMAGIC
+	    !HMAGIC_OK(HHead.hmagic)
 	) {
 	    uint32 n;
 	    uint32 b;
@@ -386,7 +389,9 @@ HistoryOpen(const char *fileName, int hflags)
 	    bzero(&HHead, sizeof(HHead));
 
 	    HHead.hashSize = NewHSize;
-	    HHead.version  = HVERSION;
+	    HHead.version  = (DOpts.MsgIdHashMethod == MSGIDHASH_HASH) ?
+				HVERSION_HASH : HVERSION;
+	    HHead.msgidHash = DOpts.MsgIdHashMethod;
 	    HHead.henSize  = sizeof(History);
 	    HHead.headSize = sizeof(HHead);
 
@@ -423,7 +428,7 @@ HistoryOpen(const char *fileName, int hflags)
 		HistoryFatalIO("initial sync");
 
 	    /* Mark the database valid only after its contents are complete. */
-	    HHead.hmagic = HMAGIC;
+	    HHead.hmagic = HLIVEMAGIC(&HHead);
 	    if (HistoryWriteAt(fd, &HHead, sizeof(HHead), 0) < 0)
 		HistoryFatalIO("final header write");
 	    if (fsync(fd) < 0)
@@ -486,7 +491,39 @@ HistoryOpen(const char *fileName, int hflags)
 	    (int)sizeof(History), (int)sizeof(HHead));
 	exit(1);
     }
-    if (HHead.hmagic != HMAGIC) {
+    /*
+     * The entries hold the hashes of one msgidhash method.  With the other
+     * one every lookup would miss (and the old collisions would come back
+     * through the gaps), so the history is refused: rebuild it, or set
+     * msgidhash back.  HGF_FILEHASH (dhisctl, didump: tools for one named
+     * file) takes the file's method instead.
+     */
+    if (HFlags & HGF_FILEHASH)
+	DOpts.MsgIdHashMethod = HistHeadMsgIdHash(&HHead);
+    if (HistHeadMsgIdHash(&HHead) != DOpts.MsgIdHashMethod) {
+	logit(LOG_ERR, "DHistory is hashed with msgidhash %s, diablo.config has msgidhash %s: rebuild the history (and the reader overview) or set msgidhash %s",
+	    MsgIdHashName(HistHeadMsgIdHash(&HHead)),
+	    MsgIdHashName(DOpts.MsgIdHashMethod),
+	    MsgIdHashName(HistHeadMsgIdHash(&HHead)));
+	fprintf(stderr, "DHistory is hashed with msgidhash %s, diablo.config has msgidhash %s: rebuild the history (and the reader overview) or set msgidhash %s\n",
+	    MsgIdHashName(HistHeadMsgIdHash(&HHead)),
+	    MsgIdHashName(DOpts.MsgIdHashMethod),
+	    MsgIdHashName(HistHeadMsgIdHash(&HHead)));
+	exit(1);
+    }
+    /*
+     * The magic goes with the version (HMAGIC3 for version 3); the hot
+     * paths compare the mapped header with HMagic to see a dead history.
+     */
+    HMagic = HLIVEMAGIC(&HHead);
+    if (HMAGIC_OK(HHead.hmagic) && !HistHeadMagicOK(&HHead)) {
+	logit(LOG_ERR, "DHistory magic 0x%x does not match its version %d: damaged header",
+	    (unsigned)HHead.hmagic, HHead.version);
+	fprintf(stderr, "DHistory magic 0x%x does not match its version %d: damaged header\n",
+	    (unsigned)HHead.hmagic, HHead.version);
+	exit(1);
+    }
+    if (HHead.hmagic != HMagic) {
 	logit(LOG_NOTICE, "DHistory magic mismatch");
 	fprintf(stderr, "DHistory magic mismatch\n");
     }
@@ -679,10 +716,10 @@ HistoryLookup(const char *msgid, History *nh)
     int counter = 0;
     int statfailed = 0;
 
-    if (HHeadMap->hmagic != HMAGIC)
+    if (HHeadMap->hmagic != HMagic)
 	historyReOpen();
 
-    hv = hhash(msgid);
+    hv = msgidhash(msgid);
     hi = (hv.h1 ^ hv.h2) & HMask;
     pindex = HHead.headSize + hi * sizeof(HistIndex);
     index = HAry[hi];
@@ -721,7 +758,8 @@ HistoryLookup(const char *msgid, History *nh)
     /*
      * On failure, try alternate hash method (for lookup only)
      */
-    if (r < 0 && DOpts.CompatHashMethod >= 0 &&
+    if (r < 0 && DOpts.MsgIdHashMethod == MSGIDHASH_HASH &&
+	DOpts.CompatHashMethod >= 0 &&
 	DOpts.CompatHashMethod != DOpts.HashMethod &&
 	HLAlt == 0 && !statfailed
     ) {
@@ -753,7 +791,7 @@ HistoryLookupByHash(hash_t hv, History *h)
     off_t off;
     int counter = 0;
 
-    if (HHeadMap->hmagic != HMAGIC)
+    if (HHeadMap->hmagic != HMagic)
 	historyReOpen();
 
     hi = (hv.h1 ^ hv.h2) & HMask;
@@ -843,7 +881,7 @@ HistoryPosLookupByHash(hash_t hv, History *h)
 static int
 updateLost(void)
 {
-    return((HFlags & HGF_FAST) == 0 && HHeadMap->hmagic != HMAGIC);
+    return((HFlags & HGF_FAST) == 0 && HHeadMap->hmagic != HMagic);
 }
 
 /* File offset of the record at index. */
@@ -896,7 +934,7 @@ lockChain(hash_t hv)
     for (;;) {
 	off_t chainlock;
 
-	if (HHeadMap->hmagic != HMAGIC)
+	if (HHeadMap->hmagic != HMagic)
 	    historyReOpen();
 	if (HFlags & HGF_FAST)
 	    return(0);
@@ -915,7 +953,7 @@ lockChain(hash_t hv)
 	    errno = error;
 	    return(-1);
 	}
-	if (HHeadMap->hmagic == HMAGIC)
+	if (HHeadMap->hmagic == HMagic)
 	    return(chainlock);
 	unlockChain(chainlock);
     }
@@ -1183,7 +1221,7 @@ HistoryExpire(const char *msgid, History *h, int unexp)
     if (msgid == NULL)
 	hv = h->hv;
     else
-	hv = hhash(msgid);
+	hv = msgidhash(msgid);
     do {
 	if ((chainlock = lockChain(hv)) < 0)
 	    return(-1);
@@ -1204,4 +1242,25 @@ HistoryExpire(const char *msgid, History *h, int unexp)
     if (index == (HistIndex)-1)
 	return(found ? 2 : 0);
     return(1);
+}
+
+/*
+ * HistHeadMsgIdHash() - the msgidhash method of a history's entries: the
+ * header's msgidHash in a version 3 file, the "hash" method before.
+ */
+int
+HistHeadMsgIdHash(const HistHead *hh)
+{
+    return((hh->version >= 3) ? hh->msgidHash : MSGIDHASH_HASH);
+}
+
+/*
+ * HistHeadMagicOK() - is the header's magic the live magic of its version
+ * (HMAGIC3 for version 3, HMAGIC before)?  A dead history (HDEADMAGIC)
+ * and a version 3 file with HMAGIC, or an older one with HMAGIC3, are not.
+ */
+int
+HistHeadMagicOK(const HistHead *hh)
+{
+    return(hh->hmagic == HLIVEMAGIC(hh));
 }

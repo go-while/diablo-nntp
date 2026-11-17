@@ -552,7 +552,7 @@ rewriteFile(HistoryList *hl_file)
 	msgid = getMsgId(oldf, artBuf, artHdr.ArtHdrLen);
 	if (msgid == NULL)
 	    break;
-	hv = hhash(msgid);
+	hv = msgidhash(msgid);
 
 	/*
 	 * Lookup the msgid in history for later modification

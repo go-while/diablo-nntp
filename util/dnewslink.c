@@ -244,6 +244,7 @@ typedef struct Stream {
     int32 st_Size;		/* file size	*/
     int32 st_CompSize;		/* compressed file size	*/
     int32 st_Lines;		/* body lines (L), -1: none */
+    int st_Defers;		/* a deferred entry, sent again: no second defer */
 } Stream;
 
 int connectTo(const char *hostName, const char *serviceName, int defPort);
@@ -404,6 +405,7 @@ time_t LastFeedData = 0;
 
 volatile sig_atomic_t TermFlag;
 static int PeerWait(void);
+static int modeRefused(int code, const char *line);
 
 FeedStats	*Stats;
 FeedStats	*HostStats;
@@ -2187,19 +2189,35 @@ connectTo(const char *hostName, const char *serviceName, int defPort)
 	negotiated[0] = 0;
 
 	if (TryStreaming) {
-	    switch(commandResponse(cfd, &ptr, "mode stream\r\n")) {
-	    case OK_STREAMOK:
+	    int code;
+
+	    ptr = NULL;
+	    code = commandResponse(cfd, &ptr, "mode stream\r\n");
+	    if (code == OK_STREAMOK) {
 		StreamMode = STREAM_ON;
 		strcat(negotiated,"streaming enabled");                
 		dl_logit("connect: %s (streaming)", (ptr ? ptr : "<Unexpected EOF>"));
 		stprintf("%s %s connect: stream", HostName, CurrentBatchFile + CBFIndex);
-		break;
-	    default:
+	    } else if (modeRefused(code, ptr)) {
 		StreamMode = STREAM_OFF;
 		strcat(negotiated,"streaming disabled");                
-		dl_logit("connect: %s (nostreaming)", (ptr ? ptr : "<Unexpected EOF>"));
+		dl_logit("connect: %s (nostreaming)", ptr);
 		stprintf("%s %s connect: nostream", HostName, CurrentBatchFile + CBFIndex);
-		break;
+	    } else {
+		/*
+		 * Not a reply MODE STREAM has: lines left over from it
+		 * would be read as the replies to IHAVE.  Close.
+		 */
+		StreamMode = STREAM_OFF;
+		dl_logit("mode stream failed: %s", (ptr ? ptr : "<Unexpected EOF>"));
+		stprintf("%s %s connect: mode stream failed", HostName,
+					CurrentBatchFile + CBFIndex);
+		clearCommandBuffer();
+		KillFd = -1;
+		close(cfd);
+		cfd = -1;
+		fd = -1;
+		sprintf(LastErrBuf, "mode stream reply out of step");
 	    }
 	} else {
 	    strcat(negotiated,"streaming disabled");                
@@ -2212,8 +2230,9 @@ connectTo(const char *hostName, const char *serviceName, int defPort)
 	 * added to support compression, cmsedore@maxwell.syr.edu 12/4/97
 	 */
 #ifdef	USE_ZLIB
-	if (CompressMode > 0) {
+	if (cfd >= 0 && CompressMode > 0) {
 	    int deflateOk;
+	    int code;
 
 	    /*
 	     * Set the stream up before asking the peer: once it has agreed
@@ -2227,32 +2246,50 @@ connectTo(const char *hostName, const char *serviceName, int defPort)
 			CompressMode, Z_Strm.msg ? Z_Strm.msg : "failed");
 		CompressMode = COMPRESS_OFF;
 	    }
-	    switch(deflateOk ? commandResponse(cfd, &ptr, "mode compress\r\n") : -1) {
-	    case OK_COMPRESSOK:
+	    ptr = NULL;
+	    code = deflateOk ? commandResponse(cfd, &ptr, "mode compress\r\n") : -1;
+	    if (code == OK_COMPRESSOK) {
 		CompressOn = 1;
 		strcat(negotiated," compression enabled");
 		dl_logit("connect: %s (%s)\n", (ptr ? ptr : "<Unexpected EOF>"),
 								 negotiated);
-		break;
-	    default:
+	    } else if (!deflateOk || modeRefused(code, ptr) ||
+		(code == 403 && ptr != NULL)) {
+		/* 403: the Diablo feeder could not set up compression */
 		if (deflateOk)
 		    deflateEnd(&Z_Strm);
 		CompressOn = 0;
 		strcat(negotiated," compression disabled");
 		CompressMode = COMPRESS_OFF;
 		dl_logit("connect: (%s)\n", negotiated);
-		break;
+	    } else {
+		/*
+		 * Not a reply MODE COMPRESS has: close, as for MODE
+		 * STREAM above.
+		 */
+		deflateEnd(&Z_Strm);
+		CompressOn = 0;
+		dl_logit("mode compress failed: %s", (ptr ? ptr : "<Unexpected EOF>"));
+		stprintf("%s %s connect: mode compress failed", HostName,
+					CurrentBatchFile + CBFIndex);
+		clearCommandBuffer();
+		KillFd = -1;
+		close(cfd);
+		cfd = -1;
+		fd = -1;
+		sprintf(LastErrBuf, "mode compress reply out of step");
 	    }
-	} else {
+	} else if (CompressMode <= 0) {
 	    CompressMode = COMPRESS_OFF;
 	    CompressOn = 0;
 	}
 #endif
 
-	stprintf("%s %s connect: %s", HostName, CurrentBatchFile + CBFIndex,
+	if (cfd >= 0)
+	    stprintf("%s %s connect: %s", HostName, CurrentBatchFile + CBFIndex,
 						negotiated);
 
-	if (HeaderOnlyFeed) {
+	if (cfd >= 0 && HeaderOnlyFeed) {
 	    switch(commandResponse(cfd, &ptr, "mode headfeed\r\n")) {
 	    case OK_MODECMDOK:
 		dl_logit("connect: %s (header feed only)", (ptr ? ptr : "<Unexpected EOF>"));
@@ -2299,6 +2336,28 @@ connectTo(const char *hostName, const char *serviceName, int defPort)
 
     KillFd = fd;
     return(cfd);
+}
+
+/*
+ * modeRefused() - the reply to a MODE command is a one-line refusal
+ * (unknown, not allowed), so the connection can go on without that
+ * mode.  Any other reply, a line without a code, or no reply at all
+ * (EOF, a failed write) is not: the caller closes the connection.
+ */
+static int
+modeRefused(int code, const char *line)
+{
+    if (line == NULL)
+	return(0);
+    switch(code) {
+    case ERR_NOAUTH:
+    case ERR_COMMAND:
+    case ERR_CMDSYN:
+    case ERR_ACCESS:
+    case ERR_FAULT:
+	return(1);
+    }
+    return(0);
 }
 
 /*
@@ -2414,6 +2473,10 @@ Transact(int cfd, const char *relPath, char *msgId, off_t off, int size, int cSi
     case CONT_XFER:
 	break;
     case ERR_XFERRJCT:
+	/*
+	 * 437 belongs to the article (RFC 3977 6.3.2), but some servers
+	 * answer the offer with it: a one-line reject.
+	 */
 	r = T_REJECTED;
 	break;
     case ERR_GOTIT:
@@ -2841,6 +2904,11 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 	s->st_Size = size;
 	s->st_CompSize = cSize;
 	s->st_Lines = lines;
+	/*
+	 * The reply comes later, when deferbegin may be reset already:
+	 * the entry keeps whether it is a defer sent again.
+	 */
+	s->st_Defers = defers;
 	if (NoCheckOpt) {
 	    ArtMap am;
 
@@ -2886,8 +2954,9 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
      * future.  For now, we simply enforce the pipeline by ensuring the
      * receive buffer is large enough.
      *
-     * check command response:	  OK_STRMCHECK, ERR_STRMCHECK, ERR_RESEND?
-     * takethis command response: OK_STRMTAKE,  ERR_STRMTAKE, ERR_RESEND
+     * check command response:	  OK_STRMCHECK, ERR_STRMCHECK, ERR_RESEND
+     * takethis command response: OK_STRMTAKE,  ERR_STRMTAKE
+     *				  (also ERR_RESEND, ERR_XFERRJCT: see below)
      * misc:			  ERR_GOODBYE
      */
 
@@ -2900,16 +2969,34 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 
 	switch(commandResponse(cfd, &ptr, NULL)) {
 	case ERR_RESEND:
+	    /*
+	     * 431 to TAKETHIS is not in RFC 4644, but Diablo's feeder sends
+	     * it (history busy or failed).  A one-line reply: defer the
+	     * article once, as for CHECK below; while the defers are sent
+	     * (no second defer is taken then) or for a deferred one, take it
+	     * as a reject.
+	     */
 	    if ((s = LocateStream(ptr, STATE_POSTED)) != NULL) {
 		delMe = 1;
-		r = T_REJECTED;	/* XXX */
 		StrnCpyNull(msgId, s->st_MsgId, 1024);
 		if (STAGE_UNSET(stage))
-		    StrnCpyNull(stage, (defers? "resend-stream": "stream"), MAXREASON);
+		    StrnCpyNull(stage, (s->st_Defers? "resend-stream": "stream"), MAXREASON);
 		StrnCpyNull(reason, ptr, MAXREASON);
+		if (defers || s->st_Defers) {
+		    r = T_REJECTED;
+		} else {
+		    char cst[32];
+
+		    r = T_DEFERIT;
+		    streamFlags(s, cst, sizeof(cst));
+		    /* buf is the caller's queue line buffer (QLINESIZE) */
+		    snprintf(buf, QLINESIZE, "%s %s %lld,%d %c%s\n", s->st_RelPath, s->st_MsgId,
+			(long long)s->st_Off, s->st_Size,
+			HeaderOnlyFeed ? 'H' : ' ', cst);
+		}
 		break;
 	    }
-	    if (!defers && ((s = LocateStream(ptr, STATE_CHECK)) != NULL)) {
+	    if (!defers && (s = LocateStream(ptr, STATE_CHECK)) != NULL && !s->st_Defers) {
 		char cst[32];
 		delMe = 1;
 		StrnCpyNull(msgId, s->st_MsgId, 1024);
@@ -3016,17 +3103,9 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 	    break;
 	case ERR_STRMTAKE:
 	case ERR_XFERRJCT:
-	    /* 
-	     * NOTE: ERR_XFERRJCT is an illegal response to a streaming
-	     * takethis, but some news systems return it so...
-	     *
-	     * But note also that we do not wait for the response of a
-	     * takethis, so this may very well a perfectly valid 
-	     * post-dump reject.
-	     *
-	     * !!! How do we get the proper state to ArtLog? We should really
-	     * distinguish between a ERR_XFERRJCT as response to a CHECK and
-	     * ERR_XFERRJCT as a response to TAKETHIS.
+	    /*
+	     * 437 is not a TAKETHIS reply (RFC 4644), but some servers send
+	     * it for a rejected article: take it as a 439.
 	     */
 	    if ((s = LocateStream(ptr, STATE_POSTED)) != NULL) {
 		delMe = 1;
@@ -3639,7 +3718,12 @@ commandResponse(int cfd, char **rptr, const char *ctl, ...)
 			Buf[i-1] = 0;
 		    *rptr = Buf + Bufb;
 		    Bufb = i + 1;
-		    r = strtol(*rptr, NULL, 10);
+		    /*
+		     * the whole three-digit code; a line without one is
+		     * a broken peer, failed like EOF (ERR_UNKNOWN)
+		     */
+		    if ((r = NntpCode(*rptr)) < 0)
+			r = ERR_UNKNOWN;
 		    break;
 		}
 	    }

@@ -1247,8 +1247,8 @@ updateHistory(void)
 
 	    exit(1);
 	}
-	if (hh.hmagic != HMAGIC) {
-	    fprintf(stderr, "corrupted history file or old version of history file: %x : %x\n", hh.hmagic, HMAGIC);
+	if (!HistHeadMagicOK(&hh)) {
+	    fprintf(stderr, "corrupted history file or old version of history file: %x : %x\n", hh.hmagic, HLIVEMAGIC(&hh));
 	    exit(1);
 	}
 	if (hh.version > HVERSION) {

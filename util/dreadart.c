@@ -137,7 +137,7 @@ main(int ac, char **av)
 		    if ((p = strchr(m, '>')) == NULL)
 			continue;
 		    *++p = 0;
-		    hv = hhash(m);
+		    hv = msgidhash(m);
 		    r = LookupHash(hv, m, NULL);
 		} else if (sscanf(buf, "%x.%x", &hv.h1, &hv.h2) == 2) {
 		    r = LookupHash(hv, NULL, NULL);
@@ -154,7 +154,7 @@ main(int ac, char **av)
 
 	if (arg[0] == '<') {
 	    msgid = arg;
-	    hv = hhash(arg);
+	    hv = msgidhash(arg);
 	    r = LookupHash(hv, msgid, NULL);
 	} else if (arg[0] == 'D' && arg[1] == '.') {
 	    int32 dummy;

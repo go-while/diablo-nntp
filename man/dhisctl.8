@@ -51,6 +51,8 @@ hash in the form
 .IR h1 . h2
 (two hexadecimal numbers, as printed by
 .IR dilookup (8)).
+A Message-ID is hashed with the msgidhash method recorded in the file,
+whatever diablo.config says.
 More entries can be listed in a file with
 .BR \-f .
 Without
@@ -77,7 +79,8 @@ standard input if \fIfile\fP is '-'.
 .TP
 .B \-h
 Print the history header (magic, hash table size, version, entry and
-header size) and the total size and number of entries.
+header size, and the msgidhash method of the entries) and the total size
+and number of entries.
 .TP
 .B \-p
 Show progress on standard output.
