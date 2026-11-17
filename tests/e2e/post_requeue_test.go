@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -253,17 +254,26 @@ func TestPostClientTimeoutWholeArticle(t *testing.T) {
 	c.Deadline = 60 * time.Second
 	c.MustSend(requeuePostHead(id, "timed out") + strings.Join(body, "\r\n") + "\r\n.\r\n")
 
-	// the client is let go by its idle timeout (a "400 ... Idle timeout." line, or only EOF)
+	// the client is let go by its idle timeout: a "400 ... Idle timeout." line, or EOF or a
+	// reset; a read that only hits its deadline means the client was not let go, and the
+	// article would then go through with the client still there (not the F2 case)
 	c.Deadline = 75 * time.Second
 	code, line, err := c.ReadStatus()
-	if code == 240 {
-		t.Fatalf("POST answered 240 while the post server held the article: the test did not hold it")
-	}
 	t.Logf("client: %d %q (%v)", code, line, err)
-	if err == nil {
+	switch {
+	case err == nil && code == 400:
 		if l, err := c.ReadLine(); err == nil {
-			t.Errorf("after %q the client got %q, want the connection closed", line, l)
+			t.Fatalf("after %q the client got %q, want the connection closed", line, l)
+		} else if isTimeout(err) {
+			t.Fatalf("after %q the connection stayed open: %v", line, err)
 		}
+	case err == nil:
+		t.Fatalf("POST reply %d %q while the post server held the article, want the idle timeout's 400 or a closed connection", code, line)
+	case isTimeout(err):
+		t.Fatalf("the client was not let go by its idle timeout within 75 s: %v", err)
+	}
+	if !strings.Contains(generalLog(s), "timeout idle") {
+		t.Fatalf("no \"timeout idle\" line in general.log: the client was not ended by its idle timeout")
 	}
 	free()
 
@@ -425,7 +435,8 @@ func letGo(s *Site, tag string) bool {
 
 // TestPostClientCloseKeepsPost: a client that sends a complete POST and then closes its
 // connection cleanly, or half-closes it (shutdown of its write side, no QUIT), while the
-// post server holds its 335 for 48 s. The look at a waiting posting client's socket (D-228)
+// post server holds its 335 for 60 s (the check below at 44 s after the close, past one pass,
+// leaves about 15 s before the 335). The look at a waiting posting client's socket (D-228)
 // took the EOF for a client gone and let it go at the next pass over all descriptors; its
 // post was then dropped (the post server got a "." alone). A clean close or half-close is no
 // longer taken for gone, only a socket error is: the client keeps its connection until the
@@ -442,7 +453,7 @@ func TestPostClientCloseKeepsPost(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, spool := spoolStore(t)
-			post, got := heldPostServer(t, 48*time.Second)
+			post, got := heldPostServer(t, 60*time.Second)
 			s := NewReaderSite(t, ReaderOptions{Spool: spool, Post: post})
 			t.Cleanup(func() {
 				if t.Failed() {
@@ -483,7 +494,7 @@ func TestPostClientCloseKeepsPost(t *testing.T) {
 				t.Fatalf("the post server answered (%d articles) within 44 s: the test did not hold it", n)
 			}
 			if tc.half {
-				c.Deadline = 30 * time.Second
+				c.Deadline = 45 * time.Second
 				if code, line, err := c.ReadStatus(); code != 240 {
 					t.Errorf("half-closed client: POST reply %d %q (%v), want 240", code, line, err)
 				}
@@ -498,6 +509,12 @@ func TestPostClientCloseKeepsPost(t *testing.T) {
 			})
 		})
 	}
+}
+
+// isTimeout reports whether err is a read deadline that passed (not EOF or a reset).
+func isTimeout(err error) bool {
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
 }
 
 // TestPostClientGoneUnqueued: a client whose connection fails (here: it is reset) while its
