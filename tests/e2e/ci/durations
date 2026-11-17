@@ -330,7 +330,7 @@ TestDnewsfeedsLimitsDfeedtest 0.02
 TestDnewsfeedsLimitsLive 0.08
 TestDnewsfeedsLogAfter 0.01
 TestDnewsfeedsMaxconnect 0.01
-TestDnewsfeedsReloadWithoutArgument 33.02
+TestDnewsfeedsReloadWithoutArgument 58.00
 TestDnewslinkBadCompressLevel 3.01
 TestDnewslinkBatchTemplatePercentLabel 0.02
 TestDnewslinkConnlife 32.88
