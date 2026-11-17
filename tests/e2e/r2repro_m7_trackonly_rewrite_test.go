@@ -34,7 +34,7 @@ func TestR2ReproTrackonlyRewrite(t *testing.T) {
 	})
 	g0 := group()
 	info0, _ := s.TryRun("dgrpctl", "groupinfo", "e2e.test")
-	out, err := s.TryRun("dexpireover", "-a", "-R", "-v")
+	out, err := s.TryRun("dexpireover", "-a", "-R", "-l90", "-v")
 	t.Logf("dexpireover -a -R -v: err %v\n%s", err, out)
 	g1 := group()
 	info1, _ := s.TryRun("dgrpctl", "groupinfo", "e2e.test")
@@ -82,7 +82,7 @@ func TestR2ReproRewriteFullGroupBeingWritten(t *testing.T) {
 	deadline := time.Now().Add(120 * time.Second)
 loop:
 	for time.Now().Before(deadline) {
-		out, err := s.TryRun("dexpireover", "-a", "-R")
+		out, err := s.TryRun("dexpireover", "-a", "-R", "-l20")
 		runs++
 		if err != nil || strings.Contains(out, "panic") {
 			bad++

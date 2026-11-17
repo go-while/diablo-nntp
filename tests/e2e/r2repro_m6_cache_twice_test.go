@@ -109,6 +109,9 @@ func TestR2ReproCacheSameArticleTwice(t *testing.T) {
 		}
 	}
 	same := func(x, y []string) bool { return strings.Join(x, "\n") == strings.Join(y, "\n") }
+	for i, l := range lc {
+		t.Logf("cache line %02d: %.70q", i, l)
+	}
 	if err != nil || nul || !(same(lc, la) || same(lc, lb)) {
 		t.Errorf("the article from the cache is neither copy: NUL %v, err %v\ncache: %q\nA:     %q\nB:     %q", nul, err, lc, la, lb)
 	}
