@@ -59,8 +59,10 @@ func cacheSameArticleTwice(t *testing.T, firstFirst bool) {
 		}
 		return lines
 	}
-	// release[k] is closed by the test when request k may send its second half
+	// release[k] is closed by the test when request k may send its second half; a hold that
+	// runs out reports k on expired (read by the test goroutine) and sends nothing more
 	release := []chan struct{}{nil, make(chan struct{}), make(chan struct{})}
+	expired := make(chan int, 2)
 	handler := func(c *fakeserver.Conn) {
 		for {
 			line, err := c.ReadLine()
@@ -79,16 +81,23 @@ func cacheSameArticleTwice(t *testing.T, firstFirst bool) {
 				half := len(all) / 2
 				c.WriteLines("220 0 " + f[1] + " article follows")
 				c.WriteLines(all[:half]...)
-			hold: // until the test releases this copy, the server is closed, or 60 s
-				for range 600 {
+				released := false
+				for range 600 { // until the test releases this copy, the server is closed, or 60 s
 					select {
 					case <-release[k]:
-						break hold
+						released = true
 					default:
 					}
-					if !c.Sleep(100 * time.Millisecond) {
-						return
+					if released || !c.Sleep(100*time.Millisecond) {
+						break
 					}
+				}
+				if !released {
+					select {
+					case expired <- k:
+					default:
+					}
+					return
 				}
 				c.WriteLines(all[half:]...)
 				c.WriteLines(".")
@@ -171,6 +180,15 @@ func cacheSameArticleTwice(t *testing.T, firstFirst bool) {
 		}
 	}
 	time.Sleep(1 * time.Second)
+
+	checkHolds := func() {
+		select {
+		case k := <-expired:
+			t.Errorf("spool side: copy %d was not released within 60 s; it was cut off, not completed", k)
+		default:
+		}
+	}
+	checkHolds()
 
 	c := s.Reader(t)
 	c.MustSend("ARTICLE " + id + "\r\n")
