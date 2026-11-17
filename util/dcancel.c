@@ -273,6 +273,24 @@ PrintCancelList(void)
     }
 }
 
+/*
+ * Undo GetOverInfo(): unmap the index, drop the shared lock, close it and
+ * free the memory.  dcancel -r opens the group of each input line anew, so
+ * without this every line kept a descriptor and a mapping.
+ */
+static void
+dcancelFreeOverInfo(OverInfo *ov)
+{
+    if (ov->ov_Head != NULL)
+	xunmap((void *)ov->ov_Head, ov->ov_Size);
+    if (ov->ov_OFd >= 0) {
+	hflock(ov->ov_OFd, 4, XLOCK_UN);
+	close(ov->ov_OFd);
+    }
+    zfreeStr(&SysMemPool, &ov->ov_Group);
+    zfree(&SysMemPool, ov, sizeof(OverInfo));
+}
+
 void
 CancelReader(char *grpinfo)
 {
@@ -298,6 +316,8 @@ CancelReader(char *grpinfo)
 	} else {
 		printf("Unable to cancel %lld in %s\n", artno, group);
 	}
+	if (ov != NULL)
+		dcancelFreeOverInfo(ov);
 }
 
 char *
@@ -730,15 +750,19 @@ GetOverInfo(const char *group)
 
 	ov = zalloc(&SysMemPool, sizeof(OverInfo));
 	ov->ov_Group = zallocStr(&SysMemPool, group);
+	ov->ov_OFd = -1;
 
 	{
 	    const char *rec;
 	    int recLen;
-	    if ((KDBActive = KPDBOpen(PatDbExpand(ReaderDActivePat), O_RDWR)) == NULL) {
+	    /* once per run, not per input line */
+	    if (KDBActive == NULL &&
+		(KDBActive = KPDBOpen(PatDbExpand(ReaderDActivePat), O_RDWR)) == NULL) {
 		fprintf(stderr, "Unable to open active file (%s)\n", strerror(errno));
 		exit(1);
 	    }
 	    if ((rec = KPDBReadRecord(KDBActive, group, KP_LOCK, &recLen)) == NULL) {
+		dcancelFreeOverInfo(ov);
 		return(NULL);
 	    }
 	    iter = strtol(KPDBGetField(rec, recLen, "ITER", NULL, "0"), NULL, 10);
@@ -765,6 +789,7 @@ again:
 	if (ov->ov_OFd < 0) {
 	    logit(LOG_ERR, "Error on overview open/create for group %s: %s (%s)",
 						group, path, strerror(errno));
+	    dcancelFreeOverInfo(ov);
 	    ov = NULL;
 	} else {
 	    OverHead oh;
@@ -783,7 +808,7 @@ again:
 						group, path, strerror(error));
 		fprintf(stderr, "%s: overview lock failed: %s\n",
 						group, strerror(error));
-		close(ov->ov_OFd);
+		dcancelFreeOverInfo(ov);
 		return(NULL);
 	    }
 
@@ -824,8 +849,7 @@ again:
 						group, path, strerror(error));
 		    fprintf(stderr, "%s: overview lock failed: %s\n",
 						group, strerror(error));
-		    hflock(ov->ov_OFd, 4, XLOCK_UN);
-		    close(ov->ov_OFd);
+		    dcancelFreeOverInfo(ov);
 		    return(NULL);
 		}
 		/*
@@ -895,6 +919,7 @@ again:
 	    if (ov->ov_Head == NULL) {
 		logit(LOG_ERR, "Error on overview mmap for group %s (%s)",
 						group, strerror(errno));
+		dcancelFreeOverInfo(ov);
 		ov = NULL;
 	    }
 	}
