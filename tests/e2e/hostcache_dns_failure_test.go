@@ -79,6 +79,9 @@ type hcSite struct {
 
 func newHCSite(t *testing.T, feeds, hosts string) *hcSite {
 	t.Helper()
+	if !preloadHost(false) {
+		t.Skip("the fault injector uses LD_PRELOAD")
+	}
 	so := preloadShim(t, "hcgai", withMark(hostCacheGAISource))
 	h := &hcSite{t: t, mark: filepath.Join(t.TempDir(), "mark"), flag: filepath.Join(t.TempDir(), "dnsfail")}
 	h.Site = NewSite(t, SiteOptions{
