@@ -43,7 +43,7 @@ Prototype void NNPostCommand1(Connection *conn);
 Prototype void PostLogRefused(Connection *conn, const char *msgid, const char *reply);
 
 void NNPostResponse1(Connection *conn);
-void NNPostArticle1(Connection *conn);
+Prototype void NNPostArticle1(Connection *conn);
 void NNPostResponse2(Connection *conn);
 int MailIfModerated(char *groups, Connection *conn, const char **perr);
 int ModeratorAddress(const char *group, char *addr, size_t addrLen);
@@ -983,6 +983,9 @@ NNPostBuffer(Connection *conn)
 	    } else {
 		keep = 1;
 		haveMsgId = 1;
+		/* the id NNTPPost() made, or an earlier Message-ID header's */
+		if (conn->co_IHaveMsgId)
+		    zfreeStr(&conn->co_MemPool, &conn->co_IHaveMsgId);
 		conn->co_IHaveMsgId = zallocStr(&conn->co_MemPool, msgmsgid);
 	    }
 #endif
@@ -1437,6 +1440,16 @@ NNPostBuffer(Connection *conn)
 	    NNCommand(conn);
 	} else {
 	    NNServerRequest(conn, NULL, conn->co_IHaveMsgId, 0, SREQ_POST, 0, -1, 0);
+	    /*
+	     * Wait for the post server's answer, as a fetch does
+	     * (NNArticleRetrieveByMessageId()): the client's next lines are
+	     * read as commands after the 240 or 441, never as more lines of
+	     * the article on its way, nor as a second "." that would post
+	     * the buffer again.  A request that was answered at once has
+	     * already given the client back to NNCommand().
+	     */
+	    if (conn->co_SReq != NULL)
+		NNWaitThread(conn);
 	}
     } else {
 	PostLogRefused(conn, conn->co_IHaveMsgId, errMsg);
@@ -1558,6 +1571,20 @@ syslog(LOG_EMERG, "bad carriage return in %s %d", sreq->sr_MsgId, buf[len-1]);
     }
 }
 
+/*
+ * postFreeIHaveMsgId() - the post of client cc is answered: free its
+ *			  Message-ID.  Called before NNFinishSReq(): after it
+ *			  conn->co_SReq is the next queued post, of another
+ *			  client, whose Message-ID is still needed for its
+ *			  own "240 <id> Article posted".
+ */
+static void
+postFreeIHaveMsgId(Connection *cc)
+{
+    if (cc != NULL && cc->co_IHaveMsgId != NULL)
+	zfreeStr(&cc->co_MemPool, &cc->co_IHaveMsgId);
+}
+
 void
 NNPostResponse2(Connection *conn)
 {
@@ -1592,6 +1619,7 @@ NNPostResponse2(Connection *conn)
 	    snprintf(msgbuf, sizeof(msgbuf), "240 %s Article posted\r\n",
 			conn->co_SReq->sr_CConn->co_IHaveMsgId != NULL ?
 				conn->co_SReq->sr_CConn->co_IHaveMsgId : "");
+	    postFreeIHaveMsgId(conn->co_SReq->sr_CConn);
 	    NNFinishSReq(conn, msgbuf, 0);
 	} else {
 	    char errMsg[256];
@@ -1612,12 +1640,9 @@ NNPostResponse2(Connection *conn)
 	    /* the server refused the article */
 	    if (conn->co_SReq != NULL && conn->co_SReq->sr_CConn != NULL)
 		PostLogRefused(conn->co_SReq->sr_CConn, conn->co_SReq->sr_MsgId, errMsg);
+	    postFreeIHaveMsgId(conn->co_SReq->sr_CConn);
 	    NNFinishSReq(conn, errMsg, 0);
 	}
-	if (conn->co_SReq != NULL && conn->co_SReq->sr_CConn != NULL &&
-				conn->co_SReq->sr_CConn->co_IHaveMsgId != NULL)
-	    zfreeStr(&conn->co_SReq->sr_CConn->co_MemPool,
-				&conn->co_SReq->sr_CConn->co_IHaveMsgId);
     } else if (len < 0) {
 	NNServerTerminate(conn);
     } /* else we haven't gotten the reponse yet */
