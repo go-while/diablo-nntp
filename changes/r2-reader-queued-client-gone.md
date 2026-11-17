@@ -1,0 +1,1 @@
+- `dreaderd`: a client that goes away (idle or session timeout) while its article request waits for a busy or unreachable spool server no longer stops the reader process when a spool server with `groupdef=` becomes free; the waiting request is dropped, the other clients of the process keep their connections (D-243).

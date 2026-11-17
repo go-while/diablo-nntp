@@ -602,6 +602,14 @@ QueueServerRequests(void)
 	if ((SReadBase = sreq->sr_Next) == NULL)
 	    PSRead = &SReadBase;
 	sreq->sr_Next = NULL;
+	/*
+	 * The client went away while its request waited here
+	 * (NNTerminate cleared sr_CConn): nobody wants the answer.
+	 */
+	if (sreq->sr_CConn == NULL) {
+	    FreeSReq(sreq);
+	    continue;
+	}
 	if (queueServerRequest(sreq, THREAD_SPOOL, THREAD_QSIZE) < 0) {
 	    *PSRead = sreq;
 	    PSRead = &sreq->sr_Next;
@@ -612,6 +620,10 @@ QueueServerRequests(void)
 	if ((SWriteBase = sreq->sr_Next) == NULL)
 	    PSWrite = &SWriteBase;
 	sreq->sr_Next = NULL;
+	if (sreq->sr_CConn == NULL) {
+	    FreeSReq(sreq);
+	    continue;
+	}
 	if (queueServerRequest(sreq, THREAD_POST, THREAD_PSIZE) < 0) {
 	    *PSWrite = sreq;
 	    PSWrite = &sreq->sr_Next;
@@ -635,7 +647,12 @@ cbQueueReqFindThread(void *cbData, void *data)
 	    conn->co_Retention < (time(NULL) - sreq->sr_TimeRcvd))
 	return(0);
 
-    if (conn->co_GroupDef && sreq->sr_CConn->co_Auth.dr_GroupDef->gr_Name &&
+    /*
+     * sr_CConn is NULL when the client went away (NNTerminate); a
+     * requeue of such a request still comes here.
+     */
+    if (conn->co_GroupDef && sreq->sr_CConn != NULL &&
+	    sreq->sr_CConn->co_Auth.dr_GroupDef->gr_Name &&
 	    !GroupFindWild(sreq->sr_CConn->co_Auth.dr_GroupDef->gr_Name, conn->co_GroupDef))
 	return(0);
 
