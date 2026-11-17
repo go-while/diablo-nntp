@@ -139,6 +139,7 @@ func cacheSameArticleTwice(t *testing.T, pause1, pause2 time.Duration) {
 	time.Sleep(1 * time.Second)
 
 	c := s.Reader(t)
+	c.MustSend("ARTICLE " + id + "\r\n")
 	lc := read("C (cache)", c)
 	if asked() != 2 {
 		t.Errorf("the third client's ARTICLE went to a spool server (%d requests): the article was not cached", asked())
