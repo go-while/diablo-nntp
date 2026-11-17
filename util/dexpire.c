@@ -1297,6 +1297,12 @@ updateHistory(void)
 	fflush(stdout);
     }
 
+    /*
+     * Only the directories of this pass: a directory listed by an earlier
+     * pass and removed in this one must not keep its records unexpired.
+     */
+    freeNodes();
+
     snprintf(spoolHome, sizeof(spoolHome), "%s", PatExpand(SpoolHomePat));
     spoolHomeLen = strlen(spoolHome);
 
