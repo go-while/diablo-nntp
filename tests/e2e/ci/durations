@@ -564,6 +564,7 @@ TestPostBareLFHeaders 0.03
 TestPostBareLFLastLineToFeeder 0.35
 TestPostClientCloseKeepsPost 98.18
 TestPostClientGoneAfterIhave 50.90
+TestPostClientGoneUnqueued 72.02
 TestPostClientGoneWhileQueued 48.12
 TestPostClientTimeoutWholeArticle 30.87
 TestPostLineEndsToPostServer 0.12
