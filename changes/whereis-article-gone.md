@@ -1,0 +1,1 @@
+- dreaderd: with `localspool`, an article asked for by number that was cancelled or expired while the spool server answered `whereis` left the client without a reply and the connection to the spool server busy: dreaderd waited for the lines of an article it had not asked for. The client now gets "423 No such article number in this group".
