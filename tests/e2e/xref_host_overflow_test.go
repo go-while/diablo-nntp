@@ -55,6 +55,8 @@ func TestFeedNoXrefLongXRefHost(t *testing.T) {
 	feedReader(t, s2, st2, "e2e.test", newArticle(id2, "e2e.test", "long xref host", "body"))
 
 	r2 := s2.Reader(t)
+	// the OVER line carries the whole host: over the kit's 64 KiB default line cap
+	r2.MaxLine = hostLen + 4096
 	r2.ExpectCmd(211, "GROUP e2e.test")
 	if over := overOne(t, r2); !strings.Contains(over, "Xref: "+longHost) {
 		t.Errorf("OVER 1 does not carry the %d byte Xref host", hostLen)
