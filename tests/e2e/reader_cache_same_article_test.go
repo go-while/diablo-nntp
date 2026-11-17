@@ -23,8 +23,10 @@ import (
 // halves with a pause. Client A asks first, client B while A's copy is still coming. Both get
 // their copy whole; a third client is then served from the cache (no third spool request) and
 // gets exactly one of the two copies. Two orders: the first request ends first, and the first
-// request ends last. Fails before the fix: the cached article was the short copy followed by
-// the tail of the long one.
+// request ends last. Fails before the fix in the first order: the cached article was the short
+// copy followed by the tail of the long one. The second order passes before the fix too (with
+// copies this small the first writer's stdio buffer still holds its whole copy, which then
+// overwrites the short one); it checks that the fix keeps the first writer's copy.
 func TestReaderCacheSameArticleTwice(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
