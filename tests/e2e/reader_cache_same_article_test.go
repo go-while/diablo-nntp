@@ -20,16 +20,17 @@ import (
 // TestReaderCacheSameArticleTwice: readercache on; two spool servers (127.0.0.1 and 127.0.0.2,
 // one connection each, so the two requests run at the same time) answer the same Message-ID
 // with copies of different length (the first request gets the long copy), each sent in two
-// halves. Client A asks first, client B after A got its 220 (A's copy is still coming, its cache
-// file open). The spool side orders the rest: request 1 sends its second half only after request
-// 2 has arrived, and the request that ends last sends its second half only after the other has
-// sent its "." (and one more second for dreaderd to finish it). Both clients get their copy
-// whole; a third client is then served from the cache (no third spool request) and gets exactly
-// one of the two copies. Two orders: the first request ends first, and the first request ends
-// last. Fails before the fix in the first order: the cached article was the short copy followed
-// by the tail of the long one. The second order passes before the fix too (with copies this
-// small the first writer's stdio buffer still holds its whole copy, which then overwrites the
-// short one); it checks that the fix keeps the first writer's copy.
+// halves. Client A asks first; client B asks after A got its 220. The second halves wait for
+// the test: it lets the fake servers go on only after both clients got their 220 (dreaderd has
+// handled both 220s, both fetches have their cache file open), and lets the copy that ends last
+// go on only after the client of the other one has read its whole article and "." (dreaderd has
+// finished that fetch, its cache file committed or dropped). Both clients get their copy whole; a
+// third client is then served from the cache (no third spool request) and gets exactly one of
+// the two copies. Two orders: the first request ends first, and the first request ends last.
+// Fails before the fix in the first order: the cached article was the short copy followed by
+// the tail of the long one. The second order passes before the fix too (with copies this small
+// the first writer's stdio buffer still holds its whole copy, which then overwrites the short
+// one); it checks that the fix keeps the first writer's copy.
 func TestReaderCacheSameArticleTwice(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -58,16 +59,8 @@ func cacheSameArticleTwice(t *testing.T, firstFirst bool) {
 		}
 		return lines
 	}
-	// arrived[k] is closed when request k has arrived, done[k] when it has sent its "."
-	arrived := []chan struct{}{nil, make(chan struct{}), make(chan struct{})}
-	done := []chan struct{}{nil, make(chan struct{}), make(chan struct{})}
-	wait := func(ch chan struct{}, what string) {
-		select {
-		case <-ch:
-		case <-time.After(20 * time.Second):
-			t.Errorf("spool side: no %s within 20 s", what)
-		}
-	}
+	// release[k] is closed by the test when request k may send its second half
+	release := []chan struct{}{nil, make(chan struct{}), make(chan struct{})}
 	handler := func(c *fakeserver.Conn) {
 		for {
 			line, err := c.ReadLine()
@@ -82,21 +75,23 @@ func cacheSameArticleTwice(t *testing.T, firstFirst bool) {
 					c.WriteLines("430 no third copy")
 					continue
 				}
-				close(arrived[k])
 				all := copyOf(k)
 				half := len(all) / 2
 				c.WriteLines("220 0 " + f[1] + " article follows")
 				c.WriteLines(all[:half]...)
-				if k == 1 {
-					wait(arrived[2], "second request")
-				}
-				if last := (k == 2) == firstFirst; last {
-					wait(done[3-k], "end of the other copy")
-					c.Sleep(1 * time.Second)
+			hold: // until the test releases this copy, the server is closed, or 60 s
+				for range 600 {
+					select {
+					case <-release[k]:
+						break hold
+					default:
+					}
+					if !c.Sleep(100 * time.Millisecond) {
+						return
+					}
 				}
 				c.WriteLines(all[half:]...)
 				c.WriteLines(".")
-				close(done[k])
 			case len(f) > 0 && strings.EqualFold(f[0], "QUIT"):
 				c.WriteLines("205 bye")
 				return
@@ -131,13 +126,24 @@ func cacheSameArticleTwice(t *testing.T, firstFirst bool) {
 		status(who, c)
 		return body(who, c)
 	}
-	// A's 220 comes with the first half of its copy (dreaderd passes the header on before the
-	// body): A's fetch has its cache file open when B asks
+	// A client gets its 220 with the first half of its copy (dreaderd passes the header on
+	// before the body), after dreaderd handled the spool's 220 and opened the cache file.
 	a.MustSend("ARTICLE " + id + "\r\n")
 	status("A", a)
 	b.MustSend("ARTICLE " + id + "\r\n")
-	la := body("A", a)
-	lb := read("B", b)
+	status("B", b)
+	var la, lb []string
+	if firstFirst {
+		close(release[1])
+		la = body("A", a) // A's fetch is finished
+		close(release[2])
+		lb = body("B", b)
+	} else {
+		close(release[2])
+		lb = body("B", b)
+		close(release[1])
+		la = body("A", a)
+	}
 	if asked() != 2 {
 		t.Fatalf("the spool servers were asked %d times, want 2 (one per client)", asked())
 	}
