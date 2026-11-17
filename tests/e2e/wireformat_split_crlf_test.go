@@ -3,6 +3,7 @@ package e2e
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -71,15 +72,19 @@ func TestWireFormatCRLFSplitAcrossBuffer(t *testing.T) {
 				p.Close()
 			}
 
-			// TAKETHIS, pipelined: an article whose last line splits, then a second one whose
-			// first body line splits. Each gets its own 239 and is stored on its own.
+			// TAKETHIS, pipelined: an article whose last line splits, then a second one with a
+			// header line and its first body line that split. Each gets its own 239 and is
+			// stored on its own, with its bytes unchanged.
 			for _, n := range lens {
 				p := s.Peer(t)
 				p.ExpectCmd(203, "MODE STREAM")
 				long := strings.Repeat("y", n)
 				id1, id2 := msgID(t), msgID(t)
 				raw1 := client.Stuff(newArticle(id1, "e2e.test", "split crlf 1", "first", long))
-				raw2 := client.Stuff(newArticle(id2, "e2e.test", "split crlf 2", long, "after"))
+				hdr := "X-Split: " + strings.Repeat("z", n-len("X-Split: "))
+				art2 := newArticle(id2, "e2e.test", "split crlf 2", long, "after")
+				art2 = append(art2[:1], append([]string{hdr}, art2[1:]...)...)
+				raw2 := client.Stuff(art2)
 				p.MustSend(fmt.Sprintf("TAKETHIS %s\r\n%sTAKETHIS %s\r\n%s", id1, raw1, id2, raw2))
 				p.Deadline = 10 * time.Second
 				ok := true
@@ -102,6 +107,9 @@ func TestWireFormatCRLFSplitAcrossBuffer(t *testing.T) {
 				}
 				p.ExpectCmd(220, "ARTICLE %s", id2)
 				lines := p.ReadDotLines()
+				if !slices.Contains(lines, hdr) {
+					t.Errorf("stored article 2 has no header line of %d octets as sent", n)
+				}
 				if len(lines) < 2 || lines[len(lines)-2] != long || lines[len(lines)-1] != "after" {
 					t.Errorf("stored article 2 ends %q, want the %d-octet line and \"after\"",
 						lines[max(0, len(lines)-2):], n)
