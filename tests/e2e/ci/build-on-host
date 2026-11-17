@@ -87,10 +87,12 @@ elif command -v pacman >/dev/null; then
     have() { pacman -Qg "$1" >/dev/null 2>&1 || pacman -Q "$1" >/dev/null 2>&1; }
     need=$(missing base-devel openssl zlib procps-ng); report
     nodb=; if wantdb; then nodb=1; fi
+    # pacman 7 sandboxes downloads with Landlock, which containers may lack.
+    # Set here, not inside the install block below: the radcli install further
+    # down uses it too, also when all packages are already present (set -u).
+    nosandbox=
+    pacman --help --sync 2>/dev/null | grep -q -- --disable-sandbox && nosandbox=--disable-sandbox
     if [ -n "$need" ] || [ -n "$nodb" ]; then
-        # pacman 7 sandboxes downloads with Landlock, which containers may lack.
-        nosandbox=
-        pacman --help --sync 2>/dev/null | grep -q -- --disable-sandbox && nosandbox=--disable-sandbox
         # Arch is rolling and does not support partial upgrades: refresh and
         # upgrade the whole system once (-Syu), then install with -S. An older
         # cached/pinned base otherwise breaks on mismatched shared libraries.
