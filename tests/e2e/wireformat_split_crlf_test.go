@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	testkit "github.com/go-while/nntp-testkit"
+	"github.com/go-while/nntp-testkit/client"
 )
 
 // splitDataMaxes returns the candidate sizes of the feeder's input-buffer pieces. The feeder
@@ -27,6 +29,16 @@ func splitDataMaxes() []int {
 		ds = append(ds, page-h-4)
 	}
 	return ds
+}
+
+// splitRaiseMaxLine lets c read lines of up to n octets. nntp-testkit from v0.14.1 caps one
+// line at Conn.MaxLine (64 KiB by default), which the lines of splitCases exceed on a system
+// with 64 KiB pages (aarch64, ppc64le); older kits have neither the field nor a cap. The field
+// is set by name so that the test builds with both.
+func splitRaiseMaxLine(c *client.Conn, n int) {
+	if f := reflect.ValueOf(c).Elem().FieldByName("MaxLine"); f.IsValid() && f.CanSet() && f.Kind() == reflect.Int {
+		f.SetInt(int64(n))
+	}
 }
 
 // splitCase is the last body line of an article, with its line end, as sent and as stored.
@@ -78,6 +90,7 @@ func TestWireFormatCRLFSplitAcrossBuffer(t *testing.T) {
 			p := s.Peer(t)
 			p.Deadline = 10 * time.Second
 			p.Strict = false // stored lines with a CR before the CRLF are read raw
+			splitRaiseMaxLine(p, 2*os.Getpagesize()+4096)
 		ihave:
 			for _, d := range ds {
 				for _, c := range splitCases(d) {
@@ -103,6 +116,7 @@ func TestWireFormatCRLFSplitAcrossBuffer(t *testing.T) {
 			p = s.Peer(t)
 			p.Deadline = 10 * time.Second
 			p.Strict = false
+			splitRaiseMaxLine(p, 2*os.Getpagesize()+4096)
 			p.ExpectCmd(203, "MODE STREAM")
 			total, ok := 0, true
 		takethis:
