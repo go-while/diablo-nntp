@@ -10,6 +10,7 @@ package e2e
 // timeout (see the shim).
 
 import (
+	"context"
 	"embed"
 	"net"
 	"os"
@@ -69,7 +70,8 @@ func shimCC(t *testing.T) string {
 }
 
 // buildTestdataShim compiles the shim testdata/<name>/<name>.c into <dir>/<name>.so. A
-// compile error fails the test: a skip would let a broken shim pass unnoticed.
+// compile error fails the test: a skip would let a broken shim pass unnoticed. The compiler
+// gets two minutes.
 func buildTestdataShim(t *testing.T, dir, name string) string {
 	t.Helper()
 	cc := shimCC(t)
@@ -82,7 +84,9 @@ func buildTestdataShim(t *testing.T, dir, name string) string {
 	if err := os.WriteFile(src, b, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command(cc, append([]string{"-O2", "-shared", "-fPIC", "-o", so, src}, shimLibs()...)...).CombinedOutput(); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if out, err := exec.CommandContext(ctx, cc, append([]string{"-O2", "-shared", "-fPIC", "-o", so, src}, shimLibs()...)...).CombinedOutput(); err != nil {
 		t.Fatalf("cannot build the shim %s: %v\n%s", name, err, out)
 	}
 	return so
