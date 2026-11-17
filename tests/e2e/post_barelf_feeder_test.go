@@ -1,11 +1,14 @@
 package e2e
 
 import (
+	"bytes"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	testkit "github.com/go-while/nntp-testkit"
+	"github.com/go-while/nntp-testkit/fakeserver"
 )
 
 // postToFeederSite returns a reader site whose outgoing (post) server is a real diablo, and
@@ -45,6 +48,9 @@ func feederBody(t *testing.T, feeder *Site, id string) []string {
 	t.Helper()
 	p := feeder.Peer(t)
 	defer p.Close()
+	// a line may keep a CR of its own ("crcr\r\r\n"): read leniently, every CR before the
+	// LF is stripped (TestPostLineEndsToPostServer checks the exact bytes)
+	p.Strict = false
 	var art []string
 	testkit.WaitFor(t, 15*time.Second, "the feeder to serve "+id, func() bool {
 		code, _, err := p.TryCmd("ARTICLE %s", id)
@@ -110,6 +116,15 @@ func TestPostBareLFLastLineToFeeder(t *testing.T) {
 		{"one body line, bare LF", func(id string) string {
 			return head(id, "\r\n") + "only line\n"
 		}, ".\r\n", []string{"only line"}},
+		// a line that ends in CR CR LF already ends in CR LF: passed on as it is (the reader
+		// strips every CR before the LF, so the feeder's copy reads "crcr")
+		{"last line CR CR LF", func(id string) string {
+			return head(id, "\r\n") + "first\r\ncrcr\r\r\n"
+		}, ".\r\n", []string{"first", "crcr"}},
+		// a CR inside a line stays; the bare LF at its end gets its CR
+		{"last line with a lone CR, bare LF", func(id string) string {
+			return head(id, "\r\n") + "first\r\nlone\rcr\n"
+		}, ".\r\n", []string{"first", "lone\rcr"}},
 	} {
 		id := msgID(t)
 		code, line := postReply(t, s, tc.raw(id), tc.dot, 15*time.Second)
@@ -125,6 +140,50 @@ func TestPostBareLFLastLineToFeeder(t *testing.T) {
 	// the post connection still works for the next client
 	id := msgID(t)
 	if code, line := postReply(t, s, head(id, "\r\n")+"after\r\n", ".\r\n", 15*time.Second); code != 240 {
-		t.Errorf("CRLF post after them: %d %q, want 240 within 15 s", code, line)
+		t.Fatalf("CRLF post after them: %d %q, want 240 within 15 s", code, line)
+	}
+	if body := feederBody(t, feeder, id); strings.Join(body, "|") != "after" {
+		t.Errorf("CRLF post after them: body at the feeder %q, want [after]", body)
+	}
+}
+
+// TestPostLineEndsToPostServer: the exact bytes dreaderd sends to the post server for a POST
+// with mixed line ends. Every line ends in CR LF there: a line the client ended with CR LF
+// (also CR CR LF) is passed on as it is, a bare LF (also after a lone CR inside the line, and
+// on a blank or dot-stuffed line) gets a CR in front of it. Nothing else changes.
+func TestPostLineEndsToPostServer(t *testing.T) {
+	_, spool := spoolStore(t)
+	var mu sync.Mutex
+	raws := map[string][]byte{}
+	post := fakeserver.New(t, fakeserver.Options{Handler: fakeserver.PeerHandler(&fakeserver.PeerOptions{
+		OnArticleRaw: func(id string, raw []byte) {
+			mu.Lock()
+			defer mu.Unlock()
+			raws[id] = append([]byte(nil), raw...)
+		},
+	})})
+	s := NewReaderSite(t, ReaderOptions{Spool: spool, Post: post})
+
+	id := msgID(t)
+	in := "plain\r\nbare\n\nblank above\r\ncrcr\r\r\nlone\rcr\n..dot\nlast\n"
+	want := "plain\r\nbare\r\n\r\nblank above\r\ncrcr\r\r\nlone\rcr\r\n..dot\r\nlast\r\n"
+	raw := "From: a <a@example.invalid>\r\nNewsgroups: e2e.test\r\nSubject: line ends\r\nMessage-ID: " + id + "\r\n\r\n" + in
+	if code, line := postReply(t, s, raw, ".\r\n", 15*time.Second); code != 240 {
+		t.Fatalf("POST reply %d %q, want 240", code, line)
+	}
+	var got []byte
+	testkit.WaitFor(t, 15*time.Second, "the post server to get "+id, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		got = raws[id]
+		return got != nil
+	})
+	i := bytes.Index(got, []byte("\r\n\r\n"))
+	if i < 0 {
+		t.Fatalf("no blank line after the headers at the post server: %q", got)
+	}
+	body := strings.TrimSuffix(string(got[i+4:]), ".\r\n")
+	if body != want {
+		t.Errorf("body bytes at the post server %q, want %q", body, want)
 	}
 }
