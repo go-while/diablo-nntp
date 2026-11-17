@@ -68,8 +68,10 @@ func TestReaderQueuedRequestClientGone(t *testing.T) {
 }
 
 // reservedPort holds a TCP port for a server that is "down": a socket bound to it but not
-// listening, so a connect gets a refusal (as from a closed port) and no other test or process
-// can bind the port meanwhile. up then listens on that same socket, so the port is never free.
+// listening, so no other test or process can bind the port meanwhile. A connect to it is
+// refused on Linux (as from a closed port); NetBSD drops the SYN instead, so the connect stays
+// pending and completes on a retransmitted SYN once up has run (or times out and is tried
+// again). up listens on that same socket, so the port is never free.
 type reservedPort struct {
 	fd   int
 	addr string
@@ -180,14 +182,20 @@ func waitQueuedFirst(t *testing.T, s *Site, id string) {
 	})
 }
 
-func waitAccepted(t *testing.T, back *fakeserver.Server) {
+// waitAccepted waits until dreaderd has connected to the returned server, and keeps other
+// talking meanwhile (other has idletimeout 5, and the reader's pass that connects to the server
+// also closes idle clients). dreaderd connects again at a later pass of its own, or, where a
+// connect to the reserved port was not refused but its SYN dropped (NetBSD), when a retransmitted
+// SYN of the connect it already started arrives after up(): that can take a minute or more.
+func waitAccepted(t *testing.T, back *fakeserver.Server, other *client.Conn) {
 	t.Helper()
-	deadline := time.Now().Add(90 * time.Second)
+	deadline := time.Now().Add(150 * time.Second)
 	for back.Accepted() == 0 && time.Now().Before(deadline) {
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(2 * time.Second)
+		other.ExpectCmd(111, "DATE")
 	}
 	if back.Accepted() == 0 {
-		t.Fatalf("dreaderd did not connect to the returned server within 90 s")
+		t.Fatalf("dreaderd did not connect to the returned server within 150 s")
 	}
 }
 
@@ -230,7 +238,7 @@ func queuedGoneArticle(t *testing.T) {
 
 	back := fakeserver.New(t, fakeserver.Options{Store: st})
 	rp.up(t, back.Addr())
-	waitAccepted(t, back)
+	waitAccepted(t, back, other)
 
 	code, line, err := waiter.ReadStatus()
 	if err != nil || code != 220 {
@@ -290,7 +298,7 @@ func queuedGonePost(t *testing.T) {
 
 	back := fakeserver.New(t, fakeserver.Options{Addr: "127.0.0.2:0", Handler: fakeserver.PeerHandler(po)})
 	rp.up(t, back.Addr())
-	waitAccepted(t, back)
+	waitAccepted(t, back, other)
 
 	code, line, err := waiter.ReadStatus()
 	if err != nil || code != 240 {
