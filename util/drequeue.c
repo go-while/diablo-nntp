@@ -238,7 +238,12 @@ writeFeedOut(const char *label, const char *file, const char *msgid, const char 
 	    snprintf(lineField, sizeof(lineField), " L%d", lines);
 	else
 	    lineField[0] = 0;
-	if (l < fe->fe_BufMax) {
+	if (l >= fe->fe_BufMax) {
+	    /* longer than the whole buffer: not queued, and counted */
+	    logit(LOG_ERR, "%s: queue line for %s is too long (%d bytes), dropped",
+						fe->fe_Label, msgid, l);
+	    ++fe->fe_Lost;
+	} else {
 	    /*
 	     * line fits in buffer with trailing nul ?
 	     */
