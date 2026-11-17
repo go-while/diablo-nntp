@@ -48,6 +48,9 @@ func feederBody(t *testing.T, feeder *Site, id string) []string {
 	t.Helper()
 	p := feeder.Peer(t)
 	defer p.Close()
+	// a line may keep a CR of its own ("crcr\r\r\n"): read leniently, every CR before the
+	// LF is stripped (TestPostLineEndsToPostServer checks the exact bytes)
+	p.Strict = false
 	var art []string
 	testkit.WaitFor(t, 15*time.Second, "the feeder to serve "+id, func() bool {
 		code, _, err := p.TryCmd("ARTICLE %s", id)
