@@ -135,7 +135,8 @@ closedir(DIR *d)
 // one spool cannot be read (opendir() of P.01 fails, or readdir() of the spool home fails),
 // its two articles must still answer STAT 223 after dexpire -a -h1. The other spool shows that
 // the rest of the history is still updated: the directory of its one article was removed by
-// hand, so that record must be marked expired (430).
+// hand, so that record must be marked expired (dilookup: EX=(expired); STAT cannot tell, the
+// feeder answers 430 for a record whose file is gone, expired or not).
 func TestR2DexpireUnreadableSpoolDir(t *testing.T) {
 	const spoolCtl = `spool 00
     minfree 1m
@@ -204,13 +205,31 @@ expire e2e.one m1
 					t.Errorf("STAT %s (in the directory dexpire could not read): %q, want 223 (its history record was marked expired)", id, line)
 				}
 			}
-			if code, line := p.Cmd("STAT %s", gone); code != 430 {
-				t.Errorf("STAT %s (its directory was removed): %q, want 430 (the history of the other spool must still be updated)", gone, line)
-			}
 			p.ExpectCmd(205, "QUIT")
+			for _, id := range keep {
+				if ex := r2l26HistoryEx(t, s, id); ex != "valid" {
+					t.Errorf("history record of %s (in the directory dexpire could not read): EX=(%s), want valid", id, ex)
+				}
+			}
+			if ex := r2l26HistoryEx(t, s, gone); ex != "expired" {
+				t.Errorf("history record of %s (its directory was removed): EX=(%s), want expired (the history of the other spool must still be updated)", gone, ex)
+			}
 			if t.Failed() {
 				t.Logf("dexpire -a -h1 -v: err=%v\n%s", err, out)
 			}
 		})
 	}
+}
+
+// r2l26HistoryEx returns what dilookup says of the history record of msgid: valid, expired
+// or rejected.
+func r2l26HistoryEx(tb testing.TB, s *Site, msgid string) string {
+	tb.Helper()
+	out := s.Run(tb, "dilookup", msgid)
+	i := strings.Index(out, "EX=(")
+	if i < 0 {
+		tb.Fatalf("dilookup %s: no EX=(...) in %q", msgid, out)
+	}
+	ex, _, _ := strings.Cut(out[i+len("EX=("):], ")")
+	return ex
 }
