@@ -12,6 +12,8 @@ typedef struct Feed {
     int         fe_BufIdx;
     int         fe_BufMax;
     int         fe_Failed;
+    int         fe_OpenFailed;	/* the queue file could not be opened: logged */
+    int         fe_Lost;	/* lines that were not queued: exit 1 */
 } Feed;
 
 Feed    *FeBase;
@@ -20,8 +22,9 @@ char    *MySpoolHome;
 
 int fwCallBack(const char *hlabel, const char *msgid, const char *path, const char *offsize, int plfo, int headOnly, const char *artType, int lines, const char *cSize);
 void writeFeedOut(const char *label, const char *file, const char *msgid, const char *offSize, int rt, int headOnly, int lines, const char *cSize);
-void flushFeeds(int justClose);
+int flushFeeds(int justClose);
 void flushFeedOut(Feed *fe);
+static void openFailed(Feed *fe);
 
 void
 Usage(void)
@@ -152,7 +155,12 @@ main(int ac, char **av)
 	    }
 	}
     }
-    flushFeeds(0);
+    /*
+     * Lines that could not be queued (the queue file could not be opened,
+     * or a write failed) must show in the exit status.
+     */
+    if (flushFeeds(0) > 0)
+	exit(1);
     exit(0);
 }
 
@@ -178,22 +186,24 @@ writeFeedOut(const char *label, const char *file, const char *msgid, const char 
     }
 
     /*
-     * allocate feed if not found
+     * allocate feed if not found.  The buffer is allocated also when the
+     * queue file cannot be opened now: the lines wait in it and the next
+     * flush tries to open the file again (flushFeedOut()).
      */
 
     if (fe == NULL) {
+	int bsize;
+
 	fe = zalloc(&ParProcMemPool, sizeof(Feed) + strlen(label) + 1);
 	fe->fe_Label = (char *)(fe + 1);
 	strcpy(fe->fe_Label, label);
 	fe->fe_Fd = xopen(O_APPEND|O_RDWR|O_CREAT, 0644, "%s/%s", PatExpand(DQueueHomePat), label);
-	if (fe->fe_Fd >= 0) {
-	    int bsize;
-
-	    fe->fe_Buf = pagealloc(&bsize, 1);
-	    fe->fe_BufMax = bsize;
-	    fe->fe_BufIdx = 0;
-	    fe->fe_Failed = 0;
-	}
+	if (fe->fe_Fd < 0)
+	    openFailed(fe);
+	fe->fe_Buf = pagealloc(&bsize, 1);
+	fe->fe_BufMax = bsize;
+	fe->fe_BufIdx = 0;
+	fe->fe_Failed = 0;
 	fe->fe_Next = FeBase;
 	FeBase = fe;
     }
@@ -209,7 +219,7 @@ writeFeedOut(const char *label, const char *file, const char *msgid, const char 
      * subtract it off after the actual copy operation.
      */
 
-    if (fe->fe_Fd >= 0) {
+    if (fe->fe_Buf != NULL) {
 	char lineField[16];
 	/*
 	 * " H", " L" + lines, " C" + cSize, the spaces, newline and nul.
@@ -235,6 +245,14 @@ writeFeedOut(const char *label, const char *file, const char *msgid, const char 
 	    if (l >= fe->fe_BufMax - fe->fe_BufIdx)
 		flushFeedOut(fe);
 
+	    if (l >= fe->fe_BufMax - fe->fe_BufIdx) {
+		/*
+		 * The queue file cannot be opened and the buffer keeps
+		 * its lines for the next try: no room for this one.
+		 */
+		++fe->fe_Lost;
+		return;
+	    }
 	    snprintf(fe->fe_Buf + fe->fe_BufIdx, fe->fe_BufMax - fe->fe_BufIdx,
 		"%s %s %s%s%s%s%s\n",
 		file, msgid, offSize, 
@@ -250,14 +268,40 @@ writeFeedOut(const char *label, const char *file, const char *msgid, const char 
     }
 }
 
-void
+static int
+countLines(const char *buf, int len)
+{
+    int n = 0;
+
+    while (len-- > 0)
+	if (*buf++ == '\n')
+	    ++n;
+    return(n);
+}
+
+/*
+ * Flush and close every feed.  Returns the number of lines that were not
+ * queued: lines still in a buffer because the queue file could not be
+ * opened, lines dropped for lack of room meanwhile, and lines of failed
+ * writes.
+ */
+int
 flushFeeds(int justClose)
 {
     Feed *fe;
+    int lost = 0;
 
     while ((fe = FeBase) != NULL) {
 	if (justClose == 0)
 	    flushFeedOut(fe);
+	if (fe->fe_Buf && fe->fe_BufIdx)
+	    fe->fe_Lost += countLines(fe->fe_Buf, fe->fe_BufIdx);
+	if (fe->fe_Lost) {
+	    logit(LOG_ERR, "%s: %d lines were not queued", fe->fe_Label, fe->fe_Lost);
+	    fprintf(stderr, "drequeue: %s: %d lines were not queued\n",
+						fe->fe_Label, fe->fe_Lost);
+	    lost += fe->fe_Lost;
+	}
 	if (fe->fe_Buf)
 	    pagefree(fe->fe_Buf, 1);
 	if (fe->fe_Fd >= 0)
@@ -267,12 +311,82 @@ flushFeeds(int justClose)
 	FeBase = fe->fe_Next;
 	zfree(&ParProcMemPool, fe, sizeof(Feed) + strlen(fe->fe_Label) + 1);
     }
+    return(lost);
+}
+
+/*
+ * The queue file could not be opened: say so once (also on stderr, for
+ * the admin running drequeue), not on every flush that tries again.
+ */
+static void
+openFailed(Feed *fe)
+{
+    if (fe->fe_OpenFailed == 0) {
+	char why[128];
+
+	snprintf(why, sizeof(why), "%s", strerror(errno));
+
+	fe->fe_OpenFailed = 1;
+	fprintf(stderr, "drequeue: %s: unable to open the queue file: %s, keeping the lines and trying again\n",
+						fe->fe_Label, why);
+	logit(LOG_ERR, "%s: unable to open the queue file: %s, keeping the lines and trying again",
+						fe->fe_Label, why);
+    }
+}
+
+/*
+ * dspoolout renames dqueue/<label> to <label>.S<seq> and dnewslink
+ * removes that file once it has sent it.  A run that spans a rotation
+ * must not go on writing to the renamed file: lines written after
+ * dnewslink read it are lost.  So before each write, drop the descriptor
+ * when the name no longer points at the file we hold (as the feeder does
+ * when it closes its queue files on a flush); flushFeedOut() then opens
+ * the queue file again by name.
+ */
+static int
+heldFileGone(Feed *fe)
+{
+    struct stat fst;
+    struct stat pst;
+    char path[PATH_MAX];
+
+    if (fstat(fe->fe_Fd, &fst) < 0)
+	return(0);
+    if (snprintf(path, sizeof(path), "%s/%s", PatExpand(DQueueHomePat),
+				fe->fe_Label) >= (int)sizeof(path))
+	return(0);
+    if (stat(path, &pst) == 0)
+	return(pst.st_dev != fst.st_dev || pst.st_ino != fst.st_ino);
+    return(errno == ENOENT);
 }
 
 void
 flushFeedOut(Feed *fe)
 {
-    if (fe->fe_BufIdx && fe->fe_Buf && fe->fe_Fd >= 0) {
+    if (fe->fe_BufIdx == 0 || fe->fe_Buf == NULL)
+	return;
+    if (fe->fe_Fd >= 0 && heldFileGone(fe)) {
+	close(fe->fe_Fd);
+	fe->fe_Fd = -1;
+    }
+    if (fe->fe_Fd < 0) {
+	/*
+	 * Not open (it could not be opened, or it was renamed away):
+	 * open it by name.  If that fails, the lines stay in the buffer
+	 * for the next flush, never go to a file the name has left.
+	 */
+	fe->fe_Fd = xopen(O_APPEND|O_RDWR|O_CREAT, 0644, "%s/%s",
+				PatExpand(DQueueHomePat), fe->fe_Label);
+	if (fe->fe_Fd < 0) {
+	    openFailed(fe);
+	    return;
+	}
+	if (fe->fe_OpenFailed) {
+	    fe->fe_OpenFailed = 0;
+	    logit(LOG_NOTICE, "%s: queue file open again", fe->fe_Label);
+	}
+    }
+    {
 	/*
 	 * flush buffer.  If the write fails, we undo it to ensure
 	 * that we do not get garbaged feed files.
@@ -283,11 +397,13 @@ flushFeedOut(Feed *fe)
 	    logit(LOG_ERR, "%s: queue file truncate failed: %s",
 					fe->fe_Label, strerror(errno));
 	}
-	if (n != fe->fe_BufIdx && fe->fe_Failed == 0) {
-	    fe->fe_Failed = 1;
-	    logit(LOG_INFO, "failure writing to feed %s", fe->fe_Label);
+	if (n != fe->fe_BufIdx) {
+	    if (fe->fe_Failed == 0) {
+		fe->fe_Failed = 1;
+		logit(LOG_INFO, "failure writing to feed %s", fe->fe_Label);
+	    }
+	    fe->fe_Lost += countLines(fe->fe_Buf, fe->fe_BufIdx);
 	}
     }
     fe->fe_BufIdx = 0;
 }
-
