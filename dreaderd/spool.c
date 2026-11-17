@@ -125,6 +125,16 @@ NNGetLocal1(Connection *conn)
 	wcode = NntpCode(buf);
 	if (wcode == 223) {
 	    /*
+	     * The client is gone (ended while it waited, e.g. by its idle
+	     * timeout): nobody to send the article to.  The 223 line is
+	     * the whole reply, so the request is just finished.  Going on
+	     * crashed in NewDFA(), which uses sr_CConn.
+	     */
+	    if (sreq->sr_CConn == NULL) {
+		NNFinishSReq(conn, NULL, 0);
+		return;
+	    }
+	    /*
 	     * sr_CConn may be NULL if client was terminated while
 	     * server operation was still in progress.
 	     */
