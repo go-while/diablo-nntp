@@ -9,7 +9,6 @@ import (
 	"strings"
 	"syscall"
 	"testing"
-	"time"
 
 	testkit "github.com/go-while/nntp-testkit"
 )
@@ -87,11 +86,15 @@ func TestKPDBConcurrentUpdate(t *testing.T) {
 		t.Fatalf("lock record k: %v", err)
 	}
 
-	// Both writers find k and wait for its lock.
+	// Both writers find k and wait for a lock: the first for the record lock the test
+	// holds, the second for that one or for a lock the first writer holds while it waits.
+	// A writer that is not seen waiting, or that has finished before the unlock, did not
+	// run the path this test is for.
 	ctx, cancel := context.WithTimeout(context.Background(), 2*testkit.Deadline())
 	defer cancel()
 	var writers []*exec.Cmd
 	var outs []*bytes.Buffer
+	var dones []chan error
 	for _, tv := range []string{"a=22", "b=333"} {
 		cmd := exec.CommandContext(ctx, dkp, "-w", db, "k", tv)
 		var out bytes.Buffer
@@ -99,13 +102,22 @@ func TestKPDBConcurrentUpdate(t *testing.T) {
 		if err := cmd.Start(); err != nil {
 			t.Fatal(err)
 		}
+		done := make(chan error, 1)
+		go func() { done <- cmd.Wait() }()
 		writers = append(writers, cmd)
 		outs = append(outs, &out)
+		dones = append(dones, done)
 	}
-	time.Sleep(time.Second)
 	for i, w := range writers {
-		if w.ProcessState != nil {
-			t.Fatalf("writer %d finished while the record was locked:\n%s", i, outs[i])
+		if err := waitLockWaiter(w.Process.Pid, dones[i]); err != nil {
+			t.Fatalf("writer %d did not wait while the record was locked: %v\n%s", i, err, outs[i])
+		}
+	}
+	for i := range writers {
+		select {
+		case err := <-dones[i]:
+			t.Fatalf("writer %d finished while the record was locked (%v):\n%s", i, err, outs[i])
+		default:
 		}
 	}
 
@@ -113,8 +125,8 @@ func TestKPDBConcurrentUpdate(t *testing.T) {
 	if err := syscall.FcntlFlock(f.Fd(), syscall.F_SETLK, &lk); err != nil {
 		t.Fatal(err)
 	}
-	for i, w := range writers {
-		if err := w.Wait(); err != nil {
+	for i := range writers {
+		if err := <-dones[i]; err != nil {
 			t.Fatalf("writer %d: %v\n%s", i, err, outs[i])
 		}
 	}
