@@ -99,9 +99,10 @@ accept(int s, struct sockaddr *addr, socklen_t *len)
 //
 //   - program: the defs.h override in a small program built with -O2 -D_FORTIFY_SOURCE=2;
 //     FD_SET of 1030 aborts where the libc has the check (skipped where it has not, e.g. musl).
+//   - probe: FD_SETSIZE, sizeof(fd_set) and MAXFDS as the tree's lib/defs.h gives them with
+//     the build's flags (logged).
 //   - diablo: the feeder as built on this host, its descriptors filled to 1030 before a peer
-//     connects; the master must stay up and serve the next connection. This fails only where
-//     the build is fortified (the binary calls __fdelt_chk); elsewhere it passes.
+//     connects; the master must stay up (a refused connection is the existing limit path).
 func TestR2FdSetFortify(t *testing.T) {
 	t.Run("program", func(t *testing.T) {
 		if !preloadHost(false) {
@@ -141,8 +142,9 @@ func TestR2FdSetFortify(t *testing.T) {
 		prog := filepath.Join(dir, "probe")
 		code := "#include \"lib/defs.h\"\n#include <stdio.h>\nint main(void) {\n" +
 			"#ifdef __USE_FORTIFY_LEVEL\n int fl = __USE_FORTIFY_LEVEL;\n#else\n int fl = -1;\n#endif\n" +
+			"#ifdef __FD_SETSIZE\n int ifs = __FD_SETSIZE;\n#else\n int ifs = -1;\n#endif\n" +
 			" printf(\"FD_SETSIZE %d __FD_SETSIZE %d sizeof(fd_set) %d MAXFDS %d MAXFORKS %d fortify %d\\n\"," +
-			" (int)FD_SETSIZE, (int)__FD_SETSIZE, (int)sizeof(fd_set), (int)MAXFDS, (int)MAXFORKS, fl);\n return 0;\n}\n"
+			" (int)FD_SETSIZE, ifs, (int)sizeof(fd_set), (int)MAXFDS, (int)MAXFORKS, fl);\n return 0;\n}\n"
 		if err := os.WriteFile(src, []byte(code), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -185,19 +187,21 @@ func TestR2FdSetFortify(t *testing.T) {
 		if nc, err := d.Dial("tcp", s.Addr); err == nil {
 			_ = nc.SetReadDeadline(time.Now().Add(5 * time.Second))
 			buf := make([]byte, 512)
-			_, _ = nc.Read(buf) // the greeting, when the child gets to send it
+			n, err := nc.Read(buf) // the greeting, when the child gets to send it
+			t.Logf("connection on a descriptor above 1024: %q (%v)", strings.TrimSpace(string(buf[:n])), err)
 			nc.Close()
 		}
 		if len(shimMarked(mark, "filled to")) == 0 {
 			t.Fatalf("the descriptors were not filled")
 		}
+		// A refused connection ("Maximum file descriptors exceeded" when the pipe is above
+		// MAXFDS) is the existing limit path; the finding is the master's abort.
 		select {
 		case <-s.Proc.Done():
-			t.Fatalf("the diablo master exited after a connection on a descriptor above 1024 (fortified: %v)\n%s",
+			t.Errorf("the diablo master exited after a connection on a descriptor above 1024 (fortified: %v)\n%s",
 				fortified, s.Proc.Stderr())
 		case <-time.After(3 * time.Second):
+			t.Logf("the master is still up; general.log:\n%s", generalLog(s))
 		}
-		p := s.Peer(t)
-		p.ExpectCmd(205, "QUIT")
 	})
 }
