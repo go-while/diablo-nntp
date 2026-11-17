@@ -162,6 +162,7 @@ static int gzipOnlyData(Group *group, const char *dirPath, artno_t startNo, artn
 #endif
 static void groupGone(Group *group, const char *what);
 static int writeActiveField(Group *group, const char *tok, const char *data);
+static int deleteStaleGroup(Group *group, int t);
 static int enterActiveRecord(int recOff, int recLen, int late);
 static int rescanActive(void);
 static int currentIter(char *Hash, int iter);
@@ -551,9 +552,8 @@ main(int ac, char **av)
 			/*
 			 * Existing LMTS
 			 */
-			if ((int)(t - group->gr_LMTS) > 0) {
-			    if (ForReal)
-				KPDBDelete(KDBActive, group->gr_GroupName);
+			if ((int)(t - group->gr_LMTS) > 0 &&
+					deleteStaleGroup(group, t) > 0) {
 			    if (VerboseOpt)
 				printf("%s: stale group deleted\n", group->gr_GroupName);
 			    add = 1;
@@ -769,6 +769,42 @@ writeActiveField(Group *group, const char *tok, const char *data)
     }
     KPDBWriteEncode(KDBActive, group->gr_GroupName, tok, data, KP_UNLOCK);
     return(0);
+}
+
+/*
+ * deleteStaleGroup() - -O: delete the group from the active file if its
+ * last-article time (LMTS) is still older than t.  The LMTS read at the
+ * start of the run can be hours old; dreaderd sets it under the record
+ * lock when it numbers an article, so look at it again under that lock.
+ * Returns 1 when the group is deleted (or would be, with -n), 0 when it
+ * got an article meanwhile and stays, -1 when it has left the active file.
+ */
+static int
+deleteStaleGroup(Group *group, int t)
+{
+    const char *rec;
+    int recLen;
+    int lmts;
+
+    rec = KPDBReadRecord(KDBActive, group->gr_GroupName, KP_LOCK, &recLen);
+    if (rec == NULL) {
+	groupGone(group, "not deleted");
+	return(-1);
+    }
+    lmts = (int)strtoul(KPDBGetField(rec, recLen, "LMTS", NULL, "0"), NULL, 16);
+    if (lmts == 0 || (int)(t - lmts) <= 0) {
+	KPDBUnlock(KDBActive, rec);
+	if (VerboseOpt)
+	    printf("%s: new article during the run, not deleted\n",
+						group->gr_GroupName);
+	group->gr_LMTS = lmts;
+	return(0);
+    }
+    if (ForReal)
+	KPDBDelete(KDBActive, group->gr_GroupName);	/* unlocks the record */
+    else
+	KPDBUnlock(KDBActive, rec);
+    return(1);
 }
 
 /*
