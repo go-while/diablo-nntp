@@ -160,7 +160,9 @@ func TestDexpireoverRewriteTrackonly(t *testing.T) {
 // TestDexpireoverRewriteMixedRecords: a group written with overview data (articles 1-6) and
 // then, after a switch to readerxover trackonly, without (7-12); with four articles per data
 // file one file holds both kinds (4-7). "dexpireover -a -R" keeps every record, the ones with
-// data still point at their (rewritten) data, and OVER gives the same lines as before.
+// data still point at their (rewritten) data, and OVER gives the same lines as before. With
+// zlib: an empty .gz in place of a data file whose records have data is still a failure of
+// -R (group left as it was, exit 1), not an empty range.
 func TestDexpireoverRewriteMixedRecords(t *testing.T) {
 	cfg := trackonlyConfig(t)
 	st, spool := spoolStore(t)
@@ -213,6 +215,41 @@ func TestDexpireoverRewriteMixedRecords(t *testing.T) {
 	if after := over(); strings.Join(after, "\n") != strings.Join(before, "\n") {
 		t.Errorf("OVER 1-12 after dexpireover -a -R differs:\nbefore %q\nafter  %q", before, after)
 	}
+	if !builtWithZlib(t) {
+		return
+	}
+
+	// An empty .gz in place of the data file of articles 1-3, whose records have data: that
+	// is damage, not a trackonly range. -R must leave the group as it is and fail, as it
+	// does for any unreadable data file, and not drop the three records.
+	s.Proc.Stop()
+	overPath := overFilePath(t, s)
+	plain := filepath.Join(filepath.Dir(overPath), "data.0."+strings.TrimPrefix(filepath.Base(overPath), "over.0."))
+	if err := os.Remove(plain); err != nil {
+		t.Fatalf("data file of articles 1-3: %v", err)
+	}
+	if err := os.WriteFile(plain+".gz", emptyGzip(t), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := s.TryRun("dexpireover", "-a", "-R", "-v")
+	t.Logf("dexpireover -a -R -v with an empty .gz for records with data: err %v\n%s", err, out)
+	if err == nil || !strings.Contains(out, "Rewrite of e2e.test data files failed, group left as it was") {
+		t.Errorf("dexpireover -a -R with an empty .gz for records with data: err %v, want exit 1 and the group left as it was:\n%s", err, out)
+	}
+	checkSlots(t, s, "after dexpireover -a -R with an empty .gz for records with data", 12, mixed)
+	if _, err := os.Stat(plain + ".gz"); err != nil {
+		t.Errorf("the .gz of articles 1-3 is gone after the failed -R: %v", err)
+	}
+}
+
+// emptyGzip is a gzip file of no bytes, as -z made of an empty data file.
+func emptyGzip(t *testing.T) []byte {
+	t.Helper()
+	var gz bytes.Buffer
+	if err := gzip.NewWriter(&gz).Close(); err != nil {
+		t.Fatal(err)
+	}
+	return gz.Bytes()
 }
 
 // TestDexpireoverRewriteTrackonlyGzip: the data files of a trackonly group are empty (dreaderd
@@ -252,12 +289,7 @@ func TestDexpireoverRewriteTrackonlyGzip(t *testing.T) {
 	if err := os.Remove(plain); err != nil && !os.IsNotExist(err) {
 		t.Fatal(err)
 	}
-	var gz bytes.Buffer
-	zw := gzip.NewWriter(&gz)
-	if err := zw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(plain+".gz", gz.Bytes(), 0o644); err != nil {
+	if err := os.WriteFile(plain+".gz", emptyGzip(t), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	expireOver(t, s, "-a", "-R", "-v")
