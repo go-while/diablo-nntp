@@ -838,6 +838,7 @@ NNServerRequest(Connection *conn, const char *grp, const char *msgid, const int 
     sreq->sr_MsgId = msgid ? zallocStr(&SysMemPool, msgid) : NULL;
     sreq->sr_MaxAge = maxage;
     sreq->sr_HeadOnly = (req == SREQ_HDR);
+    sreq->sr_Post = (req == SREQ_POST);
     sreq->sr_Cache = NULL;
     sreq->sr_TimeRcvd = TimeRcvd;
     sreq->sr_GrpIter = grpIter;
