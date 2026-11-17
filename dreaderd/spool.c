@@ -166,8 +166,16 @@ NNGetLocal1(Connection *conn)
 			    MBPrintf(&sreq->sr_CConn->co_TMBuf, "\r\n"); 
 			    sreq->sr_CConn->co_ArtMode = COM_BODYNOSTAT;
 			} else {
-			    NNSpoolResponseScrap(conn);
-			    return; /* bleh */
+			    /*
+			     * The article went away (cancelled, expired) while
+			     * the spool server answered.  Nothing follows a
+			     * whereis reply, so there is no article to drop:
+			     * answer the client, the stream is in step.
+			     * NNSpoolResponseScrap() waited here for lines
+			     * that never came.
+			     */
+			    NNFinishSReq(conn, "423 No such article number in this group\r\n", 0);
+			    return;
 			}
 		    }
 		    break;
