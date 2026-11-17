@@ -2263,7 +2263,11 @@ feedSpamFeedOK(int feed, int article)
               return(0);
       }
       if (feed == 2) {
-              if (article == 0) {
+              /*
+               * onlyspam: only what the filter called spam, not an
+               * article it failed on (-1)
+               */
+              if (article != 1) {
                       return(1);
               }
               return(0);

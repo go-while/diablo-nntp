@@ -1,0 +1,1 @@
+- diablo: an article whose first line is "." reached the external spam filter (`feederfilter`) unstuffed, as the end of the article; a filter that answers per "." line answered twice, and every later article got the verdict meant for the article before it, until the filter was restarted. The first line is now dot-stuffed like every other line (D-240).

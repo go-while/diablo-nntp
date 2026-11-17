@@ -96,11 +96,20 @@ filter_failed(char *reason, char *fpath)
 	int delay;
 	time_t now = time(NULL);
 
-	/* Yeah, yeah, it's hokey. */
-	if (now - filter_last_fail < 300) {
-		filter_fail_count++;
+	/*
+	 * The delay is the failure count squared, at most 900 s.  A failure
+	 * within the last delay plus five minutes continues the series (a
+	 * filter that stays broken fails again right after its delay); after
+	 * a longer quiet time it starts again at 1 s.  It counted down before,
+	 * below zero, so rare failures grew the delay.
+	 */
+	delay = filter_fail_count * filter_fail_count;
+	delay = (delay > 900) ? 900 : delay;
+	if (filter_fail_count > 0 && now - filter_last_fail < 300 + delay) {
+		if (filter_fail_count < 30)
+			filter_fail_count++;
 	} else {
-		filter_fail_count--;
+		filter_fail_count = 1;
 	}
 	filter_last_fail = now;
 	delay = filter_fail_count * filter_fail_count;
@@ -298,6 +307,13 @@ DiabFilter(char *fpath, char *loc, int wireformat)
 
 	llen = atoi(aptr + 1);	/* get article length */
 
+	/*
+	 * diab_read() puts the article after sizeof(SpoolArtHdr) bytes and
+	 * a NUL after it, also for an old record without a header.
+	 */
+	if (llen < 0 || llen > INT_MAX / 4)
+		return(-1);
+	llen += sizeof(SpoolArtHdr) + 1;
 	if (llen >= filter_abufsiz) {
 		count = sizeit(llen);
 		if (filter_abuf) {
@@ -336,9 +352,9 @@ DiabFilter(char *fpath, char *loc, int wireformat)
 	}
 
 	if ((rval = diab_read(loc, filter_abuf, filter_abufsiz)) < 0) {
-#ifdef DEBUG
-		logit(LOG_ERR, "diab_read failed: %s", loc);
-#endif
+		/* it passes unjudged, as with a failed filter: say so */
+		logit(LOG_ERR, "diab-filter(%s): cannot read article %s, not filtered",
+			fpath, loc);
 		return(-1);
 	}
 
@@ -346,7 +362,15 @@ DiabFilter(char *fpath, char *loc, int wireformat)
 	aptr = filter_abuf + sizeof(SpoolArtHdr);
 	nptr = filter_nbuf;
 	pptr = aptr;
-	eoln = 0;
+	/*
+	 * The article starts at a line start: a first line beginning with
+	 * "." is dot-stuffed like every other one.  The feeder stores it
+	 * unstuffed, and sent as ".\r\n" it ended the article for the
+	 * filter, which then answered twice; every later article got the
+	 * answer meant for the one before.  A wireformat article is stored
+	 * stuffed and copied as it is.
+	 */
+	eoln = wireformat ? 0 : 1;
 	while (count--) {
 		if (wireformat) {
 			if (*pptr == '\r' && *aptr == '\n')
@@ -405,14 +429,23 @@ DiabFilter(char *fpath, char *loc, int wireformat)
 
 	filter_abuf[rval] = '\0';
 
-	if (*filter_abuf == '3') {
+	/*
+	 * The whole code, as IHAVE has it: 335 takes the article, 435
+	 * and 437 mark it as spam.  Any other answer (400, 436, a line
+	 * without a code) is a failed filter, not spam: it is out of
+	 * step, so restart it rather than read its next answer.
+	 */
+	switch (NntpCode(filter_abuf)) {
+	case 335:
 		return(0);
-	}
-	if (*filter_abuf == '4') {
+	case 435:
+	case 437:
 		return(1);
 	}
 	logit(LOG_ERR, "filter read failure: got unknown response: %s",
 			filter_abuf);
+	filter_failed("unknown response", fpath);
+	DiabFilterClose(1);
 	return(-1);
 }
 

@@ -36,8 +36,9 @@ diab_read(char *namepos, char *buf, int szbuf)
 	static char name[NAMELEN], *ptr, *nptr;
 	static char lastname[NAMELEN] = { 0 };
 	static int fd = -1;
-	int offset, size, nsize;
-	int rval;
+	int offset, size, skip, alen;
+	ssize_t n;
+	SpoolArtHdr ah;
 
 	for (ptr = namepos, nptr = name; *ptr && *ptr != ':' && *ptr != ' '; ) {
 		*nptr++ = *ptr++;
@@ -59,6 +60,8 @@ diab_read(char *namepos, char *buf, int szbuf)
 #endif
 		return(-1);
 	}
+	if (offset < 0 || size <= 0)
+		return(-1);
 	if (strcmp(lastname, name)) {
 		if (fd >= 0) {
 			close(fd);
@@ -80,50 +83,71 @@ diab_read(char *namepos, char *buf, int szbuf)
 		}
 		snprintf(lastname, sizeof(lastname), "%s", name);
 	}
-	if (lseek(fd, (off_t)offset, SEEK_SET) < 0) {
+
+	/*
+	 * The record, read the way the feeder reads it to serve it
+	 * (SendArticle(), MapArticle()).  With the magic: a spool header
+	 * of HeadLen bytes, the article and a NUL; size is the header plus
+	 * the article.  A header that fails the feeder's checks is refused.
+	 * Without the magic: an old record with no header, size is the
+	 * article.  On a compressed spool object (compresslvl) the article
+	 * is one gzip member after a full header: it is inflated.  Before,
+	 * every record was taken to have a full header, and a NUL byte
+	 * anywhere (gzip data, or an article with a NUL, rejectartswithnul
+	 * being off by default) failed the read: the article went out
+	 * unfiltered.
+	 *
+	 * In every case the article is put into buf after
+	 * sizeof(SpoolArtHdr) bytes, followed by a NUL, and its length is
+	 * returned; -1 if it cannot be read.
+	 */
+	memset(&ah, 0, sizeof(ah));
+	if ((n = pread(fd, &ah, sizeof(ah), (off_t)offset)) < 0) {
 #ifdef	DEBUG
-		fprintf(stderr, "error: seeking to article location, %d\n", errno);
+		fprintf(stderr, "error: reading article header, %d\n", errno);
 #endif
 		return(-1);
 	}
-	nsize = size + 1;
-	if (nsize > szbuf) {
-		/* Too big for buffer - read what we can */
-		if ((rval = read(fd, buf, szbuf)) != szbuf) {
-#ifdef	DEBUG
-		fprintf(stderr, "error: reading article data (toobig), read fails, %d\n", errno);
-#endif
+	skip = 0;
+	if (n >= 2 && (uint8)ah.Magic1 == STORE_MAGIC1 &&
+	    (uint8)ah.Magic2 == STORE_MAGIC2) {
+		if (n != (ssize_t)sizeof(ah) || size < (int)sizeof(ah) ||
+		    ah.HeadLen < 8 || ah.HeadLen > sizeof(ah) ||
+		    ah.ArtHdrLen > (uint32)(size - ah.HeadLen))
 			return(-1);
-		}
-		/* Can't check last byte that didn't fit */
-		return(rval);
-	} else {
-		/* Fits in buffer - go for it */
-		if ((rval = read(fd, buf, nsize)) != nsize) {
-#ifdef	DEBUG
-		fprintf(stderr, "error: reading article data (itfits), read fails, %d, %d read, %d wanted, %d curloc, %d fd, %x buf\n", errno, rval, nsize, (int)lseek(fd, 0, SEEK_CUR), fd, buf);
-#endif
-			return(-1);
-		}
-		ptr = buf + sizeof(SpoolArtHdr);
-		rval -= sizeof(SpoolArtHdr);
-
-		for (nptr = ptr + rval - 1; ptr < nptr; ) {
-			if (! *ptr++) {
-#ifdef	DEBUG
-				fprintf(stderr, "error: checking article data (itfits), data byte null\n");
-#endif
+		if (ah.StoreType & STORETYPE_GZIP) {
+			if (ah.HeadLen != sizeof(ah) || ah.ArtLen == 0 ||
+			    (size_t)ah.ArtLen + sizeof(ah) != (size_t)size ||
+			    size >= szbuf)
 				return(-1);
-			}
+			if (SpoolGunzip(fd, (off_t)offset + sizeof(ah),
+					buf + sizeof(ah), (int)ah.ArtLen) < 0)
+				return(-1);
+			buf[size] = '\0';
+			return((int)ah.ArtLen);
 		}
-		if (*ptr) {
-#ifdef	DEBUG
-		fprintf(stderr, "error: checking article data (itfits), last byte not null\n");
-#endif
-			return(-1);
-		}
-		return(rval - 1);
+		skip = ah.HeadLen;
 	}
+	alen = size - skip;
+	if (alen > szbuf - (int)sizeof(SpoolArtHdr) - 1)
+		return(-1);
+
+	/* the article and the stored NUL after it, by length */
+	n = pread(fd, buf + sizeof(SpoolArtHdr), (size_t)alen + 1,
+						(off_t)offset + skip);
+	if (n != (ssize_t)alen + 1) {
+#ifdef	DEBUG
+		fprintf(stderr, "error: reading article data, %d read, %d wanted, %d\n", (int)n, alen + 1, errno);
+#endif
+		return(-1);
+	}
+	if (buf[sizeof(SpoolArtHdr) + alen] != '\0') {
+#ifdef	DEBUG
+		fprintf(stderr, "error: checking article data, last byte not null\n");
+#endif
+		return(-1);
+	}
+	return(alen);
 }
 
 
@@ -161,7 +185,7 @@ int main(int argc, char *argv[])
 		perror("diab_read");
 		exit(1);
 	}
-	write(fileno(stdout), abuf, rval);
+	write(fileno(stdout), abuf + sizeof(SpoolArtHdr), rval);
 	exit(0);
 }
 #endif
