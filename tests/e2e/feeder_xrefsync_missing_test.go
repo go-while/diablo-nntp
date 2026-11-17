@@ -148,10 +148,11 @@ func TestFeederXrefSyncMissingGroupNoDrop(t *testing.T) {
 	xsyncAbsent(t, s, xsyncOther)
 }
 
-// TestFeederXrefSyncNumbers: every valid number is written to NX as the master sent it, with no
-// forward-only rule: the same number again, a lower number, a number above 32 bits and the
-// largest 64-bit article number (9223372036854775807) are all written, and a group listed twice
-// in one Xref: ends with the last number. Each article is accepted.
+// TestFeederXrefSyncNumbers: a valid number is written to NX as the master sent it, with no
+// forward-only rule: a lower number, a number above 32 bits and the largest 64-bit article number
+// (9223372036854775807) are all written, and a group listed twice in one Xref: ends with the
+// last number. The same number again is accepted and NX stays (the test cannot see whether it
+// is written again). Each article is accepted.
 func TestFeederXrefSyncNumbers(t *testing.T) {
 	s := newXrefSyncSite(t, "yes")
 	for _, c := range []struct {
