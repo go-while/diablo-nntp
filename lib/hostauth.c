@@ -31,7 +31,26 @@ time_t HAMTime = 0;
 time_t HACMTime = 0;
 time_t DNMTime = 0;
 
+/*
+ * The cache being replaced, open for reading in the rebuild only: the
+ * addresses of a name that does not resolve for now are taken from it.
+ */
+static FILE *HAOldCache = NULL;
+
+/*
+ * The (label, entry) pairs whose old addresses this rebuild has written:
+ * a name listed more than once under one label gets them once.
+ */
+typedef struct HAKept {
+    struct HAKept	*next;
+    char		label[256];
+    char		entry[256];
+} HAKept;
+
+static HAKept *HAKeptList = NULL;
+
 int convHost(char *host, HostAccess *HA, FILE *fo);
+static int keepOldHost(const char *host, HostAccess *HA, FILE *fo, const char *why);
 void loadDiabloHosts(FILE *fo, int t, int *count);
 void loadDnewsFeeds(FILE *fo, int t, int *count);
 
@@ -150,8 +169,19 @@ LoadHostAccess(time_t t, int force, int rebuildtime)
 	else
 	    printf("Rebuilding host cache\n");
 
+	HAOldCache = fopen(PatDbExpand(DHostsCachePat), "r");
 	loadDnewsFeeds(fo, t, &count);
 	loadDiabloHosts(fo, t, &count);
+	if (HAOldCache != NULL) {
+	    fclose(HAOldCache);
+	    HAOldCache = NULL;
+	}
+	while (HAKeptList != NULL) {
+	    HAKept *k = HAKeptList;
+
+	    HAKeptList = k->next;
+	    free(k);
+	}
 	if (count == 0)
 	    logit(LOG_INFO, "No incoming hosts found");
 	else if (DebugOpt)
@@ -247,9 +277,11 @@ convHost(char *host, HostAccess *HA, FILE *fo)
 	 * glibc 2.39 (EL10) then drops even a numeric IPv6 address on a
 	 * host without a global IPv6 address, so the entry was lost.
 	 */
+	int gai;
+
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_UNSPEC;
-	if (getaddrinfo(host, NULL, &hints, &ai0) == 0) {
+	if ((gai = getaddrinfo(host, NULL, &hints, &ai0)) == 0) {
 	    struct addrinfo *ai;
 
 	    for (ai = ai0; ai; ai = ai->ai_next) {
@@ -262,6 +294,18 @@ convHost(char *host, HostAccess *HA, FILE *fo)
 		}
 	    }
 	    freeaddrinfo(ai0);
+	} else if (gai == EAI_AGAIN || gai == EAI_MEMORY
+#ifdef EAI_SYSTEM
+			|| gai == EAI_SYSTEM
+#endif
+	) {
+	    /*
+	     * No answer for now (resolver down or timed out, no memory, a
+	     * system error): keep the addresses the name had.  Any other
+	     * error (no such name, no address, a failed answer) drops the
+	     * name as before.
+	     */
+	    found = keepOldHost(host, HA, fo, gai_strerror(gai));
 	}
     }
 #else
@@ -269,7 +313,7 @@ convHost(char *host, HostAccess *HA, FILE *fo)
 	struct hostent *he;
 	int i;
 
-	if ((he = gethostbyname(host)) != NULL)
+	if ((he = gethostbyname(host)) != NULL) {
 	    for (i = 0; he->h_addr_list && he->h_addr_list[i] != NULL; ++i) {
 		struct in_addr *haddr = (void *)he->h_addr_list[i];
 		strcpy(HA->addrst, inet_ntoa(*haddr));
@@ -277,8 +321,81 @@ convHost(char *host, HostAccess *HA, FILE *fo)
 		fwrite(HA, sizeof(*HA), 1, fo);
 		found++;
 	    }
+	} else if (h_errno == TRY_AGAIN) {
+	    found = keepOldHost(host, HA, fo, "temporary lookup failure");
+	}
     }
 #endif
+    return(found);
+}
+
+/*
+ * keepOldHost() - the lookup of host gave no answer this time: write the
+ * addresses the previous cache had for the same label and entry, each
+ * once.  A later line of the same label and entry in this rebuild writes
+ * nothing.  Returns the number of records written (0 without a previous
+ * cache or when it had none: the entry is dropped as before).
+ */
+static int
+keepOldHost(const char *host, HostAccess *HA, FILE *fo, const char *why)
+{
+    HostAccess old;
+    HAKept *k;
+    char **addrs = NULL;
+    int naddrs = 0;
+    int found = 0;
+    int i;
+
+    for (k = HAKeptList; k != NULL; k = k->next) {
+	if (strcmp(k->label, HA->label) == 0 &&
+					strcmp(k->entry, HA->entry) == 0)
+	    return(0);
+    }
+    if ((k = malloc(sizeof(*k))) == NULL)
+	return(0);
+    strcpy(k->label, HA->label);
+    strcpy(k->entry, HA->entry);
+    k->next = HAKeptList;
+    HAKeptList = k;
+
+    if (HAOldCache != NULL) {
+	rewind(HAOldCache);
+	while (fread(&old, sizeof(old), 1, HAOldCache) == 1) {
+	    old.entry[sizeof(old.entry) - 1] = 0;
+	    old.label[sizeof(old.label) - 1] = 0;
+	    old.addrst[sizeof(old.addrst) - 1] = 0;
+	    if (old.addrst[0] == 0 || !(old.testtype & TESTTYPE_IP) ||
+				strcmp(old.entry, HA->entry) != 0 ||
+				strcmp(old.label, HA->label) != 0)
+		continue;
+	    for (i = 0; i < naddrs; ++i) {
+		if (strcmp(addrs[i], old.addrst) == 0)
+		    break;
+	    }
+	    if (i < naddrs)
+		continue;
+	    {
+		char **na = realloc(addrs, (naddrs + 1) * sizeof(*addrs));
+
+		if (na == NULL || (na[naddrs] = strdup(old.addrst)) == NULL) {
+		    if (na != NULL)
+			addrs = na;
+		    break;
+		}
+		addrs = na;
+		naddrs++;
+	    }
+	    strcpy(HA->addrst, old.addrst);
+	    HA->testtype |= TESTTYPE_IP;
+	    fwrite(HA, sizeof(*HA), 1, fo);
+	    found++;
+	}
+    }
+    for (i = 0; i < naddrs; ++i)
+	free(addrs[i]);
+    free(addrs);
+    logit(LOG_ERR, "host cache: %s: %s, %d previous address(es) kept",
+						host, why, found);
     return(found);
 }
 
