@@ -71,6 +71,16 @@ func xsyncNX(t *testing.T, s *Site, group string) string {
 	return ""
 }
 
+// xsyncAbsent fails the test unless group has no record in the site's dactive.kp (the sync must
+// not create one for a group we do not carry).
+func xsyncAbsent(t *testing.T, s *Site, group string) {
+	t.Helper()
+	out := s.Run(t, "dkp", "-r", filepath.Join(s.Dir, "dactive.kp"), group)
+	if strings.HasPrefix(strings.TrimSpace(out), "key ") {
+		t.Errorf("%s, not carried, has a record in dactive.kp: %q", group, out)
+	}
+}
+
 // TestFeederXrefSyncMissingGroupActiveDrop: an Xref slave that syncs NX, with "activedrop yes",
 // keeps an article whose Xref: names a group it does not carry besides groups it carries, and
 // sets the NX of each carried group, also of those listed after the missing one. The docs say
@@ -109,6 +119,11 @@ func TestFeederXrefSyncMissingGroupActiveDrop(t *testing.T) {
 	if nx := xsyncNX(t, s, xsyncLocal); nx != "0000000007" {
 		t.Errorf("%s NX=%q after an article it is not in, want 0000000007", xsyncLocal, nx)
 	}
+	if nx := xsyncNX(t, s, xsyncAfter); nx != "0000000009" {
+		t.Errorf("%s NX=%q after an article it is not in, want 0000000009", xsyncAfter, nx)
+	}
+	xsyncAbsent(t, s, xsyncOther)
+	xsyncAbsent(t, s, xsyncOther2)
 }
 
 // TestFeederXrefSyncMissingGroupNoDrop: without activedrop the article is kept either way, but
@@ -117,11 +132,44 @@ func TestFeederXrefSyncMissingGroupActiveDrop(t *testing.T) {
 // used. Before the fix that NX was not updated.
 func TestFeederXrefSyncMissingGroupNoDrop(t *testing.T) {
 	s := newXrefSyncSite(t, "no")
-	if line := offerXref(t, s, xsyncOther+","+xsyncLocal, xsyncOther+":5 "+xsyncLocal+":6"); !strings.HasPrefix(line, "235") {
-		t.Errorf("Xref: master %s:5 %s:6: %q, want 235", xsyncOther, xsyncLocal, line)
+	for _, c := range []struct {
+		groups, xref, want string
+	}{
+		{xsyncOther + "," + xsyncLocal, xsyncOther + ":5 " + xsyncLocal + ":6", "0000000006"}, // missing group first
+		{xsyncLocal + "," + xsyncOther, xsyncLocal + ":8 " + xsyncOther + ":5", "0000000008"}, // missing group last
+	} {
+		if line := offerXref(t, s, c.groups, c.xref); !strings.HasPrefix(line, "235") {
+			t.Errorf("Xref: master %s: %q, want 235", c.xref, line)
+		}
+		if nx := xsyncNX(t, s, xsyncLocal); nx != c.want {
+			t.Errorf("%s NX=%q after Xref: master %s, want %s", xsyncLocal, nx, c.xref, c.want)
+		}
 	}
-	if nx := xsyncNX(t, s, xsyncLocal); nx != "0000000006" {
-		t.Errorf("%s NX=%q after Xref %s:5 %s:6, want 0000000006", xsyncLocal, nx, xsyncOther, xsyncLocal)
+	xsyncAbsent(t, s, xsyncOther)
+}
+
+// TestFeederXrefSyncNumbers: every valid number is written to NX as the master sent it, with no
+// forward-only rule: the same number again, a lower number, a number above 32 bits and the
+// largest 64-bit article number (9223372036854775807) are all written, and a group listed twice
+// in one Xref: ends with the last number. Each article is accepted.
+func TestFeederXrefSyncNumbers(t *testing.T) {
+	s := newXrefSyncSite(t, "yes")
+	for _, c := range []struct {
+		groups, xref, want string
+	}{
+		{xsyncLocal, xsyncLocal + ":6", "0000000006"},
+		{xsyncLocal, xsyncLocal + ":6", "0000000006"},                            // the same number again
+		{xsyncLocal, xsyncLocal + ":5", "0000000005"},                            // lower: written
+		{xsyncLocal, xsyncLocal + ":4294967296", "4294967296"},                   // above 32 bits
+		{xsyncLocal, xsyncLocal + ":9223372036854775807", "9223372036854775807"}, // LLONG_MAX
+		{xsyncLocal, xsyncLocal + ":12 " + xsyncLocal + ":11", "0000000011"},     // listed twice: the last wins
+	} {
+		if line := offerXref(t, s, c.groups, c.xref); !strings.HasPrefix(line, "235") {
+			t.Errorf("Xref: master %s: %q, want 235", c.xref, line)
+		}
+		if nx := xsyncNX(t, s, xsyncLocal); nx != c.want {
+			t.Errorf("after Xref: master %s: %s NX=%q, want %s", c.xref, xsyncLocal, nx, c.want)
+		}
 	}
 }
 
@@ -136,7 +184,7 @@ func TestFeederXrefSyncBadNumber(t *testing.T) {
 	if line := offerXref(t, s, xsyncLocal, xsyncLocal+":6"); !strings.HasPrefix(line, "235") {
 		t.Fatalf("Xref: master %s:6: %q, want 235", xsyncLocal, line)
 	}
-	for _, num := range []string{"-5", "abc", "99999999999999999999", "", "7x", "+8"} {
+	for _, num := range []string{"-5", "abc", "99999999999999999999", "9223372036854775808", "", "7x", "+8"} {
 		xref := xsyncLocal + ":" + num
 		if line := offerXref(t, s, xsyncLocal, xref); !strings.HasPrefix(line, "235") {
 			t.Errorf("Xref: master %s: %q, want 235", xref, line)
