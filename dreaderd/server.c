@@ -43,6 +43,7 @@ void NNServerPrime4(Connection *conn);
 void NNServerPrimeAuth1(Connection *conn);
 void NNServerPrimeAuth2(Connection *conn);
 void NNServerConnect(Connection *conn);
+void FreeSReq(ServReq *sreq);
 
 ServReq	*SReadBase;
 ServReq **PSRead = &SReadBase;
@@ -602,6 +603,14 @@ QueueServerRequests(void)
 	if ((SReadBase = sreq->sr_Next) == NULL)
 	    PSRead = &SReadBase;
 	sreq->sr_Next = NULL;
+	/*
+	 * The client went away while its request waited here
+	 * (NNTerminate cleared sr_CConn): nobody wants the answer.
+	 */
+	if (sreq->sr_CConn == NULL) {
+	    FreeSReq(sreq);
+	    continue;
+	}
 	if (queueServerRequest(sreq, THREAD_SPOOL, THREAD_QSIZE) < 0) {
 	    *PSRead = sreq;
 	    PSRead = &sreq->sr_Next;
@@ -612,6 +621,10 @@ QueueServerRequests(void)
 	if ((SWriteBase = sreq->sr_Next) == NULL)
 	    PSWrite = &SWriteBase;
 	sreq->sr_Next = NULL;
+	if (sreq->sr_CConn == NULL) {
+	    FreeSReq(sreq);
+	    continue;
+	}
 	if (queueServerRequest(sreq, THREAD_POST, THREAD_PSIZE) < 0) {
 	    *PSWrite = sreq;
 	    PSWrite = &sreq->sr_Next;
@@ -633,6 +646,14 @@ cbQueueReqFindThread(void *cbData, void *data)
 
     if (conn->co_Retention > 0 && sreq->sr_TimeRcvd &&
 	    conn->co_Retention < (time(NULL) - sreq->sr_TimeRcvd))
+	return(0);
+
+    /*
+     * sr_CConn is NULL when the client went away (NNTerminate): such a
+     * request goes to no server (QueueServerRequests and NNFinishSReq
+     * free it; this is the last guard).
+     */
+    if (sreq->sr_CConn == NULL)
 	return(0);
 
     if (conn->co_GroupDef && sreq->sr_CConn->co_Auth.dr_GroupDef->gr_Name &&
@@ -878,6 +899,12 @@ NNFinishSReq(Connection *conn, const char *ctl, int requeue)
 	 * returns 0 on success, -1 on failure, so we have to reverse the 
 	 * sense of the return value.
 	 */
+
+	/*
+	 * The client has gone: don't requeue (as NNServerTerminate does).
+	 */
+	if (sreq->sr_CConn == NULL)
+	    requeue = 0;
 
 	if (requeue) {
 	    if (conn->co_Desc->d_Type == THREAD_POST)

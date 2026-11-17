@@ -962,6 +962,7 @@ main(int ac, char **av)
     OpenLog("dreaderd", (DebugOpt ? LOG_PERROR : 0) | LOG_NDELAY | LOG_PID);
     SysLogDesc = "dreaderd";
     DnsQInitLimits();
+    (void)OverCacheLimit();	/* after the descriptor limit; the forks inherit it */
 
     /*
      * Save PID

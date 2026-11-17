@@ -838,6 +838,17 @@ KPDBWrite(KPDB *kpdb, const char *key, const char *tok, const char *data, int lo
 	    &odataLen,
 	    NULL
 	);
+	if (odata != NULL && dataLen == odataLen &&
+	    memcmp(odata, data, (size_t)dataLen) == 0) {
+	    /*
+	     * Same value: nothing to write.  (dreaderd rewrites NE with the
+	     * number diablo's GenerateXRef() already stored when the two
+	     * share dactive.kp.)
+	     */
+	    if (lockMe != KP_LOCK_CONTINUE && lockMe != KP_LOCK)
+		hflock(kpdb->kp_Fd, lockoff, XLOCK_UN);
+	    return(0);
+	}
 	if (odata != NULL && dataLen == odataLen) {
 	    kpdb->kp_Modified = 1;
 #if USE_KP_RW_MAP
