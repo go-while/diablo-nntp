@@ -440,6 +440,8 @@ sharing: they contain system/process names and test-site log contents.
 | `TestReaderOvCacheClientReserve` | dreaderd | `readerovcache 300`, `readerthreads 16`, 56 groups with 18 data files each: 12 new feed connections still get a greeting (the fork lowers its cache when the overview files reach the descriptors left for clients) |
 | `TestKPDBSameValueNoWrite` | dkp | `dkp -w` of the value a field already has leaves the file's bytes and mtime alone; a new value of the same length is written. **Fails** on main: the same-value pwrite moves the mtime and the close stamps the header |
 | `TestR2DrequeueRotatedQueue` | drequeue | SOUT lines fed in three batches; between them `dqueue/peer` is renamed to `peer.S<seq>` (as dspoolout does, the second time with a new empty `dqueue/peer`), read and removed (as dnewslink does): every Message-ID reaches a queue file exactly once. **Fails** on main: drequeue keeps writing to the removed file and exits 0 (D-238) |
+| `TestR2DrequeueReopenFails` | drequeue | after a rotation `dqueue/` is not writable for a while: drequeue reports the open failure once on stderr, keeps its buffer for the next try instead of writing to the removed file, and at the end reports the lines that did not fit and exits 1; every Message-ID is in a queue file or in that count. **Fails** on main: the lines go to the removed file, exit 0 (D-238) |
+| `TestR2DrequeueOpenFails` | drequeue | `dqueue/` not writable from the start, 10 SOUT lines: drequeue reports the open failure and "10 lines were not queued" and exits 1. **Fails** on main: the lines are dropped without a word, exit 0 (D-238) |
 
 ## Running
 
