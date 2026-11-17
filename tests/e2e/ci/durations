@@ -743,5 +743,7 @@ TestVserverdefOwnHostname 0.05
 TestVserverdefWithoutHostname 0.05
 TestWeightedAllocationWithZeroWeights 0.01
 TestWildmatUnterminatedClass 0.10
+TestWireFormatBareCRAtBufferBoundary 0.15
+TestWireFormatCRLFSplitAcrossBuffer 0.54
 TestXhdrXoverByMessageId 0.03
 TestZallocStrTrim2Passes 0.05
