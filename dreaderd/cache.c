@@ -238,20 +238,18 @@ CreateCache(Connection *conn)
     char path[PATH_MAX], tmp[PATH_MAX];
 
     /*
-     * The same request fetched again (requeued to another server after
-     * part of the article was written): start its cache file over.
+     * A request comes here with its cache file still open only if it
+     * was fetched again without going through the requeue paths of
+     * server.c (which drop the file): throw away what it holds and
+     * start a new one.
      */
     if (conn->co_SReq->sr_Cache != NULL) {
 	FILE *fo = conn->co_SReq->sr_Cache;
 
-	if (fflush(fo) != 0 || ftruncate(fileno(fo), 0) < 0) {
-	    AbortCache(fileno(fo), conn->co_SReq->sr_MsgId, 0);
-	    fclose(fo);
-	    conn->co_SReq->sr_Cache = NULL;
-	    return;
-	}
-	rewind(fo);
-	return;
+	fflush(fo);
+	AbortCache(fileno(fo), conn->co_SReq->sr_MsgId, 0);
+	fclose(fo);
+	conn->co_SReq->sr_Cache = NULL;
     }
 
     /* do not create new cache files for old articles */

@@ -20,16 +20,16 @@ import (
 // TestReaderCacheSameArticleTwice: readercache on; two spool servers (127.0.0.1 and 127.0.0.2,
 // one connection each, so the two requests run at the same time) answer the same Message-ID
 // with copies of different length (the first request gets the long copy), each sent in two
-// halves with a pause. Client A asks first, client B while A's copy is still coming. Both get
-// their copy whole; a third client is then served from the cache (no third spool request) and
-// gets exactly one of the two copies. Two orders: the first request ends first, and the first
+// halves with a pause. Client A asks first, client B after A got its 220 (A's copy is still
+// coming, its cache file open). Both get their copy whole; a third client is then served from
+// the cache (no third spool request) and gets exactly one of the two copies. Two orders: the first request ends first, and the first
 // request ends last. Fails before the fix in the first order: the cached article was the short
 // copy followed by the tail of the long one. The second order passes before the fix too (with
 // copies this small the first writer's stdio buffer still holds its whole copy, which then
 // overwrites the short one); it checks that the fix keeps the first writer's copy.
 func TestReaderCacheSameArticleTwice(t *testing.T) {
 	for _, tc := range []struct {
-		name          string
+		name           string
 		pause1, pause2 time.Duration
 	}{
 		{"first ends first", 1500 * time.Millisecond, 3 * time.Second},
@@ -93,24 +93,29 @@ func cacheSameArticleTwice(t *testing.T, pause1, pause2 time.Duration) {
 
 	a := s.Reader(t)
 	b := s.Reader(t)
-	a.MustSend("ARTICLE " + id + "\r\n")
-	deadline := time.Now().Add(20 * time.Second)
-	for asked() < 1 && time.Now().Before(deadline) {
-		time.Sleep(50 * time.Millisecond)
-	}
-	b.MustSend("ARTICLE " + id + "\r\n")
-	read := func(who string, c *client.Conn) []string {
+	status := func(who string, c *client.Conn) {
 		code, line, err := c.ReadStatus()
 		if err != nil || code != 220 {
 			t.Fatalf("client %s: ARTICLE %s: %d %q %v", who, id, code, line, err)
 		}
+	}
+	body := func(who string, c *client.Conn) []string {
 		lines, err := c.TryReadDotLines()
 		if err != nil {
 			t.Fatalf("client %s: article: %v (%q)", who, err, lines)
 		}
 		return lines
 	}
-	la := read("A", a)
+	read := func(who string, c *client.Conn) []string {
+		status(who, c)
+		return body(who, c)
+	}
+	// A's 220 comes with the first half of its copy (dreaderd passes the header on before the
+	// body): A's fetch has its cache file open when B asks
+	a.MustSend("ARTICLE " + id + "\r\n")
+	status("A", a)
+	b.MustSend("ARTICLE " + id + "\r\n")
+	la := body("A", a)
 	lb := read("B", b)
 	if asked() != 2 {
 		t.Fatalf("the spool servers were asked %d times, want 2 (one per client)", asked())
