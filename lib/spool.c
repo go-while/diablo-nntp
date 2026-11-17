@@ -63,6 +63,36 @@ void loadSpoolCtl(FILE *fi);
 double spaceFreeOn(char *part);
 int spoolSizeGb(char *part);
 void dumpSpoolConfig(void);
+static size_t spoolHomeLen(const char *shome);
+static void stripSlash(char *path);
+
+/*
+ * A spool path may be spelled with a trailing slash (path_spool "/news/spool/"
+ * or "path P.01/" in dspool.ctl).  dexpire compares the directory names it
+ * builds from a spool's path with those ArticleFileName() builds for the
+ * history records, so both must come out the same for either spelling:
+ * spool paths are kept without trailing slashes, and the spool home is
+ * compared without them (path_spool "/" compares as "": every absolute path
+ * is below it).
+ */
+static size_t
+spoolHomeLen(const char *shome)
+{
+    size_t l = strlen(shome);
+
+    while (l > 0 && shome[l - 1] == '/')
+	--l;
+    return(l);
+}
+
+static void
+stripSlash(char *path)
+{
+    size_t l = strlen(path);
+
+    while (l > 1 && path[l - 1] == '/')
+	path[--l] = 0;
+}
 
 /*
  * ArticleFileName() - get the absolute path for an article file/dir from
@@ -73,6 +103,7 @@ void
 ArticleFileName(char *path, int pathSize, History *h, int opt)
 {
     char *spool;
+    const char *sep;
 
     spool = GetSpoolPath(H_SPOOL(h->exp), h->gmt, opt);
 
@@ -80,12 +111,14 @@ ArticleFileName(char *path, int pathSize, History *h, int opt)
 	strcpy(path, "/dev/null");
 	return;
     }
+    /* no "//" for a spool path "/": dexpire names it "/D.x" */
+    sep = (spool[0] && spool[strlen(spool) - 1] != '/') ? "/" : "";
     switch (opt) {
 	case ARTFILE_DIR:
 	case ARTFILE_DIR_REL:
 		snprintf(path, pathSize, "%s%sD.%08x",
 					spool,
-					spool[0] ? "/" : "",
+					sep,
 					h->gmt - h->gmt % 10);
 		break;
 	case ARTFILE_FILE:
@@ -93,13 +126,13 @@ ArticleFileName(char *path, int pathSize, History *h, int opt)
 		if (h->boffset || h->bsize) {
 		    snprintf(path, pathSize, "%s%sD.%08x/B.%04x",
 					spool,
-					spool[0] ? "/" : "",
+					sep,
 					h->gmt - h->gmt % 10,
 					h->iter);
 		} else {
 		    snprintf(path, pathSize, "%s%sD.%08x/%08x.%08x.%04x",
 					spool,
-					spool[0] ? "/" : "",
+					sep,
 					h->gmt - h->gmt % 10,
 					h->hv.h1,
 					h->hv.h2,
@@ -154,9 +187,15 @@ GetSpoolPath(uint16 spool, int gmt, int opt)
 	    n = snprintf(path, sizeof(path), "%s", SpoolObjectMap[spool]->so_Path);
 	    if (n < 0 || (size_t)n >= sizeof(path))
 		goto path_too_long;
-	    if ((strcmp(path, PatExpand(SpoolHomePat)) == 0) && 
-			(opt == ARTFILE_DIR_REL || opt == ARTFILE_FILE_REL))
-		path[0] = 0;
+	    if (opt == ARTFILE_DIR_REL || opt == ARTFILE_FILE_REL) {
+		const char *shome = PatExpand(SpoolHomePat);
+		size_t l = spoolHomeLen(shome);
+
+		/* the spool home, with or without a trailing slash */
+		if (strncmp(path, shome, l) == 0 &&
+				path[l + strspn(path + l, "/")] == 0)
+		    path[0] = 0;
+	    }
 	} else if (*SpoolObjectMap[spool]->so_Path) {
 	    n = snprintf(path, sizeof(path), "%s/%s", PatExpand(SpoolHomePat),
 					SpoolObjectMap[spool]->so_Path);
@@ -610,6 +649,7 @@ loadSpoolCtl(FILE *fi)
 	spoolObj->so_Weight = -1;
 	spoolObj->so_Next = NULL;
 	strcpy(spoolObj->so_Path, PatExpand(SpoolHomePat));
+	stripSlash(spoolObj->so_Path);
 	SpoolObjects = spoolObj;
 	SpoolObjectMap[0] = spoolObj;
 	spoolObj = NULL;
@@ -748,21 +788,25 @@ loadSpoolCtl(FILE *fi)
 		continue;
 	    } else if (strcmp(cmd, "path") == 0) {
 		const char *shome = PatExpand(SpoolHomePat);
+		size_t shl = spoolHomeLen(shome);
+		size_t sep;
+
 		if (strncmp(arg, "%s/", 3) == 0) {
 		    arg += 3;
 		    strncpy(spoolObj->so_Path, arg, sizeof(spoolObj->so_Path) -1);
 		    spoolObj->so_Path[sizeof(spoolObj->so_Path) - 1] = '\0';
-		} else if (strcmp(arg, shome) != 0 &&
-				strncmp(arg, shome, strlen(shome)) == 0 &&
-				strlen(arg) > strlen(shome) &&
-				arg[strlen(shome)] == '/') {
-		    strncpy(spoolObj->so_Path, arg + strlen(shome) + 1,
+		} else if (strncmp(arg, shome, shl) == 0 &&
+				(sep = strspn(arg + shl, "/")) > 0 &&
+				arg[shl + sep] != 0) {
+		    /* below the spool home: relative to it */
+		    strncpy(spoolObj->so_Path, arg + shl + sep,
 						sizeof(spoolObj->so_Path) - 1);
 		    spoolObj->so_Path[sizeof(spoolObj->so_Path) - 1] = '\0';
 		} else {
 		    strncpy(spoolObj->so_Path, arg, sizeof(spoolObj->so_Path) - 1);
 		    spoolObj->so_Path[sizeof(spoolObj->so_Path) - 1] = '\0';
 		}
+		stripSlash(spoolObj->so_Path);
 		continue;
 	    } else if (strcmp(cmd, "spooldirs") == 0) {
 		spoolObj->so_SpoolDirs = strtol(arg, NULL, 0);
