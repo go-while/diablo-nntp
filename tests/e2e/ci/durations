@@ -280,6 +280,7 @@ TestDexpireReadErrorNoRemoval 20.36
 TestDexpirescoringDamaged 0.03
 TestDexpirescoringLastEntry 0.03
 TestDexpirescoringLockFailure 1.17
+TestDexpireSecondPassHistory 0.60
 TestDexpireSpoolPathSlash 0.69
 TestDexpireUnreadableSpoolDir 0.91
 TestDgrpctlCheckgroupsLongDescriptionStable 0.01
