@@ -93,6 +93,7 @@ void ArticleFileTrunc(int artFd, off_t bpos);
 void ArticleFileSetSize(int artFd);
 void ngAddControl(char *nglist, int ngSize, const char *ctl);
 void ngAddFolded(char *nglist, int ngSize, const char *s, int n, int lineEnd);
+int xrefAdd(char *xref, int *xrefLen, int xrefSize, const char *s, int n, int sep);
 void writePath(time_t t, char *path);
 
 void writeFeedOut(const char *label, const char *file, const char *msgid, const char *offSize, int rt, int headOnly, const char *artType, int lines, const char *cSize);
@@ -3207,6 +3208,8 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 	int hdrMessageId = 0;
 	int haveApproved = 0;
 	int ngFolded = 0;	/* the header line before was Newsgroups: or its continuation (D-208) */
+	int xrefFolded = 0;	/* xrefdata takes the rest of Xref: (a piece of its line or a continuation line) */
+	int xrefLen = 0;	/* strlen(xrefdata) */
 	int bytes;
 	int compressedSize = -1;
 	int zstore = 0;		/* the article went to the spool gzipped */
@@ -3448,6 +3451,10 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		 * of the buffer size).
 		 */
 		if (lastNl == 0) {
+		    if (xrefFolded &&
+			    xrefAdd(xrefdata, &xrefLen, sizeof(xrefdata),
+							p, bytes, 0) < 0)
+			xrefFolded = 0;
 		    bwrite(buffer, p, bytes);
 		    continue;
 		}
@@ -3464,14 +3471,20 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		/*
 		 * A line that begins with white space continues the header
 		 * before it.  When that is Newsgroups:, its names are part
-		 * of the list (D-208).  The line itself is written thru: it
-		 * matches none of the headers below.
+		 * of the list (D-208), and when that is Xref:, its entries
+		 * are part of the value that syncs NX.  The line itself is
+		 * written thru: it matches none of the headers below.
 		 */
 		if (bytes && (p[0] == ' ' || p[0] == '\t')) {
 		    if (ngFolded)
 			ngAddFolded(nglist, sizeof(nglist), p, bytes, thisNl);
+		    if (xrefFolded &&
+			    xrefAdd(xrefdata, &xrefLen, sizeof(xrefdata),
+							p, bytes, 1) < 0)
+			xrefFolded = 0;
 		} else {
 		    ngFolded = 0;
+		    xrefFolded = 0;
 		}
 
 		hch = tolower((unsigned char)*p);
@@ -3513,6 +3526,8 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 			    }
 
 			} else if (DOpts.FeederXRefSync) {
+			    if (DebugOpt > 2 && xrefdata[0])
+				ddprintf("FOUND XREF INFO: %s\n", xrefdata);
 			    if (UpdateActiveNX(xrefdata) == 0 &&
 							DOpts.FeederActiveDrop)
 				artError |= LAERR_ACTIVEDROP;
@@ -3644,11 +3659,17 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		    if (DOpts.FeederXRefSlave == 0) {
 			skipHeader = 1;
 		    } else if (DOpts.FeederXRefSync) {
-			/* Keep Xref: for storing NX record */
-			diablo_strlcpynl(xrefdata, p + 5, bytes - 5 - aflen,
-							sizeof(xrefdata));
-			if (DebugOpt > 2)
-			    ddprintf("FOUND XREF INFO: %s\n",xrefdata);
+			/*
+			 * Keep Xref: for storing NX record.  A folded
+			 * Xref: goes on over continuation lines, and a
+			 * line longer than the input buffer comes in
+			 * pieces: both are added above, so every entry
+			 * is synced, not only those of the first piece.
+			 */
+			xrefdata[0] = 0;
+			xrefLen = 0;
+			xrefFolded = (xrefAdd(xrefdata, &xrefLen,
+				sizeof(xrefdata), p + 5, bytes - 5, 0) == 0);
 		    }
 		    /* write thru */
 		} else if (hch == 'd' && bytes >= 13 &&
@@ -4530,6 +4551,48 @@ ngAddFolded(char *nglist, int ngSize, const char *s, int n, int lineEnd)
     NormalizeNewsgroups(nglist);
 }
 
+/*
+ * xrefAdd() - add n bytes at s to the Xref: value in xref (xrefSize
+ * bytes, *xrefLen of them used): the rest of the Xref: line, a further
+ * piece of a line longer than the input buffer, or (sep 1) a continuation
+ * line of a folded Xref:, with a space before it.  The line end at the
+ * end of s (LF, CR LF, or a CR the next piece completes) is left out;
+ * the article itself is written thru unchanged.  Returns 0 when it all
+ * fit.  When the value is full it returns -1 and the caller adds no more:
+ * the entry cut by the limit is left out, so a cut group name or number
+ * is never synced to NX.
+ */
+int
+xrefAdd(char *xref, int *xrefLen, int xrefSize, const char *s, int n, int sep)
+{
+    int l = *xrefLen;
+    int i;
+
+    if (n > 0 && s[n-1] == '\n')
+	--n;
+    if (n > 0 && s[n-1] == '\r')
+	--n;
+    if (sep) {
+	if (l + 1 >= xrefSize)
+	    return(-1);
+	xref[l++] = ' ';
+    }
+    for (i = 0; i < n; ++i) {
+	if (l + 1 >= xrefSize) {
+	    if (s[i] != ' ' && s[i] != '\t') {
+		while (l > 0 && xref[l-1] != ' ' && xref[l-1] != '\t')
+		    --l;
+	    }
+	    xref[l] = 0;
+	    *xrefLen = l;
+	    return(-1);
+	}
+	xref[l++] = s[i];
+    }
+    xref[l] = 0;
+    *xrefLen = l;
+    return(0);
+}
 
 /*
  * LOGSESSION()	- Log statistics for a session
