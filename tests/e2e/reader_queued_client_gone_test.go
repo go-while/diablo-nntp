@@ -7,9 +7,13 @@ package e2e
 // it served.
 
 import (
+	"io"
+	"net"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -63,6 +67,95 @@ func TestReaderQueuedRequestClientGone(t *testing.T) {
 	t.Run("post", queuedGonePost)
 }
 
+// reservedPort holds a TCP port for a server that is "down": a socket bound to it but not
+// listening, so a connect gets a refusal (as from a closed port) and no other test or process
+// can bind the port meanwhile. up then listens on that same socket, so the port is never free.
+type reservedPort struct {
+	fd   int
+	addr string
+	port int
+}
+
+// reservePort binds a socket to a free port of ip (an IPv4 address of 127/8) without listening.
+func reservePort(t *testing.T, ip string) *reservedPort {
+	t.Helper()
+	// close-on-exec, so that the daemons the test starts do not inherit it (as Go does for
+	// its own sockets, under ForkLock)
+	syscall.ForkLock.RLock()
+	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
+	if err == nil {
+		syscall.CloseOnExec(fd)
+	}
+	syscall.ForkLock.RUnlock()
+	if err != nil {
+		t.Fatalf("socket: %v", err)
+	}
+	sa := &syscall.SockaddrInet4{}
+	copy(sa.Addr[:], net.ParseIP(ip).To4())
+	if err := syscall.Bind(fd, sa); err != nil {
+		syscall.Close(fd)
+		t.Fatalf("bind %s:0: %v", ip, err)
+	}
+	got, err := syscall.Getsockname(fd)
+	if err != nil {
+		syscall.Close(fd)
+		t.Fatalf("getsockname: %v", err)
+	}
+	r := &reservedPort{fd: fd, port: got.(*syscall.SockaddrInet4).Port}
+	r.addr = net.JoinHostPort(ip, strconv.Itoa(r.port))
+	t.Cleanup(func() {
+		if r.fd >= 0 {
+			syscall.Close(r.fd)
+		}
+	})
+	return r
+}
+
+// up starts listening on the reserved port and passes every connection through to target (a
+// fake server on a port of its own), until the test ends.
+func (r *reservedPort) up(t *testing.T, target string) {
+	t.Helper()
+	if err := syscall.Listen(r.fd, 16); err != nil {
+		t.Fatalf("listen on %s: %v", r.addr, err)
+	}
+	// f owns the descriptor now; net.FileListener works on a copy of it
+	f := os.NewFile(uintptr(r.fd), "reserved "+r.addr)
+	r.fd = -1
+	ln, err := net.FileListener(f)
+	f.Close()
+	if err != nil {
+		t.Fatalf("listener on %s: %v", r.addr, err)
+	}
+	var mu sync.Mutex
+	var conns []net.Conn
+	t.Cleanup(func() {
+		ln.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		for _, c := range conns {
+			c.Close()
+		}
+	})
+	go func() {
+		for {
+			in, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			out, err := net.DialTimeout("tcp", target, 10*time.Second)
+			if err != nil {
+				in.Close()
+				continue
+			}
+			mu.Lock()
+			conns = append(conns, in, out)
+			mu.Unlock()
+			go func() { io.Copy(out, in); out.Close() }()
+			go func() { io.Copy(in, out); in.Close() }()
+		}
+	}()
+}
+
 // waitIdleClosed keeps other talking while it waits for the idle timeout to close a client
 // (the reader looks at idle clients at its next full pass, every 30 s or so).
 func waitIdleClosed(t *testing.T, s *Site, other *client.Conn) {
@@ -111,10 +204,11 @@ func checkReaderAlive(t *testing.T, s *Site, other *client.Conn) {
 func queuedGoneArticle(t *testing.T) {
 	st := fakeserver.NewStore()
 	st.AddGroup("e2e.test", "e2e test group")
-	spool := fakeserver.New(t, fakeserver.Options{Store: st})
-	addr := spool.Addr()
-	port := strconv.Itoa(spool.Port())
-	spool.Close() // the server is down when dreaderd starts and when the clients ask
+	// the spool server is down when dreaderd starts and when the clients ask; its port stays
+	// reserved meanwhile
+	rp := reservePort(t, "127.0.0.1")
+	addr := rp.addr
+	port := strconv.Itoa(rp.port)
 
 	stored := msgID(t)
 	head, body := splitArticle(newArticle(stored, "e2e.test", "queued behind a gone client", "body line"))
@@ -134,7 +228,8 @@ func queuedGoneArticle(t *testing.T) {
 	waiter.MustSend("ARTICLE " + stored + "\r\n")
 	waitIdleClosed(t, s, other)
 
-	back := fakeserver.New(t, fakeserver.Options{Addr: addr, Store: st})
+	back := fakeserver.New(t, fakeserver.Options{Store: st})
+	rp.up(t, back.Addr())
 	waitAccepted(t, back)
 
 	code, line, err := waiter.ReadStatus()
@@ -166,10 +261,10 @@ func queuedGonePost(t *testing.T) {
 		defer mu.Unlock()
 		got = append(got, id)
 	}}
-	post := fakeserver.New(t, fakeserver.Options{Addr: "127.0.0.2:0", Handler: fakeserver.PeerHandler(po)})
-	paddr := post.Addr()
-	pport := strconv.Itoa(post.Port())
-	post.Close() // the outgoing server is down when dreaderd starts and when the clients post
+	// the outgoing server is down when dreaderd starts and when the clients post; its port
+	// stays reserved meanwhile
+	rp := reservePort(t, "127.0.0.2")
+	pport := strconv.Itoa(rp.port)
 
 	hosts := "127.0.0.1\ts1p" + strconv.Itoa(spool.Port()) + "\n127.0.0.2\to1p" + pport + " groupdef=*\n"
 	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: queuedGoneAccess, NoStart: true,
@@ -193,7 +288,8 @@ func queuedGonePost(t *testing.T) {
 	waiter.MustSend(art(waitID))
 	waitIdleClosed(t, s, other)
 
-	back := fakeserver.New(t, fakeserver.Options{Addr: paddr, Handler: fakeserver.PeerHandler(po)})
+	back := fakeserver.New(t, fakeserver.Options{Addr: "127.0.0.2:0", Handler: fakeserver.PeerHandler(po)})
+	rp.up(t, back.Addr())
 	waitAccepted(t, back)
 
 	code, line, err := waiter.ReadStatus()
