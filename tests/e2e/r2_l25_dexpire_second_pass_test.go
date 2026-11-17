@@ -54,7 +54,8 @@ sleep(unsigned int secs)
 // articles, and a newer one of 100 KB. Pass 1 removes the old one, which is enough. Between
 // the passes (a preloaded sleep() that returns at once) 1 MB is written into the newest
 // directory, as a running diablo does, so pass 2 removes the articles' directory. Its records
-// must now be marked expired: STAT 430.
+// must now be marked expired (dilookup: EX=(expired)). STAT cannot tell: the feeder answers
+// 430 for a record whose file is gone, expired or not.
 func TestR2DexpireSecondPassHistory(t *testing.T) {
 	so := preloadShim(t, "sleepgrow", sleepGrowSource)
 	s := NewSite(t, SiteOptions{SpoolCtl: "spool 00\n    maxsize 1m\nend\nmetaspool trad\n    spool 00\nend\nexpire * trad\n"})
@@ -103,14 +104,25 @@ func TestR2DexpireSecondPassHistory(t *testing.T) {
 		t.Errorf("the newest directory was removed: %v", err)
 	}
 
-	p := s.Peer(t)
 	for _, id := range ids {
-		if code, line := p.Cmd("STAT %s", id); code != 430 {
-			t.Errorf("STAT %s (its directory was removed in pass 2): %q, want 430 (the history record was kept)", id, line)
+		if ex := r2l25HistoryEx(t, s, id); ex != "expired" {
+			t.Errorf("history record of %s (its directory was removed in pass 2): EX=(%s), want expired", id, ex)
 		}
 	}
-	p.ExpectCmd(205, "QUIT")
 	if t.Failed() {
 		t.Logf("dexpire -a -h1 -v:\n%s", out)
 	}
+}
+
+// r2l25HistoryEx returns what dilookup says of the history record of msgid: valid, expired
+// or rejected.
+func r2l25HistoryEx(tb testing.TB, s *Site, msgid string) string {
+	tb.Helper()
+	out := s.Run(tb, "dilookup", msgid)
+	i := strings.Index(out, "EX=(")
+	if i < 0 {
+		tb.Fatalf("dilookup %s: no EX=(...) in %q", msgid, out)
+	}
+	ex, _, _ := strings.Cut(out[i+len("EX=("):], ")")
+	return ex
 }
