@@ -431,7 +431,8 @@ DumpQuick(int fd, int hsize, int rsize)
     if ((hbuf = (char *)malloc(hlen)) == NULL) {
 	fprintf(stderr, "ERROR: Unable to malloc %dB for history cache (%s)\n",
 				hlen, strerror(errno));
-	return;
+	/* nothing dumped: no end mark, exit status 1 (as for a read error) */
+	exit(1);
     }
     if (StartOff)
 	seekpos = lseek(fd, StartOff, 0);
