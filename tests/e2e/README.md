@@ -475,6 +475,7 @@ sharing: they contain system/process names and test-site log contents.
 | `TestR2DrequeueReopenFails` | drequeue | after a rotation `dqueue/` is not writable for a while: drequeue reports the open failure once on stderr, keeps its buffer for the next try instead of writing to the removed file, and at the end reports the lines that did not fit and exits 1; every Message-ID is in a queue file or in that count. **Fails** on main: the lines go to the removed file, exit 0 (D-238) |
 | `TestR2DrequeueOpenFails` | drequeue | `dqueue/` not writable from the start, 10 SOUT lines: drequeue reports the open failure and "10 lines were not queued" and exits 1. **Fails** on main: the lines are dropped without a word, exit 0 (D-238) |
 | `TestR2DcancelReaderManyLines` | dcancel | `dcancel -r` with a limit of 64 descriptors on 302 lines (an article, 300 lines for a missing article or group, an article of another group): every line is answered, both articles are cancelled, exit 0. **Fails** on main: two descriptors and two mappings leak per line, dcancel stops with "Unable to open active file" (D-286) |
+| `TestR2DidumpReadError` | didump | a preloaded library makes the third `read()` of `dhistory` fail with EIO (after the header and the first block of records): didump reports the error, prints no "." line and exits 1; without the fault the same history dumps 3 entries, "." last, exit 0. **Fails** on main: "." and exit 0 after the error (D-287) |
 
 ## Running
 
