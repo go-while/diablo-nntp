@@ -944,7 +944,13 @@ NNFinishSReq(Connection *conn, const char *ctl, int requeue)
 	     * can be NULL if client was terminated
 	     */
 	    if (sreq->sr_CConn) {
-		if (sreq->sr_HeadOnly)
+		/*
+		 * A post keeps the client's article until it is answered: a
+		 * post server that goes away first is followed by the next
+		 * one with the whole article (NNPostArticle1()).
+		 */
+		if (sreq->sr_HeadOnly ||
+		    (conn->co_Desc && conn->co_Desc->d_Type == THREAD_POST))
 		    MBFree(&sreq->sr_CConn->co_ArtBuf);
 		if (ctl) {
 		    if (ctl[0] == '4' || (ctl[0] != 0 && ctl[1] == '4')) {

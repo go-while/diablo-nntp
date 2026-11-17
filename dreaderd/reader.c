@@ -1554,7 +1554,14 @@ NNUnknownCommand(Connection *conn)
  *			   seen once the post server answers, however long
  *			   that takes.  Look at its socket without reading
  *			   (MSG_PEEK: pipelined lines stay for after the
- *			   answer): 1 if it was closed or failed.
+ *			   answer): 1 if it failed (a reset, for one).
+ *
+ *	A clean close or half-close (EOF) does not count: the client sent
+ *	its whole article and its "." before it waits here, and its post
+ *	still goes to the post server and is stored; the client is closed
+ *	when the answer comes (a half-closed one still gets it).  Letting it
+ *	go would drop the post with it (its article lives in the client's
+ *	buffer).  A socket error ends the client as an idle timeout does.
  *
  *	Only for a post already given to a post server (a request still in
  *	the queue for one is left alone) and not while its article is being
@@ -1576,8 +1583,6 @@ waitPostClientGone(Connection *conn)
     if (sc->co_SReq == sreq && sc->co_Func == NNPostArticle1)
 	return(0);
     r = recv(conn->co_Desc->d_Fd, &c, 1, MSG_PEEK);
-    if (r == 0)
-	return(1);
     if (r < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)
 	return(1);
     return(0);
@@ -1596,9 +1601,9 @@ NNWaitThread(Connection *conn)
 {
     /*
      * Called again while waiting (the pass over all descriptors every
-     * 30 seconds, or output to write): a posting client that went away
-     * is let go now, as an idle timeout would, which takes it off its
-     * request (NNTerminate()); the main loop then closes it.
+     * 30 seconds, or output to write): a posting client whose socket
+     * failed is let go now, as an idle timeout would, which takes it off
+     * its request (NNTerminate()); the main loop then closes it.
      */
     if (conn->co_Func == NNWaitThread && waitPostClientGone(conn)) {
 	NNTerminate(conn);
