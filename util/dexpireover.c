@@ -2517,7 +2517,12 @@ rewriteDataFile(Group *group, const char *cacheBase, int cacheSize, const OverAr
 	    failed = 1;
 	}
     } else if (oa->oa_SeekPos == -1) {
-	; /* do nothing */
+	/*
+	 * readerxover trackonly: the record has no overview data, only
+	 * the article number.  Keep it as it is; leaving the slot empty
+	 * would drop the article from the group's index.
+	 */
+	*ob = *oa;
     } else if (CheckDataEntries) {
 	*ob = *oa;
 	printf("entry removed %s:%d, %s\n",
