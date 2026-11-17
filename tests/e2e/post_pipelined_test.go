@@ -13,14 +13,16 @@ import (
 // dreaderd hands the article to the post server but leaves the client in the article state
 // (co_Func stays NNAcceptArticle, no NNWaitThread). A command the client sends before its
 // 240 is read as one more article line: it is appended to the article that is still on its
-// way to the post server, and the command itself is never answered. The post server here
-// waits 5 s before its 335, and the client sends the command 1 s after the ".", so it is
-// read while the post is in flight.
+// way to the post server, and the command itself is never answered. NNServerRequest()
+// takes the client's descriptor out of RFds, so the line is read on the next pass over all
+// descriptors (forceallcheck, every 30 s). The post server here waits 35 s before its 335
+// and the client sends the command 1 s after the ".", so one such pass falls while the post
+// is in flight.
 func TestPostPipelinedCommandWhileQueued(t *testing.T) {
 	_, spool := spoolStore(t)
 	var mu sync.Mutex
 	var arts [][]string
-	post := fakeserver.New(t, fakeserver.Options{Handler: fakeserver.PeerHandler(&fakeserver.PeerOptions{
+	post := fakeserver.New(t, fakeserver.Options{Deadline: 90 * time.Second, Handler: fakeserver.PeerHandler(&fakeserver.PeerOptions{
 		OnArticle: func(id string, wire []string) {
 			mu.Lock()
 			defer mu.Unlock()
@@ -28,7 +30,7 @@ func TestPostPipelinedCommandWhileQueued(t *testing.T) {
 		},
 		BeforeReply: func(_ *fakeserver.Conn, cmd, _, status string) {
 			if cmd == "IHAVE" && strings.HasPrefix(status, "335") {
-				time.Sleep(5 * time.Second)
+				time.Sleep(35 * time.Second)
 			}
 		},
 	})})
@@ -41,11 +43,10 @@ func TestPostPipelinedCommandWhileQueued(t *testing.T) {
 	c.ExpectCmd(340, "POST")
 	c.MustSend("From: a <a@example.invalid>\r\nNewsgroups: e2e.test\r\nSubject: pipelined\r\nMessage-ID: " + id +
 		"\r\n\r\n" + strings.Join(body, "\r\n") + "\r\n.\r\n")
-	// in its own write while the post waits for the 335: a line in the same write as the "."
-	// stays in the input buffer until the 240, the new data wakes the client's descriptor
+	// in its own write while the post waits for the 335
 	time.Sleep(time.Second)
 	c.MustSend("GROUP e2e.test\r\n")
-	c.Deadline = 20 * time.Second
+	c.Deadline = 60 * time.Second
 	if code, line, err := c.ReadStatus(); code != 240 {
 		t.Errorf("POST reply %d %q (%v), want 240", code, line, err)
 	}
