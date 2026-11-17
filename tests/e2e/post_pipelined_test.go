@@ -15,9 +15,9 @@ import (
 // 240 is read as one more article line: it is appended to the article that is still on its
 // way to the post server, and the command itself is never answered. NNServerRequest()
 // takes the client's descriptor out of RFds, so the line is read on the next pass over all
-// descriptors (forceallcheck, every 30 s). The post server here waits 35 s before its 335
-// and the client sends the command 1 s after the ".", so one such pass falls while the post
-// is in flight.
+// descriptors (forceallcheck, every 30 s). The post server here waits 35 s before its 335,
+// the client sends the command 1 s after the ".", and a second client keeps dreaderd's loop
+// turning, so one such pass falls while the post is in flight.
 func TestPostPipelinedCommandWhileQueued(t *testing.T) {
 	_, spool := spoolStore(t)
 	var mu sync.Mutex
@@ -35,6 +35,26 @@ func TestPostPipelinedCommandWhileQueued(t *testing.T) {
 		},
 	})})
 	s := NewReaderSite(t, ReaderOptions{Spool: spool, Post: post})
+
+	// dreaderd looks at the clock only every 10 selects (2 s each when idle), so on an idle
+	// process the 30 s pass can be up to 50 s apart; a second client keeps it turning
+	busy := s.Reader(t)
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			case <-time.After(200 * time.Millisecond):
+			}
+			if _, _, err := busy.TryCmd("GROUP e2e.test"); err != nil {
+				return
+			}
+		}
+	}()
+	defer func() { close(stop); <-done }()
 
 	id := msgID(t)
 	body := []string{"first body line", "last body line"}
