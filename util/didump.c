@@ -423,6 +423,7 @@ DumpQuick(int fd, int hsize, int rsize)
     uint32 totalentries = 0;
     uint32 count = 0;
     int i;
+    int readError = 0;
     History *h;
 
 
@@ -546,8 +547,10 @@ top:
 		fflush(stdout);
 	}
     }
-    if (n < 0)
+    if (n < 0) {
 	fprintf(stderr, "Error reading file: %s\n", strerror(errno));
+	readError = 1;
+    }
 
     if (FOpt) {
 	usleep(100000);
@@ -566,8 +569,16 @@ top:
 	fprintf(stderr, "%u dropped as beyond max age\n", MaxAgeCount);
 	fprintf(stderr, "%u dropped with gmt=0\n", ZeroGmtCount);
     }
+    free(hbuf);
+    /*
+     * The dump is cut: no end mark, so that it does not look complete,
+     * and exit status 1 for the caller that installs what diload made.
+     */
+    if (readError) {
+	fprintf(stderr, "dump incomplete: read error\n");
+	exit(1);
+    }
     if (!QuietOpt)
 	printf(".\n");
-    free(hbuf);
 }
 

@@ -439,6 +439,7 @@ sharing: they contain system/process names and test-site log contents.
 | `TestReaderOvCacheLowered` | dreaderd | `readerovcache 65536` does not fit the descriptor limit: dreaderd logs `readerovcache 65536 lowered to N` and the feed still works |
 | `TestReaderOvCacheClientReserve` | dreaderd | `readerovcache 300`, `readerthreads 16`, 56 groups with 18 data files each: 12 new feed connections still get a greeting (the fork lowers its cache when the overview files reach the descriptors left for clients) |
 | `TestKPDBSameValueNoWrite` | dkp | `dkp -w` of the value a field already has leaves the file's bytes and mtime alone; a new value of the same length is written. **Fails** on main: the same-value pwrite moves the mtime and the close stamps the header |
+| `TestR2DidumpReadError` | didump | a preloaded library makes the third `read()` of `dhistory` fail with EIO (after the header and the first block of records): didump reports the error, prints no "." line and exits 1; without the fault the same history dumps 3 entries, "." last, exit 0. **Fails** on main: "." and exit 0 after the error (D-287) |
 
 ## Running
 
