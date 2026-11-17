@@ -82,6 +82,33 @@ gzHeaderLen(const unsigned char *p, size_t n)
 	return(0);
     return(o);
 }
+
+/*
+ * gzEmpty() - the gzip file at p (n bytes) holds a complete deflate stream
+ * that inflates to nothing: -z gzipped an empty data file (a range that has
+ * only readerxover trackonly records, which have no overview data).
+ */
+static int
+gzEmpty(const unsigned char *p, size_t n)
+{
+    size_t hl = gzHeaderLen(p, n);
+    unsigned char out[1];
+    z_stream z;
+    int code;
+
+    if (hl == 0)
+	return(0);
+    bzero(&z, sizeof(z));
+    if (inflateInit2(&z, -MAX_WBITS) != Z_OK)
+	return(0);
+    z.next_in = (unsigned char *)p + hl;
+    z.avail_in = n - hl;
+    z.next_out = out;
+    z.avail_out = sizeof(out);
+    code = inflate(&z, Z_FINISH);
+    inflateEnd(&z);
+    return(code == Z_STREAM_END && z.total_out == 0);
+}
 #endif
 
 
@@ -157,6 +184,7 @@ int RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int old
 int rewriteDataFile(Group *group, const char *cacheBase, int cacheSize, const OverArt *oa, OverArt *ob, const char *dirPath, int oldDataEntriesMask, int newDataEntriesMask, artno_t artNo);
 int ResizeGroup(Group *group, int fd, OverHead *oh, int maxArts, int OldDataEntries, int *fdl);
 static int rangeHasRecords(const OverArt *oa, long long n, artno_t base, int entries, artno_t startNo, artno_t endNo);
+static int rangeHasData(const OverArt *oa, long long n, artno_t base, int entries, artno_t startNo, artno_t endNo);
 #ifndef USE_ZLIB
 static int gzipOnlyData(Group *group, const char *dirPath, artno_t startNo, artno_t endNo, int dataEntries);
 #endif
@@ -1323,6 +1351,11 @@ again:
 		        if (VerboseOpt > 0) {
 			    printf("Overview %s not eligible for compression: modified too recently\n", path);
 		        }
+		    } else if (st.st_size == 0) {
+			/* no overview data (readerxover trackonly): nothing to compress */
+		        if (VerboseOpt > 0) {
+			    printf("Overview %s not eligible for compression: empty\n", path);
+		        }
 		    } else {
 		        if (VerboseOpt > 0) {
 			    printf("Overview %s compressing\n", path);
@@ -2078,7 +2111,16 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
 				       ((unsigned)zpos[2] & 0xff) << 16 |
 				       ((unsigned)zpos[3] & 0xff) << 24);
 
-				if (zlen < 256 || zlen > (64 * 1048576)) {
+				if (zlen == 0 && gzEmpty(zmap, st.st_size) &&
+				    !rangeHasData(oaBase, n, cacheArtBase,
+					oldDataEntries, startNo, endNo)) {
+				    /*
+				     * an empty data file, gzipped, for a range
+				     * whose records have no data (trackonly)
+				     */
+				    xunmap((void *)zmap, st.st_size);
+				    close(tmpfd);
+				} else if (zlen < 256 || zlen > (64 * 1048576)) {
 				    printf("Bad zlen %d for gzcat %s\n",
 						(int)zlen, path);
 				    xunmap((void *)zmap, st.st_size);
@@ -2388,6 +2430,27 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
      */
     xunmap((void *)oaBase, n * sizeof(OverArt));
     free(oaBaseNew);
+    return(0);
+}
+
+/*
+ * rangeHasData() - the index oa (n slots) has a record with overview data
+ * (a data offset, not a trackonly record) for articles base .. base +
+ * entries - 1 (within startNo .. endNo).
+ */
+static int
+rangeHasData(const OverArt *oa, long long n, artno_t base, int entries, artno_t startNo, artno_t endNo)
+{
+    artno_t artNo;
+
+    for (artNo = (base > startNo) ? base : startNo;
+	 artNo < base + entries && artNo <= endNo; ++artNo) {
+	const OverArt *ob = &oa[(artNo & 0x7FFFFFFFFFFFFFFFLL) % n];
+
+	if (OA_ARTVALID(ob) && OA_ARTNOEQ(artNo, ob->oa_ArtNo) &&
+							ob->oa_SeekPos >= 0)
+	    return(1);
+    }
     return(0);
 }
 
