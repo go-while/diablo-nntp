@@ -33,6 +33,64 @@ int CacheHitsFD=-1;
 char *CacheHits=NULL;
 uint32 CacheHitsEnd=0;
 
+/*
+ * The cache .tmp files this reader process is writing.  The fcntl lock
+ * CreateCache takes on a .tmp file belongs to the process, so a second
+ * fetch of the same article in this process would get it again and
+ * write into (and truncate) the file under the first one; and a close()
+ * of a second descriptor of the file would drop the first one's lock.
+ * CreateCache therefore leaves alone an article this process is already
+ * caching, before it opens the file.
+ */
+typedef struct CacheWriter {
+    struct CacheWriter *cw_Next;
+    hash_t	cw_Hv;
+    int		cw_Fd;
+} CacheWriter;
+
+static CacheWriter *CacheWriters;
+
+static int
+cacheWriterBusy(hash_t hv)
+{
+    CacheWriter *cw;
+
+    for (cw = CacheWriters; cw; cw = cw->cw_Next) {
+	if (cw->cw_Hv.h1 == hv.h1 && cw->cw_Hv.h2 == hv.h2)
+	    return(1);
+    }
+    return(0);
+}
+
+static int
+cacheWriterAdd(hash_t hv, int fd)
+{
+    CacheWriter *cw = malloc(sizeof(CacheWriter));
+
+    if (cw == NULL)
+	return(-1);
+    cw->cw_Hv = hv;
+    cw->cw_Fd = fd;
+    cw->cw_Next = CacheWriters;
+    CacheWriters = cw;
+    return(0);
+}
+
+static void
+cacheWriterDel(int fd)
+{
+    CacheWriter **pcw;
+    CacheWriter *cw;
+
+    for (pcw = &CacheWriters; (cw = *pcw) != NULL; pcw = &cw->cw_Next) {
+	if (cw->cw_Fd == fd) {
+	    *pcw = cw->cw_Next;
+	    free(cw);
+	    return;
+	}
+    }
+}
+
 /* Write the complete scoreboard range, including after EINTR/short writes.
  * Explicit offsets avoid disturbing other users of CacheHitsFD's file offset.
  */
@@ -179,6 +237,21 @@ CreateCache(Connection *conn)
     hash_t hv;
     char path[PATH_MAX], tmp[PATH_MAX];
 
+    /*
+     * A request comes here with its cache file still open only if it
+     * was fetched again without going through the requeue paths of
+     * server.c (which drop the file): throw away what it holds and
+     * start a new one.
+     */
+    if (conn->co_SReq->sr_Cache != NULL) {
+	FILE *fo = conn->co_SReq->sr_Cache;
+
+	fflush(fo);
+	AbortCache(fileno(fo), conn->co_SReq->sr_MsgId, 0);
+	fclose(fo);
+	conn->co_SReq->sr_Cache = NULL;
+    }
+
     /* do not create new cache files for old articles */
     if (conn->co_Desc->d_CacheableTime > 0 &&
 	(conn->co_Desc->d_CacheableTime < (time(NULL) - conn->co_SReq->sr_TimeRcvd))) {
@@ -186,6 +259,13 @@ CreateCache(Connection *conn)
     }
 
     hv = msgidhash(conn->co_SReq->sr_MsgId);
+
+    /*
+     * Another fetch of this article in this process writes its cache
+     * file already (see CacheWriters): this copy is not cached.
+     */
+    if (cacheWriterBusy(hv))
+	return;
 
     /*
      * open cache file
@@ -284,8 +364,15 @@ CreateCache(Connection *conn)
 	}
     }
 
+    if (cacheWriterAdd(hv, fd) < 0) {
+	hflock(fd, 0, XLOCK_UN);
+	close(fd);
+	return;
+    }
     conn->co_SReq->sr_Cache = fdopen(fd, "w");
     if (!conn->co_SReq->sr_Cache) {
+	cacheWriterDel(fd);
+	hflock(fd, 0, XLOCK_UN);
 	close(fd);
     }
 }
@@ -300,6 +387,7 @@ AbortCache(int fd, const char *msgid, int closefd)
     char path[PATH_MAX];
     hash_t hv = msgidhash(msgid);
 
+    cacheWriterDel(fd);
     if (cacheFile(hv, path, 0) == 0) {
 	strcat(path, ".tmp");
 	remove(path);
@@ -325,6 +413,7 @@ CommitCache(Connection *conn, int closefd)
     hash_t hv = msgidhash(msgid);
     int fd = fileno(conn->co_SReq->sr_Cache);
 
+    cacheWriterDel(fd);
     if (cacheFile(hv, path2, 0) < 0) {
 	/* CreateCache refuses the same names, so this is not expected */
 	hflock(fd, 0, XLOCK_UN);
