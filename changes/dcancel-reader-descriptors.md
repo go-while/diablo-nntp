@@ -1,0 +1,1 @@
+- dcancel: `dcancel -r` no longer runs out of descriptors on a long list. It opened the reader active file and the group's overview index for every input line and kept both open and mapped, so it stopped with "Unable to open active file" after about 500 lines. The active file is now opened once per run, and the overview index is unmapped and closed after each line (D-286).
