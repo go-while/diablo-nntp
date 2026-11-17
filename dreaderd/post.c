@@ -1539,6 +1539,8 @@ void
 NNPostArticle1(Connection *conn)
 {
     ServReq *sreq = conn->co_SReq;
+    MBuf *mb;
+    char last = 0;
 
     conn->co_Func = NNPostArticle1;
     conn->co_State = "poart1";
@@ -1547,28 +1549,37 @@ NNPostArticle1(Connection *conn)
      * case, don't bother returning an error message, there's no client
      */
     if (sreq == NULL || sreq->sr_CConn == NULL) {
-	logit(LOG_DEBUG, "Client vanished during post (%s)", sreq->sr_MsgId);
+	logit(LOG_DEBUG, "Client vanished during post (%s)", sreq ? sreq->sr_MsgId : "");
 	MBPrintf(&conn->co_TMBuf, ".\r\n"); /* Just junk the post. */
 	NNPostResponse2(conn);
 	return;
     }
 
-    while (conn->co_TMBuf.mh_Bytes < 800) {
-	char *buf;
-	int len;
+    /*
+     * Queue the whole article for the post server at once, and leave
+     * the client's copy in place until the post is answered
+     * (NNFinishSReq() frees it).  If this server goes away before its
+     * answer, NNServerTerminate() gives the post to the next server,
+     * which then gets the whole article again, not only what was left
+     * of it.  And a client that goes away from now on (idle or session
+     * timeout, reader shutdown) no longer cuts the article short: the
+     * post server always gets all of it and its "." line.
+     *
+     * Every line in co_ArtBuf ends with CR LF (NNAcceptArticle(),
+     * NNPostBuffer()), as it is sent; dot-stuffing is kept as posted.
+     */
+    for (mb = sreq->sr_CConn->co_ArtBuf.mh_MBuf; mb != NULL; mb = mb->mb_Next) {
+	int n = mb->mb_Size - mb->mb_Index;
 
-	if ((len = MBReadLine(&sreq->sr_CConn->co_ArtBuf, &buf)) > 0) {
-if (buf[len-1] != '\n' && buf[len-1]) {
-syslog(LOG_EMERG, "bad carriage return in %s %d", sreq->sr_MsgId, buf[len-1]);
-}
-	    buf[len-1] = '\n';
-	    MBWrite(&conn->co_TMBuf, buf, len);
-	} else if (len <= 0) {
-	    MBPrintf(&conn->co_TMBuf, ".\r\n");
-	    NNPostResponse2(conn);
-	    return;
+	if (n > 0) {
+	    MBWrite(&conn->co_TMBuf, mb->mb_Buf + mb->mb_Index, n);
+	    last = mb->mb_Buf[mb->mb_Size - 1];
 	}
     }
+    if (last != 0 && last != '\n')
+	MBPrintf(&conn->co_TMBuf, "\r\n");
+    MBPrintf(&conn->co_TMBuf, ".\r\n");
+    NNPostResponse2(conn);
 }
 
 /*
