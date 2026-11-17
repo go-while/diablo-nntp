@@ -147,13 +147,15 @@ func TestPostPipelinedCommandWhileQueued(t *testing.T) {
 	}
 }
 
-// TestPostClientGoneWhileQueued: a client that closes its connection while its POST waits for
-// the post server is let go at the next pass over all descriptors, before the post server
-// answers. A waiting client is not read (NNWaitThread), so without a look at its socket it
-// was held, with its descriptor and its article, until the post server answered, however
-// long that took. The post server holds its 335 for 48 s; dreaderd must report the client
-// closed within 44 s of the close (the pass comes every 30 s), while a busy client and a new
-// client keep being served; the new client's POST is answered after the held one.
+// TestPostClientGoneWhileQueued: a client whose connection fails (here: it is reset) while
+// its POST waits for the post server is let go at the next pass over all descriptors, before
+// the post server answers. A waiting client is not read (NNWaitThread), so without a look at
+// its socket it was held, with its descriptor and its article, until the post server
+// answered, however long that took. A clean close or half-close is not taken for gone: such
+// a client keeps its connection and its post until the answer (TestPostClientCloseKeepsPost).
+// The post server holds its 335 for 48 s; dreaderd must report the client closed within 44 s
+// of the reset (the pass comes every 30 s), while a busy client and a new client keep being
+// served; the new client's POST is answered after the held one.
 func TestPostClientGoneWhileQueued(t *testing.T) {
 	_, spool := spoolStore(t)
 	post, got := heldPostServer(t, 48*time.Second)
@@ -173,9 +175,9 @@ func TestPostClientGoneWhileQueued(t *testing.T) {
 	c.MustSend(head(msgID(t)) + "body\r\n.\r\n")
 	// dreaderd logs "closed from 127.0.0.1 (127.0.0.1:<port>) ..." when it lets a client go
 	tag := "(" + c.Conn.LocalAddr().String() + ")"
-	// give dreaderd the "." before the close
+	// give dreaderd the "." before the reset
 	time.Sleep(time.Second)
-	c.Close()
+	resetClose(t, c)
 	closed := func() bool {
 		for _, l := range strings.Split(generalLog(s), "\n") {
 			if strings.Contains(l, "closed from") && strings.Contains(l, tag) {
