@@ -465,6 +465,7 @@ TestHistoryUpdateDuringDhisexpire 2.23
 TestHistoryUpdateLockFailure 0.86
 TestHistoryWriterWaitsForCreator 0.03
 TestHostCacheDiabloHostsForms 0.00
+TestHostCacheDNSFailureAfterFreshLookup 6.43
 TestHostCacheDNSFailureKeepsPeers 67.74
 TestHostCacheDNSFailureNoDuplicates 32.72
 TestHostCacheEndEndsLabel 0.00
@@ -571,11 +572,17 @@ TestPostBareLFBlankBodyControl 0.02
 TestPostBareLFBlankBodyHeaderLike 0.05
 TestPostBareLFHeaders 0.03
 TestPostBareLFLastLineToFeeder 0.35
+TestPostClientCloseKeepsPost 98.18
+TestPostClientGoneAfterIhave 50.90
+TestPostClientGoneUnqueued 72.02
 TestPostClientGoneWhileQueued 48.12
+TestPostClientTimeoutWholeArticle 30.87
 TestPostLineEndsToPostServer 0.12
 TestPostPipelinedCommandWhileQueued 48.10
+TestPostQueuedClientGoneNotOffered 51.06
 TestPostQueuedKeepsMessageID 0.14
 TestPostRefusedThenNewMessageID 0.09
+TestPostRequeueWholeArticle 12.03
 TestPrecommitDelcommLeavesOtherSlot 0.09
 TestProcessInspectionParsers 0.00
 TestQuotedPrintableNotRejectedAsBinary 0.03
@@ -584,6 +591,7 @@ TestR2DexpireReadErrorNoRemoval 20.36
 TestR2DexpireSecondPassHistory 0.60
 TestR2DexpireSpoolPathSlash 0.69
 TestR2DexpireUnreadableSpoolDir 0.91
+TestR2DidumpFollowReadError 0.31
 TestR2DidumpReadError 0.38
 TestR2DrequeueOpenFails 0.02
 TestR2DrequeueReopenFails 1.72
