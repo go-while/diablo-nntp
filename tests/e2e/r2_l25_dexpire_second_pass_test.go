@@ -19,7 +19,6 @@ const sleepGrowSource = `#define _GNU_SOURCE
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-/*FDPATH*/
 unsigned int
 sleep(unsigned int secs)
 {
