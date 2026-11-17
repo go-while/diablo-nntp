@@ -77,6 +77,16 @@ func waitIdleClosed(t *testing.T, s *Site, other *client.Conn) {
 	}
 }
 
+// waitQueuedFirst waits until dreaderd has put the request for id into its list of waiting
+// requests: with no server to take it, queueServerRequest logs "Unable to find any spools ...
+// for request <id>". Only then may the second client ask, so that gone's request is first.
+func waitQueuedFirst(t *testing.T, s *Site, id string) {
+	t.Helper()
+	testkit.WaitFor(t, 20*time.Second, "dreaderd to queue the request of "+id, func() bool {
+		return strings.Contains(generalLog(s), "for request "+id)
+	})
+}
+
 func waitAccepted(t *testing.T, back *fakeserver.Server) {
 	t.Helper()
 	deadline := time.Now().Add(90 * time.Second)
@@ -119,7 +129,7 @@ func queuedGoneArticle(t *testing.T) {
 	gone := s.Reader(t)
 	goneID := msgID(t)
 	gone.MustSend("ARTICLE " + goneID + "\r\n")
-	time.Sleep(500 * time.Millisecond) // gone's request is first in the list
+	waitQueuedFirst(t, s, goneID)
 	waiter := s.dialFrom(t, "127.0.0.3")
 	waiter.MustSend("ARTICLE " + stored + "\r\n")
 	waitIdleClosed(t, s, other)
@@ -176,7 +186,7 @@ func queuedGonePost(t *testing.T) {
 	goneID := msgID(t)
 	gone.ExpectCmd(340, "POST")
 	gone.MustSend(art(goneID))
-	time.Sleep(500 * time.Millisecond) // gone's request is first in the list
+	waitQueuedFirst(t, s, goneID)
 	waiter := s.dialFrom(t, "127.0.0.3")
 	waitID := msgID(t)
 	waiter.ExpectCmd(340, "POST")
