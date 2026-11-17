@@ -146,3 +146,46 @@ func TestR2DidumpReadError(t *testing.T) {
 		t.Errorf("didump after a read error: %v, want exit status 1\n%s", err, errOut)
 	}
 }
+
+// TestR2DidumpFollowReadError (L45, integration round 0): didump -f waits at the end of the
+// history for new entries. A read error there went back to waiting, printed "Error reading file"
+// every 100 ms and never ended. Now it ends like the plain dump: no "." line, exit status 1.
+// With -f the dump starts at the end: the header is read (call 1), the first read is at the end
+// of the file (call 2, 0 bytes: didump keeps waiting, as before), and the next one fails (call 3).
+// Fails on main: didump is still running when the 10 s limit stops it.
+func TestR2DidumpFollowReadError(t *testing.T) {
+	so := preloadShim(t, "readfail", readFailSource)
+	s := NewSite(t, SiteOptions{})
+	s.Inject(t, "e2e.test", 1)
+	mark := filepath.Join(t.TempDir(), "readfail")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, filepath.Join(s.Bin, "didump"), "-f", filepath.Join(s.Dir, "dhistory"))
+	cmd.Dir = s.Dir
+	cmd.Env = append(append(os.Environ(), s.Env...), lockFaultEnv(so),
+		"READFAIL_PATH=/dhistory", "READFAIL_CALL=3", "READFAIL_MARK="+mark)
+	var out, errOut bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errOut
+	err := cmd.Run()
+	short := errOut.String()
+	if len(short) > 1500 {
+		short = short[:1500] + " ..."
+	}
+	if b, rerr := os.ReadFile(mark); rerr != nil || len(b) == 0 {
+		t.Fatalf("the read fault was never hit (%v):\n%s", rerr, short)
+	}
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) || ee.ExitCode() != 1 {
+		t.Errorf("didump -f after a read error: %v, want exit status 1 (ctx: %v)\n%s", err, ctx.Err(), short)
+	}
+	if n := strings.Count(errOut.String(), "Error reading file"); n != 1 {
+		t.Errorf("the read error was reported %d times, want once:\n%s", n, short)
+	}
+	for _, line := range strings.Split(out.String(), "\n") {
+		if line == "." {
+			t.Errorf("didump -f printed the \".\" line after a read error:\n%s", out.String())
+			break
+		}
+	}
+}

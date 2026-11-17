@@ -553,7 +553,11 @@ top:
 	readError = 1;
     }
 
-    if (FOpt) {
+    /*
+     * -f waits at the end of the file for more entries; a read error
+     * ends it like the plain dump (no end mark, exit status 1).
+     */
+    if (FOpt && !readError) {
 	usleep(100000);
 	goto top;
     }
