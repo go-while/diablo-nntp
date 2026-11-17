@@ -516,3 +516,70 @@ func isTimeout(err error) bool {
 	var ne net.Error
 	return errors.As(err, &ne) && ne.Timeout()
 }
+
+// TestPostClientGoneUnqueued: a client whose connection fails (here: it is reset) while its
+// POST waits in dreaderd's queue because no post server connection can take it (the post
+// server is down here: nothing listens on its port) is let go at the next pass over all
+// descriptors, as one whose post is at a post server already. It was held, with its
+// descriptor and article, until a post server answered. Once the post server is up, the gone
+// client's post is not sent: the next client's POST gets 240 and is the only article the post
+// server gets. The "groupdef" case puts groupdef=* on the post server line: without the D-243
+// change (gw-r2-m16) the gone client's request in the queue then stopped the reader process
+// when the post server came up (cbQueueReqFindThread() read the cleared sr_CConn).
+func TestPostClientGoneUnqueued(t *testing.T) {
+	for _, tc := range []struct {
+		name, opts string
+	}{
+		{"plain", ""},
+		{"groupdef", " groupdef=*"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, spool := spoolStore(t)
+			l := listenFree(t)
+			postAddr := l.Addr().String()
+			_, postPort, _ := net.SplitHostPort(postAddr)
+			l.Close() // the post server is down until the test starts it below
+			hosts := "127.0.0.1\ts1p" + fmt.Sprint(spool.Port()) + "\n" +
+				"127.0.0.1\to1p" + postPort + tc.opts + "\n"
+			s := NewReaderSite(t, ReaderOptions{Spool: spool, Files: map[string]string{"dserver.hosts": hosts}})
+			t.Cleanup(func() {
+				if t.Failed() {
+					t.Logf("general.log:\n%s", generalLog(s))
+				}
+			})
+			defer keepBusy(t, s)()
+
+			gone := msgID(t)
+			c := s.Reader(t)
+			c.ExpectCmd(340, "POST")
+			c.MustSend(requeuePostHead(gone, "queued, no server") + "body\r\n.\r\n")
+			tag := "(" + c.Conn.LocalAddr().String() + ")"
+			time.Sleep(time.Second)
+			resetClose(t, c)
+			waitLetGo(t, s, tag, 44*time.Second)
+
+			sink, post := newPostSinkAt(t, postAddr)
+			next := msgID(t)
+			d := s.Reader(t)
+			defer d.Close()
+			d.ExpectCmd(340, "POST")
+			d.MustSend(requeuePostHead(next, "after the gone one") + "body\r\n.\r\n")
+			d.Deadline = 60 * time.Second
+			if code, line, err := d.ReadStatus(); code != 240 {
+				t.Errorf("POST once the post server is up: %d %q (%v), want 240", code, line, err)
+			}
+			time.Sleep(time.Second)
+			if n := post.Count("IHAVE"); n != 1 {
+				t.Errorf("the post server got %d IHAVE, want 1 (none for the gone client's post)", n)
+			}
+			onlyArticles(t, sink.got(), next)
+		})
+	}
+}
+
+// newPostSinkAt is newPostSink on a given address.
+func newPostSinkAt(t *testing.T, addr string) (*postSink, *fakeserver.Server) {
+	t.Helper()
+	p := &postSink{}
+	return p, fakeserver.New(t, fakeserver.Options{Addr: addr, Deadline: 120 * time.Second, Handler: p.handler})
+}

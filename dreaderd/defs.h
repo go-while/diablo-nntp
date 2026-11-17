@@ -679,6 +679,7 @@ typedef struct ServReq {
     int		sr_AccIn;	/* 1: in an Xref or Newsgroups line, for continuations */
     int		sr_AccCut;	/* 1: such a line was left out: the check fails closed */
     int		sr_Denied;	/* D-195: the reader may not read this article */
+    int		sr_Post;	/* 1: a POST (SWrite, post servers), 0: a fetch */
 } ServReq;
 
 #define SREQ_RETRIEVE	1

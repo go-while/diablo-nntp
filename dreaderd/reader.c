@@ -1563,23 +1563,24 @@ NNUnknownCommand(Connection *conn)
  *	go would drop the post with it (its article lives in the client's
  *	buffer).  A socket error ends the client as an idle timeout does.
  *
- *	Only for a post already given to a post server (a request still in
- *	the queue for one is left alone).  Not while the reader shuts down
- *	(TerminatePending): the main loop then frees server connections
- *	without NNServerTerminate(), so sr_SConn can point at a freed one.
+ *	Only for a post (sr_Post), in the queue for a post server (SWrite)
+ *	or already given to one.  A request of a gone client in SWrite is
+ *	freed there, and none is requeued (QueueServerRequests(),
+ *	NNServerTerminate(), NNFinishSReq()); one queued on a post server is
+ *	dropped before its IHAVE (NNPostCommand1()).  sr_SConn is not read:
+ *	on reader shutdown (TerminatePending) the main loop frees server
+ *	connections without NNServerTerminate(), so it can point at a freed
+ *	one; the look is skipped then too.
  */
 static int
 waitPostClientGone(Connection *conn)
 {
     ServReq *sreq = conn->co_SReq;
-    Connection *sc;
     char c;
     int r;
 
     if (TerminatePending || sreq == NULL || sreq->sr_CConn != conn ||
-	(sc = sreq->sr_SConn) == NULL || sc->co_Desc == NULL ||
-	sc->co_Desc->d_Type != THREAD_POST
-    )
+	!sreq->sr_Post)
 	return(0);
     r = recv(conn->co_Desc->d_Fd, &c, 1, MSG_PEEK);
     if (r < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)
