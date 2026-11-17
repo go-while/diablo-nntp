@@ -114,7 +114,7 @@ func TestPostQueuedKeepsMessageID(t *testing.T) {
 }
 
 // TestPostRefusedThenNewMessageID: a POST without a Message-ID header gets the id dreaderd made
-// for it ("340 <id> (desired)"). When the outgoing server refuses it at IHAVE with 435, the next
+// for it ("340 340 <id> (desired)"). When the outgoing server refuses it at IHAVE with 435, the next
 // POST without a Message-ID on the same connection gets a new id, not the refused one again
 // (NNTPPost() makes one for every POST).
 func TestPostRefusedThenNewMessageID(t *testing.T) {
@@ -159,13 +159,15 @@ func TestPostRefusedThenNewMessageID(t *testing.T) {
 	c := s.Reader(t)
 	defer c.Close()
 	c.Deadline = 20 * time.Second
-	// the id of "340 <id> (desired)"
+	// the id of dreaderd's "340 340 <id> (desired)"
 	offered := func(line string) string {
-		f := strings.Fields(line)
-		if len(f) < 2 || !strings.HasPrefix(f[1], "<") {
-			t.Fatalf("POST: %q has no Message-ID", line)
+		for _, f := range strings.Fields(line) {
+			if strings.HasPrefix(f, "<") && strings.HasSuffix(f, ">") {
+				return f
+			}
 		}
-		return f[1]
+		t.Fatalf("POST: %q has no Message-ID", line)
+		return ""
 	}
 	article := client.Stuff([]string{
 		"From: E2E Poster <poster@example.invalid>",
