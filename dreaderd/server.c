@@ -649,11 +649,14 @@ cbQueueReqFindThread(void *cbData, void *data)
 	return(0);
 
     /*
-     * sr_CConn is NULL when the client went away (NNTerminate); a
-     * requeue of such a request still comes here.
+     * sr_CConn is NULL when the client went away (NNTerminate): such a
+     * request goes to no server (QueueServerRequests and NNFinishSReq
+     * free it; this is the last guard).
      */
-    if (conn->co_GroupDef && sreq->sr_CConn != NULL &&
-	    sreq->sr_CConn->co_Auth.dr_GroupDef->gr_Name &&
+    if (sreq->sr_CConn == NULL)
+	return(0);
+
+    if (conn->co_GroupDef && sreq->sr_CConn->co_Auth.dr_GroupDef->gr_Name &&
 	    !GroupFindWild(sreq->sr_CConn->co_Auth.dr_GroupDef->gr_Name, conn->co_GroupDef))
 	return(0);
 
@@ -896,6 +899,12 @@ NNFinishSReq(Connection *conn, const char *ctl, int requeue)
 	 * returns 0 on success, -1 on failure, so we have to reverse the 
 	 * sense of the return value.
 	 */
+
+	/*
+	 * The client has gone: don't requeue (as NNServerTerminate does).
+	 */
+	if (sreq->sr_CConn == NULL)
+	    requeue = 0;
 
 	if (requeue) {
 	    if (conn->co_Desc->d_Type == THREAD_POST)
