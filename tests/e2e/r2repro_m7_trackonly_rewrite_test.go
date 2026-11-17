@@ -23,25 +23,24 @@ func TestR2ReproTrackonlyRewrite(t *testing.T) {
 	for i := range 20 {
 		feedReader(t, s, st, "e2e.test", newArticle(msgID(t), "e2e.test", "trackonly "+strconv.Itoa(i), "body"))
 	}
-	listed := func() (string, int) {
+	group := func() string {
 		c := s.Reader(t)
 		defer c.Close()
 		_, line := c.Cmd("GROUP e2e.test")
-		code, _ := c.Cmd("LISTGROUP e2e.test")
-		n := 0
-		if code == 211 {
-			n = len(c.ReadDotLines())
-		}
-		return line, n
+		return line
 	}
-	testkit.WaitFor(t, testkit.Deadline(), "20 articles listed", func() bool { _, n := listed(); return n == 20 })
-	g0, n0 := listed()
+	testkit.WaitFor(t, testkit.Deadline(), "20 articles in GROUP e2e.test", func() bool {
+		return strings.HasPrefix(group(), "211 20 1 20")
+	})
+	g0 := group()
+	info0, _ := s.TryRun("dgrpctl", "groupinfo", "e2e.test")
 	out, err := s.TryRun("dexpireover", "-a", "-R", "-v")
 	t.Logf("dexpireover -a -R -v: err %v\n%s", err, out)
-	g1, n1 := listed()
-	t.Logf("before: %q, %d listed; after: %q, %d listed", g0, n0, g1, n1)
-	if n1 != 20 {
-		t.Errorf("LISTGROUP after dexpireover -a -R: %d articles, want 20 (before: %d)", n1, n0)
+	g1 := group()
+	info1, _ := s.TryRun("dgrpctl", "groupinfo", "e2e.test")
+	t.Logf("before: %q\n%s\nafter: %q\n%s", g0, info0, g1, info1)
+	if !strings.HasPrefix(g1, "211 20 1 20") {
+		t.Errorf("GROUP e2e.test after dexpireover -a -R: %q, want 211 20 1 20 (before: %q)", g1, g0)
 	}
 }
 

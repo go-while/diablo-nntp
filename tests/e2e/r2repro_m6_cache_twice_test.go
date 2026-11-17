@@ -33,7 +33,7 @@ func TestR2ReproCacheSameArticleTwice(t *testing.T) {
 		}
 		return lines
 	}
-	spool := fakeserver.New(t, fakeserver.Options{Handler: func(c *fakeserver.Conn) {
+	handler := func(c *fakeserver.Conn) {
 		for {
 			line, err := c.ReadLine()
 			if err != nil {
@@ -61,14 +61,20 @@ func TestR2ReproCacheSameArticleTwice(t *testing.T) {
 				c.WriteLines("430 no")
 			}
 		}
-	}})
-	s := NewReaderSite(t, ReaderOptions{Spool: spool, Config: map[string]string{"readercache": "on"}})
+	}
+	// two spool servers: one connection each, so that the two requests are on two connections
+	// (dreaderd queues a second request to a busy connection otherwise)
+	sp1 := fakeserver.New(t, fakeserver.Options{Handler: handler})
+	sp2 := fakeserver.New(t, fakeserver.Options{Addr: "127.0.0.2:0", Handler: handler})
+	hosts := "127.0.0.1\ts1p" + strconv.Itoa(sp1.Port()) + "\n127.0.0.2\ts1p" + strconv.Itoa(sp2.Port()) + "\n"
+	s := NewReaderSite(t, ReaderOptions{SpoolAddr: sp1.Addr(), Config: map[string]string{"readercache": "on"},
+		Files: map[string]string{"dserver.hosts": hosts}})
 
 	a := r2Dial(t, s.Addr)
 	b := r2Dial(t, s.Addr)
 	a.send("ARTICLE " + id + "\r\n")
 	deadline := time.Now().Add(20 * time.Second)
-	for spool.Count("ARTICLE") < 1 && time.Now().Before(deadline) {
+	for sp1.Count("ARTICLE")+sp2.Count("ARTICLE") < 1 && time.Now().Before(deadline) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	b.send("ARTICLE " + id + "\r\n")
@@ -85,7 +91,7 @@ func TestR2ReproCacheSameArticleTwice(t *testing.T) {
 	}
 	stA, la := read(a)
 	stB, lb := read(b)
-	t.Logf("client A: %q, %d lines; client B: %q, %d lines; spool saw %d ARTICLE", stA, len(la), stB, len(lb), spool.Count("ARTICLE"))
+	t.Logf("client A: %q, %d lines; client B: %q, %d lines; spool saw %d ARTICLE", stA, len(la), stB, len(lb), sp1.Count("ARTICLE")+sp2.Count("ARTICLE"))
 	time.Sleep(2 * time.Second)
 
 	c := r2Dial(t, s.Addr) // from the cache now

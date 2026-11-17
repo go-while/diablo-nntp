@@ -74,6 +74,17 @@ func TestR2ReproLocalspoolDiabloSpool(t *testing.T) {
 		stW, wire := r2ArticleVia(t, f, "", a.id)
 		stL, local := r2ArticleVia(t, f, spoolDir, a.id)
 		t.Logf("%s: over the wire %q (%d lines); localspool %q (%d lines)", a.name, stW, len(wire), stL, len(local))
+		if len(local) > 0 {
+			// what is left when the first line's bytes before "Path:" (the record header) are cut:
+			// shows whether a second defect (the DFA of a 5-character last header line) is there
+			if i := strings.Index(local[0], "Path:"); i > 0 {
+				stripped := append([]string{local[0][i:]}, local[1:]...)
+				t.Logf("%s: with the %d bytes before \"Path:\" cut: equal to the NNTP fetch: %v", a.name, i, strings.Join(stripped, "\n") == strings.Join(wire, "\n"))
+				if strings.Join(stripped, "\n") != strings.Join(wire, "\n") {
+					t.Logf("stripped local: %q", stripped)
+				}
+			}
+		}
 		if stW != stL || strings.Join(wire, "\n") != strings.Join(local, "\n") {
 			t.Errorf("%s: localspool differs from the fetch over NNTP\nwire:  %q\nlocal: %q", a.name, wire, local)
 		}

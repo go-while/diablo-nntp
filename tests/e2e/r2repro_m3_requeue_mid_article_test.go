@@ -116,7 +116,7 @@ func r2RequeueMidArticle(t *testing.T, cache bool) {
 	if cache {
 		conf["readercache"] = "on"
 	}
-	hosts := "127.0.0.1\ts1p" + strconv.Itoa(stall.Port()) + " T5\n127.0.0.2\ts2p" + strconv.Itoa(good.Port()) + "\n"
+	hosts := "127.0.0.1\ts1T5p" + strconv.Itoa(stall.Port()) + "\n127.0.0.2\ts2p" + strconv.Itoa(good.Port()) + "\n"
 	s := NewReaderSite(t, ReaderOptions{SpoolAddr: stall.Addr(), Config: conf,
 		Files: map[string]string{"dserver.hosts": hosts}})
 	feedReader(t, s, st, "e2e.test", art)

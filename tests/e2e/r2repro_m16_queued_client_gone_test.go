@@ -34,6 +34,7 @@ readerdef rp
     read yes
     post yes
     groups testonly
+    idletimeout 5
 end
 readerdef feed
     feed yes
@@ -45,14 +46,17 @@ access ` + PeerIP + ` feed
 		Files: map[string]string{"dserver.hosts": "127.0.0.1\ts1p" + port + " groupdef=*\n"}})
 	startReader(t, s, "[127.0.0.1]:"+strings.TrimPrefix(s.Addr, "127.0.0.1:"))
 
-	other := s.Reader(t) // stays connected: it is served by the same reader process
+	other := s.Reader(t) // stays connected, and active: it is served by the same reader process
 	other.ExpectCmd(111, "DATE")
 	gone := s.Reader(t)
 	id := msgID(t)
 	gone.MustSend("ARTICLE " + id + "\r\n")
-	time.Sleep(2 * time.Second) // the request is queued: no spool server to give it to
-	gone.Close()
-	time.Sleep(3 * time.Second) // dreaderd sees the disconnect
+	// the request is queued (no spool server to give it to); the client waits, says nothing, and
+	// is closed by the idle timeout (5 s), which takes it off its request (NNTerminate)
+	for range 6 {
+		time.Sleep(2 * time.Second)
+		other.ExpectCmd(111, "DATE")
+	}
 	t.Logf("general.log before the spool server returns:\n%s", generalLog(s))
 
 	back := fakeserver.New(t, fakeserver.Options{Addr: addr, Store: st})
@@ -64,6 +68,7 @@ access ` + PeerIP + ` feed
 		t.Fatalf("dreaderd did not connect to the returned spool server within 90 s")
 	}
 	time.Sleep(2 * time.Second)
+	_ = gone
 	code, line, err := other.TryCmd("DATE")
 	if err != nil || code != 111 {
 		t.Errorf("DATE on the other client after the spool server returned: %d %q %v: the reader process died?", code, line, err)
