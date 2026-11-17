@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"errors"
 	testkit "github.com/go-while/nntp-testkit"
 	"github.com/go-while/nntp-testkit/client"
 	"os"
@@ -135,7 +136,8 @@ func TestDnewslinkDqueuePattern(t *testing.T) {
 // TestDrequeueLongCSize: drequeue reads SOUT lines on stdin and queues them like diablo's
 // writeFeedOut(), but did not count the compressed-size field in its "does the line fit"
 // test, so a long last field ran past the one-page queue buffer. The line is now too long and
-// not queued; drequeue finishes normally and queues the next line.
+// not queued; drequeue queues the next line, reports the dropped one ("1 lines were not
+// queued") and exits 1 (D-238: a line that is not queued shows in the exit status).
 func TestDrequeueLongCSize(t *testing.T) {
 	s := NewSite(t, SiteOptions{NoStart: true})
 	sout := func(id, csize string) string {
@@ -150,8 +152,9 @@ func TestDrequeueLongCSize(t *testing.T) {
 	b, err := cmd.CombinedOutput()
 	out := string(b)
 	noSanitizerReport(t, out)
-	if err != nil {
-		t.Fatalf("drequeue: %v\n%.400s", err, out)
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) || ee.ExitCode() != 1 || !strings.Contains(out, "drequeue: peer: 1 lines were not queued") {
+		t.Fatalf("drequeue: %v, want exit status 1 and the dropped line reported\n%.400s", err, out)
 	}
 	q := s.ReadFile(t, "dqueue/peer")
 	if strings.Contains(q, "<long@e2e.test>") || !strings.Contains(q, "<short@e2e.test> 0,10 C5") {
