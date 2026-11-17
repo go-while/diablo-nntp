@@ -93,6 +93,7 @@ func TestDsyncgroupsModeReaderReply(t *testing.T) {
 		ok    bool
 	}{
 		{"501 unknown mode", true},
+		{"403 internal fault", true},
 		{"280 odd", false},
 	} {
 		t.Run(tc.reply, func(t *testing.T) {
