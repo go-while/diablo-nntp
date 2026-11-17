@@ -1387,10 +1387,21 @@ NNArticleRetrieveByMessageId(Connection *conn, const char *msgid, const char *ms
     if (DebugOpt)
 	printf("bad cache\n");
 
-    if (msgopts && *msgopts) {
-	if (*msgopts == 'a') {
-	    maxage = atoi(msgopts + 1);
-	}
+    /*
+     * A reader's own "a<N>" (seconds) may only narrow the readerdef's
+     * maxagepolicy (0 = no limit), never widen or remove it: a0, a
+     * larger N and anything that is not a positive number keep the
+     * policy.
+     */
+    if (msgopts && *msgopts == 'a') {
+	char *end;
+	long want;
+
+	errno = 0;
+	want = strtol(msgopts + 1, &end, 10);
+	if (end != msgopts + 1 && errno == 0 && want > 0 && want <= INT_MAX &&
+		(maxage <= 0 || want < maxage))
+	    maxage = (int)want;
     }
     NNServerRequest(conn, grouphint ? conn->co_GroupName : NULL, msgid, maxage, SREQ_RETRIEVE, TimeRcvd, grpIter, endNo);
     NNWaitThread(conn);
