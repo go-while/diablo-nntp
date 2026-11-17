@@ -10,7 +10,6 @@ import (
 	"fmt"
 	testkit "github.com/go-while/nntp-testkit"
 	"net"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -553,15 +552,7 @@ func TestReaderTooManyRefsHostLimit(t *testing.T) {
 	if !preloadHost(false) {
 		t.Skip("the ETOOMANYREFS shim needs LD_PRELOAD (Linux, FreeBSD, NetBSD)")
 	}
-	cc := wmCC(t)
-	so := filepath.Join(t.TempDir(), "tmrshim.so")
-	src, err := filepath.Abs(filepath.Join("testdata", "tmrshim", "tmrshim.c"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out, err := exec.Command(cc, append([]string{"-O2", "-shared", "-fPIC", "-o", so, src}, shimLibs()...)...).CombinedOutput(); err != nil {
-		t.Skipf("cannot build the shim: %v\n%s", err, out)
-	}
+	so := buildTestdataShim(t, t.TempDir(), "tmrshim")
 	_, spool := spoolStore(t)
 	access := strings.Replace(DefaultReaderAccess, "readerdef rp\n", "readerdef rp\n    maxconnperhost 2\n", 1)
 	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: access, NoStart: true})
