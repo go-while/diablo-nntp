@@ -32,16 +32,8 @@ func startStreamIPCReader(t *testing.T, conf map[string]string) *Site {
 	if !preloadHost(false) {
 		t.Skip("the stream IPC shim needs LD_PRELOAD (Linux, FreeBSD, NetBSD)")
 	}
-	cc := wmCC(t)
 	dir := t.TempDir()
-	so := filepath.Join(dir, "streamipc.so")
-	src, err := filepath.Abs(filepath.Join("testdata", "streamipc", "streamipc.c"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out, err := exec.Command(cc, append([]string{"-O2", "-shared", "-fPIC", "-o", so, src}, shimLibs()...)...).CombinedOutput(); err != nil {
-		t.Skipf("cannot build the shim: %v\n%s", err, out)
-	}
+	so := buildTestdataShim(t, dir, "streamipc")
 	marks := filepath.Join(dir, "refused.log")
 	config := map[string]string{"readerthreads": "64"}
 	for k, v := range conf {
