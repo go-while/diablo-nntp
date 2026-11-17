@@ -1477,6 +1477,16 @@ NNPostCommand1(Connection *conn)
 {
     ServReq *sreq = conn->co_SReq;
 
+    /*
+     * The client went away while its post waited behind another one on
+     * this connection (NNTerminate() cleared sr_CConn, its article is
+     * gone with it): nothing to offer.  NNFinishSReq() frees the request
+     * and starts the next one.
+     */
+    if (sreq->sr_CConn == NULL) {
+	NNFinishSReq(conn, NULL, 0);
+	return;
+    }
     MBLogPrintf(conn, &conn->co_TMBuf, "ihave %s\r\n", sreq->sr_MsgId);
     NNPostResponse1(conn);
 }
@@ -1545,13 +1555,18 @@ NNPostArticle1(Connection *conn)
     conn->co_Func = NNPostArticle1;
     conn->co_State = "poart1";
 
-    /* Verify that the client has not disconnected yet. If such is the
-     * case, don't bother returning an error message, there's no client
+    /*
+     * The client went away after the IHAVE was sent, and its article
+     * with it.  A "." now would offer the server an empty article, which
+     * a lax server could store.  Close the connection instead, so the
+     * server stores nothing (a server that loses the connection before
+     * the "." keeps no article); NNServerTerminate() frees this request
+     * and gives the posts queued behind it to the next connection.
      */
     if (sreq == NULL || sreq->sr_CConn == NULL) {
-	logit(LOG_DEBUG, "Client vanished during post (%s)", sreq ? sreq->sr_MsgId : "");
-	MBPrintf(&conn->co_TMBuf, ".\r\n"); /* Just junk the post. */
-	NNPostResponse2(conn);
+	logit(LOG_INFO, "post(%s): client gone after IHAVE %s, closing",
+	    conn->co_Desc->d_Id, sreq ? sreq->sr_MsgId : "");
+	NNServerTerminate(conn);
 	return;
     }
 

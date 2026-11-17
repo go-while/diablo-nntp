@@ -271,3 +271,133 @@ func TestPostClientTimeoutWholeArticle(t *testing.T) {
 	time.Sleep(time.Second)
 	checkWhole(t, sink.got(), id, body)
 }
+
+// waitLetGo waits until dreaderd logs that it let the client with local address tag go
+// ("closed from 127.0.0.1 (<tag>) ...").
+func waitLetGo(t *testing.T, s *Site, tag string, d time.Duration) {
+	t.Helper()
+	testkit.WaitFor(t, d, "dreaderd to let the closed posting client "+tag+" go", func() bool {
+		for _, l := range strings.Split(generalLog(s), "\n") {
+			if strings.Contains(l, "closed from") && strings.Contains(l, tag) {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+// onlyArticles fails t unless the post server got exactly the articles with these
+// Message-IDs, in this order.
+func onlyArticles(t *testing.T, arts [][]string, ids ...string) {
+	t.Helper()
+	var got []string
+	for _, a := range arts {
+		h, _ := splitArticle(a)
+		got = append(got, fmt.Sprintf("%q (%d lines)", headerValue(h, "Message-ID"), len(a)))
+	}
+	want := make([]string, len(ids))
+	ok := len(arts) == len(ids)
+	for i, id := range ids {
+		want[i] = fmt.Sprintf("%q", id)
+		if ok {
+			h, _ := splitArticle(arts[i])
+			ok = headerValue(h, "Message-ID") == id
+		}
+	}
+	if !ok {
+		t.Errorf("the post server got %v, want only %v", got, want)
+	}
+}
+
+// TestPostClientGoneAfterIhave (no article lines sent yet): a client that goes
+// away after dreaderd sent the IHAVE for its post, before the 335 (here: it closes while the
+// post server holds its 335 for 48 s, and dreaderd lets it go at the next pass over all
+// descriptors). Its article is gone with it; dreaderd answered the 335 with the "." line
+// alone, an empty article, which the post server here stores (a lax server could). Now
+// dreaderd closes the post server connection instead, so nothing is stored; the next
+// client's POST goes over a new connection and gets 240, and it is the only article the
+// post server gets.
+func TestPostClientGoneAfterIhave(t *testing.T) {
+	_, spool := spoolStore(t)
+	post, got := heldPostServer(t, 48*time.Second)
+	s := NewReaderSite(t, ReaderOptions{Spool: spool, Post: post})
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("general.log:\n%s", generalLog(s))
+		}
+	})
+	defer keepBusy(t, s)()
+
+	gone := msgID(t)
+	c := s.Reader(t)
+	c.ExpectCmd(340, "POST")
+	c.MustSend(requeuePostHead(gone, "gone after ihave") + "body\r\n.\r\n")
+	tag := "(" + c.Conn.LocalAddr().String() + ")"
+	time.Sleep(time.Second)
+	c.Close()
+	waitLetGo(t, s, tag, 44*time.Second)
+	if n := len(got()); n != 0 {
+		t.Fatalf("the post server answered (%d articles) before the client was let go: the test did not hold it", n)
+	}
+
+	next := msgID(t)
+	d := s.Reader(t)
+	defer d.Close()
+	d.ExpectCmd(340, "POST")
+	d.MustSend(requeuePostHead(next, "after the gone one") + "body\r\n.\r\n")
+	d.Deadline = 60 * time.Second
+	if code, line, err := d.ReadStatus(); code != 240 {
+		t.Errorf("POST after the gone one: %d %q (%v), want 240", code, line, err)
+	}
+	time.Sleep(time.Second)
+	onlyArticles(t, got(), next)
+}
+
+// TestPostQueuedClientGoneNotOffered (a post queued behind another): a client whose
+// post waits behind another client's post on the post server connection, and that goes
+// away there (dreaderd lets it go at the next pass over all descriptors). When the post
+// before it was answered, dreaderd offered the gone client's post anyway (IHAVE) and
+// answered the 335 with the "." line alone: an empty article, which the post server here
+// stores. Now a post whose client is gone is dropped before its IHAVE: the post server gets
+// one IHAVE and the first client's article only, and the first client gets its 240.
+func TestPostQueuedClientGoneNotOffered(t *testing.T) {
+	_, spool := spoolStore(t)
+	post, got := heldPostServer(t, 48*time.Second)
+	s := NewReaderSite(t, ReaderOptions{Spool: spool, Post: post})
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("general.log:\n%s", generalLog(s))
+		}
+	})
+	defer keepBusy(t, s)()
+
+	first := msgID(t)
+	a := s.Reader(t)
+	defer a.Close()
+	a.ExpectCmd(340, "POST")
+	a.MustSend(requeuePostHead(first, "first") + "body\r\n.\r\n")
+	time.Sleep(time.Second)
+
+	gone := msgID(t)
+	b := s.Reader(t)
+	b.ExpectCmd(340, "POST")
+	b.MustSend(requeuePostHead(gone, "queued and gone") + "body\r\n.\r\n")
+	tag := "(" + b.Conn.LocalAddr().String() + ")"
+	time.Sleep(time.Second)
+	b.Close()
+	waitLetGo(t, s, tag, 44*time.Second)
+	if n := len(got()); n != 0 {
+		t.Fatalf("the post server answered (%d articles) before the client was let go: the test did not hold it", n)
+	}
+
+	a.Deadline = 60 * time.Second
+	if code, line, err := a.ReadStatus(); code != 240 {
+		t.Errorf("POST of the first client: %d %q (%v), want 240", code, line, err)
+	}
+	// the gone client's post would be offered right after the first one's 235
+	time.Sleep(3 * time.Second)
+	if n := post.Count("IHAVE"); n != 1 {
+		t.Errorf("the post server got %d IHAVE, want 1 (none for the gone client's post)", n)
+	}
+	onlyArticles(t, got(), first)
+}
