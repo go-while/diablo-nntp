@@ -1,0 +1,1 @@
+- dexpire: a trailing slash in `path_spool` or in a spool's `path` in dspool.ctl (`/news/spool/`, `P.01/`) no longer makes dexpire mark every history record of that spool expired. Spool paths are kept without trailing slashes, and the spool home is compared without them, so the directory names dexpire builds from the spool path match those it builds from the history (D-239).
