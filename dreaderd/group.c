@@ -412,6 +412,7 @@ NNFeedOverview(Connection *conn)
 	    /* out of headers */
 	    break;
 	} else if (ch == 'n' && strncasecmp(line, "Newsgroups:", 11) == 0) {
+	    zfreeStr(&conn->co_MemPool, &newsgroups);	/* a repeated header: the last one counts */
 	    newsgroups = zallocStrTrim2(&conn->co_MemPool, ',', line + 11, l - 11);
 	    /*
 	     * White space between names separates them (D-206).  The plain
@@ -428,16 +429,22 @@ NNFeedOverview(Connection *conn)
 		newsgroups = t;
 	    }
 	} else if (ch == 'm' && strncasecmp(line, "Message-ID:", 11) == 0) {
+	    zfreeStr(&conn->co_MemPool, &msgid);
 	    msgid = zallocStrTrim2(&conn->co_MemPool, 0, line + 11, l - 11);
 	} else if (ch == 's' && strncasecmp(line, "Subject:", 8) == 0) {
+	    zfreeStr(&conn->co_MemPool, &subject);
 	    subject = zallocStrTrim2(&conn->co_MemPool, 0, line + 8, l - 8);
 	} else if (ch == 'd' && strncasecmp(line, "Date:", 5) == 0) {
+	    zfreeStr(&conn->co_MemPool, &date);
 	    date = zallocStrTrim2(&conn->co_MemPool, 0, line + 5, l - 5);
 	} else if (ch == 'x' && strncasecmp(line, "Xref:", 5) == 0) {
+	    zfreeStr(&conn->co_MemPool, &xref);
 	    xref = zallocStrTrim2(&conn->co_MemPool, ',', line + 5, l - 5);
 	} else if (ch == 'c' && strncasecmp(line, "Control:", 8) == 0) {
+	    zfreeStr(&conn->co_MemPool, &control);
 	    control = zallocStrTrim2(&conn->co_MemPool, 0, line + 8, l - 8);
 	} else if (ch == 's' && strncasecmp(line, "Supersedes:", 11) == 0) {
+	    zfreeStr(&conn->co_MemPool, &supers);
 	    supers = zallocStrTrim2(&conn->co_MemPool, 0, line + 11, l - 11);
 	} else if (ch == 'a' && strncasecmp(line, "Approved:", 9) == 0) {
 	    appr = 1;
@@ -657,6 +664,7 @@ NNFeedOverview(Connection *conn)
     zfreeStr(&conn->co_MemPool, &date);
     zfreeStr(&conn->co_MemPool, &xref);
     zfreeStr(&conn->co_MemPool, &control);
+    zfreeStr(&conn->co_MemPool, &supers);
     zfreeStr(&conn->co_MemPool, &conn->co_IHaveMsgId);
 
     MBFree(&conn->co_ArtBuf);
