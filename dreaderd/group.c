@@ -28,6 +28,7 @@
  */
 
 #include "defs.h"
+#include <sys/resource.h>	/* getrlimit() in OverCacheLimit(); defs.h has it only with USE_PRCTL */
 
 #define OVHSIZE		1024
 #define OVHMASK		(OVHSIZE-1)
