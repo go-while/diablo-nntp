@@ -724,6 +724,25 @@ queueDesc(ServReq *sreq, ForkDesc *desc)
 }
 
 /*
+ * requeueDropCache() - a request that goes to another server starts its
+ *			cache file over: what the failed server sent (part of
+ *			the article) is thrown away, and the next server's
+ *			answer gets a new file if that server caches
+ *			(CreateCache), none otherwise.
+ */
+
+static void
+requeueDropCache(ServReq *sreq)
+{
+    if (sreq->sr_Cache != NULL) {
+	fflush(sreq->sr_Cache);
+	AbortCache(fileno(sreq->sr_Cache), sreq->sr_MsgId, 0);
+	fclose(sreq->sr_Cache);
+	sreq->sr_Cache = NULL;
+    }
+}
+
+/*
  * requeueServerRequest() - if request failed with previous server,
  *			    requeue for next server.
  *
@@ -742,6 +761,8 @@ requeueServerRequest(Connection *conn, ServReq *sreq, int type, int maxq)
 {
     static int Randex2;
     ForkDesc *desc;
+
+    requeueDropCache(sreq);
 
     /*
      * Find the next server
@@ -1209,6 +1230,7 @@ NNServerTerminate(Connection *conn)
 	    /* client has gone, don't requeue */
 	    FreeSReq(sreq);
 	} else {
+	    requeueDropCache(sreq);
 	    sreq->sr_Next = NULL;
 	    sreq->sr_SConn = NULL;
 	    sreq->sr_Time = time(NULL);
