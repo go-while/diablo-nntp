@@ -3344,6 +3344,17 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		}
 		aflen = 1;
 	    } else {
+		/*
+		 * A full buffer that ends in CR: read the CR again with the
+		 * LF after it, as above, so that a line whose CRLF falls on
+		 * the piece boundary still counts as CRLF-ended (the "."
+		 * after it ends the article).  The bytes stored are the same.
+		 */
+		if (bytes > 1 && p[bytes-1] == '\r') {
+		    bunget(bi, 1);
+		    --bytes;
+		    --size;
+		}
 		/* a line the peer ended with a bare LF has one byte to cut */
 		aflen = (bytes > 1 && p[bytes-2] == '\r') ? 2 : 1;
 	    }
