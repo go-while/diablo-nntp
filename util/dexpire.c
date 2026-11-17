@@ -146,6 +146,7 @@ void printPartition(Partition *p);
 int updateHistory(void);
 int findNode(const char *path, int createMe);
 static int unsurePart(const char *partname, int add);
+static int underUnsure(const char *partname);
 static void scanFailed(const Partition *p);
 static int inFailedDir(uint16 spoolnum, const char *path);
 void freeNodes(void);
@@ -686,7 +687,7 @@ cleanupDirectories(void)
 	int j;
 
 	part = SpoolEntries[i]->partn;
-	if (part->spaceok || part->unsure)
+	if (part->spaceok || part->unsure || underUnsure(part->partname))
 	    continue;
 
 	spacefree = part->filesys->fsfree;
@@ -897,9 +898,15 @@ scanDirectory(Partition *scanpart)
     /*
      * A directory that cannot be read is not an empty one: the history
      * update keeps only the records of the directories it has seen, and
-     * would mark every article stored below it expired.
+     * would mark every article stored below it expired.  One that is
+     * gone (ENOENT, ENOTDIR) is empty: its articles are gone too.
      */
     if ((dir = opendir(scanpart->partname)) == NULL) {
+	if (errno == ENOENT || errno == ENOTDIR) {
+	    fprintf(stderr, "Unable to scan directory: %s (%s)\n",
+				scanpart->partname, strerror(errno));
+	    return;
+	}
 	fprintf(stderr, "Unable to scan directory: %s (%s): its history records are not updated in this run\n",
 				scanpart->partname, strerror(errno));
 	scanFailed(scanpart);
@@ -1036,15 +1043,39 @@ scanDirectory(Partition *scanpart)
 					scanpart->partname, den->d_name);
 	    }
 	}
-	if (errno != 0) {
-	    /* the list is not complete: the newest directory is not known */
-	    fprintf(stderr, "dexpire: error reading spool directory %s (%s): nothing removed from it and its history records not updated in this run\n",
+	if (errno != 0 && errno != ENOENT && errno != ENOTDIR) {
+	    /*
+	     * The list is not complete: the newest directory is not known.
+	     * Nothing more is removed from it or from the directories below
+	     * it (cleanupDirectories), and their records are left alone.
+	     */
+	    fprintf(stderr, "dexpire: error reading spool directory %s (%s): nothing more removed from it and its history records not updated in this run\n",
 				scanpart->partname, strerror(errno));
 	    scanpart->unsure = unsurePart(scanpart->partname, 1);
 	    scanFailed(scanpart);
 	}
     }
     closedir(dir);
+}
+
+/*
+ * underUnsure() - whether partname lies below a directory that could not be
+ * classified or read in full in this run (an N.xx listed before a readdir()
+ * error of its spool directory): its records are left alone, so nothing may
+ * be removed from it either.  Partition names end in '/'.
+ */
+static int
+underUnsure(const char *partname)
+{
+    int i;
+
+    for (i = 0; i < UnsureCount; ++i) {
+	size_t l = strlen(UnsureParts[i]);
+
+	if (strncmp(partname, UnsureParts[i], l) == 0 && partname[l] != 0)
+	    return(1);
+    }
+    return(0);
 }
 
 /*
@@ -1063,7 +1094,7 @@ scanFailed(const Partition *p)
     uint16 *ns;
     char **np;
 
-    while (shl > 1 && shome[shl - 1] == '/')
+    while (shl > 0 && shome[shl - 1] == '/')
 	--shl;
     if (pl > shl && strncmp(name, shome, shl) == 0 && name[shl] == '/')
 	name += shl + 1;
