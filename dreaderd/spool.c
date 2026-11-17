@@ -172,7 +172,8 @@ NNGetLocal1(Connection *conn)
 			     * whereis reply, so there is no article to drop:
 			     * answer the client, the stream is in step.
 			     * NNSpoolResponseScrap() waited here for lines
-			     * that never came.
+			     * that never came.  No requeue: the record is
+			     * gone here, another spool server cannot help.
 			     */
 			    NNFinishSReq(conn, "423 No such article number in this group\r\n", 0);
 			    return;
