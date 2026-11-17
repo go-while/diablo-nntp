@@ -558,6 +558,7 @@ TestReaderAccessCacheRenameWaitsForReaders 11.40
 TestReaderAccessCacheStampDiffers 2.54
 TestReaderAccessLongCommentIgnored 0.02
 TestReaderAccessLongLineRefused 0.26
+TestReaderAgeArgNarrowsPolicy 2.16
 TestReaderAuthinfoAfterLogin 0.02
 TestReaderAuthinfoCodes 0.02
 TestReaderAuthinfoNotLogged 0.03
