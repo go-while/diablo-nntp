@@ -487,14 +487,15 @@ func withFdPath(src string) string {
 }
 
 // preloadShim builds the C source src into an LD_PRELOAD library (Linux, illumos, FreeBSD,
-// NetBSD) named <name>.so; lockFaultEnv gives the variable that loads it.
+// NetBSD) named <name>.so; lockFaultEnv gives the variable that loads it. Without a C
+// compiler the test fails, unless E2E_NO_CC=1 (shimCC).
 func preloadShim(t *testing.T, name, src string) string {
 	t.Helper()
 	if !preloadHost(true) {
 		t.Skip("the fault injector uses LD_PRELOAD on Linux, illumos, FreeBSD and NetBSD")
 	}
 	src = withFdPath(src)
-	cc := wmCC(t)
+	cc := shimCC(t)
 	dir := t.TempDir()
 	c := filepath.Join(dir, name+".c")
 	so := filepath.Join(dir, name+".so")

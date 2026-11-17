@@ -462,7 +462,7 @@ DIABLO_BIN=$PWD/../../dbin go test ./...
 Without `DIABLO_BIN` every test is skipped. `NNTP_TEST_DEADLINE` (default
 `60s`) bounds every blocking step, so a hung server fails the test instead of
 hanging it.
-The DNS and reader IPC tests build LD_PRELOAD shims with the C compiler (`CC`, else `cc`, `gcc` or `clang`); without one they fail, unless `E2E_NO_CC=1` says the host has none on purpose, which skips them.
+The tests that preload a shim (the DNS and reader IPC tests, and every test that builds one with `preloadShim`: lock and I/O fault injection, PAM, access cache, dexpire) build it with the C compiler (`CC`, else `cc`, `gcc` or `clang`); without one they fail, unless `E2E_NO_CC=1` says the host has none on purpose, which skips them.
 
 Faster: run the suite in several processes at once, as CI does. Each process
 gets its own set of tests, balanced by `ci/durations`; the tests matched by
