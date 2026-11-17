@@ -38,8 +38,9 @@ time_t DNMTime = 0;
 static FILE *HAOldCache = NULL;
 
 /*
- * The (label, entry) pairs whose old addresses this rebuild has written:
- * a name listed more than once under one label gets them once.
+ * The (label, entry) pairs that got records in this rebuild, from a lookup
+ * or kept from the old cache: a later line of the same pair whose lookup
+ * fails writes nothing (no old address next to fresh ones, none twice).
  */
 typedef struct HAKept {
     struct HAKept	*next;
@@ -51,6 +52,7 @@ static HAKept *HAKeptList = NULL;
 
 int convHost(char *host, HostAccess *HA, FILE *fo);
 static int keepOldHost(const char *host, HostAccess *HA, FILE *fo, const char *why);
+static int haWritten(const HostAccess *HA);
 void loadDiabloHosts(FILE *fo, int t, int *count);
 void loadDnewsFeeds(FILE *fo, int t, int *count);
 
@@ -294,6 +296,8 @@ convHost(char *host, HostAccess *HA, FILE *fo)
 		}
 	    }
 	    freeaddrinfo(ai0);
+	    if (found)
+		(void)haWritten(HA);
 	} else if (gai == EAI_AGAIN || gai == EAI_MEMORY
 #ifdef EAI_SYSTEM
 			|| gai == EAI_SYSTEM
@@ -321,6 +325,8 @@ convHost(char *host, HostAccess *HA, FILE *fo)
 		fwrite(HA, sizeof(*HA), 1, fo);
 		found++;
 	    }
+	    if (found)
+		(void)haWritten(HA);
 	} else if (h_errno == TRY_AGAIN) {
 	    found = keepOldHost(host, HA, fo, "temporary lookup failure");
 	}
@@ -330,33 +336,49 @@ convHost(char *host, HostAccess *HA, FILE *fo)
 }
 
 /*
+ * haWritten() - note that HA's (label, entry) gets records in this
+ * rebuild.  Returns 1 when it already had, 0 when it is new, -1 when it
+ * could not be noted (no memory).
+ */
+static int
+haWritten(const HostAccess *HA)
+{
+    HAKept *k;
+
+    for (k = HAKeptList; k != NULL; k = k->next) {
+	if (strcmp(k->label, HA->label) == 0 &&
+					strcmp(k->entry, HA->entry) == 0)
+	    return(1);
+    }
+    if ((k = malloc(sizeof(*k))) == NULL)
+	return(-1);
+    strcpy(k->label, HA->label);
+    strcpy(k->entry, HA->entry);
+    k->next = HAKeptList;
+    HAKeptList = k;
+    return(0);
+}
+
+/*
  * keepOldHost() - the lookup of host gave no answer this time: write the
  * addresses the previous cache had for the same label and entry, each
- * once.  A later line of the same label and entry in this rebuild writes
- * nothing.  Returns the number of records written (0 without a previous
- * cache or when it had none: the entry is dropped as before).
+ * once, unless that label and entry already got records in this rebuild
+ * (from a lookup or kept).  Returns the number of records written (0
+ * without a previous cache or when it had none: the entry is dropped as
+ * before).
  */
 static int
 keepOldHost(const char *host, HostAccess *HA, FILE *fo, const char *why)
 {
     HostAccess old;
-    HAKept *k;
     char **addrs = NULL;
     int naddrs = 0;
     int found = 0;
     int i;
 
-    for (k = HAKeptList; k != NULL; k = k->next) {
-	if (strcmp(k->label, HA->label) == 0 &&
-					strcmp(k->entry, HA->entry) == 0)
-	    return(0);
-    }
-    if ((k = malloc(sizeof(*k))) == NULL)
+    /* already has records in this rebuild, or no memory to note it */
+    if (haWritten(HA) != 0)
 	return(0);
-    strcpy(k->label, HA->label);
-    strcpy(k->entry, HA->entry);
-    k->next = HAKeptList;
-    HAKeptList = k;
 
     if (HAOldCache != NULL) {
 	rewind(HAOldCache);

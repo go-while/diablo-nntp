@@ -15,8 +15,9 @@ import (
 // hostCacheGAISource is preloaded into diablo: while the file named by HC_DNSFAIL exists,
 // getaddrinfo() of a host name (not a numeric address) does what the file's first byte says:
 // "N" fails with EAI_NONAME (no such name), "F" with EAI_FAIL (a failed answer), "S" with
-// EAI_SYSTEM, "C" answers 127.0.0.3 (the name has a new address), anything else fails with
-// EAI_AGAIN (the resolver does not answer). Its first call in each process writes the mark
+// EAI_SYSTEM, "C" answers 127.0.0.3 (the name has a new address), "X" answers 127.0.0.3 to
+// the first such lookup of a process and fails the later ones with EAI_AGAIN (DNS goes away
+// during a rebuild), anything else fails with EAI_AGAIN (the resolver does not answer). Its first call in each process writes the mark
 // "CALLED", so a test can tell that the shim is in use at all.
 const hostCacheGAISource = `#define _GNU_SOURCE
 #include <ctype.h>
@@ -30,12 +31,15 @@ const hostCacheGAISource = `#define _GNU_SOURCE
 #include <string.h>
 #include <unistd.h>
 #include <sys/socket.h>
+#include <sys/types.h>
 /*MARK*/
 int
 getaddrinfo(const char *node, const char *service, const struct addrinfo *hints, struct addrinfo **res)
 {
     static int (*real)(const char *, const char *, const struct addrinfo *, struct addrinfo **);
     static int called;
+    static pid_t npid;
+    static int n;
     const char *flag = getenv("HC_DNSFAIL");
     char c = 0;
     int fd;
@@ -52,6 +56,14 @@ getaddrinfo(const char *node, const char *service, const struct addrinfo *hints,
 					(fd = open(flag, O_RDONLY)) >= 0) {
 	(void)read(fd, &c, 1);
 	close(fd);
+	if (npid != getpid()) {
+	    npid = getpid();
+	    n = 0;
+	}
+	if (c == 'X' && ++n == 1) {
+	    shim_mark("CHANGED %s", node);
+	    return real("127.0.0.3", service, hints, res);
+	}
 	switch (c) {
 	case 'N':
 	    shim_mark("EAI_NONAME %s", node);
@@ -311,5 +323,33 @@ func TestHostCacheDNSFailureNoDuplicates(t *testing.T) {
 	// with DNS working, and the entry matches by name)
 	if g := h.greeting("127.0.0.3", "new address after the change"); !strings.HasPrefix(g, "200 ") {
 		t.Errorf("the new address 127.0.0.3 of localhost: %q, want 200", g)
+	}
+}
+
+// TestHostCacheDNSFailureAfterFreshLookup (deep review r2 M9, integration round 0): a name
+// listed twice under one label (inhost in dnewsfeeds, then a diablo.hosts line) whose first
+// lookup in a rebuild answers and whose second fails with EAI_AGAIN keeps only the fresh
+// addresses: the failing line must not write the old addresses next to them.
+func TestHostCacheDNSFailureAfterFreshLookup(t *testing.T) {
+	feeds := DefaultNewsfeeds + "label named\n    inhost localhost\n    addgroup *\nend\n"
+	h := newHCSite(t, feeds, "localhost named\n")
+
+	r0 := h.records("localhost")
+	t.Logf("records before: %v", r0)
+	if !slices.Contains(r0["named"], "127.0.0.1") {
+		t.Fatalf("setup: dhosts.cache has %v for localhost, want 127.0.0.1 under named", r0)
+	}
+
+	// the dnewsfeeds line is looked up first and answers 127.0.0.3, the diablo.hosts line fails
+	h.dns("X")
+	h.rebuild(nil, "EAI_AGAIN localhost")
+	h.dns("")
+	if len(shimMarked(h.mark, "CHANGED localhost")) == 0 {
+		t.Fatalf("the rebuild's first lookup of localhost did not answer (marks %v)", shimMarks(h.mark))
+	}
+	r := h.records("localhost")
+	t.Logf("records after the rebuild: %v", r)
+	if got := uniq(r["named"]); !slices.Equal(got, []string{"127.0.0.3"}) {
+		t.Errorf("label named has %v after a rebuild whose first lookup gave 127.0.0.3 and whose second failed, want only 127.0.0.3 (no old address kept next to the fresh one)", r["named"])
 	}
 }
