@@ -133,6 +133,7 @@ initDOpts(void)
     DOpts.ReaderForks = 10;
     DOpts.ReaderThreads = 40;
     DOpts.ReaderFeedForks = 2;
+    DOpts.ReaderOvCache = 8;
     DOpts.ReaderDns = 5;
     DOpts.ReaderDnsCacheTTL = 300;
     DOpts.ReaderDnsCacheNegTTL = 60;
@@ -373,6 +374,13 @@ LoadDiabloConfig(int ac, char **av)
 					    READERFORKS_MAX, opt);
 			logit(LOG_CRIT, "readerfeedforks must be 0..%d: %s",
 					    READERFORKS_MAX, opt);
+		    }
+		} else if (strcasecmp(cmd, "readerovcache") == 0) {
+		    if (confRange(opt, 1, 65536, &DOpts.ReaderOvCache)) {
+			optErr = 0;
+		    } else {
+			fprintf(stderr, "readerovcache must be 1..65536: %s\n", opt);
+			logit(LOG_CRIT, "readerovcache must be 1..65536: %s", opt);
 		    }
 		} else if (strcasecmp(cmd, "readerdnscachesize") == 0) {
 		    if (confRange(opt, 0, 1048576, &DOpts.ReaderDnsCacheSize))
@@ -1056,6 +1064,8 @@ dumpConfigReader(FILE *fo, char *cmd)
 	fprintf(fo, "*readerforks: %d\n", DOpts.ReaderForks);
     if (cmd == NULL || strcasecmp(cmd, "readerfeedforks") == 0)
 	fprintf(fo, "*readerfeedforks: %d\n", DOpts.ReaderFeedForks);
+    if (cmd == NULL || strcasecmp(cmd, "readerovcache") == 0)
+	fprintf(fo, "*readerovcache: %d\n", DOpts.ReaderOvCache);
     if (cmd == NULL || strcasecmp(cmd, "readerdnscachettl") == 0)
 	fprintf(fo, "readerdnscachettl: %d\n", DOpts.ReaderDnsCacheTTL);
     if (cmd == NULL || strcasecmp(cmd, "readerdnscachenegttl") == 0)
