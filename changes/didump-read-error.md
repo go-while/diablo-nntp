@@ -1,0 +1,1 @@
+- didump: a read error in the middle of a dump no longer ends the dump as complete. didump printed "Error reading file" but still wrote the closing "." line and exited 0, so a `didump | diload` pipeline could take the cut dump for the whole history. After a read error the "." line is left out and didump exits 1 (D-287).
