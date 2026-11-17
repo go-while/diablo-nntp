@@ -562,11 +562,16 @@ TestPostBareLFBlankBodyControl 0.02
 TestPostBareLFBlankBodyHeaderLike 0.05
 TestPostBareLFHeaders 0.03
 TestPostBareLFLastLineToFeeder 0.35
+TestPostClientCloseKeepsPost 98.18
+TestPostClientGoneAfterIhave 50.90
 TestPostClientGoneWhileQueued 48.12
+TestPostClientTimeoutWholeArticle 30.87
 TestPostLineEndsToPostServer 0.12
 TestPostPipelinedCommandWhileQueued 48.10
+TestPostQueuedClientGoneNotOffered 51.06
 TestPostQueuedKeepsMessageID 0.14
 TestPostRefusedThenNewMessageID 0.09
+TestPostRequeueWholeArticle 12.03
 TestPrecommitDelcommLeavesOtherSlot 0.09
 TestProcessInspectionParsers 0.00
 TestQuotedPrintableNotRejectedAsBinary 0.03
