@@ -14,7 +14,8 @@ import (
 // (co_Func stays NNAcceptArticle, no NNWaitThread). A command the client sends before its
 // 240 is read as one more article line: it is appended to the article that is still on its
 // way to the post server, and the command itself is never answered. The post server here
-// waits 5 s before its 335, so the command is read while the post is in flight.
+// waits 5 s before its 335, and the client sends the command 1 s after the ".", so it is
+// read while the post is in flight.
 func TestPostPipelinedCommandWhileQueued(t *testing.T) {
 	_, spool := spoolStore(t)
 	var mu sync.Mutex
@@ -39,7 +40,11 @@ func TestPostPipelinedCommandWhileQueued(t *testing.T) {
 	defer c.Close()
 	c.ExpectCmd(340, "POST")
 	c.MustSend("From: a <a@example.invalid>\r\nNewsgroups: e2e.test\r\nSubject: pipelined\r\nMessage-ID: " + id +
-		"\r\n\r\n" + strings.Join(body, "\r\n") + "\r\n.\r\nGROUP e2e.test\r\n")
+		"\r\n\r\n" + strings.Join(body, "\r\n") + "\r\n.\r\n")
+	// in its own write while the post waits for the 335: a line in the same write as the "."
+	// stays in the input buffer until the 240, the new data wakes the client's descriptor
+	time.Sleep(time.Second)
+	c.MustSend("GROUP e2e.test\r\n")
 	c.Deadline = 20 * time.Second
 	if code, line, err := c.ReadStatus(); code != 240 {
 		t.Errorf("POST reply %d %q (%v), want 240", code, line, err)
