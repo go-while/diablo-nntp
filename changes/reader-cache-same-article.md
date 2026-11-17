@@ -1,0 +1,1 @@
+- `dreaderd`: a request that goes to another spool server after the first one failed while sending the article header (or later with fast copy off, `-f0`, or on a spool timeout) drops the cache file it had started; before, the next server's answer was added to the first server's partial lines and the mix was kept in the cache when the next server had `cache=off` (D-234).
