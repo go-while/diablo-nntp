@@ -197,8 +197,12 @@ GetSpoolPath(uint16 spool, int gmt, int opt)
 		    path[0] = 0;
 	    }
 	} else if (*SpoolObjectMap[spool]->so_Path) {
-	    n = snprintf(path, sizeof(path), "%s/%s", PatExpand(SpoolHomePat),
-					SpoolObjectMap[spool]->so_Path);
+	    const char *shome = PatExpand(SpoolHomePat);
+
+	    /* the home without trailing slashes: path_spool "/" gives "/P.01" */
+	    n = snprintf(path, sizeof(path), "%.*s/%s",
+				(int)spoolHomeLen(shome), shome,
+				SpoolObjectMap[spool]->so_Path);
 	    if (n < 0 || (size_t)n >= sizeof(path))
 		goto path_too_long;
 	} else {
@@ -208,8 +212,9 @@ GetSpoolPath(uint16 spool, int gmt, int opt)
 	}
 	if (SpoolObjectMap[spool]->so_SpoolDirs > 0) {
 	    int l = strlen(path);
+	    /* no "//" after a spool path "/": dexpire names it "/N.00/" */
 	    n = snprintf(path + l, sizeof(path) - l, "%sN.%02x",
-			(l == 0) ? "" : "/",
+			(l == 0 || path[l - 1] == '/') ? "" : "/",
 			(gmt / 10) % SpoolObjectMap[spool]->so_SpoolDirs);
 	    if (n < 0 || (size_t)n >= sizeof(path) - l)
 		goto path_too_long;
