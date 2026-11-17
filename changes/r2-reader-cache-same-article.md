@@ -1,0 +1,1 @@
+- `dreaderd`: two clients of one reader process that fetch the same article, not yet in the reader cache, at the same time no longer both write its cache file: the first fetch caches it, the second is served without caching. Before, the cache could keep a mix of the two copies (or NUL bytes) and serve it to every later reader (D-234).
