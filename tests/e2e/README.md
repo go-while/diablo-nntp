@@ -457,6 +457,7 @@ sharing: they contain system/process names and test-site log contents.
 | `TestReaderOvCacheLowered` | dreaderd | `readerovcache 65536` does not fit the descriptor limit: dreaderd logs `readerovcache 65536 lowered to N` and the feed still works |
 | `TestReaderOvCacheClientReserve` | dreaderd | `readerovcache 300`, `readerthreads 16`, 56 groups with 18 data files each: 12 new feed connections still get a greeting (the fork lowers its cache when the overview files reach the descriptors left for clients) |
 | `TestKPDBSameValueNoWrite` | dkp | `dkp -w` of the value a field already has leaves the file's bytes and mtime alone; a new value of the same length is written. **Fails** on main: the same-value pwrite moves the mtime and the close stamps the header |
+| `TestFeederAgeRefusalReleasesArticle` | diablo | on a plain spool and on a compressed one (`compresslvl 6`, skipped without zlib), an article with a 256 KiB body older than 1 s: 100 each of `HEAD`, `BODY` and `ARTICLE <id> a1` get `430` and leave the connection's diablo child flat: at most 20 more mappings (the plain spool maps the article) and at most 16 MiB more VmRSS (the compressed spool inflates it into the heap); the same connection then serves `ARTICLE`, `HEAD ... a999999999` and `BODY ... a999999999`. **Fails** on main before the D-227 fix: one mapping, or one heap copy, per refused request. Linux only (reads /proc) |
 
 ## Running
 
