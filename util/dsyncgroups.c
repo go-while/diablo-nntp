@@ -127,6 +127,7 @@ main(int ac, char **av)
     char *grpfile = NULL;
     char *username = NULL;
     char *password = NULL;
+    int loggedIn = 0;
     int port = 119;
 
     LoadDiabloConfig(ac, av);
@@ -452,7 +453,16 @@ main(int ac, char **av)
 	}
 	switch(CommandResponse(cmd, &line)) {
 	    case 381:
+		if (password == NULL) {
+		    printf("authinfo wants a password (-u): %s\n", line);
+		    exit(1);
+		}
 		printf("authinfo accepted: %s\n", line);
+		break;
+	    case 281:
+		/* logged in without a password (RFC 4643 2.3): no PASS */
+		printf("authinfo accepted: %s\n", line);
+		loggedIn = 1;
 		break;
 	    default:
 		printf("authinfo denied: %s\n", line);
@@ -460,7 +470,7 @@ main(int ac, char **av)
 	}
     }
 
-    if (host != NULL && password != NULL) {
+    if (host != NULL && password != NULL && !loggedIn) {
 	char *line;
 	char cmd[4096];
 
@@ -490,10 +500,22 @@ main(int ac, char **av)
 	case 200: case 201:
 	    printf("Entering reader mode: %s\n", line);
 	    break;
-	default:
+	case 400: case 401: case 403: case 480: case 483:
+	case 500: case 501: case 502: case 503:
+	    /*
+	     * a one-line refusal (the replies RFC 3977 3.2.1 allows to any
+	     * command): the server may still list its groups
+	     */
 	    printf("Unable to switch to reader mode: %s\n", line);
 	    printf("Going on anyway\n");
 	    break;
+	default:
+	    /*
+	     * No reply MODE READER has (or none at all): lines left over
+	     * from it would be read as the reply to LIST.
+	     */
+	    printf("Unexpected reply to mode reader: %s\n", line);
+	    exit(1);
 	}
     }
 
@@ -1114,7 +1136,13 @@ CommandResponse(const char *cmd, char **pres)
 	    fprintf(stderr, "<< %s", buf);
 	    fflush(stderr);
 	}
-	return(strtol(buf, NULL, 10));
+	/*
+	 * A line longer than buf would leave its rest to be read as the
+	 * next reply: no code for it, so the session ends.
+	 */
+	if (strchr(buf, '\n') == NULL)
+	    return(-1);
+	return(NntpCode(buf));
     } else if (DebugOpt) {
 	fprintf(stderr, "<< (EOF)\n");
 	fflush(stderr);
