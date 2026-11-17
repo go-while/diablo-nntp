@@ -14,11 +14,19 @@ package e2e
 //	                 dropped half of its groups in hash-bucket order.
 //	Lowered          readerovcache 65536 does not fit the descriptor limit: dreaderd logs
 //	                 the lower number it uses, and the feed still works.
+//	ClientReserve    readerovcache 300, readerthreads 16: 56 groups with 18 data files
+//	                 each (Xref numbers 65536 apart) would take nearly all of the 1024
+//	                 descriptors a Linux fork may select() on.  12 new feed connections
+//	                 still get a greeting: the fork lowers its cache when the overview
+//	                 files reach the descriptors left for clients.  On 0811f796 the 8th
+//	                 got EOF ("reader handed back a connection without its descriptor").
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,6 +35,7 @@ import (
 	"time"
 
 	testkit "github.com/go-while/nntp-testkit"
+	"github.com/go-while/nntp-testkit/client"
 )
 
 // overIndexPath finds the over.* index of group under the site's spool/group: the file
@@ -153,4 +162,65 @@ func TestReaderOvCacheLowered(t *testing.T) {
 			t.Errorf("%s: not open after the feed", g)
 		}
 	}
+}
+
+func TestReaderOvCacheClientReserve(t *testing.T) {
+	_, spool := spoolStore(t)
+	groups := make([]string, 56)
+	for i := range groups {
+		groups[i] = fmt.Sprintf("e2e.ovr.%02d", i)
+	}
+	s := NewReaderSite(t, ReaderOptions{Spool: spool, Groups: groups, Config: map[string]string{
+		"readerovcache":       "300",
+		"readerthreads":       "16",
+		"readerxrefslavehost": PathHost,
+	}})
+	p := s.dialFrom(t, PeerIP)
+	defer p.Close()
+	for _, g := range groups {
+		for j := 0; j < 18; j++ {
+			id := msgID(t)
+			art := append([]string{fmt.Sprintf("Xref: %s %s:%d", PathHost, g, 1+j*65536)},
+				newArticle(id, g, "client reserve "+g, "body")...)
+			p.ExpectCmd(335, "IHAVE %s", id)
+			p.MustSend(client.Stuff(art))
+			p.ExpectStatus(235, "IHAVE "+id)
+		}
+	}
+
+	var held []net.Conn
+	defer func() {
+		for _, c := range held {
+			c.Close()
+		}
+	}()
+	for i := 1; i <= 12; i++ {
+		d := net.Dialer{LocalAddr: &net.TCPAddr{IP: net.ParseIP(PeerIP)}, Timeout: testkit.Deadline()}
+		c, err := d.Dial("tcp", s.Addr)
+		if err != nil {
+			t.Fatalf("new feed connection %d: %v", i, err)
+		}
+		held = append(held, c)
+		c.SetReadDeadline(time.Now().Add(testkit.Deadline()))
+		line, err := bufio.NewReader(c).ReadString('\n')
+		if err != nil || !(strings.HasPrefix(line, "200 ") || strings.HasPrefix(line, "201 ")) {
+			b, _ := os.ReadFile(filepath.Join(s.Dir, "log", "general.log"))
+			var logs []string
+			for _, l := range strings.Split(string(b), "\n") {
+				if strings.Contains(l, "descriptor") || strings.Contains(l, "readerovcache") {
+					logs = append(logs, l)
+				}
+			}
+			t.Fatalf("new feed connection %d after 56 groups x 18 data files: greeting %q, %v; want 200/201\n%s",
+				i, line, err, strings.Join(logs, "\n"))
+		}
+	}
+	// Where the descriptor limit is 1024 (Linux, FreeBSD), the cache was lowered.
+	b, _ := os.ReadFile(filepath.Join(s.Dir, "log", "general.log"))
+	for _, l := range strings.Split(string(b), "\n") {
+		if strings.Contains(l, "readerovcache lowered") || strings.Contains(l, "low on descriptors") {
+			t.Log(l)
+		}
+	}
+	p.ExpectCmd(205, "QUIT")
 }

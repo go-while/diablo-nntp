@@ -437,6 +437,7 @@ sharing: they contain system/process names and test-site log contents.
 | `TestReaderOvCacheKeepsGroupsOpen` | dreaderd | `readerovcache 16`, one article fed to each of 12 groups: the feed-only fork keeps all 12 overview indexes open (the shared lock at offset 4 is still held). **Fails** on main: a fixed cache of 8 groups, and `readerovcache` unknown |
 | `TestReaderOvCacheLeastRecent` | dreaderd | `readerovcache 4`, groups fed 1 2 3 4 1 5: the group used least recently (2) is closed, the others stay open. On main a full cache dropped half of its groups in hash-bucket order |
 | `TestReaderOvCacheLowered` | dreaderd | `readerovcache 65536` does not fit the descriptor limit: dreaderd logs `readerovcache 65536 lowered to N` and the feed still works |
+| `TestReaderOvCacheClientReserve` | dreaderd | `readerovcache 300`, `readerthreads 16`, 56 groups with 18 data files each: 12 new feed connections still get a greeting (the fork lowers its cache when the overview files reach the descriptors left for clients) |
 | `TestKPDBSameValueNoWrite` | dkp | `dkp -w` of the value a field already has leaves the file's bytes and mtime alone; a new value of the same length is written. **Fails** on main: the same-value pwrite moves the mtime and the close stamps the header |
 
 ## Running

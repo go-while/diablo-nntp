@@ -83,6 +83,7 @@ gzHeaderLen(const unsigned char *p, size_t n)
 Prototype void NNFeedOverview(Connection *conn);
 Prototype void FlushOverCache(void);
 Prototype int OverCacheLimit(void);
+Prototype void OverCacheFdPressure(void);
 Prototype OverInfo *GetOverInfo(const char *group);
 Prototype void PutOverInfo(OverInfo *ov);
 Prototype const char *GetOverRecord(OverInfo *ov, artno_t artno, int *plen, int *aleno, int *plines, TimeRestrict *tr, int *TimeRcvd);
@@ -188,6 +189,16 @@ static OverInfo *OvLruHead;
 static OverInfo *OvLruTail;
 static int	OvCacheMax;
 
+/*
+ * The descriptors left for the clients: an overview file that gets a
+ * descriptor at or above OvFdHigh sets OvFdPressure, and the next
+ * GetOverInfo() lowers the cache (see OvCacheShrink()).  open() returns the
+ * lowest free descriptor, so a number that high means every one below it
+ * is in use, by whatever: a group keeps up to readerthreads+1 data files.
+ */
+static long	OvFdHigh;
+static int	OvFdPressure;
+
 static void
 OvLruUnlink(OverInfo *ov)
 {
@@ -267,11 +278,60 @@ OvCacheReclaim(int err)
     return(freed);
 }
 
+/* an overview file got descriptor fd */
+static void
+OvFdNote(int fd)
+{
+    if (OvCacheMax == 0)
+	(void)OverCacheLimit();
+    if (fd >= OvFdHigh)
+	OvFdPressure = 1;
+}
+
+/*
+ * OverCacheFdPressure() - this fork is short of descriptors (an overview
+ * file got one near the limit, or a new client's descriptor was dropped).
+ */
+void
+OverCacheFdPressure(void)
+{
+    OvFdPressure = 1;
+}
+
+/*
+ * The cached groups use the descriptors the clients need: lower this
+ * fork's cache to three quarters of the groups it has now (not below
+ * OV_CACHE_MAX) and close the least recently used ones.  The lower limit
+ * stays, so a cache that does not fit is not refilled and shrunk again.
+ * Called from GetOverInfo(), where closing groups was always allowed.
+ */
+static void
+OvCacheShrink(void)
+{
+    int n = NumOverInfo - NumOverInfo / 4;
+    int freed = 0;
+
+    OvFdPressure = 0;
+    if (n < OV_CACHE_MAX)
+	n = OV_CACHE_MAX;
+    if (n < OvCacheMax) {
+	logit(LOG_NOTICE, "readerovcache lowered to %d: the overview files use the descriptors left for clients",
+	    n);
+	OvCacheMax = n;
+    }
+    while (NumOverInfo > n && OvCacheEvictOne())
+	++freed;
+    if (freed)
+	logit(LOG_NOTICE, "low on descriptors: closed %d cached overview groups",
+	    freed);
+}
+
 /*
  * OverCacheLimit() - the number of groups a fork keeps open: readerovcache,
  * lowered so the descriptors fit.  Each cached group holds its over.* file
- * and usually one data.* file, sometimes more.  The forks select() on their
- * clients, so all descriptors must stay below FD_SETSIZE as well as below
+ * and usually one data.* file, sometimes more (OvCacheShrink() lowers it
+ * further when they do not fit).  The forks select() on their clients, so
+ * all descriptors must stay below FD_SETSIZE as well as below
  * RLIMIT_NOFILE; room is left for the clients, the spool servers and the
  * log files.  Computed once (dreaderd calls it at startup, before it forks).
  */
@@ -286,7 +346,10 @@ OverCacheLimit(void)
 	if (getrlimit(RLIMIT_NOFILE, &rl) == 0 &&
 	    rl.rlim_cur != RLIM_INFINITY && rl.rlim_cur < (rlim_t)lim)
 	    lim = (long)rl.rlim_cur;
-	cap = (lim - 2L * DOpts.ReaderThreads - 64) / 3;
+	OvFdHigh = lim - 2L * DOpts.ReaderThreads - 64;
+	if (OvFdHigh < lim / 2)
+	    OvFdHigh = lim / 2;
+	cap = OvFdHigh / 3;
 	if (cap < OV_CACHE_MAX)
 	    cap = OV_CACHE_MAX;
 	OvCacheMax = DOpts.ReaderOvCache;
@@ -1045,6 +1108,8 @@ GetOverInfo(const char *group)
     OverInfo **pov = &OvHash[shash(group) & OVHMASK];
     OverInfo *ov;
 
+    if (OvFdPressure)
+	OvCacheShrink();
     while ((ov = *pov) != NULL) {
 	if (strcmp(group, ov->ov_Group) == 0)
 	    break;
@@ -1111,6 +1176,8 @@ again:
 	    else if ((ov->ov_OFd = xopen(O_RDWR|O_CREAT, 0644, "%s", path)) < 0 &&
 		     OvCacheReclaim(errno))
 		ov->ov_OFd = xopen(O_RDWR|O_CREAT, 0644, "%s", path);
+	    if (ov->ov_OFd >= 0)
+		OvFdNote(ov->ov_OFd);
 	}
 	if (ov->ov_OFd < 0) {
 	    logit(LOG_ERR, "Error on overview open/create for group %s: %s (%s)",
@@ -1933,6 +2000,7 @@ MakeOverHFile(OverInfo *ov, artno_t artNo, int create)
 	    FreeOverData(od);
 	    *pod = od = NULL;
 	} else {
+	    OvFdNote(od->od_HFd);
 	    od->od_ArtBase = artBase;
 	    if (count > DOpts.ReaderThreads) {
 		OverData *t = ov->ov_HData;
