@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"fmt"
+	"net"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	testkit "github.com/go-while/nntp-testkit"
+	"github.com/go-while/nntp-testkit/client"
 	"github.com/go-while/nntp-testkit/fakeserver"
 )
 
@@ -273,16 +275,11 @@ func TestPostClientTimeoutWholeArticle(t *testing.T) {
 }
 
 // waitLetGo waits until dreaderd logs that it let the client with local address tag go
-// ("closed from 127.0.0.1 (<tag>) ...").
+// ("closed from 127.0.0.1 (<tag>) ...", letGo).
 func waitLetGo(t *testing.T, s *Site, tag string, d time.Duration) {
 	t.Helper()
-	testkit.WaitFor(t, d, "dreaderd to let the closed posting client "+tag+" go", func() bool {
-		for _, l := range strings.Split(generalLog(s), "\n") {
-			if strings.Contains(l, "closed from") && strings.Contains(l, tag) {
-				return true
-			}
-		}
-		return false
+	testkit.WaitFor(t, d, "dreaderd to let the posting client "+tag+" go", func() bool {
+		return letGo(s, tag)
 	})
 }
 
@@ -310,9 +307,9 @@ func onlyArticles(t *testing.T, arts [][]string, ids ...string) {
 }
 
 // TestPostClientGoneAfterIhave (F2, the case without article lines): a client that goes
-// away after dreaderd sent the IHAVE for its post, before the 335 (here: it closes while the
-// post server holds its 335 for 48 s, and dreaderd lets it go at the next pass over all
-// descriptors). Its article is gone with it; dreaderd answered the 335 with the "." line
+// away after dreaderd sent the IHAVE for its post, before the 335 (here: its connection is
+// reset while the post server holds its 335 for 48 s, and dreaderd lets it go at the next
+// pass over all descriptors; idle and session timeouts end a client the same way). Its article is gone with it; dreaderd answered the 335 with the "." line
 // alone, an empty article, which the post server here stores (a lax server could). Now
 // dreaderd closes the post server connection instead, so nothing is stored; the next
 // client's POST goes over a new connection and gets 240, and it is the only article the
@@ -334,7 +331,7 @@ func TestPostClientGoneAfterIhave(t *testing.T) {
 	c.MustSend(requeuePostHead(gone, "gone after ihave") + "body\r\n.\r\n")
 	tag := "(" + c.Conn.LocalAddr().String() + ")"
 	time.Sleep(time.Second)
-	c.Close()
+	resetClose(t, c)
 	waitLetGo(t, s, tag, 44*time.Second)
 	if n := len(got()); n != 0 {
 		t.Fatalf("the post server answered (%d articles) before the client was let go: the test did not hold it", n)
@@ -354,8 +351,8 @@ func TestPostClientGoneAfterIhave(t *testing.T) {
 }
 
 // TestPostQueuedClientGoneNotOffered (F2, a post queued behind another): a client whose
-// post waits behind another client's post on the post server connection, and that goes
-// away there (dreaderd lets it go at the next pass over all descriptors). When the post
+// post waits behind another client's post on the post server connection, and whose
+// connection is reset there (dreaderd lets it go at the next pass over all descriptors). When the post
 // before it was answered, dreaderd offered the gone client's post anyway (IHAVE) and
 // answered the 335 with the "." line alone: an empty article, which the post server here
 // stores. Now a post whose client is gone is dropped before its IHAVE: the post server gets
@@ -384,7 +381,7 @@ func TestPostQueuedClientGoneNotOffered(t *testing.T) {
 	b.MustSend(requeuePostHead(gone, "queued and gone") + "body\r\n.\r\n")
 	tag := "(" + b.Conn.LocalAddr().String() + ")"
 	time.Sleep(time.Second)
-	b.Close()
+	resetClose(t, b)
 	waitLetGo(t, s, tag, 44*time.Second)
 	if n := len(got()); n != 0 {
 		t.Fatalf("the post server answered (%d articles) before the client was let go: the test did not hold it", n)
@@ -400,4 +397,105 @@ func TestPostQueuedClientGoneNotOffered(t *testing.T) {
 		t.Errorf("the post server got %d IHAVE, want 1 (none for the gone client's post)", n)
 	}
 	onlyArticles(t, got(), first)
+}
+
+// resetClose closes c with SO_LINGER 0: the peer gets a reset (a socket error), not a clean
+// close.
+func resetClose(t *testing.T, c *client.Conn) {
+	t.Helper()
+	tc, ok := c.Conn.(*net.TCPConn)
+	if !ok {
+		t.Fatalf("client connection is %T, not TCP", c.Conn)
+	}
+	if err := tc.SetLinger(0); err != nil {
+		t.Fatalf("SO_LINGER 0: %v", err)
+	}
+	c.Close()
+}
+
+// letGo reports whether dreaderd logged that it let the client with local address tag go.
+func letGo(s *Site, tag string) bool {
+	for _, l := range strings.Split(generalLog(s), "\n") {
+		if strings.Contains(l, "closed from") && strings.Contains(l, tag) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestPostClientCloseKeepsPost: a client that sends a complete POST and then closes its
+// connection cleanly, or half-closes it (shutdown of its write side, no QUIT), while the
+// post server holds its 335 for 48 s. The look at a waiting posting client's socket (D-228)
+// took the EOF for a client gone and let it go at the next pass over all descriptors; its
+// post was then dropped (the post server got a "." alone). A clean close or half-close is no
+// longer taken for gone, only a socket error is: the client keeps its connection until the
+// answer (not let go 44 s after the close, past one pass), the post server gets the article
+// once, whole, a half-closed client still reads its 240, and the reader process serves other
+// clients meanwhile.
+func TestPostClientCloseKeepsPost(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		half bool
+	}{
+		{"half-close", true},
+		{"close", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, spool := spoolStore(t)
+			post, got := heldPostServer(t, 48*time.Second)
+			s := NewReaderSite(t, ReaderOptions{Spool: spool, Post: post})
+			t.Cleanup(func() {
+				if t.Failed() {
+					t.Logf("general.log:\n%s", generalLog(s))
+				}
+			})
+			defer keepBusy(t, s)()
+
+			id := msgID(t)
+			body := postBody(40)
+			c := s.Reader(t)
+			defer c.Close()
+			c.ExpectCmd(340, "POST")
+			c.MustSend(requeuePostHead(id, tc.name) + strings.Join(body, "\r\n") + "\r\n.\r\n")
+			tag := "(" + c.Conn.LocalAddr().String() + ")"
+			time.Sleep(time.Second)
+			closed := time.Now()
+			if tc.half {
+				if err := c.Conn.(*net.TCPConn).CloseWrite(); err != nil {
+					t.Fatalf("half-close: %v", err)
+				}
+			} else {
+				c.Close()
+			}
+
+			// another client is served while the post waits
+			time.Sleep(5 * time.Second)
+			o := s.Reader(t)
+			o.ExpectCmd(211, "GROUP e2e.test")
+			o.Close()
+
+			// one pass over all descriptors (every 30 s) falls in this time
+			time.Sleep(time.Until(closed.Add(44 * time.Second)))
+			if letGo(s, tag) {
+				t.Errorf("the client %s was let go before its post was answered", tag)
+			}
+			if n := len(got()); n != 0 {
+				t.Fatalf("the post server answered (%d articles) within 44 s: the test did not hold it", n)
+			}
+			if tc.half {
+				c.Deadline = 30 * time.Second
+				if code, line, err := c.ReadStatus(); code != 240 {
+					t.Errorf("half-closed client: POST reply %d %q (%v), want 240", code, line, err)
+				}
+			}
+			testkit.WaitFor(t, 30*time.Second, "the post server to get the article", func() bool {
+				return len(got()) > 0
+			})
+			time.Sleep(time.Second)
+			checkWhole(t, got(), id, body)
+			testkit.WaitFor(t, 15*time.Second, "dreaderd to close the client "+tag+" after the answer", func() bool {
+				return letGo(s, tag)
+			})
+		})
+	}
 }
