@@ -3,6 +3,7 @@ package e2e
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -16,23 +17,27 @@ import (
 //
 // Spool paths are now kept without trailing slashes, and the spool home is compared without
 // them. Nothing is old enough to expire here: after dexpire -a -h1 both articles must still
-// be there (STAT 223). The last case (path_spool with a slash, an absolute spool path below
-// it without one) worked before and must keep working.
+// be there (STAT 223), and the feeder must still read them (ARTICLE 220 with the article's
+// body) through the paths it now builds. The last case (path_spool with a slash, an absolute
+// spool path below it without one) worked before and must keep working.
 func TestR2DexpireSpoolPathSlash(t *testing.T) {
-	spool01 := func(path string) string {
-		return "spool 01\n    minfree 1m\n    path " + path + "\nend\nmetaspool m\n    spool 01\nend\nexpire * m\n"
+	spool01 := func(path, more string) string {
+		return "spool 01\n    minfree 1m\n    path " + path + "\n" + more + "end\nmetaspool m\n    spool 01\nend\nexpire * m\n"
 	}
 	for _, tc := range []struct {
 		name      string
 		pathSpool string // path_spool; "" = the default
 		spoolCtl  string // "" = DefaultSpoolCtl (spool 00)
 		mkdir     string // spool partition to create, below the site home
+		glob      string // where the articles' directories must be, below the site home
 	}{
-		{"path_spool", "@home@/spool/news/", "", ""},
-		{"relative", "", spool01("P.01/"), "spool/news/P.01"},
-		{"below_home", "", spool01("@home@/spool/news/P.01/"), "spool/news/P.01"},
-		{"elsewhere", "", spool01("@home@/other//"), "other"},
-		{"path_spool_and_below_home", "@home@/spool/news/", spool01("@home@/spool/news/P.01"), "spool/news/P.01"},
+		{"path_spool", "@home@/spool/news/", "", "", "spool/news/D.*"},
+		{"path_spool_double", "@home@/spool//news//", "", "", "spool/news/D.*"},
+		{"relative", "", spool01("P.01/", ""), "spool/news/P.01", "spool/news/P.01/D.*"},
+		{"relative_spooldirs", "", spool01("P.01/", "    spooldirs 2\n"), "spool/news/P.01", "spool/news/P.01/N.0*/D.*"},
+		{"below_home", "", spool01("@home@/spool/news/P.01/", ""), "spool/news/P.01", "spool/news/P.01/D.*"},
+		{"elsewhere", "", spool01("@home@/other//", ""), "other", "other/D.*"},
+		{"path_spool_and_below_home", "@home@/spool/news/", spool01("@home@/spool/news/P.01", ""), "spool/news/P.01", "spool/news/P.01/D.*"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			o := SiteOptions{SpoolCtl: tc.spoolCtl}
@@ -48,10 +53,8 @@ func TestR2DexpireSpoolPathSlash(t *testing.T) {
 			}
 			s := NewSite(t, o)
 			ids := s.Inject(t, "e2e.test", 2)
-			if tc.mkdir != "" {
-				if d, _ := filepath.Glob(filepath.Join(s.Dir, tc.mkdir, "D.*")); len(d) == 0 {
-					t.Fatalf("test setup: no spool directory in %s", tc.mkdir)
-				}
+			if d, _ := filepath.Glob(filepath.Join(s.Dir, tc.glob)); len(d) == 0 {
+				t.Fatalf("test setup: no spool directory %s", tc.glob)
 			}
 			p := s.Peer(t)
 			for _, id := range ids {
@@ -65,6 +68,16 @@ func TestR2DexpireSpoolPathSlash(t *testing.T) {
 			for _, id := range ids {
 				if code, line := p.Cmd("STAT %s", id); code != 223 {
 					t.Errorf("STAT %s after dexpire -a -h1: %q, want 223 (nothing was old enough to expire)", id, line)
+				}
+			}
+			for _, id := range ids {
+				code, line := p.Cmd("ARTICLE %s", id)
+				if code != 220 {
+					t.Errorf("ARTICLE %s after dexpire -a -h1: %q, want 220", id, line)
+					continue
+				}
+				if body := strings.Join(p.ReadDotLines(), "\n"); !strings.Contains(body, "body of "+id) {
+					t.Errorf("ARTICLE %s returned another article:\n%s", id, body)
 				}
 			}
 			p.ExpectCmd(205, "QUIT")

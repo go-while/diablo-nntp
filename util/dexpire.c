@@ -1194,8 +1194,11 @@ updateHistory(void)
 
     snprintf(spoolHome, sizeof(spoolHome), "%s", PatExpand(SpoolHomePat));
     spoolHomeLen = strlen(spoolHome);
-    /* "/news/spool/" is the same spool home: the spool paths have no slash */
-    while (spoolHomeLen > 1 && spoolHome[spoolHomeLen - 1] == '/')
+    /*
+     * "/news/spool/" is the same spool home: the spool paths have no slash.
+     * path_spool "/" becomes "", as in lib/spool.c (GetSpoolPath()).
+     */
+    while (spoolHomeLen > 0 && spoolHome[spoolHomeLen - 1] == '/')
 	spoolHome[--spoolHomeLen] = 0;
 
     for (i = 0; i < entryIdx; ++i) {
@@ -1597,8 +1600,11 @@ DumpSpoolEntries(void)
 
     snprintf(spoolHome, sizeof(spoolHome), "%s", PatExpand(SpoolHomePat));
     spoolHomeLen = strlen(spoolHome);
-    /* "/news/spool/" is the same spool home: the spool paths have no slash */
-    while (spoolHomeLen > 1 && spoolHome[spoolHomeLen - 1] == '/')
+    /*
+     * "/news/spool/" is the same spool home: the spool paths have no slash.
+     * path_spool "/" becomes "", as in lib/spool.c (GetSpoolPath()).
+     */
+    while (spoolHomeLen > 0 && spoolHome[spoolHomeLen - 1] == '/')
 	spoolHome[--spoolHomeLen] = 0;
     printf("List of directories on spool:\n");
     for (i = 0; i < entryIdx; ++i) {

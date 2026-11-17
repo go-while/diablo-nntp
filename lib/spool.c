@@ -72,14 +72,15 @@ static void stripSlash(char *path);
  * builds from a spool's path with those ArticleFileName() builds for the
  * history records, so both must come out the same for either spelling:
  * spool paths are kept without trailing slashes, and the spool home is
- * compared without them.
+ * compared without them (path_spool "/" compares as "": every absolute path
+ * is below it).
  */
 static size_t
 spoolHomeLen(const char *shome)
 {
     size_t l = strlen(shome);
 
-    while (l > 1 && shome[l - 1] == '/')
+    while (l > 0 && shome[l - 1] == '/')
 	--l;
     return(l);
 }
@@ -102,6 +103,7 @@ void
 ArticleFileName(char *path, int pathSize, History *h, int opt)
 {
     char *spool;
+    const char *sep;
 
     spool = GetSpoolPath(H_SPOOL(h->exp), h->gmt, opt);
 
@@ -109,12 +111,14 @@ ArticleFileName(char *path, int pathSize, History *h, int opt)
 	strcpy(path, "/dev/null");
 	return;
     }
+    /* no "//" for a spool path "/": dexpire names it "/D.x" */
+    sep = (spool[0] && spool[strlen(spool) - 1] != '/') ? "/" : "";
     switch (opt) {
 	case ARTFILE_DIR:
 	case ARTFILE_DIR_REL:
 		snprintf(path, pathSize, "%s%sD.%08x",
 					spool,
-					spool[0] ? "/" : "",
+					sep,
 					h->gmt - h->gmt % 10);
 		break;
 	case ARTFILE_FILE:
@@ -122,13 +126,13 @@ ArticleFileName(char *path, int pathSize, History *h, int opt)
 		if (h->boffset || h->bsize) {
 		    snprintf(path, pathSize, "%s%sD.%08x/B.%04x",
 					spool,
-					spool[0] ? "/" : "",
+					sep,
 					h->gmt - h->gmt % 10,
 					h->iter);
 		} else {
 		    snprintf(path, pathSize, "%s%sD.%08x/%08x.%08x.%04x",
 					spool,
-					spool[0] ? "/" : "",
+					sep,
 					h->gmt - h->gmt % 10,
 					h->hv.h1,
 					h->hv.h2,
