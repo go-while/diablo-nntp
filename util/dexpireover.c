@@ -794,7 +794,10 @@ deleteStaleGroup(Group *group, int t)
     lmts = (int)strtoul(KPDBGetField(rec, recLen, "LMTS", NULL, "0"), NULL, 16);
     if (lmts == 0 || (int)(t - lmts) <= 0) {
 	KPDBUnlock(KDBActive, rec);
-	if (VerboseOpt)
+	if (VerboseOpt && lmts == 0)
+	    printf("%s: LMTS now missing or 0 in the record, not deleted\n",
+						group->gr_GroupName);
+	else if (VerboseOpt)
 	    printf("%s: new article during the run, not deleted\n",
 						group->gr_GroupName);
 	group->gr_LMTS = lmts;

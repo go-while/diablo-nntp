@@ -17,12 +17,14 @@ import (
 	"time"
 )
 
-// TestDexpireoverStaleGroupNewArticle: e2e.test and e2e.old both have a last-article time ten
-// days back. dexpireover -a -s -O1 -w e2e.* reads them, then waits in its pass over the directories for
-// the lock on the over file of e2e.test, which the test holds. Meanwhile e2e.test gets an
-// article (its LMTS is set to now, as dreaderd does when it numbers one). At the end of the
-// run e2e.test must still be in dactive.kp and e2e.old must be gone. Fails before the fix:
-// both were deleted, by the LMTS read at the start.
+// TestDexpireoverStaleGroupNewArticle: e2e.test, e2e.old, e2e.zero and e2e.gone all have a
+// last-article time ten days back. dexpireover -a -s -O1 -w e2e.* reads them, then waits in
+// its pass over the directories for the lock on the over file of e2e.test, which the test
+// holds. Meanwhile e2e.test gets an article (its LMTS is set to now, as dreaderd does when it
+// numbers one), the LMTS of e2e.zero becomes 0, and e2e.gone is removed. At the end of the run
+// e2e.test and e2e.zero must still be in dactive.kp, e2e.old must be gone, and e2e.gone must
+// not come back. Fails before the fix: e2e.test and e2e.zero were deleted, by the LMTS read
+// at the start.
 func TestDexpireoverStaleGroupNewArticle(t *testing.T) {
 	s, home := overSite(t, nil)
 	s.Run(t, "dgrpctl", "adjust", "e2e.test", "NE", "=1000")
@@ -42,8 +44,10 @@ func TestDexpireoverStaleGroupNewArticle(t *testing.T) {
 	lmts := func(at time.Time) string { return fmt.Sprintf("LMTS=%08x", at.Unix()) }
 	old := time.Now().Add(-10 * 24 * time.Hour)
 	dkp("-w", db, "e2e.test", lmts(old))
-	for _, f := range []string{"NB=0000000001", "NE=0000000010", "S=y", lmts(old)} {
-		dkp("-w", db, "e2e.old", f)
+	for _, g := range []string{"e2e.old", "e2e.zero", "e2e.gone"} {
+		for _, f := range []string{"NB=0000000001", "NE=0000000010", "S=y", lmts(old)} {
+			dkp("-w", db, g, f)
+		}
 	}
 
 	f := strings.Fields(s.Run(t, "dgrpctl", "listgrouphashfile", "e2e.test"))
@@ -84,6 +88,8 @@ func TestDexpireoverStaleGroupNewArticle(t *testing.T) {
 
 	// The group table (with both LMTS values) has been read: e2e.test gets an article now.
 	dkp("-w", db, "e2e.test", lmts(time.Now()))
+	dkp("-w", db, "e2e.zero", "LMTS=00000000")
+	dkp("-x", db, "e2e.gone")
 
 	lk.Type = syscall.F_UNLCK
 	if err := syscall.FcntlFlock(fo.Fd(), syscall.F_SETLK, &lk); err != nil {
@@ -98,7 +104,44 @@ func TestDexpireoverStaleGroupNewArticle(t *testing.T) {
 	if live, _, _ := kpRecords(t, db, "e2e.old"); len(live) != 0 {
 		t.Errorf("dexpireover -O1 kept e2e.old, whose last article is ten days old: records %q", live)
 	}
+	if live, _, _ := kpRecords(t, db, "e2e.zero"); len(live) != 1 {
+		t.Errorf("dexpireover -O1 deleted e2e.zero, whose LMTS became 0 during the run: records %q", live)
+	}
+	if live, _, _ := kpRecords(t, db, "e2e.gone"); len(live) != 0 {
+		t.Errorf("e2e.gone, removed during the run, is back in dactive.kp: %q", live)
+	}
+	for _, l := range []string{
+		"e2e.test: new article during the run, not deleted\n",
+		"e2e.zero: LMTS now missing or 0 in the record, not deleted\n",
+		"group e2e.gone no longer in the active file, not deleted\n",
+		"e2e.old: stale group deleted\n",
+	} {
+		if !strings.Contains(out.String(), l) {
+			t.Errorf("dexpireover -v output has no line %q", strings.TrimSuffix(l, "\n"))
+		}
+	}
 	if t.Failed() {
 		t.Logf("dexpireover -a -s -O1 -w e2e.* -v -l60:\n%s", out.String())
+	}
+}
+
+// TestDexpireoverStaleGroupDryRun: "dexpireover -O1 -n" names a group whose last article is
+// ten days old as stale but leaves it in dactive.kp.
+func TestDexpireoverStaleGroupDryRun(t *testing.T) {
+	s, _ := overSite(t, nil)
+	db := filepath.Join(s.Dir, "dactive.kp")
+	old := fmt.Sprintf("LMTS=%08x", time.Now().Add(-10*24*time.Hour).Unix())
+	for _, f := range []string{"NB=0000000001", "NE=0000000010", "S=y", old} {
+		s.Run(t, "dkp", "-w", db, "e2e.old", f)
+	}
+	out, err := s.TryRun("dexpireover", "-O1", "-w", "e2e.*", "-n")
+	if err != nil {
+		t.Fatalf("dexpireover -O1 -w e2e.* -n: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "e2e.old: stale group deleted\n") {
+		t.Errorf("dexpireover -O1 -n does not name e2e.old as stale:\n%s", out)
+	}
+	if live, _, _ := kpRecords(t, db, "e2e.old"); len(live) != 1 {
+		t.Errorf("dexpireover -O1 -n deleted e2e.old: records %q\n%s", live, out)
 	}
 }
