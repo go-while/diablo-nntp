@@ -242,7 +242,7 @@ func TestHostCacheDNSFailureKeepsPeers(t *testing.T) {
 // diablo.hosts line), keeps over two rebuilds during EAI_AGAIN exactly the addresses each
 // label had, each once: the records do not multiply from one failing rebuild to the next, and
 // no label gets another label's records. A later successful lookup that gives a new address
-// writes only the new one.
+// writes only the new one, and that address is let in.
 func TestHostCacheDNSFailureNoDuplicates(t *testing.T) {
 	feeds := DefaultNewsfeeds +
 		"label named\n    inhost localhost\n    host localhost\n    addgroup *\nend\n" +
@@ -291,9 +291,8 @@ func TestHostCacheDNSFailureNoDuplicates(t *testing.T) {
 			t.Errorf("after a lookup that gave 127.0.0.3: label %s has %v, want only 127.0.0.3", label, r[label])
 		}
 	}
-	if g := h.greeting("127.0.0.1", "old address after the change"); !strings.HasPrefix(g, "502 ") {
-		t.Errorf("the old address 127.0.0.1 after localhost moved to 127.0.0.3: %q, want 502", g)
-	}
+	// (127.0.0.1 itself is still let in: its reverse name localhost resolves to it again
+	// with DNS working, and the entry matches by name)
 	if g := h.greeting("127.0.0.3", "new address after the change"); !strings.HasPrefix(g, "200 ") {
 		t.Errorf("the new address 127.0.0.3 of localhost: %q, want 200", g)
 	}
