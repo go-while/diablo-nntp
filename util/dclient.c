@@ -99,7 +99,7 @@ connectnews(char *hostname, char *port) {
     }
     if (verbose)
 	printf("%s", line);
-    if (strncmp(line, "200 ", 4) != 0 && strncmp(line, "201 ", 4) != 0) {
+    if (NntpCode(line) != 200 && NntpCode(line) != 201) {
 	printf("Unexpected response from server: %s", line);
 	exit(2);
     }
@@ -107,12 +107,17 @@ connectnews(char *hostname, char *port) {
 
 /*
  * RFC 3977 replies that are followed by a multi-line block.  211 is
- * multi-line only after LISTGROUP.
+ * multi-line only after LISTGROUP.  -1: the line has no reply code
+ * (three digits, then a space or the end of the line).
  */
 static int
 MultiLineReply(const char *cmd, const char *line)
 {
-    switch (atoi(line)) {
+    int code = NntpCode(line);
+
+    if (code < 0)
+	return(-1);
+    switch (code) {
     case 100: case 101: case 215: case 220: case 221: case 222:
     case 202: case 224: case 225: case 230: case 231: case 282:
 	return(1);
@@ -145,6 +150,11 @@ newscommand(char *command) {
 	    printf("%s", line);
 	    if (multi < 0) {
 		multi = MultiLineReply(cmd, line);
+		if (multi < 0) {
+		    /* what follows could not be told from the next reply */
+		    printf("Unexpected response from server\n");
+		    exit(2);
+		}
 		if (multi == 0)
 		    break;
 	    } else if (strncmp(line, ".\r\n", 3) == 0) {
@@ -155,6 +165,9 @@ newscommand(char *command) {
 	    break;
     }
 }
+
+/* set by dodumpfile(): replies to the dumped commands were not read */
+static int dumped = 0;
 
 void
 dodumpfile(char *filename)
@@ -176,11 +189,13 @@ dodumpfile(char *filename)
 	}
     }
     fclose(f);
+    dumped = 1;
 }
 
 void
 newsquit(void) {
     char line[512];
+    int code;
 
     fflush(fp);
     fprintf(fp,"QUIT\r\n");
@@ -189,7 +204,13 @@ newsquit(void) {
 	line[0] = 0;
     if (verbose)
 	printf("%s", line);
-    if (strncmp(line, "205 ", 4) != 0 && strncmp(line, "238 ", 4) != 0) {
+    /*
+     * After -f the replies to the dumped commands were not read, so this
+     * line is the reply to the first of them, not to QUIT: as before, a
+     * 238 (a dumped CHECK) counts too.
+     */
+    code = NntpCode(line);
+    if (code != 205 && !(dumped && code == 238)) {
 	printf("Unexpected response from server: %s", line);
 	exit(2);
     }
