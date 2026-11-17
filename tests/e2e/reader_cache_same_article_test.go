@@ -20,26 +20,29 @@ import (
 // TestReaderCacheSameArticleTwice: readercache on; two spool servers (127.0.0.1 and 127.0.0.2,
 // one connection each, so the two requests run at the same time) answer the same Message-ID
 // with copies of different length (the first request gets the long copy), each sent in two
-// halves with a pause. Client A asks first, client B after A got its 220 (A's copy is still
-// coming, its cache file open). Both get their copy whole; a third client is then served from
-// the cache (no third spool request) and gets exactly one of the two copies. Two orders: the first request ends first, and the first
-// request ends last. Fails before the fix in the first order: the cached article was the short
-// copy followed by the tail of the long one. The second order passes before the fix too (with
-// copies this small the first writer's stdio buffer still holds its whole copy, which then
-// overwrites the short one); it checks that the fix keeps the first writer's copy.
+// halves. Client A asks first, client B after A got its 220 (A's copy is still coming, its cache
+// file open). The spool side orders the rest: request 1 sends its second half only after request
+// 2 has arrived, and the request that ends last sends its second half only after the other has
+// sent its "." (and one more second for dreaderd to finish it). Both clients get their copy
+// whole; a third client is then served from the cache (no third spool request) and gets exactly
+// one of the two copies. Two orders: the first request ends first, and the first request ends
+// last. Fails before the fix in the first order: the cached article was the short copy followed
+// by the tail of the long one. The second order passes before the fix too (with copies this
+// small the first writer's stdio buffer still holds its whole copy, which then overwrites the
+// short one); it checks that the fix keeps the first writer's copy.
 func TestReaderCacheSameArticleTwice(t *testing.T) {
 	for _, tc := range []struct {
-		name           string
-		pause1, pause2 time.Duration
+		name       string
+		firstFirst bool
 	}{
-		{"first ends first", 1500 * time.Millisecond, 3 * time.Second},
-		{"first ends last", 4 * time.Second, 1 * time.Second},
+		{"first ends first", true},
+		{"first ends last", false},
 	} {
-		t.Run(tc.name, func(t *testing.T) { cacheSameArticleTwice(t, tc.pause1, tc.pause2) })
+		t.Run(tc.name, func(t *testing.T) { cacheSameArticleTwice(t, tc.firstFirst) })
 	}
 }
 
-func cacheSameArticleTwice(t *testing.T, pause1, pause2 time.Duration) {
+func cacheSameArticleTwice(t *testing.T, firstFirst bool) {
 	id := msgID(t)
 	var n atomic.Int32
 	copyOf := func(k int) []string { // what the k-th request is answered with
@@ -55,6 +58,16 @@ func cacheSameArticleTwice(t *testing.T, pause1, pause2 time.Duration) {
 		}
 		return lines
 	}
+	// arrived[k] is closed when request k has arrived, done[k] when it has sent its "."
+	arrived := []chan struct{}{nil, make(chan struct{}), make(chan struct{})}
+	done := []chan struct{}{nil, make(chan struct{}), make(chan struct{})}
+	wait := func(ch chan struct{}, what string) {
+		select {
+		case <-ch:
+		case <-time.After(20 * time.Second):
+			t.Errorf("spool side: no %s within 20 s", what)
+		}
+	}
 	handler := func(c *fakeserver.Conn) {
 		for {
 			line, err := c.ReadLine()
@@ -65,17 +78,25 @@ func cacheSameArticleTwice(t *testing.T, pause1, pause2 time.Duration) {
 			switch {
 			case len(f) >= 2 && strings.EqualFold(f[0], "ARTICLE"):
 				k := int(n.Add(1))
+				if k > 2 {
+					c.WriteLines("430 no third copy")
+					continue
+				}
+				close(arrived[k])
 				all := copyOf(k)
 				half := len(all) / 2
 				c.WriteLines("220 0 " + f[1] + " article follows")
 				c.WriteLines(all[:half]...)
 				if k == 1 {
-					c.Sleep(pause1)
-				} else {
-					c.Sleep(pause2)
+					wait(arrived[2], "second request")
+				}
+				if last := (k == 2) == firstFirst; last {
+					wait(done[3-k], "end of the other copy")
+					c.Sleep(1 * time.Second)
 				}
 				c.WriteLines(all[half:]...)
 				c.WriteLines(".")
+				close(done[k])
 			case len(f) > 0 && strings.EqualFold(f[0], "QUIT"):
 				c.WriteLines("205 bye")
 				return
