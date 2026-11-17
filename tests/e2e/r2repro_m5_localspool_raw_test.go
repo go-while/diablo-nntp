@@ -81,7 +81,19 @@ func TestR2ReproLocalspoolDiabloSpool(t *testing.T) {
 				stripped := append([]string{local[0][i:]}, local[1:]...)
 				t.Logf("%s: with the %d bytes before \"Path:\" cut: equal to the NNTP fetch: %v", a.name, i, strings.Join(stripped, "\n") == strings.Join(wire, "\n"))
 				if strings.Join(stripped, "\n") != strings.Join(wire, "\n") {
-					t.Logf("stripped local: %q", stripped)
+					t.Logf("%d lines over NNTP, %d lines localspool (record header cut)", len(wire), len(stripped))
+					for k := 0; k < len(wire) || k < len(stripped); k++ {
+						w, l := "<none>", "<none>"
+						if k < len(wire) {
+							w = wire[k]
+						}
+						if k < len(stripped) {
+							l = stripped[k]
+						}
+						if w != l {
+							t.Logf("  line %02d: NNTP %.50q | localspool %.50q", k, w, l)
+						}
+					}
 				}
 			}
 		}
