@@ -280,7 +280,27 @@ func TestDexpireoverRewriteTrackonlyGzip(t *testing.T) {
 		}
 	}
 	t.Logf("data files before -z: %q", data)
-	expireOver(t, s, "-y", "-z", "-v")
+	// dreaderd made one empty data file per four articles; those of articles 1-3 and 4-7 are
+	// old enough and outside the newest file, so -z looks at them
+	for _, base := range []string{"0", "4"} {
+		f := filepath.Join(dir, "data."+base+"."+suffix)
+		if fi, err := os.Stat(f); err != nil || fi.Size() != 0 {
+			t.Fatalf("empty data file of articles from %s before -z: %v %v", base, fi, err)
+		}
+	}
+	zout := expireOver(t, s, "-y", "-z", "-v")
+	// -z must leave the empty files as they are, not gzip them
+	for _, f := range data {
+		if fi, err := os.Stat(f); err != nil || fi.Size() != 0 {
+			t.Errorf("empty data file %s after -z: %v %v, want it still there, empty", filepath.Base(f), fi, err)
+		}
+		if _, err := os.Stat(f + ".gz"); err == nil {
+			t.Errorf("dexpireover -z gzipped the empty data file %s", filepath.Base(f))
+		}
+	}
+	if n := strings.Count(zout, "not eligible for compression: empty\n"); n != 2 {
+		t.Errorf("dexpireover -y -z -v: %d \"empty\" lines, want 2 (articles 1-3 and 4-7):\n%s", n, zout)
+	}
 	expireOver(t, s, "-a", "-R", "-v")
 	checkSlots(t, s, "after dexpireover -z and -a -R", 12, allTrackonly)
 
