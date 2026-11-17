@@ -562,7 +562,9 @@ TestPostBareLFBlankBodyControl 0.02
 TestPostBareLFBlankBodyHeaderLike 0.05
 TestPostBareLFHeaders 0.03
 TestPostBareLFLastLineToFeeder 0.35
+TestPostClientGoneWhileQueued 48.12
 TestPostLineEndsToPostServer 0.12
+TestPostPipelinedCommandWhileQueued 48.10
 TestPostQueuedKeepsMessageID 0.14
 TestPostRefusedThenNewMessageID 0.09
 TestPrecommitDelcommLeavesOtherSlot 0.09
