@@ -131,6 +131,28 @@ func TestR2FdSetFortify(t *testing.T) {
 		}
 	})
 
+	// probe: what the tree's own lib/defs.h makes of FD_SETSIZE and MAXFDS with the build's
+	// flags (XMakefile.inc: -O2 -I<tree>), logged only.
+	t.Run("probe", func(t *testing.T) {
+		cc := wmCC(t)
+		root := wildmatSource(t)
+		dir := t.TempDir()
+		src := filepath.Join(dir, "probe.c")
+		prog := filepath.Join(dir, "probe")
+		code := "#include \"lib/defs.h\"\n#include <stdio.h>\nint main(void) {\n" +
+			"#ifdef __USE_FORTIFY_LEVEL\n int fl = __USE_FORTIFY_LEVEL;\n#else\n int fl = -1;\n#endif\n" +
+			" printf(\"FD_SETSIZE %d __FD_SETSIZE %d sizeof(fd_set) %d MAXFDS %d MAXFORKS %d fortify %d\\n\"," +
+			" (int)FD_SETSIZE, (int)__FD_SETSIZE, (int)sizeof(fd_set), (int)MAXFDS, (int)MAXFORKS, fl);\n return 0;\n}\n"
+		if err := os.WriteFile(src, []byte(code), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := exec.Command(cc, "-O2", "-I"+root, "-D_FILE_OFFSET_BITS=64", "-o", prog, src).CombinedOutput(); err != nil {
+			t.Skipf("probe does not build: %v\n%.2000s", err, out)
+		}
+		out, err := exec.Command(prog).CombinedOutput()
+		t.Logf("lib/defs.h with -O2: %s (err %v)", strings.TrimSpace(string(out)), err)
+	})
+
 	t.Run("diablo", func(t *testing.T) {
 		b, err := os.ReadFile(filepath.Join(bin(t), "diablo"))
 		if err != nil {
