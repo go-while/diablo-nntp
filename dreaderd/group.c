@@ -97,6 +97,7 @@ Prototype const char *NNRetrieveHead(Connection *conn, int *povlen, const char *
 
 const OverArt *GetOverArt(OverInfo *ov, artno_t artNo, off_t *ppos);
 void AssignArticleNo(Connection *conn, ArtNumAss **pan, const char *group, const char *xref, int approved, const char *art, int artLen, const char *msgid);
+static int ArtNumAssigned(const ArtNumAss *an, const char *group);
 int WriteOverview(Connection *conn, ArtNumAss *an, const char *group, const char *xref, const char *art, int artLen, const char *msgid);
 OverData *MakeOverHFile(OverInfo *ov, artno_t artNo, int create);
 void FreeOverInfo(OverInfo *ov);
@@ -562,7 +563,13 @@ NNFeedOverview(Connection *conn)
 		*whspptr = 0;
 	    }
 
-	    AssignArticleNo(conn, &ANABase, group, xref, appr, art, artLen, msgid);
+	    /*
+	     * A group listed more than once gets one number and one
+	     * overview record: the repeats are skipped here, and pass 2
+	     * finds no number for them (it matches by pointer).
+	     */
+	    if (!ArtNumAssigned(ANABase, group))
+		AssignArticleNo(conn, &ANABase, group, xref, appr, art, artLen, msgid);
 
 	    /* Repair string back to its former state */
 	    if (whspptr) {
@@ -661,6 +668,19 @@ NNFeedOverview(Connection *conn)
 
     MBFree(&conn->co_ArtBuf);
     NNCommand(conn);
+}
+
+/* group already has a number in the list (an earlier name in Newsgroups) */
+static int
+ArtNumAssigned(const ArtNumAss *an, const char *group)
+{
+    int len = strlen(group);
+
+    for (; an; an = an->an_Next) {
+	if (an->an_GroupLen == len && memcmp(an->an_GroupName, group, len) == 0)
+	    return(1);
+    }
+    return(0);
 }
 
 void
