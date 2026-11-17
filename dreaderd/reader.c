@@ -527,8 +527,11 @@ HandleReaderMsg(ForkDesc *desc)
 	} else if (recv_fd == RECV_FD_LOST) {
 	    /*
 	     * The connection's descriptor was dropped on the way: hand the
-	     * message back so the main server releases the connection.
+	     * message back so the main server releases the connection.  If
+	     * the cached overview groups hold the descriptors, the next
+	     * GetOverInfo() closes some.
 	     */
+	    OverCacheFdPressure();
 	    SendMsg(TFd, -1, &dres);
 	} else if (recv_fd >= 0) {
 	    ForkDesc *ndesc;

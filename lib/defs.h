@@ -246,6 +246,7 @@ struct DiabloOpts {
     int ReaderForks;
     int ReaderThreads;
     int ReaderFeedForks;
+    int ReaderOvCache;		/* groups whose overview a fork keeps open */
     int ReaderDns;
     int ReaderDnsCacheTTL;	/* readerdnscachettl: seconds, 0 = off */
     int ReaderDnsCacheNegTTL;	/* readerdnscachenegttl: seconds, 0 = off */
