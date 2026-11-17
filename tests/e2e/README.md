@@ -439,6 +439,7 @@ sharing: they contain system/process names and test-site log contents.
 | `TestReaderOvCacheLowered` | dreaderd | `readerovcache 65536` does not fit the descriptor limit: dreaderd logs `readerovcache 65536 lowered to N` and the feed still works |
 | `TestReaderOvCacheClientReserve` | dreaderd | `readerovcache 300`, `readerthreads 16`, 56 groups with 18 data files each: 12 new feed connections still get a greeting (the fork lowers its cache when the overview files reach the descriptors left for clients) |
 | `TestKPDBSameValueNoWrite` | dkp | `dkp -w` of the value a field already has leaves the file's bytes and mtime alone; a new value of the same length is written. **Fails** on main: the same-value pwrite moves the mtime and the close stamps the header |
+| `TestR2DcancelReaderManyLines` | dcancel | `dcancel -r` with a limit of 64 descriptors on 302 lines (an article, 300 lines for a missing article or group, an article of another group): every line is answered, both articles are cancelled, exit 0. **Fails** on main: two descriptors and two mappings leak per line, dcancel stops with "Unable to open active file" (D-286) |
 
 ## Running
 
