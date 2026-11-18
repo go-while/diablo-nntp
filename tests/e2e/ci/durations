@@ -576,6 +576,8 @@ TestReaderCacheHitsConcurrent 0.23
 TestReaderCacheHitsOneEntry 0.03
 TestReaderCacheHitsRepaired 0.03
 TestReaderCacheHitsZeroReadCount 0.03
+TestReaderCacheRequeueMidHeader 2.80
+TestReaderCacheSameArticleTwice 9.16
 TestReaderCapabilities 6.58
 TestReaderCapabilitiesArgument 0.02
 TestReaderCdbAuth 0.03
