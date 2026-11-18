@@ -438,6 +438,8 @@ LoadDiabloConfig(int ac, char **av)
 			pptr = &DHistoryPat;
 		    else if (strcasecmp(cmd + 5, "dumphist") == 0) 
 			pptr = &DumpHistPat;
+		    else if (strcasecmp(cmd + 5, "dhistory_save") == 0)
+			pptr = &DHistorySavePat;
 		    else if (strcasecmp(cmd + 5, "diablo_hosts") == 0) 
 			pptr = &DiabloHostsPat;
 		    else if (strcasecmp(cmd + 5, "dserver_hosts") == 0) 

@@ -43,6 +43,7 @@ Prototype const char *ServerDActivePat;		/* db relative	*/
 Prototype const char *ReaderDActivePat;		/* db relative	*/
 Prototype const char *DHistoryPat;		/* db relative	*/
 Prototype const char *DumpHistPat;		/* db relative	*/
+Prototype const char *DHistorySavePat;		/* db relative	*/
 Prototype const char *SpamBodyCachePat;		/* db relative	*/
 Prototype const char *SpamNphCachePat;		/* db relative	*/
 Prototype const char *PCommitCachePat;		/* db relative	*/
@@ -99,6 +100,7 @@ const char *DSpoolCtlPat = "%s/dspool.ctl";
 const char *DControlCtlPat = "%s/dcontrol.ctl";
 const char *DHistoryPat = "%s/dhistory";
 const char *DumpHistPat = "NONE";
+const char *DHistorySavePat = "NONE";	/* NONE: next to the history */
 const char *DiabloHostsPat = "%s/diablo.hosts";
 const char *DReaderAccessPat = "%s/dreader.access";
 const char *VServerPat = "%s/dreader.virtuals"; 
