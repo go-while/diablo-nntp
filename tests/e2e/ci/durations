@@ -561,6 +561,8 @@ TestPostBareLFAccepted 0.02
 TestPostBareLFBlankBodyControl 0.02
 TestPostBareLFBlankBodyHeaderLike 0.05
 TestPostBareLFHeaders 0.03
+TestPostQueuedKeepsMessageID 0.14
+TestPostRefusedThenNewMessageID 0.09
 TestPrecommitDelcommLeavesOtherSlot 0.09
 TestProcessInspectionParsers 0.00
 TestQuotedPrintableNotRejectedAsBinary 0.03
