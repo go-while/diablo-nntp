@@ -158,6 +158,20 @@ zallocStrTrim(MemPool **pmp, const char *s, int l)
     }
     ++l;
 
+    /*
+     * The callers use the copy as a C string and free it with a length of
+     * strlen() + 1 (zfreeStr() or a saved strlen() + 1).  A NUL byte
+     * inside the value ends the copy here (a C string ends there anyway),
+     * so for a caller that does not shorten the copy in place the size
+     * allocated is the size freed.
+     */
+    {
+	const char *z = memchr(s, 0, l);
+
+	if (z)
+	    l = z - s;
+    }
+
     r = zalloc(pmp, l + 1);
     bcopy(s, r, l);
     r[l] = 0;
@@ -202,6 +216,15 @@ zallocStrTrim2(MemPool **pmp, int trimwsafter, const char *s, int l)
 	 */
 	trimws = 1;
 	for (i = 0; i < l; i++) {
+	    /*
+	     * A NUL byte ends the value: the callers use the copy as a C
+	     * string and free it with a length of strlen() + 1 (zfreeStr()
+	     * or a saved strlen() + 1), so it is sized to what comes before
+	     * the NUL (a C string ends there anyway).  The sizes match for a
+	     * caller that does not shorten the copy in place.
+	     */
+	    if (s[i] == 0)
+		break;
 	    /* skip cr and lf */
 	    if (s[i] == '\r' || s[i] == '\n')
 		continue;
