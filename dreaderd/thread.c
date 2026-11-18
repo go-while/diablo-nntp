@@ -399,3 +399,93 @@ ScanTimers(int doRun, int maxMs)
     return(dt);
 }
 
+
+/*
+ * DIAG early close (not for upstream as is): every close() of dreaderd's
+ * own code comes here (defs.h), so a session that ends before its first
+ * command can tell who closed its descriptor number last.
+ */
+Prototype int DiagClose(int fd, const char *file, int line);
+Prototype void DiagAddr(int fd, struct sockaddr_storage *ss, char *buf, int len);
+Prototype void DiagLastClose(int fd, char *buf, int len);
+
+static struct {
+    struct timeval tv;
+    const char *file;
+    int line;
+} DiagCl[MAXFDS];
+
+int
+DiagClose(int fd, const char *file, int line)
+{
+    int r;
+    int err;
+
+    if (fd >= 0 && fd < MAXFDS) {
+	if (FDes[fd] != NULL)
+	    logit(LOG_CRIT, "DIAG close(%d) of a live descriptor (%s, type %d) at %s:%d",
+		fd, FDes[fd]->d_Id ? FDes[fd]->d_Id : "?", FDes[fd]->d_Type,
+		file, line);
+	gettimeofday(&DiagCl[fd].tv, NULL);
+	DiagCl[fd].file = file;
+	DiagCl[fd].line = line;
+    }
+    r = (close)(fd);
+    err = errno;
+    if (r < 0 && fd >= 0)
+	logit(LOG_CRIT, "DIAG close(%d) failed at %s:%d: %s", fd, file, line,
+	    strerror(err));
+    errno = err;
+    return(r);
+}
+
+void
+DiagLastClose(int fd, char *buf, int len)
+{
+    struct timeval now;
+
+    if (fd < 0 || fd >= MAXFDS || DiagCl[fd].file == NULL) {
+	snprintf(buf, len, "no earlier close");
+	return;
+    }
+    gettimeofday(&now, NULL);
+    snprintf(buf, len, "last close at %s:%d %ldus before",
+	DiagCl[fd].file, DiagCl[fd].line,
+	(long)((now.tv_sec - DiagCl[fd].tv.tv_sec) * 1000000L +
+	    (now.tv_usec - DiagCl[fd].tv.tv_usec)));
+}
+
+void
+DiagAddr(int fd, struct sockaddr_storage *ss, char *buf, int len)
+{
+    struct sockaddr_storage tmp;
+    socklen_t sl = sizeof(tmp);
+    char host[NI_MAXHOST];
+    char serv[32];
+    int e;
+
+    if (ss == NULL) {
+	bzero(&tmp, sizeof(tmp));
+	if (getpeername(fd, (struct sockaddr *)&tmp, &sl) < 0) {
+	    snprintf(buf, len, "getpeername:%s", strerror(errno));
+	    return;
+	}
+	ss = &tmp;
+    }
+    if (ss->ss_family == AF_INET)
+	sl = sizeof(struct sockaddr_in);
+#ifdef AF_INET6
+    else if (ss->ss_family == AF_INET6)
+	sl = sizeof(struct sockaddr_in6);
+#endif
+    else {
+	snprintf(buf, len, "family:%d", (int)ss->ss_family);
+	return;
+    }
+    if ((e = getnameinfo((struct sockaddr *)ss, sl, host, sizeof(host),
+		serv, sizeof(serv), NI_NUMERICHOST|NI_NUMERICSERV)) != 0) {
+	snprintf(buf, len, "getnameinfo:%s", gai_strerror(e));
+	return;
+    }
+    snprintf(buf, len, "%s:%s", host, serv);
+}

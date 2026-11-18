@@ -685,8 +685,11 @@ MBReadLine(MBufHead *mh, char **pptr)
 	     * attempt to read.
 	     */
 
-	    if (mh->mh_Fd < 0)
+	    if (mh->mh_Fd < 0) {
+		if (!mh->mh_REof)
+		    mh->mh_RResult = -2;	/* DIAG */
 		mh->mh_REof = 1;
+	    }
 	    if (mh->mh_REof) {
 	        if (mh->mh_Bytes) {
 		    nonl = 1;
@@ -701,6 +704,9 @@ MBReadLine(MBufHead *mh, char **pptr)
 		    mbuf->mb_Buf + mbuf->mb_Size, 
 		    mbuf->mb_Max - mbuf->mb_Size
 		);
+		mh->mh_RResult = n;		/* DIAG: keep what read() said */
+		mh->mh_RErrno = (n < 0) ? errno : 0;
+		++mh->mh_RCalls;
 		if (n < 0) {
 		    if (errno == EINTR)
 			continue;

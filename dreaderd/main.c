@@ -1358,6 +1358,18 @@ main(int ac, char **av)
 					bzero(&rsin, sizeof(rsin));
 					memcpy(&rsin, &dres.dr_Addr, sizeof(rsin));
 #endif
+					if (recv_fd >= 0) {
+					    /* DIAG early close: the handed-back socket */
+					    char da[96];
+					    char db[96];
+
+					    DiagAddr(recv_fd, NULL, da, sizeof(da));
+					    DiagAddr(-1, &dres.dr_Addr, db, sizeof(db));
+					    if (strcmp(da, db) != 0 &&
+						strstr(da, strerror(ENOTCONN)) == NULL)
+						logit(LOG_CRIT, "DIAG main handback mismatch fd %d peer %s dres %s",
+						    recv_fd, da, db);
+					}
 					if (recv_fd < 0) {
 					    /* the descriptor was lost (limit); still account */
 					    DnsRefuseLog(DQR_NOFD);
@@ -3470,6 +3482,17 @@ HandleDnsThread(ForkDesc *desc)
      * pass the descriptor to an appropriate subprocess
      */
 
+    {
+	/* DIAG early close: is the descriptor still the client's socket? */
+	char da[96];
+	char db[96];
+
+	DiagAddr(desc->d_FdPend, NULL, da, sizeof(da));
+	DiagAddr(-1, &desc->d_SaveRSin, db, sizeof(db));
+	if (strcmp(da, db) != 0 && strstr(da, strerror(ENOTCONN)) == NULL)
+	    logit(LOG_CRIT, "DIAG main send mismatch fd %d peer %s saved %s",
+		desc->d_FdPend, da, db);
+    }
     if ((r = ReaderOutSend(reader, desc->d_FdPend, &dres)) < 0) {
 	char errbuf[1024];
 

@@ -423,6 +423,9 @@ typedef struct MBufHead {
     char	mh_LongLine;	/* MBReadLine() dropped a long line */
     char	mh_LongCR;	/* the dropped long line ended with CR LF */
     char	mh_NoNL;	/* its last line ended at EOF, not with a newline */
+    int		mh_RResult;	/* DIAG: raw result of the last read() (-2: no fd) */
+    int		mh_RErrno;	/* DIAG: errno of the last read() */
+    int		mh_RCalls;	/* DIAG: read() calls */
 } MBufHead;
 
 /*
@@ -589,6 +592,13 @@ typedef struct Connection {
     int 		co_ByteCountType; /* Temp for by-type byte count */
 
     MBufHead	co_ArtBuf;	/* article buffer		*/
+    /* DIAG early close (not for upstream as is) */
+    int		co_DiagCmds;		/* commands read */
+    const char	*co_DiagEnd;		/* what ended the session */
+    char	co_DiagPeer[96];	/* getpeername() when the reader got it */
+    char	co_DiagLast[160];	/* last close of this fd number before */
+    unsigned long co_DiagIno;		/* fstat st_ino when the reader got it */
+    struct timeval co_DiagStart;
 } Connection;
 
 #define COF_SERVER	0x00000001
@@ -819,6 +829,9 @@ struct SharedInfo {
 };
 
 #include <obj/dreaderd-protos.h>
+
+/* DIAG early close: track every close() of dreaderd's own code */
+#define close(fd)	DiagClose((fd), __FILE__, __LINE__)
 
 #include <lib/debug-mbuf.h>
 

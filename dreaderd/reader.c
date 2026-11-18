@@ -382,6 +382,8 @@ ReaderTask(int fd, const char *id)
 			Connection *conn = desc->d_Data;
 
 			if(conn) {
+			    if (conn->co_DiagEnd == NULL)
+				conn->co_DiagEnd = "peek-eof";
 			    NNTerminate(conn);
 			    DeleteConnection(conn);
 			}
@@ -459,6 +461,7 @@ ReaderTask(int fd, const char *id)
 				    conn->co_Auth.dr_VServerDef->vs_HostName
 				);
 				idleTimeout = 1;
+				conn->co_DiagEnd = "idle-timeout";
 				NNTerminate(conn);
 			    }
 			    if (conn->co_Auth.dr_ReaderDef->rd_SessionTimeout &&
@@ -473,6 +476,7 @@ ReaderTask(int fd, const char *id)
 				    conn->co_Auth.dr_VServerDef->vs_HostName
 				);
 				idleTimeout = 1;
+				conn->co_DiagEnd = "session-timeout";
 				NNTerminate(conn);
 			    }
 			}
@@ -558,6 +562,20 @@ HandleReaderMsg(ForkDesc *desc)
 
 	    FD_SET(ndesc->d_Fd, &WFds);	/* will cause immediate effect */
 	    conn = InitConnection(ndesc, &dres);
+	    {
+		/* DIAG early close: what this descriptor is now */
+		struct stat dst;
+		char dbuf[96];
+
+		gettimeofday(&conn->co_DiagStart, NULL);
+		DiagAddr(recv_fd, NULL, conn->co_DiagPeer, sizeof(conn->co_DiagPeer));
+		DiagLastClose(recv_fd, conn->co_DiagLast, sizeof(conn->co_DiagLast));
+		conn->co_DiagIno = (fstat(recv_fd, &dst) == 0) ? (unsigned long)dst.st_ino : 0;
+		DiagAddr(-1, &dres.dr_Addr, dbuf, sizeof(dbuf));
+		if (strcmp(dbuf, conn->co_DiagPeer) != 0)
+		    logit(LOG_CRIT, "DIAG recv mismatch fd %d peer %s dres %s (%s)",
+			recv_fd, conn->co_DiagPeer, dbuf, conn->co_DiagLast);
+	    }
 	    if (conn->co_Auth.dr_Flags & DF_FEED)
 		conn->co_Flags |= COF_SERVER;
 
@@ -706,6 +724,37 @@ DeleteConnection(Connection *conn)
 
 	snprintf(statbuf, sizeof(statbuf), "exit articles %lu groups %lu posts %lu bytes %.0f", conn->co_ClientTotalArticleCount, conn->co_ClientGroupCount, conn->co_ClientPostCount, conn->co_ClientTotalByteCount);
 	LogCmd(conn, '$', statbuf);
+	if (conn->co_DiagCmds == 0) {
+	    /* DIAG early close: a session that ends before its first command */
+	    char pnow[96];
+	    char dbuf[96];
+	    struct stat dst;
+	    struct timeval now;
+	    int fd = conn->co_Desc->d_Fd;
+	    int fl = fcntl(fd, F_GETFL, 0);
+	    int flerr = (fl < 0) ? errno : 0;
+	    unsigned long ino = (fstat(fd, &dst) == 0) ? (unsigned long)dst.st_ino : 0;
+
+	    gettimeofday(&now, NULL);
+	    DiagAddr(fd, NULL, pnow, sizeof(pnow));
+	    DiagAddr(-1, &conn->co_Auth.dr_Addr, dbuf, sizeof(dbuf));
+	    logit(LOG_CRIT, "DIAG early close fd %d end=%s read=%d errno=%d(%s) rcalls=%d rbytes=%d werror=%d wbytes=%.0f tqueued=%d fcntl=%d(%s) peer-at-recv=%s peer-now=%s dres=%s ino-at-recv=%lu ino-now=%lu age=%ldus at-recv:%s",
+		fd,
+		conn->co_DiagEnd ? conn->co_DiagEnd : "other",
+		conn->co_RMBuf.mh_RResult,
+		conn->co_RMBuf.mh_RErrno, strerror(conn->co_RMBuf.mh_RErrno),
+		conn->co_RMBuf.mh_RCalls,
+		conn->co_RMBuf.mh_Bytes,
+		conn->co_TMBuf.mh_WError,
+		conn->co_ClientTotalByteCount,
+		conn->co_TMBuf.mh_Bytes,
+		fl, strerror(flerr),
+		conn->co_DiagPeer, pnow, dbuf,
+		conn->co_DiagIno, ino,
+		(long)((now.tv_sec - conn->co_DiagStart.tv_sec) * 1000000L +
+		    (now.tv_usec - conn->co_DiagStart.tv_usec)),
+		conn->co_DiagLast);
+	}
 
 	StatusUpdate(conn, "(closed)");
 	freeReaderSlot(conn->co_Desc->d_Slot);
@@ -1280,6 +1329,8 @@ NNCommand2(Connection *conn)
 	StatusUpdate(conn, "(idle)");
 	return;
     }
+    if (len > 0)
+	++conn->co_DiagCmds;
 
     conn->co_ByteCountType = DRBC_NONE;
 
@@ -1288,6 +1339,8 @@ NNCommand2(Connection *conn)
      */
 
     if (len < 0 || conn->co_TMBuf.mh_WError) {
+	if (conn->co_DiagEnd == NULL)
+	    conn->co_DiagEnd = (len < 0) ? "read-eof" : "write-error";
 	if (conn->co_RMBuf.mh_RError)
 	    MBLogPrintf(conn, &conn->co_TMBuf, "500 Line too long\r\n");
 	NNTerminate(conn);
