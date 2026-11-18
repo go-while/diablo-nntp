@@ -1628,8 +1628,9 @@ NNPostResponse2(Connection *conn)
 	/*
 	 * Neither 235 nor a refusal the end of a post has (or no code at
 	 * all): lines may follow that the next post would read as its reply.
-	 * The client gets a 441, never a retry (its article was sent and is
-	 * gone from its buffer), and the connection is closed (COF_BROKEN).
+	 * The client gets a 441, never a retry (the server may have taken the
+	 * article: a second offer could store it twice), and the connection
+	 * is closed (COF_BROKEN).
 	 */
 	if (!(code == 235 || code == 435 || code == 436 || code == 437 ||
 		code == 400 || code == 480 || code == 500 || code == 501 ||

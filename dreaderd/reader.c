@@ -1564,11 +1564,9 @@ NNUnknownCommand(Connection *conn)
  *	buffer).  A socket error ends the client as an idle timeout does.
  *
  *	Only for a post already given to a post server (a request still in
- *	the queue for one is left alone) and not while its article is being
- *	sent: the post server would then get a cut article.  Not while the
- *	reader shuts down (TerminatePending): the main loop then frees server
- *	connections without NNServerTerminate(), so sr_SConn can point at a
- *	freed one.
+ *	the queue for one is left alone).  Not while the reader shuts down
+ *	(TerminatePending): the main loop then frees server connections
+ *	without NNServerTerminate(), so sr_SConn can point at a freed one.
  */
 static int
 waitPostClientGone(Connection *conn)
@@ -1582,8 +1580,6 @@ waitPostClientGone(Connection *conn)
 	(sc = sreq->sr_SConn) == NULL || sc->co_Desc == NULL ||
 	sc->co_Desc->d_Type != THREAD_POST
     )
-	return(0);
-    if (sc->co_SReq == sreq && sc->co_Func == NNPostArticle1)
 	return(0);
     r = recv(conn->co_Desc->d_Fd, &c, 1, MSG_PEEK);
     if (r < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)
