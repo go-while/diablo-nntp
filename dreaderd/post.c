@@ -43,7 +43,7 @@ Prototype void NNPostCommand1(Connection *conn);
 Prototype void PostLogRefused(Connection *conn, const char *msgid, const char *reply);
 
 void NNPostResponse1(Connection *conn);
-void NNPostArticle1(Connection *conn);
+Prototype void NNPostArticle1(Connection *conn);
 void NNPostResponse2(Connection *conn);
 int MailIfModerated(char *groups, Connection *conn, const char **perr);
 int ModeratorAddress(const char *group, char *addr, size_t addrLen);
@@ -1440,6 +1440,16 @@ NNPostBuffer(Connection *conn)
 	    NNCommand(conn);
 	} else {
 	    NNServerRequest(conn, NULL, conn->co_IHaveMsgId, 0, SREQ_POST, 0, -1, 0);
+	    /*
+	     * Wait for the post server's answer, as a fetch does
+	     * (NNArticleRetrieveByMessageId()): the client's next lines are
+	     * read as commands after the 240 or 441, never as more lines of
+	     * the article on its way, nor as a second "." that would post
+	     * the buffer again.  A request that was answered at once has
+	     * already given the client back to NNCommand().
+	     */
+	    if (conn->co_SReq != NULL)
+		NNWaitThread(conn);
 	}
     } else {
 	PostLogRefused(conn, conn->co_IHaveMsgId, errMsg);

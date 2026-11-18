@@ -1549,6 +1549,44 @@ NNUnknownCommand(Connection *conn)
 }
 
 /*
+ * waitPostClientGone() - a client waiting for the answer to its POST is
+ *			   not read (NNWaitThread), so its close would only be
+ *			   seen once the post server answers, however long
+ *			   that takes.  Look at its socket without reading
+ *			   (MSG_PEEK: pipelined lines stay for after the
+ *			   answer): 1 if it was closed or failed.
+ *
+ *	Only for a post already given to a post server (a request still in
+ *	the queue for one is left alone) and not while its article is being
+ *	sent: the post server would then get a cut article.  Not while the
+ *	reader shuts down (TerminatePending): the main loop then frees server
+ *	connections without NNServerTerminate(), so sr_SConn can point at a
+ *	freed one.
+ */
+static int
+waitPostClientGone(Connection *conn)
+{
+    ServReq *sreq = conn->co_SReq;
+    Connection *sc;
+    char c;
+    int r;
+
+    if (TerminatePending || sreq == NULL || sreq->sr_CConn != conn ||
+	(sc = sreq->sr_SConn) == NULL || sc->co_Desc == NULL ||
+	sc->co_Desc->d_Type != THREAD_POST
+    )
+	return(0);
+    if (sc->co_SReq == sreq && sc->co_Func == NNPostArticle1)
+	return(0);
+    r = recv(conn->co_Desc->d_Fd, &c, 1, MSG_PEEK);
+    if (r == 0)
+	return(1);
+    if (r < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)
+	return(1);
+    return(0);
+}
+
+/*
  * NNWaitThread() - wait for some other thread to finish
  *		    our request.  Howeve, we allow writes
  *		    to occur on our descriptor while we
@@ -1559,6 +1597,16 @@ NNUnknownCommand(Connection *conn)
 void
 NNWaitThread(Connection *conn)
 {
+    /*
+     * Called again while waiting (the pass over all descriptors every
+     * 30 seconds, or output to write): a posting client that went away
+     * is let go now, as an idle timeout would, which takes it off its
+     * request (NNTerminate()); the main loop then closes it.
+     */
+    if (conn->co_Func == NNWaitThread && waitPostClientGone(conn)) {
+	NNTerminate(conn);
+	return;
+    }
     conn->co_Func = NNWaitThread;
     conn->co_State = "waitrt";
     FD_CLR(conn->co_Desc->d_Fd, &RFds);
