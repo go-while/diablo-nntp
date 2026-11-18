@@ -8,6 +8,7 @@ package e2e
 
 import (
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -26,6 +27,11 @@ import (
 // 3600, from 127.0.0.3) then fetches it (220), which writes the cache file. A new "short"
 // connection gets the same answers as before: 430 by message-id, the noted ones by number.
 // "long" is refused with a1 (narrower than its policy) and still gets the article without it.
+// a0 never replaces a policy: on the cached article "short" is still refused (430) with a0, "long"
+// still gets it, and a reader without a policy (readerdef "none", from 127.0.0.4) is served.
+// The spool server's 220 for the article that is cached already must not touch the cache file: no
+// *.tmp file appears, and the file keeps its inode and its modification time (comparing the
+// article bytes would not show a rewrite with the same bytes).
 // Fails before the fix: the second "short" connection got 220, 221, 222 and 223 by message-id
 // and the article by number from the cache, and "long" got 220 with a1.
 func TestReaderCacheKeepsAgePolicy(t *testing.T) {
@@ -52,11 +58,15 @@ readerdef long
     read yes
     maxagepolicy 3600
 end
+readerdef none
+    read yes
+end
 readerdef feed
     feed yes
 end
 access 127.0.0.1 short
 access 127.0.0.3 long
+access 127.0.0.4 none
 access ` + PeerIP + ` feed
 `
 	s := NewReaderSite(t, ReaderOptions{SpoolAddr: feeder.Addr, Access: access,
@@ -110,9 +120,16 @@ access ` + PeerIP + ` feed
 	if code, line := do(long, "ARTICLE "+id); code != 220 {
 		t.Fatalf("maxagepolicy 3600: ARTICLE %s: %d %q, want 220", id, code, line)
 	}
+	// The cache file was written at least 1 s before the state below is taken, and the fetches that
+	// follow (their last one is checked after another second) come later still: a rewrite would
+	// stamp it with a later modification time even on a filesystem that counts whole seconds.
 	time.Sleep(1 * time.Second)
 	if n := cacheFiles(t, s); n != 1 {
 		t.Fatalf("%d cache files after the fetch, want 1: the article was not cached", n)
+	}
+	cached := cacheDirState(t, s)
+	if len(cached.tmp) != 0 {
+		t.Fatalf("*.tmp files after the fetch: %q", cached.tmp)
 	}
 
 	after := shortAnswers("maxagepolicy 1, cached")
@@ -128,27 +145,97 @@ access ` + PeerIP + ` feed
 	if code, line := do(long, "ARTICLE "+id); code != 220 {
 		t.Errorf("maxagepolicy 3600, cached: ARTICLE %s: %d %q, want 220", id, code, line)
 	}
+
+	// a0 is no age limit and never replaces a policy: the answers are those without it
+	if code, line := do(long, "ARTICLE "+id+" a0"); code != 220 {
+		t.Errorf("maxagepolicy 3600, cached: ARTICLE %s a0: %d %q, want 220", id, code, line)
+	}
+	short := s.Reader(t)
+	defer short.Close()
+	if code, line := do(short, "ARTICLE "+id+" a0"); code != 430 {
+		t.Errorf("maxagepolicy 1, cached: ARTICLE %s a0: %d %q, want 430 (as without a0)", id, code, line)
+	}
+	if code, line := do(short, "HEAD "+id+" a0"); code != 430 {
+		t.Errorf("maxagepolicy 1, cached: HEAD %s a0: %d %q, want 430 (as without a0)", id, code, line)
+	}
+	none := s.dialFrom(t, "127.0.0.4")
+	defer none.Close()
+	if code, line := do(none, "ARTICLE "+id+" a0"); code != 220 {
+		t.Errorf("no policy, cached: ARTICLE %s a0: %d %q, want 220", id, code, line)
+	}
+
+	// The spool server answered 220 to "long" (twice) for the article that is cached already: the
+	// cache file is the one it was (CreateCache leaves an existing file alone); the second just
+	// given lets a late write or rename show.
+	time.Sleep(1 * time.Second)
+	cacheUntouched(t, s, cached, "after the spool server's 220 for the cached article")
 }
 
-// cacheFiles counts the committed, non-empty files in the reader site's cache directory.
-func cacheFiles(t *testing.T, s *Site) int {
+// cacheState is what the reader site's cache directory holds: the committed, non-empty files
+// (path to FileInfo; the empty files that mark an uncacheable article are left out) and the
+// paths of all *.tmp files, which are the cache files being written.
+type cacheState struct {
+	files map[string]os.FileInfo
+	tmp   []string
+}
+
+// cacheDirState reads the reader site's cache directory.
+func cacheDirState(t *testing.T, s *Site) cacheState {
 	t.Helper()
-	n := 0
+	st := cacheState{files: map[string]os.FileInfo{}}
 	err := filepath.WalkDir(filepath.Join(s.Dir, "spool", "cache"), func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if d.Type().IsRegular() && !strings.HasSuffix(path, ".tmp") {
-			if fi, err := d.Info(); err == nil && fi.Size() > 0 {
-				n++
-			}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		if strings.HasSuffix(path, ".tmp") {
+			st.tmp = append(st.tmp, path)
+		} else if fi, err := d.Info(); err == nil && fi.Size() > 0 {
+			st.files[path] = fi
 		}
 		return nil
 	})
 	if err != nil {
 		t.Fatalf("cache directory: %v", err)
 	}
-	return n
+	return st
+}
+
+// cacheFiles counts the committed, non-empty files in the reader site's cache directory (not
+// the *.tmp files; cacheDirState lists those).
+func cacheFiles(t *testing.T, s *Site) int {
+	t.Helper()
+	return len(cacheDirState(t, s).files)
+}
+
+// cacheUntouched checks that the cache directory still holds the files of before, each with the
+// same inode, size and modification time, no other committed file, and no *.tmp file.
+func cacheUntouched(t *testing.T, s *Site, before cacheState, when string) {
+	t.Helper()
+	after := cacheDirState(t, s)
+	if len(after.tmp) != 0 {
+		t.Errorf("%s: *.tmp files in the cache directory: %q", when, after.tmp)
+	}
+	for p, b := range before.files {
+		a, ok := after.files[p]
+		switch {
+		case !ok:
+			t.Errorf("%s: cache file %s is gone", when, p)
+		case !os.SameFile(a, b):
+			t.Errorf("%s: cache file %s was replaced (another inode)", when, p)
+		case !a.ModTime().Equal(b.ModTime()):
+			t.Errorf("%s: cache file %s was written: modification time %v, was %v", when, p, a.ModTime(), b.ModTime())
+		case a.Size() != b.Size():
+			t.Errorf("%s: cache file %s has size %d, was %d", when, p, a.Size(), b.Size())
+		}
+	}
+	for p := range after.files {
+		if _, ok := before.files[p]; !ok {
+			t.Errorf("%s: new cache file %s", when, p)
+		}
+	}
 }
 
 // TestReaderCacheAgeLimitAsksSpool: readercache on; the spool is a fake server that stands in
@@ -158,8 +245,12 @@ func cacheFiles(t *testing.T, s *Site) int {
 // request). Readerdef "short" (maxagepolicy 60, from 127.0.0.3) is asked for at the spool server
 // with a60 and gets 430; "none" with its own a30 likewise; readerdef "long" (maxagepolicy 3600,
 // from 127.0.0.4) is asked for with a3600 and gets the article. "none" is still served from the
-// cache afterwards, with the same article. Fails before the fix: "short" and "none ... a30" were
-// served 220 from the cache and the spool server saw no request with an age argument.
+// cache afterwards, with the same article. a0 is no age limit and replaces no policy: "short"
+// with a0 is asked for with a60 and gets 430 as without it, "none" with a0 is served from the
+// cache (no spool request). The 220 for "long" does not touch the cache file: no *.tmp file
+// appears, and it keeps its inode and modification time. Fails before the fix: "short" and
+// "none ... a30" were served 220 from the cache and the spool server saw no request with an age
+// argument.
 func TestReaderCacheAgeLimitAsksSpool(t *testing.T) {
 	id := msgID(t)
 	art := newArticle(id, "e2e.test", "age limit and cache", "body of "+id)
@@ -262,6 +353,13 @@ access 127.0.0.4 long
 	if n := len(asked()); n != 1 {
 		t.Fatalf("no policy, cached: %d spool requests, want 1: the article was not served from the cache", n)
 	}
+	// The cache file was written at least 1 s before this state is taken, and the spool answers
+	// below come later (the last is checked after another second): a rewrite would stamp it with
+	// a later modification time even on a filesystem that counts whole seconds.
+	cached := cacheDirState(t, s)
+	if n := len(cached.files); n != 1 || len(cached.tmp) != 0 {
+		t.Fatalf("cache directory: %d committed files, *.tmp %q; want 1 and none", n, cached.tmp)
+	}
 
 	short := s.dialFrom(t, "127.0.0.3")
 	defer short.Close()
@@ -276,6 +374,7 @@ access 127.0.0.4 long
 	fetch(long, "maxagepolicy 3600, cached", "", 220)
 	last("maxagepolicy 3600, cached", 4, "a3600")
 	time.Sleep(1 * time.Second)
+	cacheUntouched(t, s, cached, "after the spool server's 220 for the cached article")
 
 	again := fetch(none, "no policy, cached after the others", "", 220)
 	if n := len(asked()); n != 4 {
@@ -283,5 +382,14 @@ access 127.0.0.4 long
 	}
 	if strings.Join(again, "\n") != strings.Join(first, "\n") {
 		t.Errorf("no policy: the article from the cache changed:\nfirst: %q\nlater: %q", first, again)
+	}
+
+	// a0 replaces no policy: "short" is asked for with a60 and refused as without it; "none" has
+	// none to keep and is served from the cache, with no spool request
+	fetch(short, "maxagepolicy 60 with a0, cached", "a0", 430)
+	last("maxagepolicy 60 with a0, cached", 5, "a60")
+	fetch(none, "no policy with a0, cached", "a0", 220)
+	if n := len(asked()); n != 5 {
+		t.Errorf("no policy with a0, cached: %d spool requests, want 5: not served from the cache", n)
 	}
 }
