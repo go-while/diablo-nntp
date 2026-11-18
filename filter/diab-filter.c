@@ -346,7 +346,15 @@ DiabFilter(char *fpath, char *loc, int wireformat)
 	aptr = filter_abuf + sizeof(SpoolArtHdr);
 	nptr = filter_nbuf;
 	pptr = aptr;
-	eoln = 0;
+	/*
+	 * In text mode the article starts at a line start: a first line
+	 * beginning with "." is dot-stuffed like the other lines.  The
+	 * feeder stores it unstuffed; sent as ".\r\n" it ended the article
+	 * for the filter, which answered twice; with the answers in separate
+	 * reads the following articles got the answer meant for the one
+	 * before.  A wireformat article is stored stuffed, copied as it is.
+	 */
+	eoln = wireformat ? 0 : 1;
 	while (count--) {
 		if (wireformat) {
 			if (*pptr == '\r' && *aptr == '\n')
