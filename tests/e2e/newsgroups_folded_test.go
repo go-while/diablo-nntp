@@ -86,11 +86,14 @@ func TestNewsgroupsFoldedXref(t *testing.T) {
 }
 
 // TestNewsgroupsFoldedLongLine: a continuation line of Newsgroups: longer than the feeder's input
-// buffer (one page with the default feederbuffersize) comes in pieces, and only the first piece is
-// added to the list (D-209). The name at the end of that piece is cut, so it is left out: a cut
-// name must not be taken for another group. Here e2e.test.missing, cut after "e2e.test", would
-// make the article accepted into e2e.test. The padding walks the cut over the name at every
-// offset around the page size.
+// buffer (one page with the default feederbuffersize) comes in pieces. Before D-209 was fixed only
+// the first piece was added to the list, and the name at the end of that piece, which may be cut,
+// was left out: a cut name must not be taken for another group (e2e.test.missing, cut after
+// "e2e.test", would make the article accepted into e2e.test). Now every piece is added: the name
+// is read whole, so e2e.test.missing is still refused with 437, and e2e.test at the same place,
+// after the first piece, keeps the article (235; before the fix it was lost and the article was
+// refused). The padding walks the cut over the name at every offset around the page size; the
+// list stays under its limit (ngMaxValue), see ngLongWindow for pages over 4 KiB.
 func TestNewsgroupsFoldedLongLine(t *testing.T) {
 	s := NewSite(t, SiteOptions{
 		Config: map[string]string{
@@ -105,17 +108,37 @@ func TestNewsgroupsFoldedLongLine(t *testing.T) {
 	})
 	p := s.Peer(t)
 	ps := os.Getpagesize()
-	for pad := ps - 512; pad <= ps+64; pad++ {
-		id := msgID(t)
-		p.ExpectCmd(335, "IHAVE %s", id)
-		p.MustSend(client.Stuff(foldedArticle(id, []string{"e2e.nogroup,", strings.Repeat(" ", pad) + OpenGroup + ".missing"})))
-		line, err := p.ReadLine()
-		if err != nil {
-			t.Fatalf("padding %d: %v", pad, err)
+	lo, hi := ps-512, ps+64
+	// the list: "e2e.nogroup", the comma before the continuation line, the line
+	if maxPad := ngMaxValue - len("e2e.nogroup,"+OpenGroup+".missing"); hi > maxPad {
+		hi = maxPad
+		if lo > hi-64 {
+			t.Logf("page size %d: the first piece of a line ends past the %d-byte list limit; testing only lines that end just under the limit", ps, ngMaxValue)
+			lo = hi - 64
 		}
-		if !strings.HasPrefix(line, "437") {
-			t.Errorf("padding %d: %q, want 437 (neither group is in the active file)", pad, line)
+	}
+	bad := 0
+	for pad := lo; pad <= hi; pad++ {
+		for _, c := range []struct{ group, want, why string }{
+			{OpenGroup + ".missing", "437", "neither group is in the active file"},
+			{OpenGroup, "235", OpenGroup + " is in the active file"},
+		} {
+			id := msgID(t)
+			p.ExpectCmd(335, "IHAVE %s", id)
+			p.MustSend(client.Stuff(foldedArticle(id, []string{"e2e.nogroup,", strings.Repeat(" ", pad) + c.group})))
+			line, err := p.ReadLine()
+			if err != nil {
+				t.Fatalf("padding %d: %v", pad, err)
+			}
+			if !strings.HasPrefix(line, c.want) {
+				if bad++; bad <= 5 {
+					t.Errorf("padding %d, %s: %q, want %s (%s)", pad, c.group, line, c.want, c.why)
+				}
+			}
 		}
+	}
+	if bad > 5 {
+		t.Errorf("%d failures in all over %d paddings (%d..%d)", bad, hi-lo+1, lo, hi)
 	}
 	p.ExpectCmd(205, "QUIT")
 }
