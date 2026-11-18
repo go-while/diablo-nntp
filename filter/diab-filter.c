@@ -298,6 +298,21 @@ DiabFilter(char *fpath, char *loc, int wireformat)
 
 	llen = atoi(aptr + 1);	/* get article length */
 
+	/*
+	 * diab_read() puts the article after sizeof(SpoolArtHdr) bytes and
+	 * a NUL after it, also for an old record without a header.  The
+	 * buffer is that rounded up to a power of two, and the stuffed copy
+	 * twice that plus 6: both must fit an int, so the buffer is at
+	 * most 2^29 (512 MB) and the record less than that.  A larger one
+	 * passes unjudged, as an unreadable one does.
+	 */
+	if (llen < 0 ||
+	    llen > (1 << 29) - 1 - (int)sizeof(SpoolArtHdr) - 1) {
+		logit(LOG_ERR, "diab-filter(%s): cannot read article %s (too large), not filtered",
+			fpath, loc);
+		return(-1);
+	}
+	llen += sizeof(SpoolArtHdr) + 1;
 	if (llen >= filter_abufsiz) {
 		count = sizeit(llen);
 		if (filter_abuf) {
@@ -336,9 +351,9 @@ DiabFilter(char *fpath, char *loc, int wireformat)
 	}
 
 	if ((rval = diab_read(loc, filter_abuf, filter_abufsiz)) < 0) {
-#ifdef DEBUG
-		logit(LOG_ERR, "diab_read failed: %s", loc);
-#endif
+		/* it passes unjudged, as with a failed filter: say so */
+		logit(LOG_ERR, "diab-filter(%s): cannot read article %s, not filtered",
+			fpath, loc);
 		return(-1);
 	}
 
@@ -346,7 +361,15 @@ DiabFilter(char *fpath, char *loc, int wireformat)
 	aptr = filter_abuf + sizeof(SpoolArtHdr);
 	nptr = filter_nbuf;
 	pptr = aptr;
-	eoln = 0;
+	/*
+	 * In text mode the article starts at a line start: a first line
+	 * beginning with "." is dot-stuffed like the other lines.  The
+	 * feeder stores it unstuffed; sent as ".\r\n" it ended the article
+	 * for the filter, which answered twice; with the answers in separate
+	 * reads the following articles got the answer meant for the one
+	 * before.  A wireformat article is stored stuffed, copied as it is.
+	 */
+	eoln = wireformat ? 0 : 1;
 	while (count--) {
 		if (wireformat) {
 			if (*pptr == '\r' && *aptr == '\n')

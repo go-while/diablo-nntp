@@ -279,6 +279,7 @@ TestDexpireoverStaleGroupNewArticle 0.16
 TestDexpirescoringDamaged 0.03
 TestDexpirescoringLastEntry 0.03
 TestDexpirescoringLockFailure 1.17
+TestDexpireSpoolPathSlash 0.69
 TestDgrpctlCheckgroupsLongDescriptionStable 0.01
 TestDgrpctlGroupinfoLongDescription 0.01
 TestDgrpctlGroupinfoTimes 0.01
