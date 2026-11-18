@@ -300,10 +300,18 @@ DiabFilter(char *fpath, char *loc, int wireformat)
 
 	/*
 	 * diab_read() puts the article after sizeof(SpoolArtHdr) bytes and
-	 * a NUL after it, also for an old record without a header.
+	 * a NUL after it, also for an old record without a header.  The
+	 * buffer is that rounded up to a power of two, and the stuffed copy
+	 * twice that plus 6: both must fit an int, so the buffer is at
+	 * most 2^29 (512 MB) and the record less than that.  A larger one
+	 * passes unjudged, as an unreadable one does.
 	 */
-	if (llen < 0 || llen > INT_MAX / 4)
+	if (llen < 0 ||
+	    llen > (1 << 29) - 1 - (int)sizeof(SpoolArtHdr) - 1) {
+		logit(LOG_ERR, "diab-filter(%s): cannot read article %s (too large), not filtered",
+			fpath, loc);
 		return(-1);
+	}
 	llen += sizeof(SpoolArtHdr) + 1;
 	if (llen >= filter_abufsiz) {
 		count = sizeit(llen);
