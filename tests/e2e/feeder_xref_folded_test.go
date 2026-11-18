@@ -26,16 +26,20 @@ const xfoldMaxValue = 16384 - 1
 
 // newXrefFoldSite starts diablo as an Xref slave that syncs NX ("active on", "feederxrefslave
 // on", "feederxrefsync on") with "activedrop yes", and xfoldLocal and xfoldAfter in the active
-// file.
-func newXrefFoldSite(t *testing.T) *Site {
+// file. extra adds settings as name, value pairs (e.g. "wireformat", "on").
+func newXrefFoldSite(t *testing.T, extra ...string) *Site {
 	t.Helper()
+	conf := map[string]string{
+		"active":          "on",
+		"activedrop":      "yes",
+		"feederxrefslave": "on",
+		"feederxrefsync":  "on",
+	}
+	for i := 0; i+1 < len(extra); i += 2 {
+		conf[extra[i]] = extra[i+1]
+	}
 	return NewSite(t, SiteOptions{
-		Config: map[string]string{
-			"active":          "on",
-			"activedrop":      "yes",
-			"feederxrefslave": "on",
-			"feederxrefsync":  "on",
-		},
+		Config: conf,
 		Setup: func(tb testing.TB, s *Site) {
 			s.WriteFile(tb, "dactive.kp", "")
 			s.Run(tb, "dgrpctl", "-s", "newgroup", xfoldLocal, "y")
@@ -89,11 +93,13 @@ func xfoldAbsent(t *testing.T, s *Site, group string) {
 
 // TestFeederXrefFoldedActiveDrop: an Xref slave that syncs NX reads the whole of a folded
 // Xref: header (RFC 5536 allows folding, as for Newsgroups:, D-208). The feeder kept only the
-// line that starts with "Xref:", so the groups on the continuation lines got no NX update; with
+// line that starts with "Xref:", so the groups on the continuation lines got no NX update. With
 // "activedrop yes" an article whose Xref: named only groups we do not carry, all on a
-// continuation line, was accepted, and one whose carried group was only on the continuation
-// line was refused. A carried group on either line keeps the article; the stored article keeps
-// the folded lines as they came; a continuation of another header after Xref: is not part of it.
+// continuation line, was accepted; one whose first line named only groups we do not carry and
+// whose carried group was on the continuation line was refused (with no group on the first line,
+// "Xref: master" and the group on the continuation, it was accepted with NX unset). A carried
+// group on either line keeps the article; the stored article keeps the folded lines as they
+// came; a continuation of another header after Xref: is not part of it.
 func TestFeederXrefFoldedActiveDrop(t *testing.T) {
 	s := newXrefFoldSite(t)
 	p := s.Peer(t)
@@ -176,13 +182,23 @@ func TestFeederXrefFoldedActiveDrop(t *testing.T) {
 // bgets() starts a long line at the start of the buffer, so the first piece ends a little before
 // the page size. The feeder kept only the first piece, less its last byte, so an entry after it
 // got no NX update, and an entry cut at the end of the piece set NX to the cut number. The
-// padding walks the entry over the offsets just below the page size (where the cut falls); each
-// article carries its own number. The entry is kept under the 16383-byte value limit: with
-// 16 KiB pages the sweep stops at the limit (the cut is still below it); with larger pages the
-// first piece ends past the limit, so no line under the limit comes in pieces there, and the
-// test only checks entries that end just under the limit (one piece).
+// padding walks the entry over the offsets just below the page size (where the cut falls), with
+// "wireformat" off and on; each article carries its own number. The entry is kept under the
+// 16383-byte value limit: with 16 KiB pages the sweep stops at the limit (the cut is still
+// below it); with larger pages the first piece ends past the limit, so no line under the
+// limit comes in pieces there, and the test only checks entries that end just under the
+// limit (one piece).
 func TestFeederXrefLongLine(t *testing.T) {
-	s := newXrefFoldSite(t)
+	for _, wire := range []string{"off", "on"} {
+		t.Run("wireformat "+wire, func(t *testing.T) { xfoldLongLine(t, wire) })
+	}
+}
+
+// xfoldLongLine runs TestFeederXrefLongLine with "wireformat" set to wire. With "wireformat on"
+// the line keeps its CR LF, so at one padding the piece ends with the CR and the next piece is
+// the LF alone: the CR must not end up in the value (the entry's number would not parse).
+func xfoldLongLine(t *testing.T, wire string) {
+	s := newXrefFoldSite(t, "wireformat", wire)
 	p := s.Peer(t)
 	ps := os.Getpagesize()
 	const prefix = " master "                  // the value before the padding
@@ -285,9 +301,9 @@ func TestFeederXrefFoldedLimit(t *testing.T) {
 // buffer, so the line comes in pieces and the piece that reaches the limit stops the reading:
 // neither the rest of that line nor a continuation line after it is added. If reading went on,
 // the value, trimmed back to the last whole entry, would take "e2e.xfold.after:97" from the
-// continuation line. An entry after the first piece but under the limit is synced
-// (e2e.xfold.after:5). With pages of 64 KiB or more the line is one piece and the same limit
-// applies on the first copy.
+// continuation line. An entry under the limit is synced (e2e.xfold.after:5; on 4 KiB and 8 KiB
+// pages this entry comes after the first piece). With pages over 16 KiB the line is one piece
+// and the same limit applies on the first copy.
 func TestFeederXrefLongLineLimit(t *testing.T) {
 	s := newXrefFoldSite(t)
 	p := s.Peer(t)
