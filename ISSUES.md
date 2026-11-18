@@ -12,7 +12,7 @@ re-checked yet.
 Status values: **open**, **PR** (fix waiting for review, with its number), **fixed** (with
 the PR that fixed it), **decision** (needs the maintainer to decide), **won't fix**.
 
-Last updated 2026-11-05: F-07 added (dreaderd POST against RFC 5536/5537); D-174 added (empty overview Lines column; plan: the line count from diablo through the queue line); D-93, D-95, D-107, D-119 and D-126 marked fixed (#300); D-90, D-117, D-118 and D-122 marked fixed (#301). Before that, 2026-11-04: D-97, D-104, D-105, D-111, D-112, D-115 and D-121 marked fixed (#291); audit of the open items against main: D-70, D-77, D-88, D-102, D-106, D-108, D-109, D-113 and D-114 marked fixed (their PRs had not updated this file), D-100 marked fixed (#230), D-55 and D-101 noted as partly fixed, six index links and the F-02/F-06 status corrected; D-172 (retained control connections inherited) and D-173 (NETREMOTE accounting destination) added from go-while's review; D-164 to D-166 marked fixed (#280: readerdef typos, access cache reload); D-167 marked fixed (#169: one Perl interpreter per script); D-134 marked fixed (#257: dkp -t); D-168 and D-169 marked fixed (#185); D-170 added (illumos loses a hand-back at the descriptor limit); D-171 added (OpenBSD shared maps, won't fix). Before that, 2026-10-30: D-167 to D-169 added (Perl authentication, the file and cdb deny lists); F-06 (Perl authentication) added; F-02 noted in progress (#167). Before that, 2026-10-29: D-16 marked fixed (#127). D-135 to D-146 and D-156, D-157 marked fixed (#145, #151 to #154); D-158 won't fix; D-150 to D-155 marked fixed (#158); D-147 to D-149 marked fixed (#159); D-159 to D-162 marked fixed (#160); D-164 to D-166 added from go-while's review of #160. Before that, 2026-10-28: D-91, D-96, D-98 and D-131 to D-133 marked fixed (#146 to #149). F-01 marked done, F-04 (NoCeM) and F-05 (init scripts, done) added, D-163 (file modes, fixed in #139) added; D-135 to D-162 added from go-while's batch of `main` at `0401451`, and a note on D-94. Before that, D-110 to D-134 added from go-while's third review pass of `main` at `6a4b97d`. Before that, 2026-10-27: D-66 to D-109 added from the second review pass and the reviews of the fixes
+Last updated 2026-11-18: D-213 to D-290 added (open items from the reply-code work and the overview analysis, and go-while's deep review round 2 of `main` at 1c80d48f), their line numbers checked against `main` at 9dc51c18 (D-226 at 9aa7c5e3 and D-227 at 0dd6330e, before their fixes); D-226 and D-227 marked fixed (#416, #417); F-09: the `OverArt` slot is 32 bytes. Before that, 2026-11-05: F-07 added (dreaderd POST against RFC 5536/5537); D-174 added (empty overview Lines column; plan: the line count from diablo through the queue line); D-93, D-95, D-107, D-119 and D-126 marked fixed (#300); D-90, D-117, D-118 and D-122 marked fixed (#301). Before that, 2026-11-04: D-97, D-104, D-105, D-111, D-112, D-115 and D-121 marked fixed (#291); audit of the open items against main: D-70, D-77, D-88, D-102, D-106, D-108, D-109, D-113 and D-114 marked fixed (their PRs had not updated this file), D-100 marked fixed (#230), D-55 and D-101 noted as partly fixed, six index links and the F-02/F-06 status corrected; D-172 (retained control connections inherited) and D-173 (NETREMOTE accounting destination) added from go-while's review; D-164 to D-166 marked fixed (#280: readerdef typos, access cache reload); D-167 marked fixed (#169: one Perl interpreter per script); D-134 marked fixed (#257: dkp -t); D-168 and D-169 marked fixed (#185); D-170 added (illumos loses a hand-back at the descriptor limit); D-171 added (OpenBSD shared maps, won't fix). Before that, 2026-10-30: D-167 to D-169 added (Perl authentication, the file and cdb deny lists); F-06 (Perl authentication) added; F-02 noted in progress (#167). Before that, 2026-10-29: D-16 marked fixed (#127). D-135 to D-146 and D-156, D-157 marked fixed (#145, #151 to #154); D-158 won't fix; D-150 to D-155 marked fixed (#158); D-147 to D-149 marked fixed (#159); D-159 to D-162 marked fixed (#160); D-164 to D-166 added from go-while's review of #160. Before that, 2026-10-28: D-91, D-96, D-98 and D-131 to D-133 marked fixed (#146 to #149). F-01 marked done, F-04 (NoCeM) and F-05 (init scripts, done) added, D-163 (file modes, fixed in #139) added; D-135 to D-162 added from go-while's batch of `main` at `0401451`, and a note on D-94. Before that, D-110 to D-134 added from go-while's third review pass of `main` at `6a4b97d`. Before that, 2026-10-27: D-66 to D-109 added from the second review pass and the reviews of the fixes
 (D-77 is documented behaviour and only needs a note); the fixed ones are marked with their PR. Before that, D-53 to D-65 added from the review of `main` at `ca648d4`. Before that, 2026-10-26, after batch 1 (#30, #31, #37 to #44, #47 to #49) and the first part
 of batch 2 (#46, #50, #52, #62) were merged. Open: #35 (GnuPG pgpverify, held for a private
 advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
@@ -226,6 +226,84 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-210](#d-210-the-crc-history-hash-loses-a-bit-so-neighbouring-message-ids-collide) | Medium | The crc history hash loses a bit, so neighbouring Message-IDs collide | fixed (`msgidhash siphash`) |
 | [D-211](#d-211-the-reader-takes-a-message-id-hash-match-for-the-article) | Medium | The reader takes a Message-ID hash match for the article | open |
 | [D-212](#d-212-a-busy-group-in-a-large-readerovcache-stays-locked-until-the-feed-only-flush) | Low | A busy group in a large `readerovcache` stays locked until the feed-only flush: dexpireover skips it or waits | open |
+| [D-213](#d-213-dnewslink-waits-for-the-read-timeout-after-a-stream-reply-that-matches-no-pending-article) | Low | dnewslink waits for the read timeout after a stream reply that matches no pending article | open |
+| [D-214](#d-214-dnewslink-drops-an-article-the-peer-answers-431-after-takethis-while-the-deferred-articles-are-sent) | Low | dnewslink drops an article the peer answers 431 after TAKETHIS while the deferred articles are sent | open |
+| [D-215](#d-215-a-deferred-article-that-is-pending-at-a-lost-connection-can-be-deferred-again) | Low | A deferred article that is pending at a lost connection can be deferred again | open |
+| [D-216](#d-216-a-431-reject-after-takethis-adds-no-bytes-to-the-rejected-bytes) | Low | A 431 reject after TAKETHIS adds no bytes to the rejected bytes | open |
+| [D-217](#d-217-dclient-reads-the-rest-of-a-long-reply-line-as-the-next-reply) | Low | dclient reads the rest of a long reply line as the next reply | open |
+| [D-218](#d-218-dclient-reads-one-byte-before-its-buffer-for-a-blank-line-in-the-dump-file) | Low | dclient reads one byte before its buffer for a blank line in the dump file | open |
+| [D-219](#d-219-a-filter-restart-can-stop-the-diablo-master-for-up-to-10-s) | Low | A filter restart can stop the diablo master for up to 10 s | open |
+| [D-220](#d-220-diablo-waits-without-a-time-limit-for-the-answer-of-the-external-filter) | Low | diablo waits without a time limit for the answer of the external filter | open |
+| [D-221](#d-221-dgrpctl-masscancel-misses-articles-with-numbers-above-31-bits) | Low | dgrpctl masscancel misses articles with numbers above 31 bits | open |
+| [D-222](#d-222-a-write-error-in-one-group-drops-the-reader-feed-connection-after-every-group-got-a-number) | Low | A write error in one group drops the reader feed connection after every group got a number | open |
+| [D-223](#d-223-group-and-cancels-create-an-overview-index-for-every-group-they-touch) | Low | GROUP and cancels create an overview index for every group they touch | open |
+| [D-224](#d-224-the-locking-comment-in-dexpireover-describes-locks-dreaderd-does-not-take) | Low | The locking comment in dexpireover describes locks dreaderd does not take | open |
+| [D-225](#d-225-a-post-whose-last-body-line-ends-in-a-bare-lf-hangs-the-readers-post-connection) | High | A POST whose last body line ends in a bare LF hangs the reader's post connection | open |
+| [D-226](#d-226-a-group-repeated-in-newsgroups-gets-one-number-and-one-overview-record-per-repeat) | High | A group repeated in Newsgroups gets one number and one overview record per repeat | fixed (#416) |
+| [D-227](#d-227-the-feeder-leaks-the-article-map-for-every-430-article-prohibited) | High | The feeder leaks the article map for every 430 Article prohibited | fixed (#417) |
+| [D-228](#d-228-a-queued-post-leaves-the-client-in-article-mode) | High | A queued POST leaves the client in article mode | open |
+| [D-229](#d-229-wireformat-misses-the-article-end-when-cr-and-lf-arrive-in-two-buffer-pieces) | Medium | wireformat misses the article end when CR and LF arrive in two buffer pieces | open |
+| [D-230](#d-230-a-readers-age-argument-replaces-maxagepolicy) | Medium | A reader's age argument replaces maxagepolicy | open |
+| [D-231](#d-231-a-spool-request-requeued-mid-article-sends-a-second-status-line-and-article) | Medium | A spool request requeued mid-article sends a second status line and article | open |
+| [D-232](#d-232-the-reader-feed-leaks-supersedes-and-repeated-headers) | Medium | The reader feed leaks Supersedes and repeated headers | open |
+| [D-233](#d-233-localspool-serves-the-raw-spool-record) | Medium | localspool serves the raw spool record | open |
+| [D-234](#d-234-two-fetches-of-one-new-article-in-one-reader-process-corrupt-its-cache-file) | Medium | Two fetches of one new article in one reader process corrupt its cache file | open |
+| [D-235](#d-235-dexpireover--r-empties-trackonly-indexes) | Medium | dexpireover -R empties trackonly indexes | open |
+| [D-236](#d-236-a-dns-failure-during-the-host-cache-rebuild-locks-out-peers-named-by-host-name) | Medium | A DNS failure during the host cache rebuild locks out peers named by host name | open |
+| [D-237](#d-237-pam-authentication-skips-the-account-phase) | Medium | PAM authentication skips the account phase | open |
+| [D-238](#d-238-drequeue-keeps-writing-into-a-rotated-queue-file) | Medium | drequeue keeps writing into a rotated queue file | open |
+| [D-239](#d-239-a-trailing-slash-in-path_spool-makes-dexpire-mark-the-spool-expired-in-the-history) | Medium | A trailing slash in path_spool makes dexpire mark the spool expired in the history | open |
+| [D-240](#d-240-an-unstuffed-first-line-desyncs-the-external-filter) | Medium | An unstuffed first line desyncs the external filter | open |
+| [D-241](#d-241-articles-the-external-filter-cannot-read-pass-unjudged) | Medium | Articles the external filter cannot read pass unjudged | open |
+| [D-242](#d-242-the-feeder-forks-and-does-reverse-dns-before-the-access-check) | Medium | The feeder forks and does reverse DNS before the access check | open |
+| [D-243](#d-243-a-queued-request-whose-client-went-away-crashes-the-reader-process) | Medium | A queued request whose client went away crashes the reader process | open |
+| [D-244](#d-244-a-bare-lf-blank-line-after-the-header-breaks-body-and-the-reader-cache-in-wire-mode) | Low | A bare-LF blank line after the header breaks BODY and the reader cache in wire mode | open |
+| [D-245](#d-245-commands-buffered-before-the-session-byte-limit-still-run) | Low | Commands buffered before the session byte limit still run | open |
+| [D-246](#d-246-nnspoolresponsescrap-continues-as-the-220-path) | Low | NNSpoolResponseScrap continues as the 220 path | open |
+| [D-247](#d-247-a-requeue-skips-a-same-priority-spool-server-that-has-the-article) | Low | A requeue skips a same-priority spool server that has the article | open |
+| [D-248](#d-248-the-newgroups-cache-is-built-from-the-first-connections-listgroups) | Low | The NEWGROUPS cache is built from the first connection's listgroups | open |
+| [D-249](#d-249-newnews-runs-the-next-pipelined-command-inside-its-list) | Low | NEWNEWS runs the next pipelined command inside its list | open |
+| [D-250](#d-250-newnews-with-a-wide-wildmat-walks-all-groups-in-one-turn) | Low | NEWNEWS with a wide wildmat walks all groups in one turn | open |
+| [D-251](#d-251-an-overview-data-file-over-2-gb-stops-the-reader-process) | Low | An overview data file over 2 GB stops the reader process | open |
+| [D-252](#d-252-dexpireover--o-deletes-a-group-that-got-an-article-during-the-run) | Low | dexpireover -O deletes a group that got an article during the run | open |
+| [D-253](#d-253-xzver-leaks-its-deflate-state-when-a-timeout-closes-the-connection) | Low | XZVER leaks its deflate state when a timeout closes the connection | open |
+| [D-254](#d-254-group-creation-can-reset-ne-of-a-numbered-group) | Low | Group creation can reset NE of a numbered group | open |
+| [D-255](#d-255-an-opener-waiting-for-dkp--t-keeps-the-old-dactivekp) | Low | An opener waiting for dkp -t keeps the old dactive.kp | open |
+| [D-256](#d-256-a-power-loss-can-leave-history-chain-heads-past-the-end-of-the-file) | Low | A power loss can leave history chain heads past the end of the file | open |
+| [D-257](#d-257-dnewslink-removes-a-rotated-queue-file-before-its-deferred-entries-are-sent) | Low | dnewslink removes a rotated queue file before its deferred entries are sent | open |
+| [D-258](#d-258-a-look-ahead-dnewslink-takes-a-queue-file-before-the-master-flushes-it) | Low | A look-ahead dnewslink takes a queue file before the master flushes it | open |
+| [D-259](#d-259-one-failed-fork-stops-host-cache-rebuilds-until-a-restart) | Low | One failed fork stops host cache rebuilds until a restart | open |
+| [D-260](#d-260-a-peer-that-repeats-feedrset-and-feedcommit-starves-the-dnewsfeeds-reload) | Low | A peer that repeats feedrset and feedcommit starves the dnewsfeeds reload | open |
+| [D-261](#d-261-altfeed-clears-the-labels-requiregroup-list) | Low | AltFeed clears the label's requiregroup list | open |
+| [D-262](#d-262-groupref-inside-ifilter-ispam-and-espam-is-ignored) | Low | groupref inside IFILTER, ISPAM and ESPAM is ignored | open |
+| [D-263](#d-263-global-is-applied-again-at-every-groupref) | Low | GLOBAL is applied again at every groupref | open |
+| [D-264](#d-264-the-host-cache-rebuild-child-keeps-the-listening-socket) | Low | The host cache rebuild child keeps the listening socket | open |
+| [D-265](#d-265-a-nul-in-newsgroups-hides-the-names-after-it) | Low | A NUL in Newsgroups hides the names after it | open |
+| [D-266](#d-266-nortflush-and-domismatch-do-the-opposite-on-unsigned-char-platforms) | Low | nortflush and domismatch do the opposite on unsigned char platforms | open |
+| [D-267](#d-267-dexpire-keeps-history-entries-of-directories-removed-in-a-later-pass) | Low | dexpire keeps history entries of directories removed in a later pass | open |
+| [D-268](#d-268-a-failed-opendir-or-readdir-in-dexpire-marks-the-whole-spool-expired) | Low | A failed opendir or readdir in dexpire marks the whole spool expired | open |
+| [D-269](#d-269-record-updates-during-the-dhisexpire-copy-pass-are-lost) | Low | Record updates during the dhisexpire copy pass are lost | open |
+| [D-270](#d-270-an-unreadable-dexpirectl-at-its-reload-stops-every-reader-process) | Low | An unreadable dexpire.ctl at its reload stops every reader process | open |
+| [D-271](#d-271-compresslvl-0-stores-gzip-records-that-the-spool-reads-as-plain) | Low | compresslvl 0 stores gzip records that the spool reads as plain | open |
+| [D-272](#d-272-dirtime-is-one-global-for-all-metaspools) | Low | DirTime is one global for all metaspools | open |
+| [D-273](#d-273-minfreefiles-on-btrfs-removes-every-directory-but-the-newest) | Low | minfreefiles on btrfs removes every directory but the newest | open |
+| [D-274](#d-274-the-t-size-suffix-in-dspoolctl-multiplies-only-once) | Low | The t size suffix in dspool.ctl multiplies only once | open |
+| [D-275](#d-275-an-unconfirmed-ptr-name-becomes-the-readers-host-name) | Low | An unconfirmed PTR name becomes the reader's host name | open |
+| [D-276](#d-276-a-vserver-accessfile-uses-only-the-first-pattern-of-a-comma-list) | Low | A vserver accessfile uses only the first pattern of a comma list | open |
+| [D-277](#d-277-a-110-readerdef-answer-from-one-access-line-is-lost-when-another-lines-backend-runs) | Low | A 110 readerdef answer from one access line is lost when another line's backend runs | open |
+| [D-278](#d-278-with--c-n-refused-connections-stay-counted-and-switch-listeners-off) | Low | With -c N refused connections stay counted and switch listeners off | open |
+| [D-279](#d-279-addrealm-of-one-access-line-rewrites-the-user-name-for-later-lines) | Low | addrealm of one access line rewrites the user name for later lines | open |
+| [D-280](#d-280-with-realm--one-user-counts-as-separate-users-for-maxconnperuser) | Low | With realm * one user counts as separate users for maxconnperuser | open |
+| [D-281](#d-281-a-slow-transfer-resets-a-tripped-spam-filter-slot) | Low | A slow transfer resets a tripped spam filter slot | open |
+| [D-282](#d-282-the-spam-filter-decay-keeps-idle-minutes-as-credit) | Low | The spam filter decay keeps idle minutes as credit | open |
+| [D-283](#d-283-a-new-spam-filter-cache-size-truncates-the-mapped-cache) | Low | A new spam filter cache size truncates the mapped cache | open |
+| [D-284](#d-284-dcancel--a-and--s-rewrite-a-spool-file-a-feeder-still-appends-to) | Low | dcancel -a and -s rewrite a spool file a feeder still appends to | open |
+| [D-285](#d-285-doverctl-clean-deletes-the-overview-of-a-group-created-after-its-scan) | Low | doverctl clean deletes the overview of a group created after its scan | open |
+| [D-286](#d-286-dcancel--r-leaks-two-descriptors-and-a-map-per-line) | Low | dcancel -r leaks two descriptors and a map per line | open |
+| [D-287](#d-287-didump-prints-the-end-mark-and-exits-0-after-a-read-error) | Low | didump prints the end mark and exits 0 after a read error | open |
+| [D-288](#d-288-a-shim-compile-error-makes-23-dns-and-ipc-tests-skip) | Low | A shim compile error makes 23 DNS and IPC tests skip | open |
+| [D-289](#d-289-the-writers-waited-check-in-testkpdbconcurrentupdate-can-never-fail) | Low | The writers-waited check in TestKPDBConcurrentUpdate can never fail | open |
+| [D-290](#d-290-the-30-s-wait-in-the-dnewsfeeds-no-argument-test-misses-the-reload) | Low | The 30 s wait in the dnewsfeeds no-argument test misses the reload | open |
 
 Feature requests are at the end: [F-01 Cancel-Lock](#f-01-cancel-lock-rfc-8315), [F-02 configure script](#f-02-configure-script-for-the-build-options), [F-03 refeed a whole spool](#f-03-refeed-a-whole-spool-to-another-server), [F-04 NoCeM notices](#f-04-nocem-notices), [F-05 init scripts](#f-05-init-scripts-and-adm-script-replacements), [F-06 Perl authentication](#f-06-perl-authentication-for-dreaderd), [F-07 POST as an injecting agent](#f-07-dreaderd-post-as-an-rfc-55365537-injecting-agent), [F-08 smaller overview](#f-08-smaller-overview-overview-fields-only-one-copy-per-article).
 
@@ -1331,6 +1409,322 @@ Plan: compare the Message-ID before using a match: the cache file's `Message-ID:
 `dreaderd/group.c`, `dreaderd/reader.c`, `util/dexpireover.c`: a group in a dreaderd process's overview cache keeps a shared lock on its `over.*` index (offset 4). Since `readerovcache` (#413) the cache closes the group used least recently when it is full; with a large number, a group that gets articles all the time never becomes the least recently used one, so only `FlushOverCache()` closes it: every 30 seconds in reader processes (`reader.c:307`), every 300 seconds in feed-only ones (`reader.c:350`). `dexpireover -s` and `-R` need the exclusive lock and try each group once per run, waiting at most `-l` seconds (`alarm(LockWaitTime)`: `dexpireover.c:2564` for `-s`, `:1897` for `-R`). With the default `-l 1` such a group is skipped ("file in use"), so a busy group's index is not resized (`-s`, also part of `-a`) and its data is not rewritten (`-R`); with `-l` longer than 300 each such group can add up to 5 minutes to the run. With the default `readerovcache 8` the cache closes groups often and nothing changes. The behaviour is documented in `samples/diablo.config` (#413). Found by go-while/cc-1 in council r2 of #413; shown from the code, not run.
 Possible fix (to be decided): flush more often in feed-only processes when `readerovcache` is above 8, or let dexpireover ask the processes to close a group (there is no channel for that today). Test: a feed-only process with a large `readerovcache` and one group fed all the time; `dexpireover -s` with a short `-l` resizes that group's index within one run.
 
+### D-213 dnewslink waits for the read timeout after a stream reply that matches no pending article
+`util/dnewslink.c:2971-3137`, the reply switch of `StreamTransact()` (`:2885`): each reply is matched to a pending article by Message-ID and state. A reply in the wrong state (238 or 438 for an article sent with TAKETHIS, 239 or 439 for one still at CHECK) or for a Message-ID that is not pending is read and dropped; no entry is resolved and `StreamPend` stays. The reply the pending article waits for does not come, so the connection hangs until the read timeout (`-t`, 600 s by default), fails and reconnects; the pending entries go back through `RefilePendingStreams()` (`:3231`) and are offered again, so after an unmatched 239 the article is sent twice. Found by the round-0 reviewers (Haiku, Sonnet) of the dnewslink reply codes (#410), checked by go-while/cc-1; re-checked at main 1c80d48f by go-while/opus-high-B, shown from the code, not run.
+Plan: a reply that matches no pending entry in the right state is a peer out of step: close the connection at once and refile the pending entries, as for an unknown code. Test: a peer that answers 239 to a CHECK: dnewslink reconnects without waiting for `-T`.
+
+### D-214 dnewslink drops an article the peer answers 431 after TAKETHIS while the deferred articles are sent
+`util/dnewslink.c:2971-2998`: since #410 a 431 to TAKETHIS defers the article once, as for a 431 to CHECK. While the deferred articles are sent (the replay starts with articles pending when the defer buffer reaches `MAXDEFER - 20`, `:980-992`), and for a deferred article sent again, no second defer is taken: the 431 is a reject (`T_REJECTED`, `:2985-2986`; for a full defer buffer `:1205`), so the article is not kept or requeued. Diablo's own feeder answers 431 to TAKETHIS when the history add fails for a time (D-185, #314), so between two Diablos such an article is lost. RFC 4644 has no 431 for TAKETHIS. Found by the round-0 reviewers of #410, checked by go-while/cc-1; re-checked at main 1c80d48f by go-while/opus-high-B, shown from the code, not run.
+Plan: in the replay case write the queue line back with `keepQueueLine()` instead of the reject. Test: a peer that answers 431 to a TAKETHIS sent while the deferred articles are sent: the article is in the queue file afterwards.
+
+### D-215 A deferred article that is pending at a lost connection can be deferred again
+`util/dnewslink.c`: a deferred article that is sent again (`deferbegin > 0`, `:980-992`) and still pending when the connection fails goes through `RefilePendingStreams()` (`:3231`) and `readretry()` (`:3906`), which keep only the queue line and clear the entry (`:3934`), so the per-entry mark `st_Defers` (#410) is lost. After the reconnect `deferbegin` starts at 0, so the article is offered as a new one and can be deferred once more. Bounded: one more defer per reconnect. Found by the round-0 reviewers of #410, checked by go-while/cc-1; re-checked at main 1c80d48f by go-while/opus-high-B, shown from the code, not run.
+Plan: keep the mark in the retry entry and pass it on when `readretry()` hands the entry back. Test: a peer that defers an article, then drops the connection while the deferred article is pending: after the reconnect a second 431 is a reject.
+
+### D-216 A 431 reject after TAKETHIS adds no bytes to the rejected bytes
+`util/dnewslink.c:2971-2998`: the 431-to-TAKETHIS path does not set `*sentSize`, which `Transact()` sets to 0 for each article (`:2438`), so when that 431 is a reject (a deferred article sent again, or any article while the deferred ones are sent: D-214), the reject (`:1232-1253`) adds 0 to `RejectedBytes` although the article was sent. Statistics only. Found by the round-0 reviewers of #410, checked by go-while/cc-1; re-checked at main 1c80d48f by go-while/opus-high-B, shown from the code, not run.
+Plan: set `*sentSize = s->st_Size` on that path, as the 439 path does (`:3115`).
+
+### D-217 dclient reads the rest of a long reply line as the next reply
+`util/dclient.c:149-163`, `newscommand()`: replies are read with `fgets()` into `MAXLINE` bytes. For a longer line only the first piece is judged (`MultiLineReply()`); a one-line reply ends the command there, and the rest of the line is read as the reply to the next command. Since #411 that rest has no reply code in most cases, so dclient prints "Unexpected response from server" and exits 2 at the next command; a rest that starts with three digits and a space is taken as the next reply, and every later reply is one off. Found by the round-0 reviewers of the dsyncgroups and dclient reply codes (#411), checked by go-while/cc-1; re-checked at main 1c80d48f by go-while/opus-high-B, shown from the code, not run.
+Plan: read to the end of the line and drop what does not fit, or exit with an error for a line that does not fit.
+
+### D-218 dclient reads one byte before its buffer for a blank line in the dump file
+`util/dclient.c:182-189`, `dodumpfile()` (`-f`): `strncmp(&line[strlen(line) - 2], "\r\n", 2)` reads `line[-1]` for a blank line (`"\n"`, length 1). The same code also cuts a byte that is not a newline: the last line of a file without a final newline loses its last character, and a line longer than `MAXLINE` loses one byte at each piece and gets a CRLF inside it. Local file, local tool. The read before the buffer found by the council r2 reviewer (Sonnet) of #411; the cut bytes found by go-while/opus-high-B in the re-check at main 1c80d48f; shown from the code, not run.
+Plan: strip a trailing `"\n"` or `"\r\n"` only when it is there, and send the line with `"\r\n"`. Test: a dump file with a blank line, a last line without a newline and a long line.
+
+### D-219 A filter restart can stop the diablo master for up to 10 s
+`filter/diab-filter.c:113-156`, `DiabFilterClose(1)`: after a failed write to or read from the external filter, it closes the pipes and polls `waitpid(WNOHANG)` with `sleep(1)` between tries, up to 10 times. The call comes from `DoPipe()` in the diablo master (`util/diablo.c:1678`), so the master handles no feed for about 1 s when the filter has not exited yet, and for 10 s when it ignores EOF. The restart backoff (`filter_failed()`) bounds how often. The child is not left unreaped: the master loop's `wait3()` (`util/diablo.c:1027`) takes it. Found by the round-0 reviewer (Haiku) of the filter reply codes, checked by go-while/cc-1; re-checked at main 1c80d48f by go-while/opus-high-B, shown from the code, not run.
+Plan: do not wait in the master: send the filter SIGTERM after the close and leave the reaping to the master loop's `wait3()`.
+
+### D-220 diablo waits without a time limit for the answer of the external filter
+`filter/diab-filter.c:396`, `DiabFilter()`: the filter's answer is read with one blocking `read()` and no timeout, from a pipe or, for a `host:port` filter, from a TCP socket. A filter that takes the article but does not answer stops the diablo master (`DoPipe()`, `util/diablo.c:1678`) until it answers or closes. Found by the round-0 reviewer (Haiku) of the filter reply codes, checked by go-while/cc-1; re-checked at main 1c80d48f by go-while/opus-high-B, shown from the code, not run.
+Plan: wait for the answer with `poll()` and a time limit; on expiry take the filter as failed (`filter_failed()`, close), as for a read error. Test: a filter that reads the article and never answers: the feed goes on after the limit.
+
+### D-221 dgrpctl masscancel misses articles with numbers above 31 bits
+`util/dgrpctl.c:198`: `masscancel` tests `oa->oa_ArtNo == artEnd`, but `oa_ArtNo` keeps only 31 bits of the number (`dreaderd/defs.h:733-739`). For a group whose numbers are above 2^31 - 1 no slot matches, so nothing is cancelled and no error is given. Other lookups use `OA_ARTNOEQ()`. `masscancel` is also missing from `man/dgrpctl.8` (it is in the usage text, `util/dgrpctl.c:68`). Found by go-while/cc-1 in the overview analysis; re-checked at main 1c80d48f by go-while/opus-high-B, shown from the code, not run.
+Plan: compare with `OA_ARTNOEQ(artEnd, oa->oa_ArtNo)`, and add `masscancel` to the man page. Test: `masscancel` in a group whose numbers start above 2^31.
+
+### D-222 A write error in one group drops the reader feed connection after every group got a number
+`dreaderd/group.c`, `NNFeedOverview()`: the first pass (`:531-583`) gives the article a number in every group of `Newsgroups:` and writes the new NE (`AssignArticleNo()`, `:839`); the second pass (`:598-635`) writes the overview. When the write fails for one group, `WriteOverview()` answers `400` and closes the connection (`:923-956`, `:1084-1104`), and the loop goes on with the other groups. The failed group keeps a number with no entry (a gap), and no 235 or 239 is sent, so the feeder offers the article again later, and the groups already written get it a second time under a new number (the reader feed has no duplicate check for it). Found by go-while/cc-1 in the overview analysis; re-checked at main 9aa7c5e3 (first at 1c80d48f) by go-while/opus-high-B, shown from the code, not run.
+Plan: answer per article, not per group: log the failed group and go on, and answer 235/239 when at least one group was written; close the connection only for an error that is not limited to one group.
+
+### D-223 GROUP and cancels create an overview index for every group they touch
+`dreaderd/group.c:1196`, `GetOverInfo()` opens the group's `over.*` index with `O_CREAT` and initialises a new one (`:1282-1309`: the header and `i` slots, 512 by default, allocated, with two `fsync()`). It is called for any group in the active file by `GROUP` and `LISTGROUP` (`SelectGroup()`, `dreaderd/nntp.c:392`), by cancels (`FindCanceledMsg()`, `group.c:1717-1721`) and by `dcancel -r` (`util/dcancel.c:763`, a copy). So a reader that selects every group creates an index file, with two `fsync()`, for each group that never had an article. Found by go-while/cc-1 in the overview analysis; re-checked at main 9aa7c5e3 (first at 1c80d48f) by go-while/opus-high-B, shown from the code, not run.
+Plan: open without `O_CREAT` on the read and cancel paths, and treat a missing index as an empty group; only the feed creates it.
+
+### D-224 The locking comment in dexpireover describes locks dreaderd does not take
+`util/dexpireover.c:28-33` says dreaderd holds an advisory lock at offset 4 on the data file while it has it open, and one at offset 4 on the info file. The code: dreaderd takes offset 4 shared on the `over.*` index only (`dreaderd/group.c:1217`), offset 0 exclusive on the data file for an append (`:946`) and on the index for a slot write (`:1039`); dexpireover takes offset 4 shared on the index (`util/dexpireover.c:1043`), exclusive for a resize (`:2565`) or a rewrite (`:1898`), and offset 0 per slot (`:723`). Comment only, but it misleads a change of the lock order. Found by go-while/cc-1 in the overview analysis; re-checked at main 9aa7c5e3 (first at 1c80d48f) by go-while/opus-high-B.
+Plan: replace the comment with the locks above.
+
+### D-225 A POST whose last body line ends in a bare LF hangs the reader's post connection
+`dreaderd/feed.c:261-265` ends a POST on "." whatever the line before ended with, and `:354-367` turns only header lines into CRLF (`bareLF` needs `COF_INHEADER`, `:297-298`); `post.c:1552` sends the body as stored. The feeder (`util/diablo.c:3313`, `:3359`) ends an article only on CRLF before ".", so it takes ".\r\n" as data and waits. dreaderd waits in `NNPostResponse2()` with no timeout. That reader process's post connection never returns: every later POST of its clients hangs, and the article is lost. Who: a client allowed to POST; an old client with LF line ends does it by accident. Crash: none. Effect: posting stops for one reader process, shown. Conditions: default config, diablo as the post server. Found in go-while's deep review round 2 of main 1c80d48f; reproduced on a test host with `TestPostBareLFLastLineToFeeder` on gw-r2-repro-a (control 240, then no reply within 15 s for the bare-LF POST and the POST after it). Effort: S.
+Plan: send POST body lines with CRLF like the header lines (drop `COF_INHEADER` from the `bareLF` test); optionally a timeout in the post states.
+
+### D-226 A group repeated in Newsgroups gets one number and one overview record per repeat
+`dreaderd/group.c`, `NNFeedOverview()`: pass 1 (`:530-576`) calls `AssignArticleNo()` (`:565`) for every name, so NE grows by one per repeat (`:819`); pass 2 (`:591-628`) writes an index slot and a copy of the header per name (`:849`). An article with `e2e.test` 600 times takes 600 numbers and overwrites every older slot of a 512-slot index: the older articles answer 423 and vanish from OVER although the spool has them. `NormalizeNewsgroups` does not remove repeats and `maxcross` is off by default. Lines are at main 9aa7c5e3, before the fix. Who: any poster anywhere, via any peer. Crash: none. Effect: wrong data, shown. Conditions: default config (no xref slave, `maxcross` unset); 512 or more repeats (about 5 KB of header) for the full wipe. Found in go-while's deep review round 2 of main 1c80d48f; reproduced on a test host with `TestR2ReproRepeatedGroupOverview` on gw-r2-repro-b (GROUP `211 513 99 611` instead of `211 12 1 12`; STAT 1..10 all 423). Effort: S.
+Plan: pass 1 skips a name that already has an `ArtNumAss` entry (compare the names), so a repeated group counts once.
+Fixed (#416): pass 1 of `NNFeedOverview()` skips a name that already has a number for this article (`ArtNumAssigned()` compares the names); pass 2 finds no number for the repeat and writes nothing for it. The stored header is unchanged. Tests: `TestReaderRepeatedGroupOneNumber`, `TestReaderRepeatedGroupNotActive`, `TestReaderRepeatedGroupXrefSlave`.
+
+### D-227 The feeder leaks the article map for every 430 Article prohibited
+`util/diablo.c:2630` opens the article (`ArticleOpen()`, which maps it, or a malloc on a gzip spool); the age refusal at `:2632-2645` sets `data = NULL`, so the release at `:2750-2755` is skipped. dreaderd passes a reader's `a<N>` argument through (`dreaderd/server.c:1392`), and a 430 is requeued and not cached, so it can be repeated. One mapping leaks per request in the long-lived spool connection child; at `vm.max_map_count` every fetch on that connection answers 430 for stored articles. Who: a reader client (`ARTICLE <id> a1`), and every fetch under readerdef `maxagepolicy`. Crash: none. Effect: lost service, shown. Conditions: default config. Lines are at main 0dd6330e, before the fix (the same at 9dc51c18, where `:2645` is now a comment). Found in go-while's deep review round 2 of main 1c80d48f; reproduced on a test host with `TestFeederAgeRefusalLeaks` on gw-r2-repro-a (41 -> 441 mappings for 400 refused requests). Effort: S.
+Plan: test the age before `ArticleOpen()`, or release the map before clearing `data`; together with D-230 (same request path).
+Fixed (#417): the "430 Article prohibited" branch keeps `data`, so the common release at the end of the handler frees the mapping (or the copy of a compressed article), as on the "not found" paths. D-230 stays open. Test: `TestFeederAgeRefusalReleasesArticle` (a plain spool and one with `compresslvl 6`; the mapping count and the resident memory of the connection's diablo process stay flat over 300 refused requests).
+
+### D-228 A queued POST leaves the client in article mode
+`dreaderd/post.c:1439` queues the POST (`NNServerRequest()` with `SREQ_POST`) without `NNWaitThread()`, so `co_Func` stays `NNAcceptArticle`. Lines the client sends after its "." while the post is in flight join the article being sent; a second "." runs `NNPostBuffer()` on the in-flight buffer; a later ARTICLE overwrites `co_SReq` (`server.c:825`), and when the client closes, `NNTerminate()` (`reader.c:764-773`) leaves the other request writing through the freed Connection. Lines are at main 9dc51c18. Who: a client allowed to POST that pipelines after ".". Crash: not shown; by reading, the reader process with all its clients (about 40). Effect: an altered posted article, shown; a write through freed memory, by reading only. Conditions: default config; timing: the post must still be in flight at a forceallcheck pass (a slow post server or D-225 widens it). Found in go-while's deep review round 2 of main 1c80d48f; reproduced on a test host with `TestPostPipelinedCommandWhileQueued` on gw-r2-repro-a (a GROUP sent after "." got no reply and became the last body line of the posted article). Effort: M.
+Plan: `NNWaitThread()` after the POST request, as the fetch paths do; `NNServerRequest()` refuses a client whose `co_SReq` is set. ASan run of the chain on a test host.
+
+### D-229 wireformat misses the article end when CR and LF arrive in two buffer pieces
+`util/diablo.c:3312-3313` needs CR and LF in one piece; text mode puts a trailing CR back (`:3337-3345`), wire mode does not (`:3346-3349`), and `bgets()` returns a full buffer without LF (`lib/buffer.c:245-260`). A line of k x DataMax - 1 octets (4027 on a 64-bit host with zlib) before the final dot hides the end: IHAVE stalls, and by reading, with TAKETHIS the next commands and article become body. Who: any article author, via any peer. Crash: none. Effect: that connection stalls, shown; merged articles, by reading. Conditions: `wireformat on` (an option). Found in go-while's deep review round 2 of main 1c80d48f; reproduced on a test host with `TestWireFormatCRLFSplitAcrossBuffer` on gw-r2-repro-a (IHAVE: no reply, `ArtIncomplete` logged; TAKETHIS not run). Effort: S.
+Plan: remember that the previous piece ended in CR, and take a piece that starts with LF after it as CRLF (wire mode).
+
+### D-230 A reader's age argument replaces maxagepolicy
+`dreaderd/server.c:1310` starts from `rd_MaxAgePolicy`, and `:1390-1393` replaces it with the client's `a<N>`; `a0` sends no limit (`dreaderd/spool.c:74`). Any reader then gets articles beyond its retention, by Message-ID. Who: a reader client. Crash: none. Effect: the retention limit is not applied, shown. Conditions: readerdef `maxagepolicy` set (an option). Found in go-while's deep review round 2 of main 1c80d48f; reproduced on a test host with `TestReaderAgeArgOverridesPolicy` on gw-r2-repro-a (`maxagepolicy 1`: plain ARTICLE 430, `a0` and `a999999999` 220). Effort: S.
+Plan: the client value may only narrow: min(policy, N) when the policy is set, ignore N < 1.
+
+### D-231 A spool request requeued mid-article sends a second status line and article
+`dreaderd/spool.c:892-897` calls `NNServerTerminate()` on the `T` timeout (counted from the queue time), and `dreaderd/server.c:1178-1195` requeues the request without touching `sr_Cache` or the bytes already sent to the client. The next server's 220 adds a new status line and the whole article. The same holds for the "." in header requeue (`dreaderd/spool.c:619-628`) and for a server removed from dserver.hosts (`server.c:98-106`). By reading, `sr_Cache` can commit a partial plus full copy, or leak the FILE. Who: nobody directly; a slow or removed spool server, and the client that fetches then. Crash: none. Effect: wrong reply, connection out of step. Conditions: the `T` flag or a dserver.hosts edit; a transfer that stalls mid-article. Found in go-while's deep review round 2 of main 1c80d48f; reproduced on a test host with `TestR2ReproRequeueMidArticle` on gw-r2-repro-b (client half: status line, partial text, a second `220` line and the whole article; the cache half was not shown). Effort: L.
+Plan: in the requeue paths abort and close `sr_Cache`; once bytes went to the client, end the article like the `len < 0` branch instead of requeuing.
+
+### D-232 The reader feed leaks Supersedes and repeated headers
+`dreaderd/group.c`, `NNFeedOverview()`: `supers` (`:442`) is never freed (`:661-667` frees six others), and each repeated Message-ID, Subject, Date, Xref, Control or Newsgroups line allocates without freeing the previous one. `co_MemPool` is freed only when the feed connection closes. Lines are at main 9dc51c18. Who: content via feeds: every superseding article leaks a little; repeated header lines leak much more. Crash: the feed fork runs out of memory in the end. Effect: lost service, shown. Conditions: default config. Found in go-while's deep review round 2 of main 1c80d48f; reproduced on a test host with `TestR2ReproSupersedesLeak` on gw-r2-repro-b (2000 articles with 500 Supersedes lines: +28 MB, about 15.6 kB per article). Effort: S.
+Plan: free `supers` with the others and `zfreeStr()` each field before it is assigned again.
+
+### D-233 localspool serves the raw spool record
+`whereis` answers the offset and length of the record including its 24-byte `SpoolArtHdr` (`util/diablo.c:2546`, `:4066`); dreaderd's local path (`dreaderd/spool.c:240-300`, `dfa.c`) knows nothing of that header, of gzip or of the wire store. Every article starts with binary bytes before `Path:`, the Path/Xref rewrite is skipped, gzip records are sent compressed and wire records dot-stuffed twice. By reading, DFA state 0x05 (`dfa.c:518-545`) also loses the header end after a 5-character last header line. Who: nobody; every article fetched on a host that uses `localspool=`. Crash: none. Effect: wrong output. Conditions: `localspool=` against a diablo spool (an option). Found in go-while's deep review round 2 of main 1c80d48f; reproduced on a test host with `TestR2ReproLocalspoolDiabloSpool` on gw-r2-repro-b (the first defect; the DFA part was not shown). Effort: L (S to document or refuse localspool).
+Plan: `whereis` returns offset + header length for plain text records and refuses gzip and wire records (the reader falls back to ARTICLE); do the Path/Xref rewrite on the local path; fix the 0x05 case. Or document localspool as unusable with a diablo spool.
+
+### D-234 Two fetches of one new article in one reader process corrupt its cache file
+`dreaderd/cache.c:260` opens the same `.tmp`, `:264` gets the fcntl lock the process already holds (`lib/lock.c:26`), and `cache.c:279` truncates under the first writer. The committed cache file can hold a NUL run, a splice of two copies of different length, or be truncated by `AbortCache()` (`cache.c:305-307`), and it is served to every later reader until dexpirecache. Who: any two clients asking for one new article. Crash: none. Effect: wrong data, shown. Conditions: default config (readercache on), two spool connections, copies of different length or timing. Found in go-while's deep review round 2 of main 1c80d48f; reproduced on a test host with `TestR2ReproCacheSameArticleTwice` on gw-r2-repro-b (a third client got the short copy followed by the tail of the long one). Effort: M.
+Plan: `CreateCache()` checks the process's in-flight requests for the same Message-ID (or a unique tmp name per writer that never truncates a non-empty file); `AbortCache()` must not truncate a committed file.
+
+### D-235 dexpireover -R empties trackonly indexes
+In trackonly mode every entry has `oa_SeekPos` -1 (`dreaderd/group.c:1048`); `rewriteDataFile()`'s `-1` branch does nothing (`util/dexpireover.c:2519-2520`), so the new all-zero index is written. The next expire moves NB past NE: all articles of the group drop out of the active range. The shipped weekly.reader runs `-R`. Lines are at main 9dc51c18. Who: the local admin or the weekly cron. Crash: none. Effect: data loss. Conditions: `readerxover trackonly` (an option) and `-R`. Found in go-while's deep review round 2 of main 1c80d48f; reproduced on a test host with `TestR2ReproTrackonlyRewrite` on gw-r2-repro-b (after `-R` and the next `dexpireover -a`: GROUP `211 1 20 20` instead of `211 20 1 20`). Effort: S.
+Plan: copy the entry (`*ob = *oa`) in the `oa_SeekPos == -1` branch, with no data file.
+
+### D-236 A DNS failure during the host cache rebuild locks out peers named by host name
+`lib/hostauth.c:252-264`, `convHost()` writes the records of an inhost given by name only when `getaddrinfo()` succeeds; the new dhosts.cache replaces the old one (`:179-187`), and the next rebuild is up to an hour later (`:59-97`). A resolver failure at the rebuild gives every peer named by host name 502, also after DNS is back. Who: nobody; a resolver failure at the rebuild. Crash: none. Effect: lost service, shown. Conditions: peers listed by host name. Found in go-while's deep review round 2 of main 1c80d48f; reproduced on a test host with `TestR2HostCacheDNSBlip` on gw-r2-repro-c (a getaddrinfo shim returns EAI_AGAIN during a forced rebuild: the peer `localhost` gets 502 afterwards). Effort: M.
+Plan: on a temporary failure keep that name's records from the old cache, or keep the old cache and retry the rebuild soon.
+
+### D-237 PAM authentication skips the account phase
+`dreaderd/dns.c:1766-1791`, `PamAuthenticate()` calls `pam_start()`, `pam_authenticate()` and `pam_end()`, never `pam_acct_mgmt()`, and sets no `PAM_RHOST`. An account that PAM's account phase refuses (expired, disabled, denied by pam_access or pam_time) logs in. Who: a client with a valid password for such an account. Crash: none. Effect: an account the account phase refuses logs in, shown (with a PAM shim). Conditions: a `pam` authdef, dreaderd built with PAM. Found in go-while's deep review round 2 of main 1c80d48f; reproduced on a test host with `TestR2PAMAccountPhase` on gw-r2-repro-c (`pam_acct_mgmt()` returns PAM_ACCT_EXPIRED and is never called: 281). Effort: S.
+Plan: call `pam_acct_mgmt()` after a successful `pam_authenticate()` and set `PAM_RHOST`. A PAM service with only auth lines falls back to `other` for account (often pam_deny), so working logins can change: a release note, or an opt-in.
+
+### D-238 drequeue keeps writing into a rotated queue file
+`util/drequeue.c:188` opens `dqueue/<label>` once with `O_APPEND` and never looks at it again (`:273-292`). dspoolout renames the file and dnewslink removes it after sending, so everything drequeue writes after a rotation is lost, and drequeue exits 0. A `diloadfromspool -Q | drequeue` run longer than the 5-minute cron loses the rest. Who: the local admin or cron. Crash: none. Effect: data loss. Conditions: a drequeue run that spans a rotation. Found in go-while's deep review round 2 of main 1c80d48f; reproduced on a test host with `TestR2DrequeueRotatedQueue` on gw-r2-repro-c (rename and remove as dspoolout and dnewslink do: 330 of 600 lines lost, exit 0). Effort: S.
+Plan: before each flush compare `fstat()` of the descriptor with `stat()` of the path and reopen when the file was replaced.
+
+### D-239 A trailing slash in path_spool makes dexpire mark the spool expired in the history
+`util/dexpire.c:405-411` keeps a spool path with its trailing slash, the prefix test at `:1207` needs `partnameLen > spoolHomeLen`, and `ArticleFileName()` adds its own slash or blanks spool 00 (`lib/spool.c:86-89`, `:152-159`). No name matches, so `dexpire -h1` marks every history entry of that spool expired, and the feeder answers 430 for articles that are still stored. A valid spelling, not a typo. Who: the local admin (config). Crash: none. Effect: data loss. Conditions: a trailing slash in `path_spool` or a spool `path`. Found in go-while's deep review round 2 of main 1c80d48f; reproduced on a test host with `TestR2DexpireSpoolPathSlash` on gw-r2-repro-c (nothing old enough to expire; both articles 430 after `dexpire -a -h1`). Effort: S.
+Plan: strip trailing slashes (not "/" itself) from `path_spool` and spool paths when they are loaded.
+
+### D-240 An unstuffed first line desyncs the external filter
+`filter/diab-filter.c:349` starts its copy with `eoln = 0`, so a first body line "." (sent as `..` and stored unstuffed) goes to the filter as ".\r\n". A filter that answers per "." line answers twice; `DiabFilter()` reads one answer per article (`:396`), so every later article gets the previous article's verdict until a restart. Who: content via feeds (one article from any peer). Crash: none. Effect: wrong filter verdicts (spam passes, ham is dropped from nospam feeds), shown. Conditions: `feederfilter` configured, a filter that answers per "." line. Found in go-while's deep review round 2 of main 1c80d48f; reproduced on a test host with `TestFilterFirstLineDotStuffed` on gw-r2-repro-a. Effort: S.
+Plan: start the copy loop with `eoln = 1`.
+
+### D-241 Articles the external filter cannot read pass unjudged
+`filter/diab-read.c:89-118` returns -1 for any NUL in the record (compressed records have them); `DiabFilter()` then returns -1 without sending (`filter/diab-filter.c:338-343`), and -1 matches neither skip rule, so the article goes to nospam and onlyspam feeds alike, with no log line. Who: content via feeds (one NUL byte in any article); with a compressed spool object every article. Crash: none. Effect: the filter verdict is not applied, shown. Conditions: `feederfilter` with nospam or onlyspam feeds; `rejectartswithnul` off (the default), or `compresslvl` on a spool object. Found in go-while's deep review round 2 of main 1c80d48f; reproduced on a test host with `TestFilterUnreadArticlesPass` on gw-r2-repro-a (subtests nul and compressed). Effort: M.
+Plan: send the article by its length (no NUL scan) and inflate compressed records; log and count a skipped article; keep passing through as the default.
+
+### D-242 The feeder forks and does reverse DNS before the access check
+`util/diablo.c:1332` forks for every connection, and the child does `getnameinfo(NI_NAMEREQD)` and a forward lookup (`lib/hostauth.c:448-450`) with no time limit before it reads dhosts.cache. Whoever answers the PTR query of the connecting address sets how long a fork slot and a master pipe stay taken, and a peer listed by address waits for the same lookup. Who: anyone on the network who controls the PTR answers for their address (or a slow resolver). Crash: none. Effect: delayed greetings and fork slots taken, shown. Conditions: default config (`maxconnect` off). Found in go-while's deep review round 2 of main 1c80d48f; reproduced on a test host with `TestR2AcceptDNSBeforeAccess` on gw-r2-repro-c (PTR answers delayed 8 s: a peer listed by address waited 8 s for its greeting; 81 to 117 stranger children alive at once). Effort: L.
+Plan: match address, CIDR and wildcard-IP entries before any lookup; do the PTR and forward lookup only when name entries exist, with a time bound in the child.
+
+### D-243 A queued request whose client went away crashes the reader process
+`NNTerminate()` sets `sr_CConn` to NULL and leaves the request queued (`dreaderd/reader.c:764-773`); `cbQueueReqFindThread()` dereferences `sr_CConn` (`dreaderd/server.c:638-639`) when the server has `groupdef=`. The reader process dies with all its clients. Lines are at main 9dc51c18. Who: a client that disconnects or idles out while its request waits for a server. Crash: the reader process, all its clients (about 40). Effect: lost service, shown. Conditions: a spool server line with `groupdef=` (an option); every matching server unreachable for longer than the client stays. Found in go-while's deep review round 2 of main 1c80d48f; reproduced on a test host with `TestR2ReproQueuedRequestClientGone` on gw-r2-repro-b (`Lost reader process` when the spool server came back). Effort: S.
+Plan: `QueueServerRequests()` drops requests whose client is gone, and the callback tests `sr_CConn`.
+
+### D-244 A bare-LF blank line after the header breaks BODY and the reader cache in wire mode
+`util/diablo.c:3478-3479` takes a bare-LF blank line as the end of the header, and `:3033-3036` then skips two bytes for the separator of a wire-format record, so BODY drops the first byte of the body; dreaderd (`dreaderd/spool.c:594`, `:619-628`) answers 430 for the stored article and leaks one cache FILE per fetch. Who: content via feeds (a bare-LF blank line after the header), through a peer. Crash: none. Effect: wrong data; open FILEs grow in the reader process. Conditions: `wireformat on`; reader cache; more than one spool server for the requeue. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: M.
+Plan: the feeder uses the stored separator length for wire records; dreaderd accepts LF at the header end; the FILE leak goes with D-231. Do not rewrite stored bytes.
+
+### D-245 Commands buffered before the session byte limit still run
+`dreaderd/reader.c:1217-1231` sends "400 Session byte limit" and calls `NNTerminate()`, but pipelined commands already in the buffer still run (`:1245`). Lines are at main 9dc51c18. Who: a reader client. Crash: none. Effect: commands run after the limit, at most one read buffer of them. Conditions: a byte limit configured. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
+Plan: return after `NNTerminate()` in `NNCommand()`.
+
+### D-246 NNSpoolResponseScrap continues as the 220 path
+`dreaderd/spool.c:908` (reached from `:430-432`) continues as `NNSpoolResponse3`: the client gets text and "." with no status line, and the article's tail is committed as its cache entry. Who: nobody directly; a race where the overview entry goes away between the request and the 220. Crash: none. Effect: wrong reply, bad cache entry. Conditions: HEAD or ARTICLE via the overview path; timing. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: M.
+Plan: set `co_Func` to `NNSpoolResponseScrap` and abort the cache instead of committing it.
+
+### D-247 A requeue skips a same-priority spool server that has the article
+`dreaderd/thread.c:147-171` and `dreaderd/server.c:729-737` pick the least-loaded server on a requeue, so a server of the same priority can be skipped: 430 or 423 for an article it has. Who: a reader client (normal fetch). Crash: none. Effect: wrong behaviour. Conditions: several spool servers of one priority, the article on a subset. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: M.
+Plan: on a requeue walk the same-priority servers in ring order from `sr_Rolodex`, or remember the servers tried.
+
+### D-248 The NEWGROUPS cache is built from the first connection's listgroups
+`dreaderd/list.c:240-243`, `:291-292` and `:177-181` build the NEWGROUPS cache filtered by the first connection's listgroups and serve it to all, so other readerdefs see too many or too few groups. Who: a reader client. Crash: none. Effect: a wrong group list (group names only). Conditions: several readerdefs with different listgroups. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
+Plan: build the cache unfiltered and filter per connection on output.
+
+### D-249 NEWNEWS runs the next pipelined command inside its list
+`dreaderd/xover.c:600-606` calls `NNCommand()` at the end of each group, which reads the next pipelined command (`dreaderd/reader.c:1279`; the `co_FCounter` guard at `:1256-1266` only puts it off to a later pass), so that command runs, now or on the next pass, and answers inside the 230 block. Lines are at main 9dc51c18. Who: a reader client that pipelines after NEWNEWS. Crash: none. Effect: only its own session. Conditions: `allownewnews` (opt-in). Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
+Plan: call `NNCommand()` only after the final ".".
+
+### D-250 NEWNEWS with a wide wildmat walks all groups in one turn
+`dreaderd/xover.c:132-161` and `:580-583` walk every matching group in one pass; the reader process serves nobody else meanwhile, and with D-223 each group gets an index file. Who: a reader client. Crash: none. Effect: one reader process serves nobody else meanwhile. Conditions: `allownewnews` (opt-in); many groups. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: M.
+Plan: bound the groups per pass and yield via WFds.
+
+### D-251 An overview data file over 2 GB stops the reader process
+`dreaderd/group.c:1051` stores the append position in the int `oa_SeekPos`; past 2 GB it is negative, and `:1462-1474` exits on "mmap() failed B" for each access to the group. Lines are at main 9dc51c18. Who: nobody in practice. Crash: every reader process that touches the group (exit 1). Effect: lost service. Conditions: an overview data file over 2 GB (a large `e`, non-default). Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: M.
+Plan: refuse appends past INT_MAX and take a negative `oa_SeekPos` as no data, without exit(1). A 64-bit field would change the on-disk format.
+
+### D-252 dexpireover -O deletes a group that got an article during the run
+`util/dexpireover.c:549-561` decides on the LMTS read at the start, also when the group got an article during the run. Who: the local admin or cron (race). Crash: none. Effect: data loss. Conditions: `dexpireover -O`; timing. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
+Plan: re-read LMTS under `KP_LOCK` just before `KPDBDelete()`.
+
+### D-253 XZVER leaks its deflate state when a timeout closes the connection
+`dreaderd/mbuf.c:291-318` (`MZInit()`), `:372-386` (`MZFinish()`, which frees the state) and `dreaderd/reader.c:679-744`: the deflate state (about 260 KB) of an XZVER list is not freed when a timeout closes the connection mid-list. Lines are at main 9dc51c18. Who: a reader client (XZVER, then let the session time out). Crash: none. Effect: memory growth, paced by the timeout. Conditions: XZVER enabled. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
+Plan: finish and free `co_ZStream` in `DeleteConnection()`.
+
+### D-254 Group creation can reset NE of a numbered group
+Group creation is not create-if-absent (`dreaderd/group.c:708-721`, `dreaderd/control.c:967-969`, `:1729-1735`, `lib/active.c:231-243`, `util/dsyncgroups.c:704-750`): a second creator writes NE=0 over a group that already has numbers, so article numbers are used twice. The same-value test #413 added to `KPDBWrite()` does not change it (0 is a new value). Lines are at main 9dc51c18. Who: a control message (newgroup) and the local admin or cron at the same time. Crash: none. Effect: wrong data. Conditions: two creators at once; timing. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: L.
+Plan: a KPDB create-if-absent helper (re-read under the lock, never write NB/NE over an existing record), used by every creator.
+
+### D-255 An opener waiting for dkp -t keeps the old dactive.kp
+`lib/kpdb.c:307-336` and `util/dkp.c:139-199`: a process that waits for `dkp -t`'s lock keeps the unlinked old file and writes into it, so Xref numbers are given twice. Lines are at main 9dc51c18. Who: the local admin (`dkp -t`), race. Crash: none. Effect: wrong data. Conditions: a narrow window. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: M.
+Plan: after the shared lock compare `fstat()` with `stat()` (inode, nlink) and reopen a replaced file.
+
+### D-256 A power loss can leave history chain heads past the end of the file
+`lib/history.c:1089-1124` writes the head before the record is on disk; after a power loss on ext4 or XFS a head can point past EOF, and older entries of that chain are unreachable until dhisexpire (duplicates can be accepted again). Who: nobody (power loss). Crash: none. Effect: wrong data. Conditions: a crash of an ext4 or XFS host. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: M.
+Plan: at open take heads past the record count as chain end and log it at LOG_CRIT (recovers nothing; the real cure is write ordering with fsync).
+
+### D-257 dnewslink removes a rotated queue file before its deferred entries are sent
+`util/dnewslink.c:4091-4100`, `:1014-1034` and `:1568-1573`: in realtime mode the rotated file is removed before entries the peer deferred with 431 are sent again; a session end then loses them. Who: an outbound peer that answers 431, then a session end. Crash: none. Effect: lost queue entries. Conditions: dnewslink realtime. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: M.
+Plan: remove the rotated file only when the defer queue and the pending stream are empty.
+
+### D-258 A look-ahead dnewslink takes a queue file before the master flushes it
+`util/dspoolout.c:726-727`, `:817-840` and `util/dnewslink.c:833-845`, `:1560-1562`: a look-ahead batch can take the file dspoolout just renamed before `dicmd flush`, so the master's flushed lines go to a file that is gone. Who: nobody directly (dspoolout and dnewslink timing). Crash: none. Effect: lost queue lines. Conditions: a look-ahead batch; timing. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: M.
+Plan: rename to a name outside the sequence, flush, then rename to `label.S<k>`.
+
+### D-259 One failed fork stops host cache rebuilds until a restart
+`lib/hostauth.c:103-107` and `util/diablo.c:989-990`: a failed `fork()` leaves `HostCachePid` at -1, and the cache is never rebuilt again, so diablo.hosts and DNS changes are ignored. Who: nobody (one fork failure under resource pressure). Crash: none. Effect: changed peers are not picked up. Conditions: a fork failure. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
+Plan: reset `HostCachePid` on a failed fork.
+
+### D-260 A peer that repeats feedrset and feedcommit starves the dnewsfeeds reload
+`util/diablo.c:5084`, `lib/newsfeed.c:1233-1241`, `:1270-1277` and `lib/hostauth.c:67-86`: each feedcommit touches dnewsfeeds, so its mtime stays younger than 10 s: no reload, and a host cache rebuild every 10 s. Who: a peer allowed those commands. Crash: none. Effect: mild: CPU and DNS load, and the reload waits. Conditions: a peer allowed feedrset/feedcommit. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: M.
+Plan: touch dnewsfeeds only on a real change, and do not rebuild the host cache on that touch.
+
+### D-261 AltFeed clears the label's requiregroup list
+`lib/newsfeed.c:2195` and `:2239`: when a peer feed table exists, AltFeed drops the label's requiregroup list, so articles go out that should be held back. Who: the local admin (config). Crash: none. Effect: feed rules not applied as written. Conditions: AltFeed with a peer feed table. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
+Plan: walk `prNode` to the end of the list, as for `pgNode` and `psNode`.
+
+### D-262 groupref inside IFILTER, ISPAM and ESPAM is ignored
+`lib/newsfeed.c:2029-2034`, `:2108-2129` and `:2498-2499` never resolve a groupref in those feeds; it is silently ignored. Who: the local admin (config). Crash: none. Effect: feed rules not applied as written. Conditions: that construct in dnewsfeeds. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
+Plan: resolve the group lists of the IFILTER, ISPAM and ESPAM feeds too (grouprefs there then take effect).
+
+### D-263 GLOBAL is applied again at every groupref
+`lib/newsfeed.c:2487-2488` applies GLOBAL again at the start of the scan inside every groupref, so it overrides the rules the label set before that groupref. Who: the local admin (config). Crash: none. Effect: feed rules not applied as written. Conditions: GLOBAL together with grouprefs. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
+Plan: apply GLOBAL only at the top level of the scan.
+
+### D-264 The host cache rebuild child keeps the listening socket
+`lib/hostauth.c:103-192` and `util/diablo.c:742-783`: the rebuild child inherits the listening socket, so a restart during a DNS outage fails to bind while the child waits for DNS. Who: nobody (a restart during a DNS outage). Crash: none. Effect: the restart fails. Conditions: a DNS outage at restart. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
+Plan: close the listening sockets in the rebuild child.
+
+### D-265 A NUL in Newsgroups hides the names after it
+`util/diablo.c:3679` and `lib/subs.c:145` copy Newsgroups as a C string, so the names after a NUL are hidden from filters and feed rules while the stored header keeps them (the Path: and Distribution: copies at `:3626` and `:3658` cut at a NUL the same way). Who: content via feeds. Crash: none. Effect: filters and feed rules do not see those names. Conditions: `rejectartswithnul` off (the default). Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
+Plan: take a NUL as a name separator in the internal group list (stored bytes unchanged); a reject would need an opt-in.
+
+### D-266 nortflush and domismatch do the opposite on unsigned char platforms
+`lib/newsfeed.c:82-83`, `:1507`, `:1527`, `:826` and `util/diablo.c:1572` keep the option values in plain `char` and test them for -1, so on arm64, ppc64le and s390x `nortflush` and `domismatch` do the opposite. Who: the local admin (config). Crash: none. Effect: wrong behaviour. Conditions: an unsigned char platform: arm64, ppc64le, s390x. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
+Plan: `signed char` for `nf_PerLineFlushOpt` and `nf_NoMisMatch`; test by building with `-funsigned-char` on an x86 test host.
+
+### D-267 dexpire keeps history entries of directories removed in a later pass
+`util/dexpire.c:1415`, `:1459` and `:312-320`: `NodeAry` is not cleared between passes, so directories removed in pass 2 or later keep their history entries unexpired. Who: the local admin or cron. Crash: none. Effect: wrong data. Conditions: dexpire with more than one pass. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
+Plan: `freeNodes()` at the start of `updateHistory()`.
+
+### D-268 A failed opendir or readdir in dexpire marks the whole spool expired
+`util/dexpire.c:888-894` counts a failed `opendir()` or `readdir()` as an empty spool, so every history entry of that spool is marked expired (as D-157). Who: nobody (an I/O error). Crash: none. Effect: wrong data. Conditions: an opendir or readdir failure. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
+Plan: mark the spool unsure on such a failure and update no history entries for it.
+
+### D-269 Record updates during the dhisexpire copy pass are lost
+`util/dhisexpire.c:401-420` and `:448-507`: a record changed in place during the copy pass before the history is marked dead (for example by `dcancel -h`) is copied in its old state into the new history; updates after the dead mark are done again (`:479-484`). Who: the local admin (`dcancel -h` during dhisexpire). Crash: none. Effect: wrong data. Conditions: the two tools at the same time. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: L.
+Plan: mark records dead before copying records that can change in place, or copy changed records again.
+
+### D-270 An unreadable dexpire.ctl at its reload stops every reader process
+`lib/expire.c:192-198` exits when dexpire.ctl cannot be opened at a reload. Reader processes call it every 30 s (`dreaderd/reader.c:307-310`), and it opens the file when the minute has changed (`lib/expire.c:180`), so every reader process exits at its next check, once a minute (as D-175 was for dspool.ctl). Lines are at main 9dc51c18. Who: the local admin (the file briefly missing, e.g. replaced during an edit). Crash: every reader process (exit 1). Effect: lost service. Conditions: the file not openable at reload time. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
+Plan: on a reload failure log it and keep the loaded list; exit only on the first load.
+
+### D-271 compresslvl 0 stores gzip records that the spool reads as plain
+`util/diablo.c:4015` compresses for `compresslvl 0` (the sample's own line, `samples/dspool.ctl:32`), but `SpoolCompressed()` (`lib/spool.c:123-132`) says plain, so dspoolrefeed (`util/dspoolrefeed.c:226`, `:369`) and dreadart (`util/dreadart.c:233`) output is broken. Who: the local admin (config). Crash: none. Effect: wrong tool output. Conditions: `compresslvl 0`. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
+Plan: compress only for levels 1 to 9.
+
+### D-272 DirTime is one global for all metaspools
+`lib/spool.c:57`, `:234-238` and `:296-299` keep one `DirTime`, so metaspools with different `reallocint` file articles by the last one's time slot. Who: the local admin (config). Crash: none. Effect: mild: wrong time slots, coarser expiry. Conditions: metaspools with different `reallocint`. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: M.
+Plan: keep the directory time per metaspool or spool object.
+
+### D-273 minfreefiles on btrfs removes every directory but the newest
+`util/dexpire.c:726` and `:1580-1581` read `f_ffree` 0 on btrfs as no free inodes, so every directory but the newest is removed at each run. Who: the local admin (config). Crash: none. Effect: data loss. Conditions: btrfs and `minfreefiles` (non-default). Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
+Plan: take `f_files == 0` as unknown and skip minfreefiles.
+
+### D-274 The t size suffix in dspool.ctl multiplies only once
+`lib/subs.c:782-803` stops after one step for `t`, so `maxsize 4t` is 4 MB and the spool is emptied every hour. Who: the local admin (a valid suffix). Crash: none. Effect: data loss. Conditions: a `t` size suffix in dspool.ctl. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
+Plan: let `t` fall through the `g` and `m` cases.
+
+### D-275 An unconfirmed PTR name becomes the reader's host name
+`dreaderd/dns.c:2021-2022` (also `:1982`) stores the PTR name before the forward check, so with `useverifieddns` an unconfirmed name appears in logs and NNTP-Posting-Host. Access is not widened. Who: anyone on the network who controls the PTR of their address. Crash: none. Effect: wrong trace data only. Conditions: `useverifieddns`, an access line matched by IP. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
+Plan: drop the unguarded `StoreDnsHost()` (the guarded copy at `:2051` stays).
+
+### D-276 A vserver accessfile uses only the first pattern of a comma list
+`dreaderd/dns.c:2740`, `:2806` and `:2808-2812` invert the `needread` logic, so only the first pattern of a comma list is used, and `|reader` is not parsed. Who: the local admin (config). Crash: none. Effect: wrong access decisions, too wide or too narrow. Conditions: a vserver accessfile. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: M.
+Plan: keep `needread` at 0 while a comma leaves patterns; parse `|reader`; ideally one parser for both access files.
+
+### D-277 A 110 readerdef answer from one access line is lost when another line's backend runs
+`dreaderd/dns.c:2197-2416`, `:2458-2476` and `:2507-2512` keep one backend answer, so a "110 readerdef" result is lost or taken from another line's backend, and the user gets the wrong readerdef. Who: an authenticated client. Crash: none. Effect: the wrong readerdef, wider or narrower. Conditions: several access lines with auth backends. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: M.
+Plan: keep the backend answer with the access line that matched.
+
+### D-278 With -c N refused connections stay counted and switch listeners off
+`dreaderd/main.c:3447-3461` and `:1477-1479` count parked refusals in `NumActive` for N seconds, so clients that get refused switch the listeners off. Lines are at main 9dc51c18. Who: anyone on the network who gets refused repeatedly. Crash: none. Effect: new connections are not accepted. Conditions: `-c N` (non-default). Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: M.
+Plan: do not count parked refusals in `NumActive`.
+
+### D-279 addrealm of one access line rewrites the user name for later lines
+`dreaderd/dns.c:2112-2124` and `:234-249` build user@realm in a shared buffer, so the name stays rewritten for later access lines and a valid user is refused. Who: an authenticated client. Crash: none. Effect: a valid user is refused. Conditions: `addrealm` on an earlier access line. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
+Plan: build user@realm in the line's own buffer.
+
+### D-280 With realm * one user counts as separate users for maxconnperuser
+`dreaderd/dns.c:2136-2145` and `dreaderd/main.c:3266-3270`: with `realm *`, user@a and user@b are one account but get separate `maxconnperuser` counts. Lines are at main 9dc51c18. Who: an authenticated client. Crash: none. Effect: the connection limit is not applied as configured. Conditions: `realm *`. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
+Plan: compare the user without the realm for `maxconnperuser`.
+
+### D-281 A slow transfer resets a tripped spam filter slot
+`util/diablo.c:3161`, `:3959` and `lib/spamfilter.c:501-511` pass the article's start time, so a transfer slower than 10 s resets a tripped slot and copies pass again. Who: a peer (a slow transfer). Crash: none. Effect: the rate filter lets copies through. Conditions: the internal spam filter on. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
+Plan: pass `time(NULL)` at the call.
+
+### D-282 The spam filter decay keeps idle minutes as credit
+`lib/spamfilter.c:519-523` and `:550-557` stop the decay at 0 but keep the idle minutes, so after a quiet hour about 59 plus the trip value copies pass. Who: content via feeds (copies sent after a quiet hour). Crash: none. Effect: the rate filter lets copies through. Conditions: the internal spam filter on. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
+Plan: set `t0 = t` when the decay loop reaches 0.
+
+### D-283 A new spam filter cache size truncates the mapped cache
+`lib/spamfilter.c:261-287`: `dicmd config internalfilter` with a new size (or dspaminfo with another size) truncates the cache file that feeder processes have mapped; by reading, they get SIGBUS. Who: the local admin. Crash: feeder processes, possibly the master (SIGBUS), by reading. Effect: lost service. Conditions: a size change at runtime. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: M.
+Plan: never truncate a mapped cache: write a new file and rename it.
+
+### D-284 dcancel -a and -s rewrite a spool file a feeder still appends to
+`util/dcancel.c:476-489`, `:560-579` and `:664` rewrite a spool file that a feeder child still appends to, so other articles in it are lost or misaddressed. The man page warns about it. Who: the local admin (`dcancel -a/-s`). Crash: none. Effect: wrong data. Conditions: a spool file still being written. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: M.
+Plan: take the feeder's exclusive lock without blocking and skip busy files.
+
+### D-285 doverctl clean deletes the overview of a group created after its scan
+`util/doverctl.c:212-248` and `:620-630` delete by the scan made at the start, so the overview of a group created meanwhile is deleted. Who: the local admin (`doverctl clean`), race. Crash: none. Effect: wrong data. Conditions: timing. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
+Plan: check the group against the live active file before deleting.
+
+### D-286 dcancel -r leaks two descriptors and a map per line
+`util/dcancel.c:277-301` and `:718-905` open the active file and an OverInfo per input line and never close them, so the tool stops after about 500 lines (with 1024 descriptors). Who: the local admin (`dcancel -r`). Crash: none. Effect: the tool fails. Conditions: long input. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
+Plan: open the active file once; close and unmap the OverInfo per line.
+
+### D-287 didump prints the end mark and exits 0 after a read error
+`util/didump.c:545-572` still prints "." and exits 0 after a read error, so diload installs a cut history (as D-85). Who: the local admin, with an I/O error. Crash: none. Effect: wrong data (the whole history). Conditions: a read error during didump. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
+Plan: no "." and exit 1 after a read error.
+
+### D-288 A shim compile error makes 23 DNS and IPC tests skip
+`tests/e2e/dnscache_test.go:53-58`, `dnsoverload_test.go:558-563` and `streamipc_test.go:38-43` skip when the shim does not compile or the working directory is wrong, so 23 tests skip and the job stays green. Who: nobody (CI). Crash: none. Effect: test-only. Conditions: a shim compile error or another working directory. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
+Plan: fail on a shim compile error; find the test data from the source path.
+
+### D-289 The writers-waited check in TestKPDBConcurrentUpdate can never fail
+`tests/e2e/kpdb_test.go:105-110` reads `ProcessState` before `Wait()`, so the check that the writers waited can never fail. Who: nobody (CI). Crash: none. Effect: test-only. Conditions: always. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
+Plan: use the done channel and `waitLockWaiter` pattern of `kpdb_relock_test.go`.
+
+### D-290 The 30 s wait in the dnewsfeeds no-argument test misses the reload
+`tests/e2e/dnewsfeeds_noarg_test.go:42-55` waits 30 s, which catches the master's reload in about one run of three. Who: nobody (CI). Crash: none. Effect: test-only, flaky. Conditions: always. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: M.
+Plan: compute the minute boundary like `dnewsfeeds_longconn_reload_test.go`; check with repeated runs, without loosening the test.
+
+Not added from deep review round 2: H4 (with `_FORTIFY_SOURCE`, glibc aborts on FD_SET of a descriptor of 1024 or more) did not reproduce: on glibc FD_SETSIZE stays 1024 despite the `__FD_SETSIZE` override in `lib/defs.h`, and MAXFDS is 1024 too (a probe on two test hosts), and the feeder refuses a connection above that and stays up (`TestR2FdSetFortify` on gw-r2-repro-c). M8 (`dexpireover -R` exit(1) on a full group being written) did not reproduce: every run found the group in use (`TestR2ReproRewriteFullGroupBeingWritten` on gw-r2-repro-b).
+
 ## Feature requests
 
 ### F-01 Cancel-Lock (RFC 8315)
@@ -1577,7 +1971,7 @@ go-while on 2026-11-08, from the archive zone's numbers.
 For every article and every group it is in, dreaderd writes the overview twice
 (`dreaderd/group.c`, `WriteOverview()`):
 - it appends the header block to the group's `data.*` file;
-- it overwrites one ~40-byte `OverArt` slot in the group's circular index with `pwrite`. The
+- it overwrites one 32-byte `OverArt` slot in the group's circular index with `pwrite`. The
   index is `over.*`, and the slot is the article number modulo the index size.
 
 Diablo reads nothing to do this (`GetOverArt()` only computes the slot), but the writes are
