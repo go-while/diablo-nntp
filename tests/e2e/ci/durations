@@ -449,6 +449,9 @@ TestHistoryUpdateDuringDhisexpire 2.23
 TestHistoryUpdateLockFailure 0.86
 TestHistoryWriterWaitsForCreator 0.03
 TestHostCacheDiabloHostsForms 0.00
+TestHostCacheDNSFailureAfterFreshLookup 6.43
+TestHostCacheDNSFailureKeepsPeers 67.74
+TestHostCacheDNSFailureNoDuplicates 32.72
 TestHostCacheEndEndsLabel 0.00
 TestHostCacheLongLabel 0.00
 TestIncomingFilterTextBinary 0.11
