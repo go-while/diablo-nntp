@@ -294,7 +294,7 @@ NNAcceptArticle(Connection *conn)
 	 * control message ?
 	 */
 
-	bareLF = ((conn->co_Flags & (COF_POST|COF_INHEADER)) == (COF_POST|COF_INHEADER) &&
+	bareLF = ((conn->co_Flags & COF_POST) &&
 		    (len == 1 || buf[len-2] != '\r'));
 
 	if ((conn->co_Flags & COF_INHEADER) == 0)
@@ -354,8 +354,12 @@ NNAcceptArticle(Connection *conn)
 	else if ((conn->co_Flags & COF_INHEADER) || (conn->co_Flags & (COF_POST|COF_WASCONTROL))) {
 	    if (len > 0 && bareLF) {
 		/*
-		 * a header line ended by LF alone is stored with CR LF, so
-		 * the checks on the posted article see each line on its own
+		 * a posted line ended by LF alone is stored with CR LF: the
+		 * checks on the posted article see each header line on its
+		 * own, and the post server gets every line, the last body
+		 * line too, ended by CR LF, so the "." line after it ends
+		 * the article there (a server that ends an article only on
+		 * CRLF "." CRLF, as diablo does, waits for more otherwise)
 		 */
 		MBWrite(&conn->co_ArtBuf, buf, len - 1);
 		buf = "\r\n";
