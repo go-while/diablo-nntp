@@ -520,8 +520,11 @@ TestNewsgroupsEmptyEntry 0.02
 TestNewsgroupsEmptyEntryActive 0.02
 TestNewsgroupsEmptyEntryNotCounted 0.01
 TestNewsgroupsFoldedActive 0.02
-TestNewsgroupsFoldedLongLine 0.08
+TestNewsgroupsFoldedLongLine 0.56
 TestNewsgroupsFoldedXref 0.01
+TestNewsgroupsLongLine 0.58
+TestNewsgroupsLongLineAutoAdd 0.18
+TestNewsgroupsLongLineLimit 0.07
 TestNewsgroupsSpaceActive 0.02
 TestNewsgroupsSpaceAfterComma 0.02
 TestNewsgroupsSpaceInsideList 0.02

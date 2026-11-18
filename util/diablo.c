@@ -92,6 +92,7 @@ void ArticleFileClose(int i);
 void ArticleFileTrunc(int artFd, off_t bpos);
 void ArticleFileSetSize(int artFd);
 void ngAddControl(char *nglist, int ngSize, const char *ctl);
+int ngAdd(char *nglist, int ngSize, const char *s, int n, int sep, int lineEnd);
 void ngAddFolded(char *nglist, int ngSize, const char *s, int n, int lineEnd);
 void writePath(time_t t, char *path);
 
@@ -3222,6 +3223,7 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 	long tbSize = -1;	/* a binary in a text article: its encoded bytes, see ArticleTypeTextBinarySize() */
 	int tbAlt = -1;		/* and the type it has without its binary types */
 	char nglist[MAXLINE];
+	int ngPiece = 0;	/* the next piece of this line goes on in nglist (D-209) */
 	char npath[MAXLINE];
 	char xrefdata[MAXLINE];
 	char dateBuf[64];
@@ -3461,8 +3463,13 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		 */
 		if (lastNl == 0) {
 		    bwrite(buffer, p, bytes);
+		    /* the rest of a Newsgroups: line, or of its continuation */
+		    if (ngPiece)
+			ngPiece = ngAdd(nglist, sizeof(nglist), p, bytes, 0,
+									thisNl);
 		    continue;
 		}
+		ngPiece = 0;
 
 		/*
 		 * The header is too big to be sane
@@ -3480,7 +3487,9 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		 * matches none of the headers below.
 		 */
 		if (bytes && (p[0] == ' ' || p[0] == '\t')) {
-		    if (ngFolded)
+		    if (ngFolded && !thisNl)
+			ngPiece = ngAdd(nglist, sizeof(nglist), p, bytes, 1, 0);
+		    else if (ngFolded)
 			ngAddFolded(nglist, sizeof(nglist), p, bytes, thisNl);
 		} else {
 		    ngFolded = 0;
@@ -3495,6 +3504,8 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		     * don't have to save the article if we don't want it
 		     */
 
+		    /* the commas of a name the limit cut (ngAdd()) */
+		    NormalizeNewsgroups(nglist);
 		    if (control[0])
 			ngAddControl(nglist, sizeof(nglist), control);
 
@@ -3688,14 +3699,20 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 			   strncasecmp(p, "Newsgroups:", 11) == 0) {
 		    hdrNewsgroups++;
 		    ngFolded = 1;
-		    diablo_strlcpynl(nglist, p + 11, bytes - 11 - aflen, MAXLINE);
-		    /* white space between names separates them (D-206) */
-		    NormalizeNewsgroups(nglist);
+		    /*
+		     * white space between names separates them (D-206).  A
+		     * line longer than the input buffer comes in pieces: the
+		     * further ones are added above (D-209).
+		     */
+		    nglist[0] = 0;
+		    ngPiece = ngAdd(nglist, sizeof(nglist), p + 11, bytes - 11,
+								0, thisNl);
 
 		    /*
 		     * FeedAdd breaks if newsgroups: header contains a
 		     * tab, but we allow trailing tabs because many systems 
-		     * are screwed and add one.  diablo_strlcpynl will deal with it.
+		     * are screwed and add one.  NormalizeNewsgroups() (in ngAdd())
+		     * drops them.
 		     */
 		    {
 			int i;
@@ -4503,43 +4520,73 @@ ngAddControl(char *nglist, int ngSize, const char *ctl)
 }
 
 /*
+ * ngAdd() - add n bytes at s to the Newsgroups: list in nglist (ngSize
+ * bytes): the value of the Newsgroups: line, (sep 1) a continuation line
+ * of a folded Newsgroups: header with a comma before it (D-208), or a
+ * further piece of either when the line is longer than the input buffer
+ * (D-209).  CR and LF are left out; the article itself is written thru
+ * unchanged.  lineEnd is 0 when s is a piece and the line goes on in the
+ * next one: the name at the end of s is then completed by that piece.
+ * When the line has ended, the list is normalized.  A NUL byte ends the
+ * line, as diablo_strlcpynl() did.
+ *
+ * When the list is full, the name the limit cuts is left out: its bytes
+ * become commas, so a cut name is never taken for another group, and the
+ * list stays full, so nothing after it is added (no later piece can join
+ * a name).  LoadArticle() normalizes the list once more at the end of
+ * the header.  Returns 1 when the next piece of the line is to be added.
+ */
+int
+ngAdd(char *nglist, int ngSize, const char *s, int n, int sep, int lineEnd)
+{
+    int l = strlen(nglist);
+    int i;
+    int k;
+
+    if (sep) {
+	if (l + 2 >= ngSize)
+	    return(0);
+	nglist[l++] = ',';
+    }
+    for (i = 0; i < n; ++i) {
+	if (s[i] == '\r' || s[i] == '\n')
+	    continue;
+	if (s[i] == 0) {
+	    lineEnd = 1;
+	    break;
+	}
+	if (l + 1 >= ngSize) {
+	    if (s[i] != ',' && s[i] != ' ' && s[i] != '\t') {
+		for (k = l; k > 0 && nglist[k-1] != ',' &&
+			nglist[k-1] != ' ' && nglist[k-1] != '\t'; --k)
+		    nglist[k-1] = ',';
+	    }
+	    nglist[l] = 0;
+	    return(0);
+	}
+	nglist[l++] = s[i];
+    }
+    nglist[l] = 0;
+    if (lineEnd)
+	NormalizeNewsgroups(nglist);
+    return(!lineEnd);
+}
+
+/*
  * ngAddFolded() - add a continuation line of a folded Newsgroups: header
  * (n bytes at s, with its line end) to nglist and normalize the list
  * again.  RFC 5536 3.1.4 allows folding white space around the commas,
  * so the line holds more names of the list (D-208).  A comma goes before
  * it, as the fold may stand for one: NormalizeNewsgroups() also takes
- * white space between two names as a separator (D-206).  A name that
- * does not fit whole is left out, so a cut name is never taken for
- * another group.  lineEnd is 0 when s is only the first piece of a line
- * longer than the input buffer: the rest of the line is written thru and
- * not added (D-209), so the name at the end of the piece may be cut and
- * is left out as well.
+ * white space between two names as a separator (D-206).  This is ngAdd()
+ * with sep 1, so a name that does not fit whole is left out; LoadArticle()
+ * calls ngAdd() itself for a continuation line longer than the input
+ * buffer, to go on with its pieces (D-209).
  */
 void
 ngAddFolded(char *nglist, int ngSize, const char *s, int n, int lineEnd)
 {
-    int l = strlen(nglist);
-    int start = l;
-    int i;
-
-    if (l + 2 >= ngSize)
-	return;
-    nglist[l++] = ',';
-    for (i = 0; i < n; ++i) {
-	if (s[i] == '\r' || s[i] == '\n')
-	    continue;
-	if (l + 1 >= ngSize)
-	    break;
-	nglist[l++] = s[i];
-    }
-    if ((i < n && s[i] != ',' && s[i] != ' ' && s[i] != '\t') ||
-						(i == n && !lineEnd)) {
-	while (l > start && nglist[l-1] != ',' && nglist[l-1] != ' ' &&
-						nglist[l-1] != '\t')
-	    --l;
-    }
-    nglist[l] = 0;
-    NormalizeNewsgroups(nglist);
+    (void)ngAdd(nglist, ngSize, s, n, 1, lineEnd);
 }
 
 
