@@ -269,10 +269,49 @@ flushFeeds(int justClose)
     }
 }
 
+/*
+ * dspoolout renames dqueue/<label> to <label>.S<seq> and dnewslink
+ * removes that file once it has sent it.  A run that spans a rotation
+ * must not go on writing to the renamed file: lines written after
+ * dnewslink read it are lost.  So before each write, open the queue file
+ * again by name when the name no longer points at the file we hold (as
+ * the feeder does when it closes its queue files on a flush).  If the
+ * new file cannot be opened, keep writing to the old one.
+ */
+static void
+reopenFeedOut(Feed *fe)
+{
+    struct stat fst;
+    struct stat pst;
+    char path[PATH_MAX];
+    int fd;
+
+    if (fstat(fe->fe_Fd, &fst) < 0)
+	return;
+    if (snprintf(path, sizeof(path), "%s/%s", PatExpand(DQueueHomePat),
+				fe->fe_Label) >= (int)sizeof(path))
+	return;
+    if (stat(path, &pst) == 0) {
+	if (pst.st_dev == fst.st_dev && pst.st_ino == fst.st_ino)
+	    return;
+    } else if (errno != ENOENT) {
+	return;
+    }
+    fd = open(path, O_APPEND|O_RDWR|O_CREAT, 0644);
+    if (fd < 0) {
+	logit(LOG_ERR, "%s: unable to open the queue file again after it was renamed: %s",
+						fe->fe_Label, strerror(errno));
+	return;
+    }
+    close(fe->fe_Fd);
+    fe->fe_Fd = fd;
+}
+
 void
 flushFeedOut(Feed *fe)
 {
     if (fe->fe_BufIdx && fe->fe_Buf && fe->fe_Fd >= 0) {
+	reopenFeedOut(fe);
 	/*
 	 * flush buffer.  If the write fails, we undo it to ensure
 	 * that we do not get garbaged feed files.

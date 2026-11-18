@@ -1,0 +1,1 @@
+- drequeue: a run that spans a `dspoolout` rotation lost the queue lines written after it: it kept writing to the queue file it opened at start, which `dspoolout` had renamed and `dnewslink` then removed, and still exited 0. drequeue now opens `dqueue/<label>` again by name before a write when the name points at another file or at none (D-238).
