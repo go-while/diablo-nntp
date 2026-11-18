@@ -1,0 +1,1 @@
+- dreaderd: with `localspool`, a reader process died (NULL pointer in NewDFA()) with all its clients when the spool server answered `whereis` with 223 for a client that was gone by then, ended by its idle or session timeout while it waited. The request is now finished without a client.
