@@ -274,6 +274,8 @@ TestDexpireoverRewriteGzipData 0.02
 TestDexpireoverRewriteMixedRecords 0.69
 TestDexpireoverRewriteTrackonly 0.38
 TestDexpireoverRewriteTrackonlyGzip 0.20
+TestDexpireoverStaleGroupDryRun 0.08
+TestDexpireoverStaleGroupNewArticle 0.16
 TestDexpirescoringDamaged 0.03
 TestDexpirescoringLastEntry 0.03
 TestDexpirescoringLockFailure 1.17
