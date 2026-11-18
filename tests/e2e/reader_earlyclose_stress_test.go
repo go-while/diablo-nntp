@@ -124,7 +124,7 @@ func TestReaderEarlyCloseStress(t *testing.T) {
 func runEarlyCloseStress(t *testing.T, threads string) {
 	sessions := envIntDefault("E2E_EARLYCLOSE_SESSIONS", 4000)
 	workers := envIntDefault("E2E_EARLYCLOSE_WORKERS", 24)
-	maxDur := time.Duration(envIntDefault("E2E_EARLYCLOSE_SECONDS", 120)) * time.Second
+	maxDur := time.Duration(envIntDefault("E2E_EARLYCLOSE_SECONDS", 60)) * time.Second
 	_, spool := spoolStore(t)
 	s := NewReaderSite(t, ReaderOptions{Spool: spool, Config: map[string]string{
 		"readerforks":   "1",

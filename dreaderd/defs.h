@@ -830,8 +830,20 @@ struct SharedInfo {
 
 #include <obj/dreaderd-protos.h>
 
-/* DIAG early close: track every close() of dreaderd's own code */
-#define close(fd)	DiagClose((fd), __FILE__, __LINE__)
+/*
+ * DIAG early close: track every close() of dreaderd's own code.  The
+ * utilities that include this file do not link thread.c: the weak
+ * reference is NULL there and they call close() directly.
+ */
+extern int DiagClose(int fd, const char *file, int line) __attribute__((weak));
+static inline int
+DiagCloseInl(int fd, const char *file, int line)
+{
+    if (DiagClose != NULL)
+	return(DiagClose(fd, file, line));
+    return((close)(fd));
+}
+#define close(fd)	DiagCloseInl((fd), __FILE__, __LINE__)
 
 #include <lib/debug-mbuf.h>
 

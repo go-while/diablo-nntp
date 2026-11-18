@@ -1069,7 +1069,7 @@ dbAuthenticate(char *user, char *pass, char *conf)
 	int i = 0;
 
 	if (negate) {
-	    db->close(db);
+	    (db->close)(db);	/* DIAG: not the close() macro */
 	    return(NULL);
 	}
 	if (*pass) {
@@ -1078,7 +1078,7 @@ dbAuthenticate(char *user, char *pass, char *conf)
 	    /* the value is not necessarily NUL-terminated: stay inside data.size */
 	    if (pl > data.size || memcmp(pass, p, pl) != 0 ||
 		(pl < data.size && p[pl] != 0)) {
-		db->close(db);
+		(db->close)(db);	/* DIAG: not the close() macro */
 		return(NULL);
 	    }
 	    while (i < data.size && *p) {
@@ -1105,7 +1105,7 @@ dbAuthenticate(char *user, char *pass, char *conf)
 	strcpy(result, "100 Success");
 	r = result;
     }
-    db->close(db);
+    (db->close)(db);	/* DIAG: not the close() macro */
     return(r);
 }
 
@@ -2175,7 +2175,7 @@ void DnsTest(DnsReq *dreq, DnsRes *dres, char *fqdn, char **ary, const char *ipn
 			Authenticated = -1;
 			authok = 0;
 		    }
-		    db->close(db);
+		    (db->close)(db);	/* DIAG: not the close() macro */
 		}
 	    }
 #endif	/* REJECT_DB */
