@@ -1359,10 +1359,33 @@ NNArticleRetrieveByMessageId(Connection *conn, const char *msgid, const char *ms
     int maxage = conn->co_Auth.dr_ReaderDef->rd_MaxAgePolicy;
 
     /*
-     * (a) retrieve from cache if caching is enabled
+     * A reader's own "a<N>" (seconds) may only narrow the readerdef's
+     * maxagepolicy (0 = no limit): a positive N <= INT_MAX (the numeric
+     * prefix strtol converts: a1x counts as 1) below it, or with no policy,
+     * is used; a0, a larger N, a negative N or no numeric prefix keep it.
+     */
+    if (msgopts && *msgopts == 'a') {
+	char *end;
+	long want;
+
+	errno = 0;
+	want = strtol(msgopts + 1, &end, 10);
+	if (end != msgopts + 1 && errno == 0 && want > 0 && want <= INT_MAX &&
+		(maxage <= 0 || want < maxage))
+	    maxage = (int)want;
+    }
+
+    /*
+     * (a) retrieve from cache if caching is enabled.  An age limit
+     * (maxage > 0) is judged by the spool server from the arrival time in
+     * its history, which the cache file does not keep: with a limit in
+     * force the request goes to the spool server as on a cache miss, so
+     * the reader gets the same answer whether the article is cached or
+     * not.  The spool server's 220 then does not rewrite a cache file that
+     * exists already (CreateCache leaves it alone).
      */
 
-    if (DOpts.ReaderCacheMode) {
+    if (DOpts.ReaderCacheMode && maxage <= 0) {
 	int valid;
 	int size;
 	int cfd;
@@ -1436,22 +1459,6 @@ NNArticleRetrieveByMessageId(Connection *conn, const char *msgid, const char *ms
     if (DebugOpt)
 	printf("bad cache\n");
 
-    /*
-     * A reader's own "a<N>" (seconds) may only narrow the readerdef's
-     * maxagepolicy (0 = no limit): a positive N <= INT_MAX (the numeric
-     * prefix strtol converts: a1x counts as 1) below it, or with no policy,
-     * is used; a0, a larger N, a negative N or no numeric prefix keep it.
-     */
-    if (msgopts && *msgopts == 'a') {
-	char *end;
-	long want;
-
-	errno = 0;
-	want = strtol(msgopts + 1, &end, 10);
-	if (end != msgopts + 1 && errno == 0 && want > 0 && want <= INT_MAX &&
-		(maxage <= 0 || want < maxage))
-	    maxage = (int)want;
-    }
     NNServerRequest(conn, grouphint ? conn->co_GroupName : NULL, msgid, maxage, SREQ_RETRIEVE, TimeRcvd, grpIter, endNo);
     NNWaitThread(conn);
 }
