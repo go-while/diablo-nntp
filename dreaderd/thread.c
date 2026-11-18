@@ -422,7 +422,8 @@ DiagClose(int fd, const char *file, int line)
     int err;
 
     if (fd >= 0 && fd < MAXFDS) {
-	if (FDes[fd] != NULL)
+	/* ResetThreads() in a new child closes the parent's descriptors */
+	if (FDes[fd] != NULL && strcmp(file, __FILE__) != 0)
 	    logit(LOG_CRIT, "DIAG close(%d) of a live descriptor (%s, type %d) at %s:%d",
 		fd, FDes[fd]->d_Id ? FDes[fd]->d_Id : "?", FDes[fd]->d_Type,
 		file, line);

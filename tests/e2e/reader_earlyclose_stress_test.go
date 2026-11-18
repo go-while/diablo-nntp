@@ -47,10 +47,10 @@ func envIntDefault(name string, def int) int {
 
 // earlyCloseSession runs one session: greeting, then cmd (if any), then QUIT. It returns
 // the client's local port, the stage that failed ("" for none), and the error.
-func earlyCloseSession(addr, mode, newgroupsArg string, d time.Duration) (int, string, error, bool) {
+func earlyCloseSession(addr, mode, newgroupsArg string, d time.Duration) (int, string, error, string) {
 	conn, err := net.DialTimeout("tcp", addr, d)
 	if err != nil {
-		return 0, "dial", err, false
+		return 0, "dial", err, ""
 	}
 	defer conn.Close()
 	port := conn.LocalAddr().(*net.TCPAddr).Port
@@ -58,11 +58,11 @@ func earlyCloseSession(addr, mode, newgroupsArg string, d time.Duration) (int, s
 	r := bufio.NewReader(conn)
 	line, err := r.ReadString('\n')
 	if err != nil {
-		return port, "greeting", err, false
+		return port, "greeting", err, ""
 	}
 	if !strings.HasPrefix(line, "200 ") && !strings.HasPrefix(line, "201 ") {
 		// a refusal (e.g. 400 limit reached) is no early close
-		return port, "", nil, true
+		return port, "", nil, strings.TrimSpace(line)
 	}
 	expect := func(cmd, code string) error {
 		if _, err := conn.Write([]byte(cmd + "\r\n")); err != nil {
@@ -80,16 +80,16 @@ func earlyCloseSession(addr, mode, newgroupsArg string, d time.Duration) (int, s
 	switch mode {
 	case "GROUP":
 		if err := expect("GROUP e2e.test", "211"); err != nil {
-			return port, "reply", err, false
+			return port, "reply", err, ""
 		}
 	case "NEWGROUPS":
 		if err := expect("NEWGROUPS "+newgroupsArg, "231"); err != nil {
-			return port, "reply", err, false
+			return port, "reply", err, ""
 		}
 		for {
 			l, err := r.ReadString('\n')
 			if err != nil {
-				return port, "reply", fmt.Errorf("NEWGROUPS list: %w", err), false
+				return port, "reply", fmt.Errorf("NEWGROUPS list: %w", err), ""
 			}
 			if l == ".\r\n" || l == ".\n" {
 				break
@@ -101,9 +101,9 @@ func earlyCloseSession(addr, mode, newgroupsArg string, d time.Duration) (int, s
 		stage = "reply" // QUIT is this session's first command
 	}
 	if err := expect("QUIT", "205"); err != nil {
-		return port, stage, err, false
+		return port, stage, err, ""
 	}
-	return port, "", nil, false
+	return port, "", nil, ""
 }
 
 // isEarlyClose tells whether err is the symptom: the server ended the connection (EOF or
@@ -122,7 +122,7 @@ func TestReaderEarlyCloseStress(t *testing.T) {
 }
 
 func runEarlyCloseStress(t *testing.T, threads string) {
-	sessions := envIntDefault("E2E_EARLYCLOSE_SESSIONS", 4000)
+	sessions := envIntDefault("E2E_EARLYCLOSE_SESSIONS", 20000)
 	workers := envIntDefault("E2E_EARLYCLOSE_WORKERS", 24)
 	maxDur := time.Duration(envIntDefault("E2E_EARLYCLOSE_SECONDS", 60)) * time.Second
 	_, spool := spoolStore(t)
@@ -135,8 +135,9 @@ func runEarlyCloseStress(t *testing.T, threads string) {
 	// On a failure, keep only the part of general.log that matters (it has thousands of
 	// sessions): registered after NewReaderSite, so it runs before its dump.
 	var (
-		mu    sync.Mutex
-		fails []earlyCloseFail
+		mu           sync.Mutex
+		fails        []earlyCloseFail
+		firstRefusal string
 	)
 	t.Cleanup(func() {
 		if !t.Failed() {
@@ -174,8 +175,12 @@ func runEarlyCloseStress(t *testing.T, threads string) {
 					mode = []string{"GROUP", "NEWGROUPS"}[i%2]
 				}
 				port, stage, err, ref := earlyCloseSession(s.Addr, mode, ahead, 10*time.Second)
-				if ref {
-					refused.Add(1)
+				if ref != "" {
+					if refused.Add(1) == 1 {
+						mu.Lock()
+						firstRefusal = ref
+						mu.Unlock()
+					}
 					continue
 				}
 				if stage == "" {
@@ -193,8 +198,8 @@ func runEarlyCloseStress(t *testing.T, threads string) {
 
 	g := generalLog(s)
 	diag := regexp.MustCompile(`(?m)^.*DIAG .*$`).FindAllString(g, -1)
-	t.Logf("readerthreads %s: %d sessions ok, %d refused, %d failed in %v (%d workers); %d DIAG lines",
-		threads, ok.Load(), refused.Load(), len(fails), el.Round(time.Millisecond), workers, len(diag))
+	t.Logf("readerthreads %s: %d sessions ok, %d refused (first: %q), %d failed in %v (%d workers); %d DIAG lines",
+		threads, ok.Load(), refused.Load(), firstRefusal, len(fails), el.Round(time.Millisecond), workers, len(diag))
 	for i, l := range diag {
 		if i == 40 {
 			t.Logf("... %d more DIAG lines", len(diag)-40)
