@@ -184,7 +184,9 @@ int RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int old
 int rewriteDataFile(Group *group, const char *cacheBase, int cacheSize, const OverArt *oa, OverArt *ob, const char *dirPath, int oldDataEntriesMask, int newDataEntriesMask, artno_t artNo);
 int ResizeGroup(Group *group, int fd, OverHead *oh, int maxArts, int OldDataEntries, int *fdl);
 static int rangeHasRecords(const OverArt *oa, long long n, artno_t base, int entries, artno_t startNo, artno_t endNo);
+#ifdef USE_ZLIB
 static int rangeHasData(const OverArt *oa, long long n, artno_t base, int entries, artno_t startNo, artno_t endNo);
+#endif
 #ifndef USE_ZLIB
 static int gzipOnlyData(Group *group, const char *dirPath, artno_t startNo, artno_t endNo, int dataEntries);
 #endif
@@ -2433,6 +2435,7 @@ RewriteData(Group *group, int fd, OverHead *oh, const char *dirPath, int oldData
     return(0);
 }
 
+#ifdef USE_ZLIB
 /*
  * rangeHasData() - the index oa (n slots) has a record with overview data
  * (a data offset, not a trackonly record) for articles base .. base +
@@ -2453,6 +2456,7 @@ rangeHasData(const OverArt *oa, long long n, artno_t base, int entries, artno_t 
     }
     return(0);
 }
+#endif
 
 /*
  * rangeHasRecords() - the new index oa (n slots) has a record in the data.
