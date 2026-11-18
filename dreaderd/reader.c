@@ -1558,7 +1558,10 @@ NNUnknownCommand(Connection *conn)
  *
  *	Only for a post already given to a post server (a request still in
  *	the queue for one is left alone) and not while its article is being
- *	sent: the post server would then get a cut article.
+ *	sent: the post server would then get a cut article.  Not while the
+ *	reader shuts down (TerminatePending): the main loop then frees server
+ *	connections without NNServerTerminate(), so sr_SConn can point at a
+ *	freed one.
  */
 static int
 waitPostClientGone(Connection *conn)
@@ -1568,7 +1571,7 @@ waitPostClientGone(Connection *conn)
     char c;
     int r;
 
-    if (sreq == NULL || sreq->sr_CConn != conn ||
+    if (TerminatePending || sreq == NULL || sreq->sr_CConn != conn ||
 	(sc = sreq->sr_SConn) == NULL || sc->co_Desc == NULL ||
 	sc->co_Desc->d_Type != THREAD_POST
     )
