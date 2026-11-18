@@ -298,6 +298,13 @@ DiabFilter(char *fpath, char *loc, int wireformat)
 
 	llen = atoi(aptr + 1);	/* get article length */
 
+	/*
+	 * diab_read() puts the article after sizeof(SpoolArtHdr) bytes and
+	 * a NUL after it, also for an old record without a header.
+	 */
+	if (llen < 0 || llen > INT_MAX / 4)
+		return(-1);
+	llen += sizeof(SpoolArtHdr) + 1;
 	if (llen >= filter_abufsiz) {
 		count = sizeit(llen);
 		if (filter_abuf) {
