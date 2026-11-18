@@ -36,9 +36,29 @@ dactive=$("$dbin/dpath" server_dactive)
 # 'remember' days ago (diablo.config); remove the old backup first to have
 # more disk space to work with.  To change the hash table size, see hsize in
 # diablo.config.
+#
+# With path_dhistory_save in diablo.config (for a history on a RAM disk), the
+# backup goes there (dhisexpire -m -o), not next to the history: there it
+# would keep the old history in memory until the next run.
+save=$("$dbin/dpath" -q dhistory_save 2>/dev/null) || save=""
 rm -f "$dhistory.new" "$dhistory.bak"
-"$dbin/dhisexpire" -a "$dhistory"
-status=$?
+case $save in
+"" | NONE)
+    "$dbin/dhisexpire" -a "$dhistory"
+    status=$?
+    ;;
+*)
+    bak="$save/$(basename "$dhistory").bak"
+    if [ -d "$save" ]; then
+	rm -f "$bak"
+	"$dbin/dhisexpire" -a -m -o "$bak" "$dhistory"
+	status=$?
+    else
+	echo "$0: path_dhistory_save $save is not a directory; history not trimmed" >&2
+	status=1
+    fi
+    ;;
+esac
 
 # Trim the server's active file.
 dstatus=0

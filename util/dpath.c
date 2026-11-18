@@ -110,6 +110,7 @@ PathList PList[] = {
     { "server_dactive",	&ServerDActivePat, PatDbExpand },
     { "reader_dactive",	&ReaderDActivePat, PatDbExpand },
     { "dhistory",	&DHistoryPat, PatDbExpand },
+    { "dhistory_save",	&DHistorySavePat, PatDbExpand },
     { "spam.body.cache",	&SpamBodyCachePat, PatDbExpand },
     { "spam.nph.cache",	&SpamNphCachePat, PatDbExpand },
     { "pcommit_cache",	&PCommitCachePat, PatDbExpand }

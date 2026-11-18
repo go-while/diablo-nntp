@@ -33,6 +33,7 @@
 #	- the history file is missing and DIABLO_REQUIRE_HISTORY="yes" (by
 #	  default that is not a failure, diablo makes a new one; a note is
 #	  printed only when a snapshot, dhistory.snp or .old, is there).
+#	  The snapshots are looked for in path_dhistory_save when it is set.
 # install-portable.sh creates an empty active file; at a site set up by hand it
 # may be missing: create it (README.READER: dsyncgroups) or start once with
 # "diablo-ctl -F start dreaderd".  "check" runs the checks and starts nothing.
@@ -336,8 +337,16 @@ preflight() {
 	    if [ "$DIABLO_REQUIRE_HISTORY" = yes ]; then
 		say "$d: history file $hist not found (DIABLO_REQUIRE_HISTORY=yes); a new site makes one with: dbin/diload $hist </dev/null"
 		bad=1
-	    elif [ -f "$hist.snp" ] || [ -f "$hist.old" ]; then
-		say "$d: note: $hist not found, but a snapshot is there ($hist.snp or $hist.old); diablo will start with an empty history unless you restore it"
+	    else
+		# adm/dumphist puts its snapshots in path_dhistory_save when set
+		snap=$("$DIABLO_BIN/dpath" -q dhistory_save 2>/dev/null) || snap=""
+		case $snap in
+		"" | NONE) snap=$hist ;;
+		*) snap=$snap/$(basename "$hist") ;;
+		esac
+		if [ -f "$snap.snp" ] || [ -f "$snap.old" ]; then
+		    say "$d: note: $hist not found, but a snapshot is there ($snap.snp or $snap.old); diablo will start with an empty history unless you restore it"
+		fi
 	    fi
 	fi
     fi

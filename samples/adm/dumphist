@@ -8,6 +8,13 @@
 #
 #	path_dumphist	%s/adm/dumphist
 #
+# With path_dhistory_save in diablo.config set to a directory, the snapshots
+# (and the temporary copy) go there instead.  Use a directory on a disk: next
+# to a history on a RAM disk the two copies take memory, and a reboot loses
+# them together with the history.
+#
+#	path_dhistory_save	/var/news/histsave
+#
 # Restoring is by hand: copy dhistory.snp back to the history path before
 # starting diablo.  The copy is taken while diablo runs, so articles that were
 # accepted during the copy may be missing from it.
@@ -31,7 +38,16 @@ fi
 
 history=$("$dbin/dpath" dhistory) || exit 1
 [ -f "$history" ] || { echo "$0: no history file $history" >&2; exit 1; }
-tmp="$history.tmp.$$"
+# an older dpath does not know dhistory_save: next to the history, as before
+save=$("$dbin/dpath" -q dhistory_save 2>/dev/null) || save=""
+case $save in
+"" | NONE) dir=$(dirname "$history") ;;
+*) dir=$save ;;
+esac
+[ -d "$dir" ] || { echo "$0: path_dhistory_save $dir is not a directory" >&2; exit 1; }
+snp="$dir/$(basename "$history").snp"
+old="$dir/$(basename "$history").old"
+tmp="$dir/$(basename "$history").tmp.$$"
 trap 'rm -f "$tmp"' EXIT
 trap 'exit 1' HUP INT TERM
 
@@ -39,8 +55,8 @@ echo "$(date) - $0 BEGIN"
 cp -p "$history" "$tmp" || exit 1
 # Keep the last snapshot as .old by a second link to it, then rename the new
 # copy over .snp: whenever the script ends, .snp is a whole snapshot.
-if [ -f "$history.snp" ]; then
-    ln -f "$history.snp" "$history.old" 2>/dev/null || cp -p "$history.snp" "$history.old" || exit 1
+if [ -f "$snp" ]; then
+    ln -f "$snp" "$old" 2>/dev/null || cp -p "$snp" "$old" || exit 1
 fi
-mv -f "$tmp" "$history.snp" || exit 1
-echo "$(date) - $0 END"
+mv -f "$tmp" "$snp" || exit 1
+echo "$(date) - $0 END ($snp)"

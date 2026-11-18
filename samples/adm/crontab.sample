@@ -39,5 +39,6 @@
 #20 * * * *	/news/dbin/djoblog actsync /news/adm/actsync active.example.com
 #
 # A history on a RAM disk: snapshot it hourly (path_dumphist in diablo.config
-# must be "%s/adm/dumphist", see adm/dumphist).
+# must be "%s/adm/dumphist", see adm/dumphist).  Set path_dhistory_save to a
+# directory on a disk, so the snapshots and dhisexpire's backup are kept there.
 #10 * * * *	/news/dbin/djoblog histbackup /news/adm/histbackup

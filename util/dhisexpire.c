@@ -66,7 +66,8 @@ Usage(void)
     printf("\t-a\t- rename the new history to old history when finished\n");
     printf("\t\t  (without -a the old history stays marked dead: run dhisexpire -u\n");
     printf("\t\t  to make it usable again, or install the new one yourself)\n");
-    printf("\t-m\t- rename history files across filesystems (file copy)\n");
+    printf("\t-m\t- rename history files across filesystems (file copy;\n");
+    printf("\t\t  a link on the same filesystem)\n");
 #ifndef	USE_DEADMAGIC
     printf("\t-P\t- don't pause diablo server\n");
 #endif
@@ -697,9 +698,11 @@ BackupOld(int fd)
 }
 
 /*
- * -m: the new history may be on another filesystem.  Copy it next to the
+ * -m: the new history may be on another filesystem.  Put it next to the
  * old one first (it is renamed over it last), so that the name never
- * shows a partial or missing file.
+ * shows a partial or missing file.  A hard link does that without a copy
+ * when both are on the same filesystem: a copy there would be a third
+ * history-sized file, which on a RAM disk is memory.
  */
 void
 CopyNew(void)
@@ -708,6 +711,13 @@ CopyNew(void)
 
     snprintf(InstallTmp, sizeof(InstallTmp), "%s.tmp", FileName);
     remove(InstallTmp);
+    if (link(NewFileName, InstallTmp) == 0) {
+	if (!QuietOpt)
+	    printf("New history linked to %s\n", InstallTmp);
+	return;
+    }
+    if (!QuietOpt)
+	printf("New history copied to %s\n", InstallTmp);
     if ((nfd = open(NewFileName, O_RDONLY)) < 0)
 	Fail(NewFileName, "Unable to open new history");
     if (copyToFile(nfd, InstallTmp) < 0) {

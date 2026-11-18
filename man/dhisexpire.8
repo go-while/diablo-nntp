@@ -92,7 +92,20 @@ and creates the new history file with ``.new'' tagged into the end.
 By default, dhisexpire can only rename files on the same filesystem.
 With this option it copies the new history next to the old one and
 renames the copy into place, so the new history can be on another
-filesystem. A backup on another filesystem is copied as well.
+filesystem. A backup on another filesystem is copied as well. A new
+history or backup on the same filesystem is linked, not copied.
+.PP
+For a history on a RAM disk, give
+.B \-m
+and a backup with
+.B \-o
+on a disk: by default the backup is a link to the old history, which then
+stays in memory until the next run (adm/biweekly.atrim does this when
+path_dhistory_save is set in diablo.config). While dhisexpire runs, the
+RAM disk holds the old and the new history either way: the old one is
+open in the diablo processes until they switch to the new one. A new
+history built on a disk is copied back next to the old one at the end,
+while the diablo processes wait for it.
 .PP
 .B \-o old-dhistory-file
 .PP
