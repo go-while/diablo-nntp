@@ -1,0 +1,1 @@
+- `dreaderd`: a reader's own age argument (`ARTICLE <message-id> a<N>`, also HEAD, BODY and STAT) can only narrow the readerdef's `maxagepolicy`; `a0`, a larger `N`, a value beyond an int, a negative number or an argument with no numeric prefix no longer replaces or removes it (D-230).
