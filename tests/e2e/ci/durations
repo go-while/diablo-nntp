@@ -576,13 +576,13 @@ TestReaderAuthinfoNotLogged 0.03
 TestReaderAuthRejectKeepsMaster 4.21
 TestReaderBindHostPort 0.04
 TestReaderBodyByMessageIdNumber 0.03
-TestReaderCacheAgeLimitAsksSpool 2.10
+TestReaderCacheAgeLimitAsksSpool 2.07
 TestReaderCacheHeaderRewrite 0.03
 TestReaderCacheHitsConcurrent 0.23
 TestReaderCacheHitsOneEntry 0.03
 TestReaderCacheHitsRepaired 0.03
 TestReaderCacheHitsZeroReadCount 0.03
-TestReaderCacheKeepsAgePolicy 4.50
+TestReaderCacheKeepsAgePolicy 4.14
 TestReaderCacheRequeueMidHeader 2.80
 TestReaderCacheSameArticleTwice 9.16
 TestReaderCapabilities 6.58
