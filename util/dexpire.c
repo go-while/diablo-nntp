@@ -82,6 +82,7 @@ typedef struct Partition {
     int			expmethod; 	/* Sync or dirsize expire method */
     struct FileSystem	*filesys;	/* Which filesys does this lie on */
     int			unsure;		/* an entry could not be classified */
+    uint16		spoolnum;	/* the spool object it belongs to */
     struct Partition	*next;
 } Partition;
 
@@ -120,6 +121,9 @@ int TestOpt = 0;
 int UpdateHistory = 0;		/* Do we run the history update */
 char **UnsureParts = NULL;	/* spools with an unclassified entry ... */
 int UnsureCount = 0;		/* ... in this run (all passes) */
+uint16 *ScanFailSpool = NULL;	/* directories that could not be read in */
+char **ScanFailPath = NULL;	/* this pass (spool, name as in the history */
+int ScanFailCount = 0;		/* update): their records are left alone */
 int HistoryUpdateOpt = -1;	/* Do we actually update the history entry 
 				 *	0 = No
 				 *	1 = Force
@@ -142,6 +146,9 @@ void printPartition(Partition *p);
 int updateHistory(void);
 int findNode(const char *path, int createMe);
 static int unsurePart(const char *partname, int add);
+static int underUnsure(const char *partname);
+static void scanFailed(const Partition *p);
+static int inFailedDir(uint16 spoolnum, const char *path);
 void freeNodes(void);
 void dumpNodeTable(void);
 time_t getAge(char *dirname);
@@ -330,6 +337,8 @@ CleanAllSpools(void)
     UpdateHistory = (HistoryUpdateOpt > 0);
     FileSystems = NULL;
     Partitions = NULL;
+    while (ScanFailCount > 0)
+	free(ScanFailPath[--ScanFailCount]);
 
     /*
      * Removal Scan
@@ -421,6 +430,7 @@ CleanAllSpools(void)
 		    p->expmethod = expmethod;
 		p->spaceok = 0;
 		p->unsure = unsurePart(p->partname, 0);
+		p->spoolnum = spoolnum;
 		p->filesys = findFileSys(p->partname);
 		p->next = Partitions;
 		Partitions = p;
@@ -677,7 +687,7 @@ cleanupDirectories(void)
 	int j;
 
 	part = SpoolEntries[i]->partn;
-	if (part->spaceok || part->unsure)
+	if (part->spaceok || part->unsure || underUnsure(part->partname))
 	    continue;
 
 	spacefree = part->filesys->fsfree;
@@ -885,13 +895,26 @@ scanDirectory(Partition *scanpart)
     if (DebugOpt > 1)
 	printf("Scanning directory: %s\n", scanpart->partname);
 
+    /*
+     * A directory that cannot be read is not an empty one: the history
+     * update keeps only the records of the directories it has seen, and
+     * would mark every article stored below it expired.  One that is
+     * gone (ENOENT, ENOTDIR) is empty: its articles are gone too.
+     */
     if ((dir = opendir(scanpart->partname)) == NULL) {
-	fprintf(stderr, "Unable to scan directory: %s (%s)\n",
+	if (errno == ENOENT || errno == ENOTDIR) {
+	    fprintf(stderr, "Unable to scan directory: %s (%s)\n",
 				scanpart->partname, strerror(errno));
+	    return;
+	}
+	fprintf(stderr, "Unable to scan directory: %s (%s): its history records are not updated in this run\n",
+				scanpart->partname, strerror(errno));
+	scanFailed(scanpart);
 	return;
     }
     {
-	while ((den = readdir(dir)) != NULL) {
+	/* readdir() returns NULL at the end and on an error: errno tells */
+	while ((errno = 0, den = readdir(dir)) != NULL) {
 	    if (den->d_name[1] != '.' || (strcmp(den->d_name, "..") == 0))
 		continue;
 	    switch (den->d_name[0]) {
@@ -907,6 +930,7 @@ scanDirectory(Partition *scanpart)
 		    p->age = 0;
 		    p->spaceok = 0;
 		    p->unsure = unsurePart(p->partname, 0);
+		    p->spoolnum = scanpart->spoolnum;
 		    p->keeptime = scanpart->keeptime;
 		    p->maxsize = scanpart->maxsize;
 		    p->minfree = scanpart->minfree;
@@ -1019,9 +1043,90 @@ scanDirectory(Partition *scanpart)
 					scanpart->partname, den->d_name);
 	    }
 	}
-
+	if (errno != 0 && errno != ENOENT && errno != ENOTDIR) {
+	    /*
+	     * The list is not complete: the newest directory is not known.
+	     * Nothing more is removed from it or from the directories below
+	     * it (cleanupDirectories), and their records are left alone.
+	     */
+	    fprintf(stderr, "dexpire: error reading spool directory %s (%s): nothing more removed from it and its history records not updated in this run\n",
+				scanpart->partname, strerror(errno));
+	    scanpart->unsure = unsurePart(scanpart->partname, 1);
+	    scanFailed(scanpart);
+	}
     }
     closedir(dir);
+}
+
+/*
+ * underUnsure() - whether partname lies below a directory that could not be
+ * classified or read in full in this run (an N.xx listed before a readdir()
+ * error of its spool directory): its records are left alone, so nothing may
+ * be removed from it either.  Partition names end in '/'.
+ */
+static int
+underUnsure(const char *partname)
+{
+    int i;
+
+    for (i = 0; i < UnsureCount; ++i) {
+	size_t l = strlen(UnsureParts[i]);
+
+	if (strncmp(partname, UnsureParts[i], l) == 0 && partname[l] != 0)
+	    return(1);
+    }
+    return(0);
+}
+
+/*
+ * scanFailed() - the directory of partition p could not be read (in full):
+ * the history update must leave the records of the articles below it alone.
+ * They are found by spool number and by the name the history update gives
+ * the directory (the part below the spool home, or the absolute path).
+ */
+static void
+scanFailed(const Partition *p)
+{
+    const char *shome = PatExpand(SpoolHomePat);
+    size_t shl = strlen(shome);
+    size_t pl = strlen(p->partname);
+    const char *name = p->partname;
+    uint16 *ns;
+    char **np;
+
+    while (shl > 0 && shome[shl - 1] == '/')
+	--shl;
+    if (pl > shl && strncmp(name, shome, shl) == 0 && name[shl] == '/')
+	name += shl + 1;
+    ns = realloc(ScanFailSpool, (ScanFailCount + 1) * sizeof(uint16));
+    if (ns != NULL)
+	ScanFailSpool = ns;
+    np = realloc(ScanFailPath, (ScanFailCount + 1) * sizeof(char *));
+    if (np != NULL)
+	ScanFailPath = np;
+    if (ns == NULL || np == NULL ||
+			(ScanFailPath[ScanFailCount] = strdup(name)) == NULL) {
+	fprintf(stderr, "unable to malloc in scan for queue dirs\n");
+	exit(1);
+    }
+    ScanFailSpool[ScanFailCount++] = p->spoolnum;
+}
+
+/*
+ * inFailedDir() - whether path (as ArticleFileName(ARTFILE_DIR_REL) gives
+ * it) of spool spoolnum lies below a directory that could not be read
+ */
+static int
+inFailedDir(uint16 spoolnum, const char *path)
+{
+    int i;
+
+    for (i = 0; i < ScanFailCount; ++i) {
+	if (ScanFailSpool[i] == spoolnum &&
+		strncmp(path, ScanFailPath[i], strlen(ScanFailPath[i])) == 0)
+	    return(1);
+    }
+    return(0);
 }
 
 /*
@@ -1366,8 +1471,12 @@ updateHistory(void)
 		if (h->hv.h1 == 0 && h->hv.h2 == 0)
 		    continue;
 
-		if (!UnexpireOpt)
+		if (!UnexpireOpt) {
 		    ArticleFileName(path, sizeof(path), h, ARTFILE_DIR_REL);
+		    if (ScanFailCount > 0 &&
+				inFailedDir(H_SPOOL(h->exp), path))
+			continue;
+		}
 
 		if (UnexpireOpt || findNode(path, 0) < 0) {
 		    if (!UnexpireOpt && VerboseOpt > 1) {
