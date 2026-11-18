@@ -130,3 +130,31 @@ func TestDiabloCtlSnapshotInSaveDir(t *testing.T) {
 		t.Errorf("check: %q, want a note naming %s", out, save)
 	}
 }
+
+// TestDhisexpireMSymlinkNewHistory: dhisexpire -a -m with the new history named by a relative
+// symbolic link (build/new -> target/rebuilt, which does not exist yet) installs the rebuilt
+// history itself, a regular file, and diablo still knows the article. Fails on the first
+// version of the link change: link() made a hard link to the symbolic link, so dhistory became
+// a link to target/rebuilt relative to the history's directory, which does not exist.
+func TestDhisexpireMSymlinkNewHistory(t *testing.T) {
+	s := NewSite(t, SiteOptions{})
+	id := s.Inject(t, "e2e.test", 1)[0]
+	if err := os.MkdirAll(filepath.Join(s.Dir, "build", "target"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	newName := filepath.Join(s.Dir, "build", "new")
+	if err := os.Symlink(filepath.Join("target", "rebuilt"), newName); err != nil {
+		t.Fatal(err)
+	}
+	out, err := s.TryRun("dhisexpire", "-a", "-m", "-o", "0", s.Dir+"/dhistory", newName)
+	if err != nil {
+		t.Fatalf("dhisexpire -a -m with a symbolic link as the new history: %v\n%s", err, out)
+	}
+	fi, err := os.Lstat(filepath.Join(s.Dir, "dhistory"))
+	if err != nil || !fi.Mode().IsRegular() {
+		t.Fatalf("dhistory after the run: %v, mode %v; want a regular file\n%s", err, fi.Mode(), out)
+	}
+	p := s.Peer(t)
+	p.ExpectCmd(438, "CHECK %s", id)
+	p.ExpectCmd(205, "QUIT")
+}

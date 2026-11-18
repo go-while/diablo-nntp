@@ -702,16 +702,21 @@ BackupOld(int fd)
  * old one first (it is renamed over it last), so that the name never
  * shows a partial or missing file.  A hard link does that without a copy
  * when both are on the same filesystem: a copy there would be a third
- * history-sized file, which on a RAM disk is memory.
+ * history-sized file, which on a RAM disk is memory.  Only a regular
+ * file is linked: link() on a symbolic link may link the symbolic link
+ * itself, and a relative one points elsewhere from the history's
+ * directory; such a new history is copied, as before.
  */
 void
 CopyNew(void)
 {
+    struct stat st;
     int nfd;
 
     snprintf(InstallTmp, sizeof(InstallTmp), "%s.tmp", FileName);
     remove(InstallTmp);
-    if (link(NewFileName, InstallTmp) == 0) {
+    if (lstat(NewFileName, &st) == 0 && S_ISREG(st.st_mode) &&
+					link(NewFileName, InstallTmp) == 0) {
 	if (!QuietOpt)
 	    printf("New history linked to %s\n", InstallTmp);
 	return;
