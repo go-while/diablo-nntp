@@ -59,6 +59,9 @@ diab_read(char *namepos, char *buf, int szbuf)
 #endif
 		return(-1);
 	}
+	/* every record starts with the spool header */
+	if (size < (int)sizeof(SpoolArtHdr))
+		return(-1);
 	if (strcmp(lastname, name)) {
 		if (fd >= 0) {
 			close(fd);
@@ -79,6 +82,37 @@ diab_read(char *namepos, char *buf, int szbuf)
 			return(-1);
 		}
 		snprintf(lastname, sizeof(lastname), "%s", name);
+	}
+	/*
+	 * A record of a compressed spool object (compresslvl) is the spool
+	 * header, the article as one gzip member and the NUL; size is the
+	 * header plus the uncompressed article.  It is inflated into buf
+	 * like a plain record would be read: before, its gzip bytes failed
+	 * the checks below and every article of such a spool went out
+	 * unfiltered.
+	 */
+	if (size < szbuf) {
+		SpoolArtHdr ah;
+
+		if (pread(fd, &ah, sizeof(ah), (off_t)offset) != sizeof(ah)) {
+#ifdef	DEBUG
+		fprintf(stderr, "error: reading article header, %d\n", errno);
+#endif
+			return(-1);
+		}
+		if ((uint8)ah.Magic1 == STORE_MAGIC1 &&
+		    (uint8)ah.Magic2 == STORE_MAGIC2 &&
+		    (ah.StoreType & STORETYPE_GZIP)) {
+			if (ah.HeadLen != sizeof(SpoolArtHdr) ||
+			    (size_t)ah.ArtLen + sizeof(SpoolArtHdr) != (size_t)size)
+				return(-1);
+			bcopy(&ah, buf, sizeof(ah));
+			if (SpoolGunzip(fd, (off_t)offset + sizeof(ah),
+					buf + sizeof(ah), (int)ah.ArtLen) < 0)
+				return(-1);
+			buf[size] = '\0';
+			return((int)ah.ArtLen);
+		}
 	}
 	if (lseek(fd, (off_t)offset, SEEK_SET) < 0) {
 #ifdef	DEBUG
@@ -108,14 +142,13 @@ diab_read(char *namepos, char *buf, int szbuf)
 		ptr = buf + sizeof(SpoolArtHdr);
 		rval -= sizeof(SpoolArtHdr);
 
-		for (nptr = ptr + rval - 1; ptr < nptr; ) {
-			if (! *ptr++) {
-#ifdef	DEBUG
-				fprintf(stderr, "error: checking article data (itfits), data byte null\n");
-#endif
-				return(-1);
-			}
-		}
+		/*
+		 * The article is passed on by its length: a NUL byte in it
+		 * (rejectartswithnul is off by default) failed the read
+		 * before, and the article went out unfiltered.  Only the
+		 * stored terminator after it must be the NUL.
+		 */
+		ptr += rval - 1;
 		if (*ptr) {
 #ifdef	DEBUG
 		fprintf(stderr, "error: checking article data (itfits), last byte not null\n");

@@ -336,9 +336,9 @@ DiabFilter(char *fpath, char *loc, int wireformat)
 	}
 
 	if ((rval = diab_read(loc, filter_abuf, filter_abufsiz)) < 0) {
-#ifdef DEBUG
-		logit(LOG_ERR, "diab_read failed: %s", loc);
-#endif
+		/* it passes unjudged, as with a failed filter: say so */
+		logit(LOG_ERR, "diab-filter(%s): cannot read article %s, not filtered",
+			fpath, loc);
 		return(-1);
 	}
 
