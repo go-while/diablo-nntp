@@ -776,7 +776,9 @@ bsizetol(char *p)
 }
 
 /*
- * Convert a string value to a number of kilobytes
+ * Convert a size string to a number of bytes. A plain number is in
+ * kilobytes; the suffixes k, m, g and t (either case) mean kilo-, mega-,
+ * giga- and terabytes.
  */
 double
 bsizektod(char *p)
