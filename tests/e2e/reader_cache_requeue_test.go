@@ -7,6 +7,7 @@ package e2e
 // committed and served to later readers. A requeue now drops the request's cache file.
 
 import (
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -14,8 +15,45 @@ import (
 	"testing"
 	"time"
 
+	testkit "github.com/go-while/nntp-testkit"
 	"github.com/go-while/nntp-testkit/fakeserver"
 )
+
+// waitSpoolConnects waits until dreaderd has put each spool server of ids into service. The
+// servers must be set up with the flag M in dserver.hosts and answer "mode reader" with 200 (the
+// handlers of these tests do). dreaderd then logs "connect(<id>) 200" when it has read the
+// greeting, sends "mode reader", reads the answer and logs "mode-reader(<id>) 200 ..."; the next
+// call in the same function, NNServerStart, makes the server available (d_Count 0; until then
+// requests skip it). Nothing between the log line and NNServerStart waits, and the reader is one
+// process: it takes up a client's request only after that call, back in its select loop. So a
+// request that is sent once both mode-reader lines are seen goes to a server that is in service.
+// All that is not observable is those few instructions between the log line and NNServerStart,
+// and nothing can happen in them. With no flag (the default, "mode thisbetterfail") dreaderd logs
+// nothing after the greeting (R logs mode-readonly(...), a login logs authinfo lines), and a wait
+// for "connect(<id>) 200" alone leaves a window until it has read the answer to its "mode ..."
+// line. The connections are started when the reader process starts and can still be coming up
+// when NewReaderSite returns, in no fixed order, and a request made before a server is in service
+// goes to the servers that are: a test that needs a request to go to one server first (or two
+// requests to run at the same time on two servers) waits for this before it asks. The wait is
+// bounded (15 s) and fails naming every line still missing.
+func waitSpoolConnects(t *testing.T, s *Site, ids ...string) {
+	t.Helper()
+	testkit.WaitForErr(t, 15*time.Second, "dreaderd's spool servers in service", func() error {
+		logged := generalLog(s)
+		var missing []string
+		for _, id := range ids {
+			for _, line := range []string{"connect(" + id + ") 200", "mode-reader(" + id + ") 200"} {
+				if !strings.Contains(logged, line) {
+					missing = append(missing, strconv.Quote(line))
+				}
+			}
+		}
+		if len(missing) > 0 {
+			return fmt.Errorf("not yet in log/general.log: %s", strings.Join(missing, ", "))
+		}
+		return nil
+	})
+}
 
 // TestReaderCacheRequeueMidHeader: readercache on; spool server 1 (priority 1) answers the first
 // ARTICLE with 220 and three header lines of its copy and then closes the connection (later
@@ -72,6 +110,8 @@ func cacheRequeueMidHeader(t *testing.T, opt2 string, cached bool) {
 					}
 					c.WriteLines(all...)
 					c.WriteLines(".")
+				case len(f) > 0 && strings.EqualFold(f[0], "MODE"): // dreaderd's priming (flag M)
+					c.WriteLines("200 reader mode")
 				case len(f) > 0 && strings.EqualFold(f[0], "QUIT"):
 					c.WriteLines("205 bye")
 					return
@@ -83,9 +123,12 @@ func cacheRequeueMidHeader(t *testing.T, opt2 string, cached bool) {
 	}
 	sp1 := fakeserver.New(t, fakeserver.Options{Handler: handler(1, &n1)})
 	sp2 := fakeserver.New(t, fakeserver.Options{Addr: "127.0.0.2:0", Handler: handler(2, &n2)})
-	hosts := "127.0.0.1\ts1p" + strconv.Itoa(sp1.Port()) + "\n127.0.0.2\ts2p" + strconv.Itoa(sp2.Port()) + opt2 + "\n"
+	hosts := "127.0.0.1\ts1p" + strconv.Itoa(sp1.Port()) + "M\n127.0.0.2\ts2p" + strconv.Itoa(sp2.Port()) + "M" + opt2 + "\n"
 	s := NewReaderSite(t, ReaderOptions{SpoolAddr: sp1.Addr(), Config: map[string]string{"readercache": "on"},
 		Files: map[string]string{"dserver.hosts": hosts}})
+	// Both servers must be in service before A asks: with only server 2 up the request goes
+	// straight to it and nothing is requeued.
+	waitSpoolConnects(t, s, "127.0.0.1", "127.0.0.2")
 
 	a := s.Reader(t)
 	a.MustSend("ARTICLE " + id + "\r\n")
