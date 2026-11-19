@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"io"
 	"net"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -144,5 +145,98 @@ func TestReaderByteLimitStopsPipelined(t *testing.T) {
 				t.Errorf("commands after the session byte limit were answered: %q", rest[1:])
 			}
 		})
+	}
+}
+
+// TestReaderByteLimitRateLimitNoSpin: a readerdef with `bytelimit 300` and `ratelimit 2000`
+// (all reply types); ARTICLE of a 12 KB article from the spool server passes the limit after
+// its first 2000 bytes, and the rest goes out at the rate, about six seconds, while the
+// connection is terminated (NNTerminate()). The reader processes must not spend that time
+// on the CPU: their CPU time (utime + stime in /proc/PID/stat, Linux only) over the transfer
+// must stay under one second. Before the change in NNTerminate(), it set the write bit again
+// while the ratelimit timer held the output, so select() returned at once for the writable
+// socket, pass after pass, and a reader process was on the CPU for about the whole transfer.
+// The limit of one second is about a fifth of that busy time, so that a loaded host neither
+// fails the fix nor lets a busy loop pass. The
+// transfer must take at least two seconds, or the ratelimit did not hold the reply and the
+// test has lost its trigger.
+func TestReaderByteLimitRateLimitNoSpin(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("reads the CPU time of the reader processes from /proc (Linux only)")
+	}
+	st, spool := spoolStore(t)
+	s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: accessWith("bytelimit 300\n    ratelimit 2000")})
+	id := msgID(t)
+	var body []string
+	for i := 0; i < 170; i++ {
+		body = append(body, strings.Repeat("y", 70)) // about 12 KB
+	}
+	feedReader(t, s, st, "e2e.test", newArticle(id, "e2e.test", "byte limit and rate limit", body...))
+	testkit.WaitFor(t, testkit.Deadline(), "the article in GROUP e2e.test", func() bool {
+		return byteLimitGroupReady(s.Addr)
+	})
+
+	ticks := func() map[int]int {
+		m := map[int]int{}
+		for _, pid := range sitePids(t, s, "dreaderd") {
+			if n := cpuTicks(pid); n >= 0 {
+				m[pid] = n
+			}
+		}
+		return m
+	}
+	conn, err := net.DialTimeout("tcp", s.Addr, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(60 * time.Second)) // the transfer takes about 6 s
+	r := bufio.NewReader(conn)
+	if g, err := r.ReadString('\n'); err != nil || !strings.HasPrefix(g, "20") {
+		t.Fatalf("greeting %q, %v", g, err)
+	}
+	before := ticks()
+	start := time.Now()
+	if _, err := io.WriteString(conn, "ARTICLE "+id+"\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	var lines []string
+	for {
+		line, err := r.ReadString('\n')
+		if line != "" {
+			lines = append(lines, strings.TrimRight(line, "\r\n"))
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("the connection was not closed after the reply (%v); %d lines read", err, len(lines))
+		}
+	}
+	took := time.Since(start)
+	after := ticks()
+	used := 0
+	for pid, n := range after {
+		used += n - before[pid] // a fork that started meanwhile counts whole
+	}
+	t.Logf("reply and close took %v; reader processes used %d clock ticks of CPU time", took.Round(10*time.Millisecond), used)
+
+	dot := slices.Index(lines, ".")
+	if len(lines) == 0 || !strings.HasPrefix(lines[0], "220 ") || dot < 0 {
+		t.Fatalf("no complete 220 reply: %d lines, first %q", len(lines), lines[:min(len(lines), 1)])
+	}
+	if blank := slices.Index(lines[:dot], ""); blank < 0 || !slices.Equal(lines[blank+1:dot], body) {
+		t.Fatalf("the article's body is not complete")
+	}
+	if rest := lines[dot+1:]; len(rest) != 1 || !strings.Contains(rest[0], "Session byte limit reached") {
+		t.Fatalf("after the article: %q, want only the 400 of the session byte limit", rest)
+	}
+	if took < 2*time.Second {
+		t.Fatalf("the reply came in %v: the ratelimit did not hold it, the test has lost its trigger", took)
+	}
+	// USER_HZ is 100 on Linux: 100 ticks are one second
+	if used > 100 {
+		t.Errorf("the reader processes used %d clock ticks (%.2f s) of CPU time while the rate-limited rest of the reply went out in %v: a busy loop",
+			used, float64(used)/100, took.Round(10*time.Millisecond))
 	}
 }

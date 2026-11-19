@@ -789,7 +789,13 @@ NNTerminate(Connection *conn)
      */
     conn->co_ListCacheMode = ACMODE_NONE;
     MBFlush(conn, &conn->co_TMBuf);
-    FD_SET(conn->co_Desc->d_Fd, &WFds);
+    /*
+     * While a ratelimit timer holds the output, MBFlush() writes nothing
+     * and the timer sets WFds when it fires; setting it here would wake
+     * select() at once for the writable socket, again and again.
+     */
+    if (conn->co_Desc->d_Timer == NULL)
+	FD_SET(conn->co_Desc->d_Fd, &WFds);
 }
 
 void
