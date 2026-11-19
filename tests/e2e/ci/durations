@@ -697,6 +697,7 @@ TestReaderPerlAuthFullCode 0.04
 TestReaderPidsFromLog 0.00
 TestReaderPost 0.02
 TestReaderPostBareLFHeaders 0.02
+TestReaderPostBytesCountedOnce 0.36
 TestReaderPostDate 0.03
 TestReaderPostDateDefault 0.08
 TestReaderPostDateWindowConfig 0.05
