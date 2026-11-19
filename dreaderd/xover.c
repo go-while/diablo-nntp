@@ -598,11 +598,20 @@ ListOverviewRangeRun(Connection *conn)
     }
     PutOverInfo(ov);
     if (conn->co_ListBegNo > conn->co_ListEndNo) {
-	if (conn->co_ArtMode != COM_NEWNEWS)
-	    FinishOverviewDotNewline(conn);
-	NNCommand(conn);
-	if (conn->co_ArtMode == COM_NEWNEWS)
+	/*
+	 * NEWNEWS: only this group is done.  NNListNewNews() takes the next
+	 * one and calls NNCommand() after the final ".".  NNCommand() here
+	 * would read the next command the client sent and answer it inside
+	 * the list, when this group took more than one pass.  The time stamp
+	 * NNCommand() set here stays (for the idle timeout): it is refreshed
+	 * at each group end, as before, not during one group.
+	 */
+	if (conn->co_ArtMode == COM_NEWNEWS) {
+	    conn->co_LastActiveTime = CurTime.tv_sec;
 	    return(1);
+	}
+	FinishOverviewDotNewline(conn);
+	NNCommand(conn);
     }
     return(0);
 }
