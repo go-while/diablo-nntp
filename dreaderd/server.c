@@ -1396,17 +1396,35 @@ NNArticleRetrieveByMessageId(Connection *conn, const char *msgid, const char *ms
 	int valid;
 	int size;
 	int cfd;
+	const char *map = NULL;
 
 	valid = OpenCache(msgid, &cfd, &size);
+
+	/*
+	 * The cache file is found by the hash of the Message-ID only: a
+	 * file that holds another article (another Message-ID with the
+	 * same hash) is a miss, and the request goes to the spool server.
+	 * The file is left as it is (CreateCache does not replace it).
+	 * If the file cannot be mapped, the check is skipped and the
+	 * answer is "no such article" below, as before this check.
+	 */
+	if (valid > 0 &&
+	    (map = xmap(NULL, size, PROT_READ, MAP_SHARED, cfd, 0)) != NULL &&
+	    !CacheMsgIdMatches(map, size, msgid)) {
+	    if (DebugOpt)
+		printf("cache holds another article\n");
+	    xunmap((void *)map, size);
+	    close(cfd);
+	    valid = 0;
+	}
 
 	if (valid > 0) {
 	    /*
 	     * good cache
 	     */
-	    const char *map;
 	    if (DebugOpt)
 		printf("good cache\n");
-	    if ((map = xmap(NULL, size, PROT_READ, MAP_SHARED, cfd, 0)) != NULL) {
+	    if (map != NULL) {
 		const char *denied;
 
 		xadvise(map, size, XADV_WILLNEED);
