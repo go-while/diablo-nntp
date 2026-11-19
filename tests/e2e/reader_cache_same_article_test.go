@@ -101,6 +101,8 @@ func cacheSameArticleTwice(t *testing.T, firstFirst bool) {
 				}
 				c.WriteLines(all[half:]...)
 				c.WriteLines(".")
+			case len(f) > 0 && strings.EqualFold(f[0], "MODE"): // dreaderd's priming (flag M)
+				c.WriteLines("200 reader mode")
 			case len(f) > 0 && strings.EqualFold(f[0], "QUIT"):
 				c.WriteLines("205 bye")
 				return
@@ -111,10 +113,13 @@ func cacheSameArticleTwice(t *testing.T, firstFirst bool) {
 	}
 	sp1 := fakeserver.New(t, fakeserver.Options{Handler: handler})
 	sp2 := fakeserver.New(t, fakeserver.Options{Addr: "127.0.0.2:0", Handler: handler})
-	hosts := "127.0.0.1\ts1p" + strconv.Itoa(sp1.Port()) + "\n127.0.0.2\ts1p" + strconv.Itoa(sp2.Port()) + "\n"
+	hosts := "127.0.0.1\ts1p" + strconv.Itoa(sp1.Port()) + "M\n127.0.0.2\ts1p" + strconv.Itoa(sp2.Port()) + "M\n"
 	s := NewReaderSite(t, ReaderOptions{SpoolAddr: sp1.Addr(), Config: map[string]string{"readercache": "on"},
 		Files: map[string]string{"dserver.hosts": hosts}})
 	asked := func() int { return sp1.Count("ARTICLE") + sp2.Count("ARTICLE") }
+	// "one connection each, so the two requests run at the same time" holds only when both are
+	// in service: with one missing, B's request has no connection of its own while A's is held.
+	waitSpoolConnects(t, s, "127.0.0.1", "127.0.0.2")
 
 	a := s.Reader(t)
 	b := s.Reader(t)

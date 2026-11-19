@@ -34,11 +34,12 @@ func TestReaderHandbackFdLostReleased(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			flag := filepath.Join(t.TempDir(), "lose")
 			_, spool := spoolStore(t)
-			s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: tc.access, NoStart: true,
+			// The shim comes in dreaderd's environment (Env, not NoStart and startReader): the
+			// site's listening socket is handed over as it was opened, not closed and bound again
+			// (that bind failed with "address already in use" once, on illumos).
+			s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: tc.access,
+				Env:    []string{lockFaultEnv(so), "FDLOST_FLAG=" + flag, "FDLOST_MODE=" + tc.mode},
 				Config: map[string]string{"path_generallog": "%s/general.log"}})
-			s.Env = append(s.Env, lockFaultEnv(so), "FDLOST_FLAG="+flag, "FDLOST_MODE="+tc.mode)
-			_, port, _ := net.SplitHostPort(s.Addr)
-			startReader(t, s, "[127.0.0.1]:"+port)
 
 			act0 := func(what string) {
 				t.Helper()
