@@ -217,13 +217,52 @@ fake_sendmail_bsd() {
     done
 }
 
+# retry BUDGET CMD...: run CMD up to 4 times, pausing 10, 20 and 30 s between the tries,
+# but start no new try when the seconds since the call plus the next pause would reach
+# BUDGET.  A try that has started is not cut short, and the helper puts no time limit
+# on a single try.  For a package mirror that fails for a while: CI saw "Not Found" and
+# "No route to host" from the FreeBSD mirror, and pkg alone retries each file only 3
+# times, 30 s each.  In the CI logs a failing `pkg install` took about 1.5 to 3.5 min
+# with "Not Found"; with "No route to host" (#443 and the second #453 run) about 9 min:
+# about 3 min to the first of five file errors, then four steps of about 90 s.  With
+# BUDGET 720: a failing call of about 1.5 to 3.5 min gives up to 4 tries, about 7 to 15
+# min; calls of about 9 min give 2 tries, about 18 min (the third is not started: after
+# try 2 the elapsed time plus the pause is past the budget).  Mixed cases can take
+# longer, because a try that started just before the budget runs its full length: a
+# 9 min try, a 100 s try and then another 9 min try take about 20 min, and 9 min tries
+# started as late as 719 s end at about 21 min.
+# Returns the last try's status, so a mirror that stays down still fails the caller (and
+# the job, under set -e).  `date +%s`: in POSIX only since the 2024 edition; FreeBSD's
+# date(1) has it (its manual page gives the example date "+%s.%3N" for the time since
+# the Unix Epoch), and retry is called only on FreeBSD.
+retry() {
+    _budget=$1; shift
+    _try=1; _pause=10; _t0=$(date +%s)
+    while :; do
+        "$@" && return 0
+        _rc=$?
+        _el=$(( $(date +%s) - _t0 ))
+        if [ "$_try" -ge 4 ]; then
+            echo "build-on-host: $* failed (try $_try of 4), giving up (tries made: $_try, $_el s)" >&2
+            return "$_rc"
+        fi
+        if [ $((_el + _pause)) -ge "$_budget" ]; then
+            echo "build-on-host: $* failed (try $_try of 4), time budget of $_budget s used up, giving up (tries made: $_try, $_el s)" >&2
+            return "$_rc"
+        fi
+        echo "build-on-host: $* failed (try $_try of 4), retrying in $_pause s" >&2
+        sleep "$_pause"
+        _try=$((_try + 1)); _pause=$((_pause + 10))
+    done
+}
+
 case "$os" in
 FreeBSD)
     echo "== FreeBSD $(freebsd-version 2>/dev/null || uname -r)"
     CCBIN=cc  # clang from base
     export ASSUME_ALWAYS_YES=yes
     # gmake is what the build needs beyond the base compiler, OpenSSL and zlib.
-    pkg install -y gmake >/dev/null 2>&1 || pkg install -y gmake
+    retry 720 pkg install -y gmake >/dev/null
     # Optional features, best effort (a package that is missing only leaves its
     # feature, and the tests of it, out): libcanlock (Cancel-Lock, dcanlock), perl5
     # (Perl authentication), gnupg (gpgv, for pgpverify) and tinycdb (CDB
