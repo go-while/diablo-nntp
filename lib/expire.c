@@ -16,6 +16,7 @@ OverExpire *OvExBase = NULL;
 MemPool *EXMemPool = NULL;
 
 uint32 ExGmtMin = (uint32)-1;
+static int ExLoaded = 0;	/* dexpire.ctl has been read once */
 time_t ExMTime = 0;
 
 void dumpOvExpire(OverExpire *ov);
@@ -188,12 +189,28 @@ LoadExpireCtl(int force)
 
 	{
 	    FILE *fi;
+	    char path[PATH_MAX];
 
-	    fi = fopen(PatLibExpand(DExpireCtlPat), "r");
+	    /*
+	     * PatLibExpand() returns a static buffer that logit() reuses
+	     * for the log file name: keep a copy for the messages.
+	     */
+	    snprintf(path, sizeof(path), "%s", PatLibExpand(DExpireCtlPat));
+	    fi = fopen(path, "r");
 
 	    if (fi == NULL) {
-		logit(LOG_CRIT, "%s file not found",
-					PatLibExpand(DExpireCtlPat));
+		/*
+		 * A reload that cannot open the file (briefly missing while
+		 * it is replaced) keeps the list already loaded and tries
+		 * again at the next minute check; first loads and forced
+		 * loads still stop.
+		 */
+		if (ExLoaded && !force) {
+		    logit(LOG_ERR, "%s cannot be opened at reload - keeping the loaded list",
+					path);
+		    return;
+		}
+		logit(LOG_CRIT, "%s file not found", path);
 		exit(1);
 	    }
 
@@ -204,6 +221,7 @@ LoadExpireCtl(int force)
 		    fstat(fileno(fi), &st);
 		ExMTime = st.st_mtime;	/* may be 0 if file failed to open */
 		loadExpireCtl(fi);
+		ExLoaded = 1;
 	    }
 	    if (fi)
 		fclose(fi);
