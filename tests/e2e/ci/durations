@@ -747,6 +747,7 @@ TestSpoolArticleReplyCode 30.08
 TestSpoolCtlBadReloadKeepsRunning 80.15
 TestSpoolCtlBadReloadRetried 102.17
 TestSpoolCtlDontstoreWithoutSpools 0.01
+TestSpoolCtlSizeSuffix 0.12
 TestSpoolCtlTooManySpoolLines 0.00
 TestSpoolCtlUnknownOption 0.00
 TestSpoolDefaultWeightPath 0.00

@@ -785,17 +785,16 @@ bsizektod(char *p)
 
     n = strtol(p, &p, 0) * 1024.0;
     switch(*p) {
+    case 't':
+    case 'T':
+	n *= 1024.0;
+	/* fall through */
     case 'g':
     case 'G':
 	n *= 1024.0;
 	/* fall through */
     case 'm':
     case 'M':
-	n *= 1024.0;
-	break;
-	/* fall through */
-    case 't':
-    case 'T':
 	n *= 1024.0;
 	break;
     }
