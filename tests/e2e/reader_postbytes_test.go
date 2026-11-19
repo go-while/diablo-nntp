@@ -15,16 +15,32 @@ import (
 
 var closedCounts = regexp.MustCompile(` posts=(-?[0-9]+) postbytes=(-?[0-9]+) postfail=(-?[0-9]+) `)
 
+// logSize is the length of the general log now: taken before a client connects, it is where
+// the log lines of that client's session can start.
+func logSize(s *Site) int {
+	return len(generalLog(s))
+}
+
 // sessionCounts waits for the "closed from" line of the session of c in the general log and
 // returns its posts=, postbytes= and postfail=. The line names the client's address and port
-// in parentheses, "(127.0.0.1:<port>)". The caller has sent QUIT.
-func sessionCounts(t *testing.T, s *Site, c *client.Conn) (posts, postBytes, postFail int64) {
+// in parentheses, "(127.0.0.1:<port>)". The caller has sent QUIT; from is logSize() taken
+// before c connected. Only the log after from is searched: an earlier session from the same
+// address may have had the same port (the up-check session of the site, or one of an earlier
+// subtest; on BSD ports are handed out at random), and its line must not be taken. Each
+// subtest waits here for the line of its own session before the next one connects. Taking
+// the last matching line instead would not do: until the line of c is written, the last
+// match is the earlier one.
+func sessionCounts(t *testing.T, s *Site, c *client.Conn, from int) (posts, postBytes, postFail int64) {
 	t.Helper()
 	tag := "(" + c.Conn.LocalAddr().String() + ")"
 	var m []string
 	var line string
 	testkit.WaitFor(t, 15*time.Second, `the "closed from" line of the session `+tag+" in the general log", func() bool {
-		for _, l := range strings.Split(generalLog(s), "\n") {
+		g := generalLog(s)
+		if from > len(g) {
+			return false
+		}
+		for _, l := range strings.Split(g[from:], "\n") {
 			if strings.Contains(l, "closed from") && strings.Contains(l, tag) {
 				if m = closedCounts.FindStringSubmatch(l); m != nil {
 					line = l
@@ -108,13 +124,14 @@ func TestReaderPostBytesCountedOnce(t *testing.T) {
 			"posted body",
 			".dot line",
 		}
+		from := logSize(s)
 		c := s.Reader(t)
 		defer c.Close()
 		c.ExpectCmd(340, "POST")
 		c.MustSend(client.Stuff(lines))
 		c.ExpectStatus(240, "POST article")
 		c.ExpectCmd(205, "QUIT")
-		posts, postBytes, postFail := sessionCounts(t, s, c)
+		posts, postBytes, postFail := sessionCounts(t, s, c, from)
 		check(t, "accepted post", posts, postBytes, postFail, 1, postWant(lines), 0)
 		if postBytes != postWant(lines) {
 			m := regexp.MustCompile(`post ok ` + regexp.QuoteMeta(id) + ` ([0-9]+)`).FindStringSubmatch(generalLog(s))
@@ -135,6 +152,7 @@ func TestReaderPostBytesCountedOnce(t *testing.T) {
 			"",
 			"posted body",
 		}
+		from := logSize(s)
 		c := s.Reader(t)
 		defer c.Close()
 		c.ExpectCmd(340, "POST")
@@ -144,7 +162,7 @@ func TestReaderPostBytesCountedOnce(t *testing.T) {
 			t.Fatalf("POST with two Newsgroups: lines: %d %q (%v), want 441 More than one Newsgroups header", code, line, err)
 		}
 		c.ExpectCmd(205, "QUIT")
-		posts, postBytes, postFail := sessionCounts(t, s, c)
+		posts, postBytes, postFail := sessionCounts(t, s, c, from)
 		check(t, "refused post", posts, postBytes, postFail, 0, postWant(lines), 1)
 	})
 
@@ -160,6 +178,7 @@ func TestReaderPostBytesCountedOnce(t *testing.T) {
 			"",
 			"posted body",
 		}
+		from := logSize(s)
 		c := s.Reader(t)
 		defer c.Close()
 		c.ExpectCmd(340, "POST")
@@ -169,7 +188,7 @@ func TestReaderPostBytesCountedOnce(t *testing.T) {
 			t.Fatalf("POST of an article the server refuses: %d %q (%v), want 441 with the server's 437", code, line, err)
 		}
 		c.ExpectCmd(205, "QUIT")
-		_, postBytes, _ := sessionCounts(t, s, c)
+		_, postBytes, _ := sessionCounts(t, s, c, from)
 		if want := postWant(lines); postBytes != want {
 			t.Errorf("post refused by the server: postbytes=%d, want %d (the bytes of its lines, counted once)", postBytes, want)
 		}
@@ -178,13 +197,14 @@ func TestReaderPostBytesCountedOnce(t *testing.T) {
 	t.Run("fed article accepted", func(t *testing.T) {
 		id := msgID(t)
 		lines := newArticle(id, "e2e.test", "fed bytes", "fed body", ".dot line")
+		from := logSize(s)
 		p := s.dialFrom(t, PeerIP)
 		defer p.Close()
 		p.ExpectCmd(335, "IHAVE %s", id)
 		p.MustSend(client.Stuff(lines))
 		p.ExpectStatus(235, "IHAVE "+id)
 		p.ExpectCmd(205, "QUIT")
-		posts, postBytes, postFail := sessionCounts(t, s, p)
+		posts, postBytes, postFail := sessionCounts(t, s, p, from)
 		check(t, "fed article accepted", posts, postBytes, postFail, 1, fedWant(lines), 0)
 	})
 
@@ -196,6 +216,7 @@ func TestReaderPostBytesCountedOnce(t *testing.T) {
 				lines = append(lines, l)
 			}
 		}
+		from := logSize(s)
 		p := s.dialFrom(t, PeerIP)
 		defer p.Close()
 		p.ExpectCmd(335, "IHAVE %s", id)
@@ -204,7 +225,7 @@ func TestReaderPostBytesCountedOnce(t *testing.T) {
 			t.Fatalf("IHAVE without a Subject: header: %d %q (%v), want 437", code, line, err)
 		}
 		p.ExpectCmd(205, "QUIT")
-		posts, postBytes, postFail := sessionCounts(t, s, p)
+		posts, postBytes, postFail := sessionCounts(t, s, p, from)
 		check(t, "fed article refused", posts, postBytes, postFail, 0, fedWant(lines), 1)
 	})
 }
