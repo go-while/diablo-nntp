@@ -1477,6 +1477,16 @@ NNPostCommand1(Connection *conn)
 {
     ServReq *sreq = conn->co_SReq;
 
+    /*
+     * The client went away while its post waited behind another one on
+     * this connection (NNTerminate() cleared sr_CConn, its article is
+     * gone with it): nothing to offer.  NNFinishSReq() frees the request
+     * and starts the next one.
+     */
+    if (sreq->sr_CConn == NULL) {
+	NNFinishSReq(conn, NULL, 0);
+	return;
+    }
     MBLogPrintf(conn, &conn->co_TMBuf, "ihave %s\r\n", sreq->sr_MsgId);
     NNPostResponse1(conn);
 }
@@ -1539,36 +1549,52 @@ void
 NNPostArticle1(Connection *conn)
 {
     ServReq *sreq = conn->co_SReq;
+    MBuf *mb;
+    char last = 0;
 
     conn->co_Func = NNPostArticle1;
     conn->co_State = "poart1";
 
-    /* Verify that the client has not disconnected yet. If such is the
-     * case, don't bother returning an error message, there's no client
+    /*
+     * The client went away after the IHAVE was sent, and its article
+     * with it.  A "." now would offer the server an empty article, which
+     * a lax server could store.  Close the connection instead, so the
+     * server stores nothing (a server that loses the connection before
+     * the "." keeps no article); NNServerTerminate() frees this request
+     * and gives the posts queued behind it to the next connection.
      */
     if (sreq == NULL || sreq->sr_CConn == NULL) {
-	logit(LOG_DEBUG, "Client vanished during post (%s)", sreq->sr_MsgId);
-	MBPrintf(&conn->co_TMBuf, ".\r\n"); /* Just junk the post. */
-	NNPostResponse2(conn);
+	logit(LOG_INFO, "post(%s): client gone after IHAVE %s, closing",
+	    conn->co_Desc->d_Id, sreq ? sreq->sr_MsgId : "");
+	NNServerTerminate(conn);
 	return;
     }
 
-    while (conn->co_TMBuf.mh_Bytes < 800) {
-	char *buf;
-	int len;
+    /*
+     * Queue the whole article for the post server at once, and leave
+     * the client's copy in place until the post is answered
+     * (NNFinishSReq() frees it).  If this server goes away before its
+     * answer, NNServerTerminate() gives the post to the next server,
+     * which then gets the whole article again, not only what was left
+     * of it.  And a client that goes away from now on (idle or session
+     * timeout) no longer cuts the article short: the whole article and
+     * its "." line are already in the post server's output buffer.
+     *
+     * Every line in co_ArtBuf ends with CR LF (NNAcceptArticle(),
+     * NNPostBuffer()), as it is sent; dot-stuffing is kept as posted.
+     */
+    for (mb = sreq->sr_CConn->co_ArtBuf.mh_MBuf; mb != NULL; mb = mb->mb_Next) {
+	int n = mb->mb_Size - mb->mb_Index;
 
-	if ((len = MBReadLine(&sreq->sr_CConn->co_ArtBuf, &buf)) > 0) {
-if (buf[len-1] != '\n' && buf[len-1]) {
-syslog(LOG_EMERG, "bad carriage return in %s %d", sreq->sr_MsgId, buf[len-1]);
-}
-	    buf[len-1] = '\n';
-	    MBWrite(&conn->co_TMBuf, buf, len);
-	} else if (len <= 0) {
-	    MBPrintf(&conn->co_TMBuf, ".\r\n");
-	    NNPostResponse2(conn);
-	    return;
+	if (n > 0) {
+	    MBWrite(&conn->co_TMBuf, mb->mb_Buf + mb->mb_Index, n);
+	    last = mb->mb_Buf[mb->mb_Size - 1];
 	}
     }
+    if (last != 0 && last != '\n')
+	MBPrintf(&conn->co_TMBuf, "\r\n");
+    MBPrintf(&conn->co_TMBuf, ".\r\n");
+    NNPostResponse2(conn);
 }
 
 /*
@@ -1602,8 +1628,9 @@ NNPostResponse2(Connection *conn)
 	/*
 	 * Neither 235 nor a refusal the end of a post has (or no code at
 	 * all): lines may follow that the next post would read as its reply.
-	 * The client gets a 441, never a retry (its article was sent and is
-	 * gone from its buffer), and the connection is closed (COF_BROKEN).
+	 * The client gets a 441, never a retry (the server may have taken the
+	 * article: a second offer could store it twice), and the connection
+	 * is closed (COF_BROKEN).
 	 */
 	if (!(code == 235 || code == 435 || code == 436 || code == 437 ||
 		code == 400 || code == 480 || code == 500 || code == 501 ||
