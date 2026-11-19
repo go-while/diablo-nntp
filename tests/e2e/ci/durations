@@ -654,6 +654,7 @@ TestReaderForksAutoTaskset 1.03
 TestReaderForksAutoZone 1.10
 TestReaderForksInvalid 0.04
 TestReaderForksNumber 1.03
+TestReaderGroupNoIndexCreate 2.11
 TestReaderGroupsByMessageId 0.15
 TestReaderHandbackFdLostReleased 0.13
 TestReaderHandbackFullTableKept 0.13

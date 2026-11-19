@@ -102,6 +102,7 @@ int WriteOverview(Connection *conn, ArtNumAss *an, const char *group, const char
 OverData *MakeOverHFile(OverInfo *ov, artno_t artNo, int create);
 void FreeOverInfo(OverInfo *ov);
 void FreeOverData(OverData *od);
+static OverInfo *OpenOverInfo(const char *group, int create);
 
 /* Overview records are fixed-size on disk.  Never publish a partial record. */
 static int
@@ -182,7 +183,7 @@ int	  NumOverInfo;
 
 /*
  * The groups in OvHash, most recently used first.  When the cache is full,
- * GetOverInfo() closes the least recently used group nobody holds.  Busy
+ * OpenOverInfo() closes the least recently used group nobody holds.  Busy
  * feeds post across thousands of groups, so dropping half of the cache at
  * a time (as before) or a small cache reopens almost every group.
  */
@@ -193,7 +194,7 @@ static int	OvCacheMax;
 /*
  * The descriptors left for the clients: an overview file that gets a
  * descriptor at or above OvFdHigh sets OvFdPressure, and the next
- * GetOverInfo() lowers the cache (see OvCacheShrink()).  open() returns the
+ * OpenOverInfo() lowers the cache (see OvCacheShrink()).  open() returns the
  * lowest free descriptor, so a number that high means every one below it
  * is in use, by whatever: a group keeps up to readerthreads+1 data files.
  */
@@ -304,7 +305,7 @@ OverCacheFdPressure(void)
  * fork's cache to three quarters of the groups it has now (not below
  * OV_CACHE_MAX) and close the least recently used ones.  The lower limit
  * stays, so a cache that does not fit is not refilled and shrunk again.
- * Called from GetOverInfo(), where closing groups was always allowed.
+ * Called from OpenOverInfo(), where closing groups was always allowed.
  */
 static void
 OvCacheShrink(void)
@@ -928,7 +929,7 @@ WriteOverview(Connection *conn, ArtNumAss *an, const char *group, const char *xr
 	int prealloc_ov, prealloc_oh;
 	struct iovec iov[3];
 
-	if ((ov = GetOverInfo(group)) == NULL) {
+	if ((ov = OpenOverInfo(group, 1)) == NULL) {
 	    logit(LOG_ERR, "Error in GetOverInfo(%s) msgid=%s", group, msgid);
 	    LogCmd(conn, '-', logbuf);
 	    if (DRIncomingLogPat != NULL)
@@ -1130,9 +1131,32 @@ void FlushOverCache(void)
     }
 }
 
+/*
+ * GetOverInfo() - the overview index of group for the read and cancel
+ *		   paths (GROUP, LISTGROUP, overview, article and cancel
+ *		   lookups), or NULL when the group has no index file.  The
+ *		   callers take NULL as a group without articles.  The feed
+ *		   (WriteOverview(), the caller of OpenOverInfo() with
+ *		   create) creates a missing index file, so
+ *		   selecting a group that never had an article leaves no
+ *		   over.* file behind.  An index file that exists but is empty
+ *		   or damaged is still initialised here, under the exclusive
+ *		   lock, as before (a feed may be creating it right now).
+ */
 OverInfo *
 GetOverInfo(const char *group)
 {
+    return(OpenOverInfo(group, 0));
+}
+
+/*
+ * OpenOverInfo() - GetOverInfo(); with create the index (and its
+ *		    directory) is made when it does not exist yet.
+ */
+static OverInfo *
+OpenOverInfo(const char *group, int create)
+{
+    int oflags = O_RDWR | (create ? O_CREAT : 0);
     OverInfo **pov = &OvHash[shash(group) & OVHMASK];
     OverInfo *ov;
 
@@ -1198,16 +1222,20 @@ again:
 
 	    snprintf(path, pathSize, "%s/%s", MyGroupHome, gfname);
 	    ov->ov_OFd = -1;
-	    if (MakeGroupDirectory(path) == -1)
+	    if (create && MakeGroupDirectory(path) == -1)
 		logit(LOG_ERR, "Error on overview dir open/create: %s (%s)",
 						path, strerror(errno));
-	    else if ((ov->ov_OFd = xopen(O_RDWR|O_CREAT, 0644, "%s", path)) < 0 &&
+	    else if ((ov->ov_OFd = xopen(oflags, 0644, "%s", path)) < 0 &&
 		     OvCacheReclaim(errno))
-		ov->ov_OFd = xopen(O_RDWR|O_CREAT, 0644, "%s", path);
+		ov->ov_OFd = xopen(oflags, 0644, "%s", path);
 	    if (ov->ov_OFd >= 0)
 		OvFdNote(ov->ov_OFd);
 	}
-	if (ov->ov_OFd < 0) {
+	if (ov->ov_OFd < 0 && !create && errno == ENOENT) {
+	    /* no index yet: a group without articles, not an error */
+	    FreeOverInfo(ov);
+	    ov = NULL;
+	} else if (ov->ov_OFd < 0) {
 	    logit(LOG_ERR, "Error on overview open/create for group %s: %s (%s)",
 						group, path, strerror(errno));
 	    FreeOverInfo(ov);
@@ -1713,11 +1741,10 @@ FindCanceledMsg(const char *group, const char *msgid, artno_t *partNo, int *pval
     OverInfo *ov = NULL;
 
     /*
-     * Make sure group is valid before calling GetOverInfo() or we will
-     * create random over. files for illegal groups.  Don't lock the record,
-     * meaning that we have to re-read it after calling GetOverInfo (otherwise
-     * someone else can update the numeric fields in the record while we are 
-     * trying to process them).
+     * Only a group in the active file counts as valid and is looked up.
+     * Don't lock the record, meaning that we have to re-read it after
+     * calling GetOverInfo (otherwise someone else can update the numeric
+     * fields in the record while we are trying to process them).
      */
 
     *partNo = -1;
@@ -1887,7 +1914,7 @@ MakeOverHFile(OverInfo *ov, artno_t artNo, int create)
 	/*
 	 * Only the feed (create) closes other groups here: a reader may still
 	 * use a record of a group it released (see PutOverInfo()), and
-	 * GetOverInfo() is where that was always allowed to go.
+	 * OpenOverInfo() is where that was always allowed to go.
 	 */
 	if (hfd < 0 && create && OvCacheReclaim(errno))
 	    hfd = xopen(O_RDWR|create, 0644, "%s/%s", MyGroupHome, gfname);
