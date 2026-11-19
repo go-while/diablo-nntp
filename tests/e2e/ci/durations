@@ -615,6 +615,7 @@ TestReaderdefNumbersRejectedReload 0.02
 TestReaderdefNumbersValidated 1.54
 TestReaderdefUnknownGroupList 0.82
 TestReaderdefUnknownOption 0.28
+TestReaderDexpireCtlMissingAtReload 110.15
 TestReaderDNSAuthFdLimit 0.60
 TestReaderDNSAuthinfoAfterTempFail 0.09
 TestReaderDNSAuthinfoNoRelookup 0.18
