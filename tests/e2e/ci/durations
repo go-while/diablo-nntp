@@ -641,6 +641,7 @@ TestReaderDNSQueueStreamIPC 0.08
 TestReaderFeedAndRead 0.03
 TestReaderFeedBareLFControlInBody 0.03
 TestReaderFeedBareLFDotIsData 0.03
+TestReaderFeedNulHeaderMemory 0.21
 TestReaderFileAuthRejectString 3.33
 TestReaderFileDenyListFdLeak 0.06
 TestReaderForkKeepsNoQueuedClients 2.19
@@ -711,6 +712,7 @@ TestReaderPostLog 0.07
 TestReaderPostLongLine 0.03
 TestReaderPostMessageIDSyntax 0.12
 TestReaderPostNewsgroupsSpace 0.03
+TestReaderPostNulHeaderMemory 0.10
 TestReaderPostRefusesInjected 0.03
 TestReaderPostReservedControlPermission 0.02
 TestReaderPostReservedGroups 0.17

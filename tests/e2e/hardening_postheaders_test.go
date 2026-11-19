@@ -77,7 +77,8 @@ func TestPostBareLFHeaders(t *testing.T) {
 }
 
 // TestPostBareLFAccepted: a post whose lines all end in LF alone, headers and body, still
-// works; the headers reach the outgoing server as separate lines and the body is unchanged.
+// works; the headers reach the outgoing server as separate lines and the contents of the body
+// lines are unchanged (each line is passed on ended by CR LF).
 func TestPostBareLFAccepted(t *testing.T) {
 	s, got := postHeadersSite(t, DefaultReaderAccess)
 	id := msgID(t)
