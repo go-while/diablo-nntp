@@ -45,11 +45,12 @@ end
 // The master looks at dnewsfeeds at its first pass in a new minute (its select() waits at
 // most 5 s), and a file whose mtime is less than 10 s behind its clock is left alone for
 // that minute, so the reload can come more than a minute after the write. The test takes
-// the first minute boundary 15 s or more after the file's mtime (the margin covers a file
-// system whose clock runs a little ahead) and fails if no reload is logged within 20 s after
-// it. It waits until the master has logged the line without an argument (only the master
-// loads the file then: the first peer's process has exited), so it knows the reload
-// happened, and then watches the master 6 s more.
+// the first minute boundary 15 s or more after the file's mtime (the master compares that
+// mtime with its clock, TooNear() in lib/newsfeed.c, and looks at its first pass after the
+// boundary, so 10 s would do; the other 5 s are slack) and fails if no reload is logged
+// within 20 s after it. It waits until the master has logged the line without an argument
+// (only the master loads the file then: the first peer's process has exited), so it knows
+// the reload happened, and then watches the master 6 s more.
 func TestDnewsfeedsReloadWithoutArgument(t *testing.T) {
 	s := NewSite(t, SiteOptions{})
 	p := s.Peer(t)
