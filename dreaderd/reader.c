@@ -789,7 +789,13 @@ NNTerminate(Connection *conn)
      */
     conn->co_ListCacheMode = ACMODE_NONE;
     MBFlush(conn, &conn->co_TMBuf);
-    FD_SET(conn->co_Desc->d_Fd, &WFds);
+    /*
+     * While a ratelimit timer holds the output, MBFlush() writes nothing
+     * and the timer sets WFds when it fires; setting it here would wake
+     * select() at once for the writable socket, again and again.
+     */
+    if (conn->co_Desc->d_Timer == NULL)
+	FD_SET(conn->co_Desc->d_Fd, &WFds);
 }
 
 void
@@ -1226,7 +1232,15 @@ NNCommand(Connection *conn)
 	    "400 %s: Session byte limit reached.\r\n",
 	    conn->co_Auth.dr_VServerDef->vs_HostName
 	);
+	/*
+	 * End here: NNCommand2() would take the connection back and run
+	 * the commands already read after the 400.  The direct update of
+	 * co_LastActiveTime after NNCommand2() is skipped; MBFlush() still
+	 * updates it after each write that goes out, so a client that stops
+	 * reading can be ended by an idle timeout if one is set.
+	 */
 	NNTerminate(conn);
+	return;
     }
     NNCommand2(conn);
     conn->co_LastActiveTime = CurTime.tv_sec;

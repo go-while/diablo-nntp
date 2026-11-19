@@ -594,6 +594,8 @@ TestReaderAuthinfoNotLogged 0.03
 TestReaderAuthRejectKeepsMaster 4.21
 TestReaderBindHostPort 0.04
 TestReaderBodyByMessageIdNumber 0.03
+TestReaderByteLimitRateLimitNoSpin 5.15
+TestReaderByteLimitStopsPipelined 0.23
 TestReaderCacheAgeLimitAsksSpool 2.07
 TestReaderCacheHeaderRewrite 0.03
 TestReaderCacheHitsConcurrent 0.23
