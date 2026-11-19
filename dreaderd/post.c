@@ -1417,7 +1417,10 @@ NNPostBuffer(Connection *conn)
 
 	conn->co_ClientPostCount++;
 	conn->co_Auth.dr_PostCount++;
-	conn->co_Auth.dr_PostBytes += conn->co_ArtBuf.mh_Bytes;
+	/*
+	 * dr_PostBytes is not added to here: NNAcceptArticle() counted the
+	 * lines of this article as they were read.
+	 */
 
 	if (newsGrps2 && haveApproved == 0 &&
 	    (mod = MailIfModerated(newsGrps2, conn, &modErr)) >= 0
