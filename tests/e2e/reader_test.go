@@ -39,6 +39,13 @@ type ReaderOptions struct {
 	// NoStart writes the site and its groups but doesn't start dreaderd.
 	NoStart bool
 
+	// Env is added to the site's Env after its groups are created (so not for the dgrpctl
+	// runs), before dreaderd starts. A test that needs an environment variable (an LD_PRELOAD
+	// shim) in dreaderd takes it here instead of NoStart and startReader: the listening socket
+	// then stays open from the free-port search until dreaderd has it. With NoStart it is
+	// closed and opened again by startReader, and a port can be taken in between.
+	Env []string
+
 	// Files are further files in the home directory, by name (e.g. dcontrol.ctl).
 	Files map[string]string
 }
@@ -125,6 +132,7 @@ func NewReaderSite(tb testing.TB, o ReaderOptions) *Site {
 		s.Run(tb, "dgrpctl", "newgroup", g, "y")
 	}
 
+	s.Env = append(s.Env, o.Env...)
 	switch {
 	case o.NoStart:
 		l.Close() // whatever starts dreaderd binds s.Addr itself, or startReader listens there
