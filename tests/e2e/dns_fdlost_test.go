@@ -109,10 +109,11 @@ func TestReaderHandbackFdLostReleased(t *testing.T) {
 func TestReaderHandbackFullTableKept(t *testing.T) {
 	so := preloadShim(t, "fdlost", fdLostSource)
 	flag := filepath.Join(t.TempDir(), "full")
+	fdlog := filepath.Join(t.TempDir(), "fdlost.log")
 	_, spool := spoolStore(t)
 	s := NewReaderSite(t, ReaderOptions{Spool: spool, NoStart: true,
 		Config: map[string]string{"path_generallog": "%s/general.log"}})
-	s.Env = append(s.Env, lockFaultEnv(so), "FDLOST_FLAG="+flag, "FDLOST_MODE=full")
+	s.Env = append(s.Env, lockFaultEnv(so), "FDLOST_FLAG="+flag, "FDLOST_MODE=full", "FDLOST_LOG="+fdlog)
 	_, port, _ := net.SplitHostPort(s.Addr)
 	startReader(t, s, "[127.0.0.1]:"+port)
 
@@ -142,9 +143,14 @@ func TestReaderHandbackFullTableKept(t *testing.T) {
 	c.Close()
 	act0("after a hand-back at the descriptor limit")
 	logged, _ := os.ReadFile(filepath.Join(s.Dir, "log", "general.log"))
-	all := string(logged) + s.Proc.Stderr()
-	if !strings.Contains(all, "fdlost: table full") {
-		t.Errorf("the shim never filled the descriptor table (no \"fdlost: table full\" on stderr):\n%s", all)
+	// The shim writes its lines to FDLOST_LOG before it returns from select() or recvmsg(),
+	// so before dreaderd goes on with the hand-back and before act0 can see Act=0. What it
+	// prints to stderr only reaches s.Proc.Stderr() when the copy goroutine has read it
+	// from the pipe, which can come after this point.
+	shim, _ := os.ReadFile(fdlog)
+	all := string(logged) + s.Proc.Stderr() + string(shim)
+	if !strings.Contains(string(shim), "fdlost: table full") {
+		t.Errorf("the shim never filled the descriptor table (no \"fdlost: table full\" in %s):\n%s", fdlog, all)
 	}
 	for _, bad := range []string{"recvmsg error (", "recvmsg descriptor dropped", "fdlost: message lost"} {
 		if strings.Contains(all, bad) {
@@ -168,11 +174,14 @@ func TestReaderHandbackFullTableKept(t *testing.T) {
 // descriptor first fails with EMFILE and stays queued, and the next recvmsg() returns it
 // without the descriptor and without MSG_CTRUNC (FreeBSD). With FDLOST_MODE=full the first
 // select() that returns while the flag exists fills the descriptor table (dup() until it
-// fails; "fdlost: table full" on stderr), and the next recvmsg() empties it again: if no slot
+// fails; "fdlost: table full" on stderr and in FDLOST_LOG), and the next recvmsg() empties it again: if no slot
 // was free when it was called and the message carries a descriptor, the message is read and
 // thrown away with its descriptor, and recvmsg() fails with EMFILE ("fdlost: message lost";
 // illumos). A message without a descriptor (reader stats) passes and the table fills again at
 // the next select(). If no recvmsg() comes, the table is emptied at a select() 3 seconds later.
+// If FDLOST_LOG names a file, the shim also appends its "fdlost: table full" and "fdlost:
+// message lost" lines there (written before it returns), so that a test can read them in
+// order with what dreaderd does.
 const fdLostSource = `#if defined(__sun)
 #define _XOPEN_SOURCE 600	/* as diablo is built: recvmsg() is __xnet_recvmsg() */
 #define __EXTENSIONS__
@@ -204,6 +213,7 @@ static int pending;	/* emfile: the next message is returned without its descript
 static int *fill;	/* full: the descriptors that fill the table */
 static int nfill, filled;
 static time_t filledAt;
+static int logfd = -1;	/* full: FDLOST_LOG, opened before the table is filled */
 
 static int
 fullmode(void)
@@ -220,6 +230,29 @@ unfill(void)
 {
     while (nfill > 0)
 	close(fill[--nfill]);
+    if (logfd >= 0) {
+	close(logfd);
+	logfd = -1;
+    }
+}
+
+/* appends line to the file FDLOST_LOG names (if set), on fd if that is open already: the
+   test reads it instead of the copy of stderr, which can lag behind */
+static void
+note(int fd, const char *line)
+{
+    const char *lf = getenv("FDLOST_LOG");
+    int own = 0;
+
+    if (fd < 0) {
+	if (lf == NULL || (fd = open(lf, O_WRONLY | O_APPEND | O_CREAT, 0644)) < 0)
+	    return;
+	own = 1;
+    }
+    if (write(fd, line, strlen(line)) < 0)
+	fprintf(stderr, "fdlost: cannot write the log\n");
+    if (own)
+	close(fd);
 }
 
 int
@@ -233,9 +266,15 @@ select(int n, fd_set *r, fd_set *w, fd_set *e, struct timeval *tv)
     res = real(n, r, w, e, tv);
     if (res > 0 && !filled && fullmode()) {
 	int cap = 0, fd;
+	const char *lf = getenv("FDLOST_LOG");
+	char line[64];
 
 	filled = 1;
 	filledAt = time(NULL);
+	/* the log file stays open (it counts as one of the descriptors that fill the table)
+	   so that it can be written once the table is full */
+	if (lf != NULL)
+	    logfd = open(lf, O_WRONLY | O_APPEND | O_CREAT, 0644);
 	for (;;) {
 	    if ((fd = open("/dev/null", O_RDONLY)) < 0)
 		break;
@@ -250,7 +289,9 @@ select(int n, fd_set *r, fd_set *w, fd_set *e, struct timeval *tv)
 	    }
 	    fill[nfill++] = fd;
 	}
-	fprintf(stderr, "fdlost: table full (%d descriptors)\n", nfill);
+	snprintf(line, sizeof(line), "fdlost: table full (%d descriptors)\n", nfill);
+	fputs(line, stderr);
+	note(logfd, line);
     } else if (nfill > 0 && time(NULL) - filledAt >= 3) {
 	unfill();
     }
@@ -313,6 +354,7 @@ recvmsg(int s, struct msghdr *msg, int flags)
 	    if (probe < 0) {
 		dropfd(msg);
 		fprintf(stderr, "fdlost: message lost\n");
+		note(-1, "fdlost: message lost\n");
 		errno = EMFILE;
 		return(-1);
 	    }
