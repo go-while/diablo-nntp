@@ -174,20 +174,54 @@ dodumpfile(char *filename)
 {
     FILE *f;
     char line[MAXLINE];
+    int heldcr = 0;
+    int partial = 0;	/* the last piece was full: its line is not ended */
 
     if ((f = fopen(filename, "r")) == NULL) {
 	printf("Unable to open %s\n", filename);
 	exit(1);    
     }
+    /*
+     * Each line goes out ending in CR LF.  fgets() cuts a long line into
+     * pieces of 16383 bytes: the piece that ends the line, or
+     * the last one of the file (which may have no newline, or end exactly
+     * at 16383 bytes), gets the CR LF.  A CR at the end of a full
+     * piece may belong to the CR LF that follows, so it is held back
+     * until we know.
+     *
+     * fp was last read (the greeting): flush before the first write, as
+     * newscommand() does.  Without it a libc may write the bytes just read
+     * back to the server (seen on illumos: the greeting in front of the file).
+     */
+    fflush(fp);
     while (fgets(line, sizeof(line), f) != NULL) {
-	if (strncmp(&line[strlen(line) - 2], "\r\n", 2) == 0) {
-	    fprintf(fp, "%s", line);
-	} else {
-	    line[strlen(line) - 1] = 0;
-	    fprintf(fp, "%s\r\n", line);
-	    
+	size_t len = strlen(line);
+	int eol = (len > 0 && line[len - 1] == '\n');
+	int full = (len == sizeof(line) - 1 && !eol);
+
+	if (heldcr) {
+	    if (!(eol && len == 1))
+		fputc('\r', fp);
+	    heldcr = 0;
 	}
+	if (eol) {
+	    len--;
+	    if (len > 0 && line[len - 1] == '\r')
+		len--;
+	} else if (full && line[len - 1] == '\r') {
+	    len--;
+	    heldcr = 1;
+	}
+	fwrite(line, 1, len, fp);
+	partial = full;
+	if (!full)
+	    fputs("\r\n", fp);
     }
+    /* the file ended in the middle of a long line, or after a held CR */
+    if (heldcr)
+	fputc('\r', fp);
+    if (partial)
+	fputs("\r\n", fp);
     fclose(f);
     dumped = 1;
 }

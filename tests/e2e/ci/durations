@@ -126,6 +126,8 @@ TestDcanlockErrors 0.01
 TestDcanlockStdinSecretBadAccess 0.01
 TestDcanlockVerify 0.01
 TestDcanlockWithdraw 0.03
+TestDclientDumpFileLastLineSizes 0.03
+TestDclientDumpFileLines 0.02
 TestDclientIPv6 0.00
 TestDclientListExtensions 0.00
 TestDclientOneLineReply 0.00
