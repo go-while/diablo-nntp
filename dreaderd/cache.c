@@ -17,6 +17,7 @@
 #include <stdint.h>
 
 Prototype int OpenCache(const char *msgid, int *pcfd, int *psize);
+Prototype int CacheMsgIdMatches(const char *map, int size, const char *msgid);
 Prototype void CreateCache(Connection *conn);
 Prototype void AbortCache(int fd, const char *msgid, int closefd);
 Prototype void CommitCache(Connection *conn, int closefd);
@@ -226,6 +227,96 @@ OpenCache(const char *msgid, int *pcfd, int *psize)
 	}
 	close(fd);			/* error	     */
 	return(0);
+    }
+    return(0);
+}
+
+/*
+ * CacheMsgIdMatches() - 1 if the cached article map[0..size) (a cache file
+ *			 OpenCache() found) is the article msgid, else 0.
+ *
+ *	The cache file is named by the hash of the Message-ID alone, and
+ *	two Message-IDs can have the same hash: with msgidhash hash (the
+ *	default) and hash crc, two IDs of the same length that differ only
+ *	in bit 0 of the 5th byte from the end share it about half the time
+ *	(lib/hash.c msgidhash(); <1510900044@gn> and <1510900045@gn> are
+ *	such a pair).  The file may then hold the other article.
+ *
+ *	The first Message-ID: header is read as MsgId() reads a Message-ID
+ *	(lib/msgid.c), within its line and the folded lines after it:
+ *	blanks and CRs before '<' are skipped, the value runs from '<' to
+ *	'>' with no '<', blank or CR inside, and after the '>' comes the
+ *	end of the line, a blank or a CR (a comment may follow; other
+ *	bytes there make it no Message-ID).  That value is compared with
+ *	msgid byte for byte.  No Message-ID: header in the header, or a
+ *	value not of that form, does not match.  MsgId()'s trailing '.'
+ *	and length rules are not checked here: msgid has passed MsgId(),
+ *	and a match is equal to it.  Reads only within the map, with
+ *	unsigned offsets that stay at or below size: it need not end in a
+ *	NUL or a newline.
+ */
+
+#define CMI_SKIP(c)	((c) == ' ' || (c) == '\t' || (c) == '\r')
+
+int
+CacheMsgIdMatches(const char *map, int size, const char *msgid)
+{
+    size_t idlen = strlen(msgid);
+    size_t n;
+    size_t b = 0;
+
+    if (size <= 0)
+	return(0);
+    n = (size_t)size;
+    while (b < n) {
+	size_t i;
+	size_t e;
+
+	for (i = b; i < n && map[i] != '\n'; ++i)
+	    ;
+	e = i;
+	if (e > b && map[e - 1] == '\r')
+	    --e;
+	if (e == b)			/* the empty line ends the header */
+	    return(0);
+	if (e - b >= 11 && strncasecmp(map + b, "Message-ID:", 11) == 0) {
+	    size_t p = b + 11;
+	    size_t q;
+
+	    for (;;) {
+		while (p < e && CMI_SKIP(map[p]))
+		    ++p;
+		if (p < e)
+		    break;
+		/* nothing left on this line: a folded value goes on */
+		if (i < n && i + 1 < n &&
+		    (map[i + 1] == ' ' || map[i + 1] == '\t')) {
+		    p = b = i + 1;
+		    for (i = b; i < n && map[i] != '\n'; ++i)
+			;
+		    e = i;
+		    if (e > b && map[e - 1] == '\r')
+			--e;
+		    continue;
+		}
+		return(0);
+	    }
+	    if (map[p] != '<')
+		return(0);
+	    for (q = p + 1; q < e && map[q] != '>'; ++q) {
+		if (map[q] == '<' || CMI_SKIP(map[q]))
+		    return(0);
+	    }
+	    if (q >= e)
+		return(0);
+	    ++q;			/* past '>' */
+	    if (q < e && !CMI_SKIP(map[q]))
+		return(0);
+	    return(q - p == idlen && memcmp(map + p, msgid, idlen) == 0);
+	}
+	if (i >= n)			/* last line, no newline */
+	    break;
+	b = i + 1;
     }
     return(0);
 }
