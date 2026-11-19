@@ -1757,7 +1757,7 @@ func TestTextBinaryLimitReload(t *testing.T) {
 	if boundary.Sub(written) < 11*time.Second {
 		boundary = boundary.Add(time.Minute)
 	}
-	time.Sleep(time.Until(boundary.Add(300 * time.Millisecond)))
+	sleepUntilWall(t, boundary.Add(300*time.Millisecond))
 
 	arts := []struct {
 		name string
@@ -1808,19 +1808,19 @@ func waitQueued(t *testing.T, s *Site, ids []string, want func(i int) []string) 
 	t.Helper()
 	deadline := time.Now().Add(15 * time.Second)
 	for {
-		missing := ""
+		var missing []string
 		for i := range ids {
 			for _, f := range want(i) {
 				if slices.Contains(deepRevMissing(s.queue(t, f), []string{ids[i]}), ids[i]) {
-					missing = f + " " + ids[i]
+					missing = append(missing, f+" "+ids[i])
 				}
 			}
 		}
-		if missing == "" {
+		if len(missing) == 0 {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("not in the queue after 15 s: %s", missing)
+			t.Fatalf("not in the queue after 15 s: %s", strings.Join(missing, ", "))
 		}
 		time.Sleep(200 * time.Millisecond)
 	}

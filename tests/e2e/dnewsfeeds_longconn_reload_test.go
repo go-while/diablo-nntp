@@ -39,7 +39,7 @@ func TestNewsfeedsReloadOnIdleOffers(t *testing.T) {
 	if boundary.Sub(written) < 11*time.Second {
 		boundary = boundary.Add(time.Minute)
 	}
-	time.Sleep(time.Until(boundary.Add(300 * time.Millisecond)))
+	sleepUntilWall(t, boundary.Add(300*time.Millisecond))
 
 	p.ExpectCmd(238, "CHECK %s", id("blocked"))
 }
