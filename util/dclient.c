@@ -58,6 +58,41 @@ usage(char *progname) {
     exit(1);
 }
 
+/*
+ * Keep the start for reply-code and dot checks, but consume the line through
+ * its newline.  Continuation pieces are printed without interpreting them.
+ */
+static int
+ReadReplyLine(char *line, int size, int show)
+{
+    char part[MAXLINE];
+    size_t len = 0;
+    int kept = 0;
+    int ch;
+    int seen = 0;
+
+    while ((ch = fgetc(fp)) != EOF) {
+	seen = 1;
+	if (kept < size - 1)
+	    line[kept++] = ch;
+	part[len++] = ch;
+	if (len == sizeof(part) || ch == '\n') {
+	    if (show)
+		fwrite(part, 1, len, stdout);
+	    len = 0;
+	}
+	if (ch == '\n')
+	    break;
+    }
+    line[kept] = 0;
+    if (show && len)
+	fwrite(part, 1, len, stdout);
+    /* A clean EOF may end a final fragment, but a read error is not a reply. */
+    if (ferror(fp))
+	return(-1);
+    return(seen);
+}
+
 void
 connectnews(char *hostname, char *port) {
     struct addrinfo hints, *res, *ai;
@@ -93,12 +128,10 @@ connectnews(char *hostname, char *port) {
 	exit(1);
     }
     setvbuf(fp, NULL, _IOLBF, 0);
-    if (fgets((char *)&line, 512, fp) == NULL) {
+    if (ReadReplyLine(line, sizeof(line), verbose) <= 0) {
 	printf("No response from server\n");
 	exit(2);
     }
-    if (verbose)
-	printf("%s", line);
     if (NntpCode(line) != 200 && NntpCode(line) != 201) {
 	printf("Unexpected response from server: %s", line);
 	exit(2);
@@ -138,6 +171,7 @@ newscommand(char *command) {
     while (command || fgets(inp, sizeof(inp), stdin) != NULL) {
 	const char *cmd = command;
 	int multi = -1;
+	int got;
 
 	if (cmd == NULL) {
 	    inp[strcspn(inp, "\r\n")] = 0;
@@ -146,8 +180,7 @@ newscommand(char *command) {
 	fflush(fp);
 	fprintf(fp, "%s\r\n", cmd);
 	rewind(fp);
-	while (fgets(line, MAXLINE, fp) != NULL) {
-	    printf("%s", line);
+	while ((got = ReadReplyLine(line, sizeof(line), 1)) > 0) {
 	    if (multi < 0) {
 		multi = MultiLineReply(cmd, line);
 		if (multi < 0) {
@@ -160,6 +193,10 @@ newscommand(char *command) {
 	    } else if (strncmp(line, ".\r\n", 3) == 0) {
 		break;
 	    }
+	}
+	if (got < 0) {
+	    printf("Error reading response from server\n");
+	    exit(2);
 	}
 	if (command)
 	    break;
@@ -234,10 +271,8 @@ newsquit(void) {
     fflush(fp);
     fprintf(fp,"QUIT\r\n");
     rewind(fp);
-    if (fgets((char *)&line, 512, fp) == NULL)
+    if (ReadReplyLine(line, sizeof(line), verbose) <= 0)
 	line[0] = 0;
-    if (verbose)
-	printf("%s", line);
     /*
      * After -f the replies to the dumped commands were not read, so this
      * line is the reply to the first of them, not to QUIT: as before, a
@@ -321,4 +356,3 @@ main(int argc, char **argv) {
     }
     exit(0);
 }
-
