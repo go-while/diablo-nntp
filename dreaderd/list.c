@@ -30,6 +30,13 @@ void NNStartListActiveScan(Connection *conn, const char *wc, TimeRestrict *tr, i
 void NNListActiveScan(Connection *conn);
 void NNListGroup(Connection *conn);
 
+static int
+ListActiveMatch(Connection *conn, const char *group, struct GroupList *groups)
+{
+    return (conn->co_ListPat == NULL || WildCmp(conn->co_ListPat, group) == 0) &&
+	(groups == NULL || GroupFindWild(group, groups));
+}
+
 /*
  * Non-blocking calls which attempt to obtain a read or write lock on the
  * active file cache. Return 0 in case of success, -1 in case of failure
@@ -182,6 +189,11 @@ NNStartListActiveScan(Connection *conn, const char *wc, TimeRestrict *tr, int mo
 	} else {
 	    if (ActiveCacheWriteLock() == 0) {
 		ActiveCacheFreeMain();
+		/*
+		 * Remember the generation before scanning.  An append during
+		 * the build must leave the finished cache out of date.
+		 */
+		ActiveCacheMarkValid(KDBActive);
 		conn->co_ListCacheMode = ACMODE_WRITE;
 	    }
 	}
@@ -218,12 +230,20 @@ NNListActiveScan(Connection *conn)
 	    ((conn->co_ListCacheMode == ACMODE_READ) &&
 	     conn->co_ListCacheGroups))) {
 	int glen;
+	int match;
+	int lockrec;
+	int cts_int = 0;
+	const char *cts = NULL;
 	const char *group;
 	char grpbuf[MAXGNAME];
 	const char *rec;
 
 	if (conn->co_ListCacheMode == ACMODE_READ) {
 	    char *grpname = conn->co_ListCacheGroups->group;
+
+	    /* A miss in KPDB can wait for a sort.  Do not look up rejected names. */
+	    if (!ListActiveMatch(conn, grpname, groups))
+		goto next;
 	    rec = KPDBReadRecord(KDBActive, grpname, 0, &conn->co_ListRecLen);
 	} else {
 	    rec = KPDBReadRecordAt(KDBActive, conn->co_ListRec, 0, NULL);
@@ -237,18 +257,55 @@ NNListActiveScan(Connection *conn)
 	    bcopy(group, grpbuf, glen);
 	    grpbuf[glen] = 0;
 
-	    if ((conn->co_ListPat == NULL || 
-		WildCmp(conn->co_ListPat, grpbuf) == 0) &&
-		(groups == NULL || GroupFindWild(grpbuf, groups))
-	    ) {
+	    match = conn->co_ListCacheMode == ACMODE_READ ||
+		ListActiveMatch(conn, grpbuf, groups);
+	    lockrec = match;
+	    if (match) {
 		/*
 		 * note: because we are locking a previously retrieved but unlocked
-		 * record, the record may be marked as deleted.  We cannot do 
+		 * record, the record may be marked as deleted.  We cannot do
 		 * KPDBWrite()'s with KP_LOCK_CONTINUE in this case because it
 		 * may not properly locate the record to continue the lock at.
 		 */
 		KPDBLock(KDBActive, rec);
+	    } else if (conn->co_ListCacheMode == ACMODE_WRITE) {
+		/* A cache-only read need not wait for an excluded record. */
+		if (hflock(KDBActive->kp_Fd, rec - KDBActive->kp_MapBase,
+			   XLOCK_SH | XLOCK_NB) != 0) {
+		    ActiveCacheFreeMain();
+		    ActiveCacheWriteUnlock();
+		    conn->co_ListCacheMode = ACMODE_NONE;
+		    goto next;
+		}
+		lockrec = 1;
+	    }
 
+	    /*
+	     * The record may have been replaced between the unlocked read
+	     * and the lock: KPDBWrite() publishes the new record before it
+	     * marks the old one deleted.  Skip a deleted record so it is
+	     * not listed or cached twice.
+	     */
+	    if (lockrec && rec[0] != '+') {
+		KPDBUnlock(KDBActive, rec);
+		goto next;
+	    }
+
+	    /*
+	     * Cache CTS even for groups outside this reply's filter.
+	     * A cache build needs those records too; other scans can
+	     * skip their record locks.
+	     */
+	    if (conn->co_ArtMode == COM_NEWGROUPS && lockrec) {
+		cts = KPDBGetField(rec, conn->co_ListRecLen, "CTS", NULL, NULL);
+		if (cts) {
+		    cts_int = (int)strtoul(cts, NULL, 16);
+		    if (conn->co_ListCacheMode == ACMODE_WRITE)
+			ActiveCacheInsert(&activeCache, grpbuf, cts_int);
+		}
+	    }
+
+	    if (match) {
 		if (conn->co_ArtMode == COM_GROUPDESC) {
 		    int glen;
 		    const char *desc = KPDBGetField(rec, conn->co_ListRecLen, "GD", &glen, "?");
@@ -284,12 +341,8 @@ NNListActiveScan(Connection *conn)
 			    (unsigned long)strtoul(cts, NULL, 16));
 		    }
 		} else if (conn->co_ArtMode == COM_NEWGROUPS) {
-		    const char *cts = KPDBGetField(rec, conn->co_ListRecLen, "CTS", NULL, NULL);
 		    if (cts) {
-			int dt, cts_int = (int)strtoul(cts, NULL, 16);
-
-			if (conn->co_ListCacheMode == ACMODE_WRITE)
-			    ActiveCacheInsert(&activeCache, grpbuf, cts_int);
+			int dt;
 
 			dt = cts_int - (int)conn->co_TimeRestrict.tr_Time;
 			if (dt > 0) {
@@ -307,10 +360,12 @@ NNListActiveScan(Connection *conn)
 			}
 		    }
 		}
-		KPDBUnlock(KDBActive, rec);
 	    }
+	    if (lockrec)
+		KPDBUnlock(KDBActive, rec);
 	}
 
+next:
 	/*
 	 * If we are looking for a wildcard, continue the scan.  Otherwise
 	 * we are done.
@@ -357,7 +412,6 @@ NNListActiveScan(Connection *conn)
 	    printf("done\n");
     }
     if ((conn->co_ListCacheMode == ACMODE_WRITE) && (conn->co_ListRec == 0)) {
-	ActiveCacheMarkValid(KDBActive);
 	ActiveCacheWriteUnlock();
 	conn->co_ListCacheMode = ACMODE_NONE;
 	MBPrintf(&conn->co_TMBuf, ".\r\n");
@@ -1118,4 +1172,3 @@ ListActiveGroups(Connection *conn, char *pat)
     }
     return(conn->co_ListCacheGroups);
 }
-

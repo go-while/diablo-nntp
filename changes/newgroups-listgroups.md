@@ -1,0 +1,1 @@
+- Populate the shared NEWGROUPS cache independently of a connection's listgroups filter; discard a build that encounters a busy excluded record, and filter cached names before looking them up.
