@@ -1,0 +1,1 @@
+- When a feed delivers a control message or a superseding article, dreaderd frees the previous From: or Newsgroups: copy if its control header scan sees the field again.
