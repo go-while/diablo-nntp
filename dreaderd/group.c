@@ -1725,12 +1725,78 @@ OutputOverRange(OverInfo *ov, Connection *conn)
 }
 
 /*
+ * OverMsgIdCheck() - whether the article artNo of ov is the article msgid,
+ *		      for an overview entry whose hash matches msgid's (D-211).
+ *
+ *	The overview index stores only the hash of the Message-ID, and two
+ *	Message-IDs can have the same hash (D-210).  The overview data holds
+ *	the article's header, so the Message-ID: header is compared with
+ *	msgid byte for byte (CacheMsgIdMatches(), dreaderd/cache.c).
+ *
+ *	Returns 1 if the header is read and has msgid, 0 if the header is
+ *	read and has another Message-ID (a collision: not this article), and
+ *	-1 if the header cannot be read: no header kept (oa_SeekPos -1, which
+ *	readerxover trackonly writes for every record), the article older
+ *	than the group's age limit, the entry gone, or a corrupt record.
+ *	The callers keep the hash match for -1: dreaderd starts with
+ *	readerxover trackonly only under readercanlock all or none, a cancel
+ *	is not checked under all, and under the checking modes
+ *	canLockDecide() refuses a target whose header it cannot read for the
+ *	group that decides (CtlCancel() asks it only while no earlier group
+ *	has decided; once the deciding group's check has passed, the
+ *	candidates of later groups are cancelled without a check, and after
+ *	a refusal no later group is cancelled).
+ */
+
+#define OMC_MATCH	1
+#define OMC_OTHER	0
+#define OMC_UNKNOWN	-1
+
+static int
+OverMsgIdCheck(OverInfo *ov, artno_t artNo, const char *msgid)
+{
+    const char *data;
+    int hlen = 0;
+    int off;
+    int nl;
+
+    if ((data = GetOverRecord(ov, artNo, &hlen, NULL, NULL, NULL, NULL)) == NULL ||
+	hlen <= 0)
+	return(OMC_UNKNOWN);
+    /*
+     * An article fed with two Message-ID: headers is indexed by the hash
+     * of the last one (NNFeedOverview()), and CacheMsgIdMatches() reads the
+     * first one it is given, so try each Message-ID: header of the record,
+     * every one that starts a line, until the blank line.  POST refuses
+     * such an article (post.c), a feed does not.
+     */
+    for (off = 0; off < hlen; off = nl + 1) {
+	for (nl = off; nl < hlen && data[nl] != '\n'; ++nl)
+	    ;
+	if (nl == off || (nl == off + 1 && data[off] == '\r'))
+	    break;
+	if (nl - off >= 11 && strncasecmp(data + off, "Message-ID:", 11) == 0 &&
+	    CacheMsgIdMatches(data + off, hlen - off, msgid))
+	    return(OMC_MATCH);
+    }
+    return(OMC_OTHER);
+}
+
+/*
  * FindCancelMsgId() - Locate cancel by message-id in group, return OverInfo
  *			and article number if found.
  *
  *			Increment *pvalidGroups if the group is valid, leave
  *			alone otherwise.  Whether or not the message-id could
  *			be located.
+ *
+ *			An entry with the hash of msgid is the article if its
+ *			header has msgid (OverMsgIdCheck()); one whose header
+ *			has another Message-ID is skipped and the scan goes
+ *			on (D-211).  An entry whose header cannot be read
+ *			still matches by its hash: see OverMsgIdCheck().
+ *			NB and NE are read under the record lock; the scan
+ *			(which reads headers) runs after the unlock.
  */
 
 OverInfo * 
@@ -1762,6 +1828,8 @@ FindCanceledMsg(const char *group, const char *msgid, artno_t *partNo, int *pval
 
 		artBeg = strtoll(KPDBGetField(rec, recLen, "NB", NULL, "-1"), NULL, 10);
 		artEnd = strtoll(KPDBGetField(rec, recLen, "NE", NULL, "-1"), NULL, 10);
+		KPDBUnlock(KDBActive, rec);
+
 		if (artEnd - artBeg > ov->ov_MaxArts)
 		    artBeg = artEnd - ov->ov_MaxArts;
 
@@ -1770,14 +1838,20 @@ FindCanceledMsg(const char *group, const char *msgid, artno_t *partNo, int *pval
 		    const OverArt *oa = GetOverArt(ov, artEnd, &ovpos);
 
 		    if (OA_ARTNOEQ(artEnd, oa->oa_ArtNo) && 
-			bcmp(&oa->oa_MsgHash, &hv, sizeof(hv)) == 0
+			bcmp(&oa->oa_MsgHash, &hv, sizeof(hv)) == 0 &&
+			OverMsgIdCheck(ov, artEnd, msgid) != OMC_OTHER
 		    ) {
-			*partNo = artEnd;
-			break;
+			/* the slot can be reused while the header is read */
+			oa = GetOverArt(ov, artEnd, &ovpos);
+			if (OA_ARTNOEQ(artEnd, oa->oa_ArtNo) &&
+			    bcmp(&oa->oa_MsgHash, &hv, sizeof(hv)) == 0
+			) {
+			    *partNo = artEnd;
+			    break;
+			}
 		    }
 		    --artEnd;
 		} /* while */
-		KPDBUnlock(KDBActive, rec);
 	    }
 	    if (*partNo == -1) {
 		PutOverInfo(ov);
@@ -1794,7 +1868,11 @@ FindCanceledMsg(const char *group, const char *msgid, artno_t *partNo, int *pval
  *		      NULL (*partNo -1).  Unlike FindCanceledMsg() it reads NB
  *		      and NE under the record lock and walks the overview index
  *		      after unlocking (an article added meanwhile is simply not
- *		      found), and it looks at no more than maxScan articles,
+ *		      found).  An entry with the hash of msgid counts only if
+ *		      its header has msgid (OverMsgIdCheck()); a collision
+ *		      is skipped and the scan goes on, and an entry whose
+ *		      header cannot be read counts as not found (D-211).  It
+ *		      looks at no more than maxScan articles,
  *		      newest first, so a reader cannot make a reader process walk
  *		      a whole big group, or hold the record the feed side needs,
  *		      with an unknown message-id.
@@ -1832,7 +1910,8 @@ FindMsgInGroup(const char *group, const char *msgid, artno_t *partNo, artno_t ma
 	const OverArt *oa = GetOverArt(ov, artEnd, &ovpos);
 
 	if (OA_ARTNOEQ(artEnd, oa->oa_ArtNo) &&
-	    bcmp(&oa->oa_MsgHash, &hv, sizeof(hv)) == 0) {
+	    bcmp(&oa->oa_MsgHash, &hv, sizeof(hv)) == 0 &&
+	    OverMsgIdCheck(ov, artEnd, msgid) == OMC_MATCH) {
 	    *partNo = artEnd;
 	    return(ov);
 	}
