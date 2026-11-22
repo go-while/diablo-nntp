@@ -221,7 +221,7 @@ main(int ac, char **av)
 	    LoadSpoolCtl(0, 1);
 	    AllocateSpools(0);
 	    Spool = GetSpool(MessageId, Newsgroups, atoi(Size),
-                        ArtType, Label, NULL, NULL);
+                        ArtType, Label, NULL, NULL, NULL);
 	    printf("\nMatched spool: ");
 	    if (Spool == (uint16)-3)
 		printf("DontStore\n");
