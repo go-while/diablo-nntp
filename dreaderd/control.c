@@ -135,6 +135,7 @@ ExecuteControl(Connection *conn, const char *ctlMsg, const char *art, int artLen
 		++nControl;
 	    } else if (strncasecmp(line, "From:", 5) == 0) {
 		++nFrom;
+		zfreeStr(&conn->co_MemPool, &from);
 		from = zallocStrTrim2(&conn->co_MemPool, 0, line + 5, l - 5);
 	    } else if (strncasecmp(line, "Sender:", 7) == 0) {
 		++nSender;
@@ -142,6 +143,7 @@ ExecuteControl(Connection *conn, const char *ctlMsg, const char *art, int artLen
 		sender = zallocStrTrim2(&conn->co_MemPool, 0, line + 7, l - 7);
 	    } else if (strncasecmp(line, "Newsgroups:", 11) == 0) {
 		++nNewsgroups;
+		zfreeStr(&conn->co_MemPool, &groups);
 		groups = zallocStrTrim2(&conn->co_MemPool, ',', line + 11, l - 11);
 #if DIABLO_PGP_SUPPORT
 	    } else if (strncasecmp(line, "X-PGP-Sig:", 10) == 0) {
