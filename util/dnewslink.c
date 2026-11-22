@@ -135,6 +135,7 @@ rewriteBatchFile(const char *path, int pipeMode)
 #define T_DEFERIT	7
 #define T_UNOFFERED	8	/* article could not be read: nothing sent (SpoolFault) */
 #define T_UNSENT	9	/* the same after the peer asked for it (238, 335) */
+#define T_REQUEUE	10	/* fresh article kept while replay is active */
 
 /*
  * Why an article could not be read from the spool (SpoolFault).
@@ -240,6 +241,7 @@ typedef struct Stream {
     int	st_State;		/* state	*/
     char *st_RelPath;		/* path		*/
     char *st_MsgId;		/* message id	*/
+    char *st_QueueLine;		/* original queue line */
     off_t st_Off;		/* file offset	*/
     int32 st_Size;		/* file size	*/
     int32 st_CompSize;		/* compressed file size	*/
@@ -1269,6 +1271,18 @@ main(int ac, char **av)
 			 */
 			if (spoolFaultNote(msgId, NULL, stage))
 			    keepQueueLine(&fo, path, &keepOld, buf);
+			break;
+		    case T_REQUEUE:
+			++connectCount;
+			keepQueueLine(&fo, path, &keepOld, buf);
+			if (fo != NULL) {
+			    size_t len = strlen(buf);
+			    /* readline may have cut the terminating newline. */
+			    if (len > 0 && buf[len - 1] != '\n')
+				fputc('\n', fo);
+			}
+			doArtLog("defer", msgId,
+			    (PipeOpt && fo == NULL) ? "not kept" : "kept", stage, reason);
 			break;
 		    case T_FAILED:
 		    case T_FAILEDEXIT:
@@ -2900,6 +2914,7 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 	s = &StreamAry[StreamPend];
 	s->st_MsgId  = zallocStr(&SysMemPool, msgId);
 	s->st_RelPath   = zallocStr(&SysMemPool, relPath);
+	s->st_QueueLine = zallocStr(&SysMemPool, buf);
 	s->st_Off = off;
 	s->st_Size = size;
 	s->st_CompSize = cSize;
@@ -2917,6 +2932,7 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 		/* not offered: the slot is not taken */
 		zfreeStr(&SysMemPool, &s->st_RelPath);
 		zfreeStr(&SysMemPool, &s->st_MsgId);
+		zfreeStr(&SysMemPool, &s->st_QueueLine);
 		memset(s, 0, sizeof(Stream));
 		StrnCpyNull(stage, "takethis-nocheck", MAXREASON);
 		StrnCpyNull(reason, "article not read from the spool", MAXREASON);
@@ -2972,9 +2988,9 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 	    /*
 	     * 431 to TAKETHIS is not in RFC 4644, but Diablo's feeder sends
 	     * it (history busy or failed).  A one-line reply: defer the
-	     * article once, as for CHECK below; while the defers are sent
-	     * (no second defer is taken then) or for a deferred one, take it
-	     * as a reject.
+	     * article once, as for CHECK below.  A fresh article answered
+	     * during replay is kept in the batch queue; a repeated defer
+	     * and a fresh reply during realtime replay reject.
 	     */
 	    if ((s = LocateStream(ptr, STATE_POSTED)) != NULL) {
 		delMe = 1;
@@ -2982,17 +2998,23 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 		if (STAGE_UNSET(stage))
 		    StrnCpyNull(stage, (s->st_Defers? "resend-stream": "stream"), MAXREASON);
 		StrnCpyNull(reason, ptr, MAXREASON);
-		if (defers || s->st_Defers) {
+		if (sentSize)
+		    *sentSize = s->st_Size;
+		if (s->st_Defers || (defers && RealTimeOpt)) {
 		    r = T_REJECTED;
 		} else {
 		    char cst[32];
 
-		    r = T_DEFERIT;
-		    streamFlags(s, cst, sizeof(cst));
-		    /* buf is the caller's queue line buffer (QLINESIZE) */
-		    snprintf(buf, QLINESIZE, "%s %s %lld,%d %c%s\n", s->st_RelPath, s->st_MsgId,
-			(long long)s->st_Off, s->st_Size,
-			HeaderOnlyFeed ? 'H' : ' ', cst);
+		    r = defers ? T_REQUEUE : T_DEFERIT;
+		    if (r == T_REQUEUE) {
+			StrnCpyNull(buf, s->st_QueueLine, QLINESIZE);
+		    } else {
+			streamFlags(s, cst, sizeof(cst));
+			/* buf is the caller's queue line buffer (QLINESIZE) */
+			snprintf(buf, QLINESIZE, "%s %s %lld,%d %c%s\n", s->st_RelPath, s->st_MsgId,
+			    (long long)s->st_Off, s->st_Size,
+			    HeaderOnlyFeed ? 'H' : ' ', cst);
+		    }
 		}
 		break;
 	    }
@@ -3140,6 +3162,7 @@ StreamTransact(int cfd, const char *relPath, char *msgId, off_t off, int size, i
 	    BytesPend -= strlen(s->st_MsgId);
 	    zfreeStr(&SysMemPool, &s->st_RelPath);
 	    zfreeStr(&SysMemPool, &s->st_MsgId);
+	    zfreeStr(&SysMemPool, &s->st_QueueLine);
 	    if (s != &StreamAry[StreamPend]) {
 		*s = StreamAry[StreamPend];
 		memset(&StreamAry[StreamPend], 0, sizeof(Stream));
@@ -3262,6 +3285,7 @@ RefilePendingStreams(FILE *fo)
 		}
 		zfreeStr(&SysMemPool, &s->st_MsgId);
 		zfreeStr(&SysMemPool, &s->st_RelPath);
+		zfreeStr(&SysMemPool, &s->st_QueueLine);
 		if (s->st_State != STATE_RETRY) {
 		    --StreamPend;
 		} else {
@@ -3931,6 +3955,7 @@ readretry(char *buf, int size)
 		} else {
 		    snprintf(buf, size, "%s\t%s\n", s->st_RelPath, s->st_MsgId);
 		}
+		zfreeStr(&SysMemPool, &s->st_QueueLine);
 		memset(s, 0, sizeof(Stream));
 		inval = 0;
 		--StreamRetry;
@@ -4714,4 +4739,3 @@ dtstamp(void)
     sprintf(buf, "%4d.%03d ", dt / 1000, dt % 1000);
     return(buf);
 }
-
