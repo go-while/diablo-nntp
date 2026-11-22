@@ -369,6 +369,7 @@ TestDnewslinkRejectsInvalidBatchTemplate 0.00
 TestDnewslinkSmallMaxstream 5.01
 TestDnewslinkSpoolErrorKept 0.03
 TestDnewslinkStreaming 0.02
+TestDnewslinkTakethis431RejectedBytes 5.02
 TestDnewslinkTermStalledPeer 6.06
 TestDnewslinkUnreadableAfterCheck 0.02
 TestDnewslinkUnreadableIHAVE 0.02

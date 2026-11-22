@@ -1,0 +1,1 @@
+- dnewslink keeps a fresh article in the batch queue when its TAKETHIS gets 431 during deferred-article replay, and counts rejected bytes for a 431 rejection.
