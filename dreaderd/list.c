@@ -283,12 +283,29 @@ NNListActiveScan(Connection *conn)
 	    /*
 	     * The record may have been replaced between the unlocked read
 	     * and the lock: KPDBWrite() publishes the new record before it
-	     * marks the old one deleted.  Skip a deleted record so it is
-	     * not listed or cached twice.
+	     * marks the old one deleted.  A wildcard scan of the file reaches
+	     * the new copy later, so it skips the deleted one.  A cached name
+	     * or a single name is not scanned again: look it up once more,
+	     * a few times at most.
 	     */
 	    if (lockrec && rec[0] != '+') {
+		int tries;
+
 		KPDBUnlock(KDBActive, rec);
-		goto next;
+		if (conn->co_ListCacheMode != ACMODE_READ &&
+		    (conn->co_Flags & COF_PATISWILD))
+		    goto next;
+		for (tries = 0; tries < 4; ++tries) {
+		    rec = KPDBReadRecord(KDBActive, grpbuf, 0, &conn->co_ListRecLen);
+		    if (rec == NULL)
+			goto next;
+		    KPDBLock(KDBActive, rec);
+		    if (rec[0] == '+')
+			break;
+		    KPDBUnlock(KDBActive, rec);
+		}
+		if (tries >= 4)
+		    goto next;
 	    }
 
 	    /*

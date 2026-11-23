@@ -2,9 +2,11 @@ package e2e
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -215,6 +217,130 @@ access 127.0.0.3 unrestricted
 			}
 			release()
 			checkUnrestricted()
+		})
+	}
+}
+
+// activeRecordOffset returns the file offset of the live record of group in dactive.kp.
+func activeRecordOffset(t *testing.T, db, group string) int64 {
+	t.Helper()
+	data, err := os.ReadFile(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	offset := int64(0)
+	for _, line := range bytes.SplitAfter(data, []byte{'\n'}) {
+		if len(line) > 15 && line[0] == '+' && bytes.HasPrefix(line[15:], []byte(group+" ")) {
+			return offset
+		}
+		offset += int64(len(line))
+	}
+	t.Fatalf("active record for %s not found", group)
+	return 0
+}
+
+// replaceActiveRecord does what KPDBWrite() does when a record grows: append a
+// longer copy, bump the append sequence (bytes 8-15 of the header) and the
+// append counter (bytes 26-33), then mark the old record deleted.
+func replaceActiveRecord(t *testing.T, db string, off int64) {
+	t.Helper()
+	f, err := os.OpenFile(db, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	data, err := os.ReadFile(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	end := bytes.IndexByte(data[off:], '\n')
+	if end < 0 || data[off] != '+' {
+		t.Fatalf("no live record at %d", off)
+	}
+	line := append([]byte("+00000000"), data[off+9:off+int64(end)]...)
+	line = append(line, " ZZ=a-longer-copy-of-the-record-so-that-it-no-longer-fits-in-place\n"...)
+	if _, err := f.WriteAt(line, int64(len(data))); err != nil {
+		t.Fatal(err)
+	}
+	for _, at := range []int64{8, 26} {
+		v, err := strconv.ParseUint(string(data[at:at+8]), 16, 32)
+		if err != nil {
+			t.Fatalf("header field at %d: %v", at, err)
+		}
+		if _, err := f.WriteAt([]byte(fmt.Sprintf("%08x", v+1)), at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := f.WriteAt([]byte("-"), off); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A reader that waits for the record lock of a group while a writer replaces
+// that record with a longer copy (append, then mark the old one deleted) must
+// still list the group: the old copy it looked up is gone, the new one has to
+// be found again by name.
+func TestReaderListRecordReplacedWhileLocked(t *testing.T) {
+	const access = `vserverdef DEFAULT
+    hostname ` + PathHost + `
+end
+readerdef unrestricted
+    read yes
+end
+access 127.0.0.3 unrestricted
+`
+	for _, tc := range []struct {
+		name, command string
+		code          int
+		cached        bool
+	}{
+		{"list-active", "LIST ACTIVE e2e.right", 215, false},
+		{"list-newsgroups", "LIST NEWSGROUPS e2e.right", 215, false},
+		{"cached-newgroups", "NEWGROUPS 20000101 000000 GMT", 231, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, spool := spoolStore(t)
+			s := NewReaderSite(t, ReaderOptions{Spool: spool, Access: access,
+				Groups: []string{"e2e.left", "e2e.right"}})
+			names := func(lines []string) []string {
+				var got []string
+				for _, line := range lines {
+					if f := strings.Fields(line); len(f) > 0 {
+						got = append(got, f[0])
+					}
+				}
+				slices.Sort(got)
+				return got
+			}
+			want := []string{"e2e.right"}
+			if tc.cached {
+				want = []string{"e2e.left", "e2e.right"}
+				c := s.dialFrom(t, "127.0.0.3") // warm the cache
+				c.ExpectCmd(231, "NEWGROUPS 20000101 000000 GMT")
+				if got := names(c.ReadDotLines()); !slices.Equal(got, want) {
+					t.Fatalf("warming NEWGROUPS returned %q, want %q", got, want)
+				}
+				c.ExpectCmd(205, "QUIT")
+			}
+			db := filepath.Join(s.Dir, "dactive.kp")
+			off := activeRecordOffset(t, db, "e2e.right")
+			release := holdHistLock(t, db, off, 4)
+			defer release()
+			c := s.dialFrom(t, "127.0.0.3")
+			c.Deadline = 20 * time.Second
+			c.MustSend(tc.command + "\r\n")
+			time.Sleep(500 * time.Millisecond) // let the reader wait for the record lock
+			replaceActiveRecord(t, db, off)
+			release()
+			c.ExpectStatus(tc.code, tc.command)
+			got, err := c.TryReadDotLines()
+			if err != nil {
+				t.Fatalf("%s: %v", tc.command, err)
+			}
+			if gotNames := names(got); !slices.Equal(gotNames, want) {
+				t.Fatalf("%s after the record was replaced returned %q, want %q", tc.command, got, want)
+			}
+			c.ExpectCmd(205, "QUIT")
 		})
 	}
 }
