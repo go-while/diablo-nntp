@@ -3,6 +3,7 @@ package e2e
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -249,7 +250,9 @@ func replaceActiveRecord(t *testing.T, db string, off int64) {
 		t.Fatal(err)
 	}
 	defer f.Close()
-	data, err := os.ReadFile(db)
+	// Read through f: closing any other descriptor of the file would drop the
+	// POSIX record lock this process holds (holdHistLock) and let the reader run.
+	data, err := io.ReadAll(f)
 	if err != nil {
 		t.Fatal(err)
 	}
