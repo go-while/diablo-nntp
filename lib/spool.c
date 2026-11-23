@@ -431,9 +431,10 @@ AllocateSpools(time_t t)
 	 * Do not let metaspools with different reallocint values share one
 	 * spool object: the object has one so_DirTime, and dexpire
 	 * (cleanupDirectories()) protects only the highest-named directory of
-	 * each spool object.  Right after an upgrade a spool can, for up to
-	 * one reallocint, be written into a directory that is not its
-	 * highest-named one.
+	 * each spool object.  With a shared 10m and 24h metaspool the slow
+	 * one's current directory is never the highest-named one, not only
+	 * right after an upgrade (then a spool can, for up to one reallocint,
+	 * be written into a directory that is not its highest-named one).
 	 *
 	 * A time of 0 is no valid directory (the clock is within about one
 	 * reallocint of 1970): the feeder refuses to store under it (see
@@ -441,9 +442,13 @@ AllocateSpools(time_t t)
 	 * which dfeedtest uses for diagnostics.
 	 */
 	ms->ms_AllocatedDirTime = dirTime;
-	if (dirTime == 0 && t != 0)
+	if (dirTime == 0 && t != 0 && !ms->ms_ZeroDirTimeLogged) {
+	    ms->ms_ZeroDirTimeLogged = 1;	/* once, not at every connection */
 	    logit(LOG_ERR, "metaspool %s: the clock gives directory time 0,"
 			" articles for it will not be stored", ms->ms_Name);
+	} else if (dirTime != 0) {
+	    ms->ms_ZeroDirTimeLogged = 0;
+	}
 	if (dirTime != 0 && (ms->ms_AllocatedSpool->so_DirTime == 0 ||
 				dirTime != ms->ms_AllocatedSpool->so_DirTime))
 	    if (createSpoolDir(ms->ms_AllocatedSpool, dirTime) == -1)

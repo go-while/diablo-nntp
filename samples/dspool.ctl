@@ -99,6 +99,9 @@
 # connection is made to this server. Spool objects can be moved
 # between metaspools and spool objects can be allocated to multiple
 # metaspools
+# (not recommended with different reallocint values: dexpire keeps only the
+# highest-named directory of a spool object, so the slow metaspool's current
+# directory is not protected)
 #
 # IMPORTANT: Each spool object in a metaspool should be the same
 #	     size, otherwise dexpire may not work as expected with
