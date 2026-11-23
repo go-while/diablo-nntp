@@ -40,8 +40,7 @@
 Prototype void ArticleFileName(char *path, int pathSize, History *h, int opt);
 Prototype int SpoolCompressed(uint16 spool);
 Prototype char *GetSpoolPath(uint16 spool, int gmt, int opt);
-Prototype uint16 GetSpool(const char *msgid, const char *nglist, int size, int arttype, char *label, int *t, int *complvl);
-Prototype uint32 SpoolDirTime(void);
+Prototype uint16 GetSpool(const char *msgid, const char *nglist, int size, int arttype, char *label, int *t, int *complvl, uint32 *dirtime);
 Prototype int AllocateSpools(time_t t);
 Prototype void LoadSpoolCtl(time_t gmt, int force);
 Prototype int GetFirstSpool(uint16 *spoolnum, char **path, double *maxsize, double *minfree, long *minfreefiles, long *keeptime, int *expmethod);
@@ -54,10 +53,9 @@ MetaSpool *MetaSpools = NULL;
 GroupExpire *ExBase = NULL;
 MemPool *SPMemPool = NULL;
 MemPool *GRMemPool = NULL;
-time_t DirTime = 0;
 
 int createSpoolDir(SpoolObject *so, uint32 gmt);
-uint16 findSpoolGrp(const char *msgid, GroupList *groups, int size, int ngcount, int arttype, char *label, int *t, int *complvl);
+uint16 findSpoolGrp(const char *msgid, GroupList *groups, int size, int ngcount, int arttype, char *label, int *t, int *complvl, uint32 *dirtime);
 int findLabel(LabelList *ll, char *label);
 void loadSpoolCtl(FILE *fi);
 double spaceFreeOn(char *part);
@@ -240,9 +238,13 @@ path_too_long:
  *	-1 = no match
  *	-2 = matched, but reject article
  *	-3 = matched, but don't store on disk
+ *
+ * *dirtime (if not NULL) gets the directory time AllocateSpools() gave
+ * the matched metaspool with its allocated spool; it is only set when a
+ * spool number is returned.
  */
 uint16
-GetSpool(const char *msgid, const char *nglist, int size, int arttype, char *label, int *t, int *complvl)
+GetSpool(const char *msgid, const char *nglist, int size, int arttype, char *label, int *t, int *complvl, uint32 *dirtime)
 {
     GroupList *grouplist = NULL;
     GroupList *gl;
@@ -265,20 +267,11 @@ GetSpool(const char *msgid, const char *nglist, int size, int arttype, char *lab
 	grouplist = gl;
     }
     if (grouplist)
-	spool = findSpoolGrp(msgid, grouplist, size, ngcount, arttype, label, t, complvl);
+	spool = findSpoolGrp(msgid, grouplist, size, ngcount, arttype, label, t, complvl, dirtime);
     if (DebugOpt > 2)
 	printf("SPOOL: %02x\n", spool);
     freePool(&GRMemPool);
     return(spool);
-}
-
-/*
- * Return the currently allocated spool article directory
- */
-uint32
-SpoolDirTime(void)
-{
-    return(DirTime);
 }
 
 /*
@@ -330,6 +323,8 @@ AllocateSpools(time_t t)
     double maxspace;
 
     for (ms = MetaSpools; ms; ms = ms->ms_Next) {
+	uint32 dirTime;
+
 	/*
 	 * Don't look for spool objects if we don't need them.  A dontstore
 	 * metaspool may have none: there is nothing to allocate (and the
@@ -338,9 +333,9 @@ AllocateSpools(time_t t)
 	if (ms->ms_RejectArts || ms->ms_NumSpoolObjects == 0)
 	    continue;
 	if (ms->ms_ReAllocInterval / 60 == 0)
-	    DirTime = gmt;
+	    dirTime = gmt;
 	else
-	    DirTime = gmt - gmt % (ms->ms_ReAllocInterval / 60);
+	    dirTime = gmt - gmt % (ms->ms_ReAllocInterval / 60);
 	switch (ms->ms_AllocationStrategy) {
 	    case SPOOL_ALLOC_NONE:
 		ms->ms_AllocationStrategy = SPOOL_ALLOC_SEQ;
@@ -427,9 +422,36 @@ AllocateSpools(time_t t)
 	if (ms->ms_AllocatedSpool == NULL)
 	    continue;
 
-	if (ms->ms_AllocatedSpool->so_DirTime == 0 ||
-				DirTime != ms->ms_AllocatedSpool->so_DirTime)
-	    if (createSpoolDir(ms->ms_AllocatedSpool, DirTime) == -1)
+	/*
+	 * The directory time belongs to the metaspool's allocation: another
+	 * metaspool may have a different reallocint and so a different time
+	 * for the same spool object.  so_DirTime only remembers which
+	 * directory was created last on the object.
+	 *
+	 * Do not let metaspools with different reallocint values share one
+	 * spool object: the object has one so_DirTime, and dexpire
+	 * (cleanupDirectories()) protects only the highest-named directory of
+	 * each spool object.  With a shared 10m and 24h metaspool the slow
+	 * one's current directory is never the highest-named one, not only
+	 * right after an upgrade (then a spool can, for up to one reallocint,
+	 * be written into a directory that is not its highest-named one).
+	 *
+	 * A time of 0 is no valid directory (the clock is within about one
+	 * reallocint of 1970): the feeder refuses to store under it (see
+	 * LoadArticle()).  Say which metaspool does it, but not for t == 0,
+	 * which dfeedtest uses for diagnostics.
+	 */
+	ms->ms_AllocatedDirTime = dirTime;
+	if (dirTime == 0 && t != 0 && !ms->ms_ZeroDirTimeLogged) {
+	    ms->ms_ZeroDirTimeLogged = 1;	/* once, not at every connection */
+	    logit(LOG_ERR, "metaspool %s: the clock gives directory time 0,"
+			" articles for it will not be stored", ms->ms_Name);
+	} else if (dirTime != 0) {
+	    ms->ms_ZeroDirTimeLogged = 0;
+	}
+	if (dirTime != 0 && (ms->ms_AllocatedSpool->so_DirTime == 0 ||
+				dirTime != ms->ms_AllocatedSpool->so_DirTime))
+	    if (createSpoolDir(ms->ms_AllocatedSpool, dirTime) == -1)
 		return(-1);
     }
     return(1);
@@ -445,7 +467,7 @@ AllocateSpools(time_t t)
  *	-3 = matched, but don't store on disk
  */
 uint16
-findSpoolGrp(const char *msgid, GroupList *groups, int size, int ngcount, int arttype, char *label, int *t, int *complvl)
+findSpoolGrp(const char *msgid, GroupList *groups, int size, int ngcount, int arttype, char *label, int *t, int *complvl, uint32 *dirtime)
 {
     GroupExpire *ex;
 
@@ -474,6 +496,8 @@ findSpoolGrp(const char *msgid, GroupList *groups, int size, int ngcount, int ar
 		return((uint16)-3);
 	    if (complvl)
 		*complvl = ex->ex_MetaSpool->ms_AllocatedSpool->so_CompressLvl;
+	    if (dirtime)
+		*dirtime = ex->ex_MetaSpool->ms_AllocatedDirTime;
 	    return(ex->ex_MetaSpool->ms_AllocatedSpool->so_SpoolNum);
 	}
     }

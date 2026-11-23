@@ -675,6 +675,8 @@ typedef struct MetaSpool {
     int			ms_NumSpoolObjects;
     SpoolObject		*ms_SpoolObjects[MAX_SPOOL_OBJECTS];
     SpoolObject		*ms_AllocatedSpool;
+    uint32		ms_AllocatedDirTime;	/* directory time with ms_AllocatedSpool */
+    int			ms_ZeroDirTimeLogged;	/* directory time 0 already logged */
     int			ms_NextAllocation;
     struct MetaSpool	*ms_Next;
 } MetaSpool;

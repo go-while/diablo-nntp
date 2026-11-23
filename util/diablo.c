@@ -4040,9 +4040,10 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 	    int interval = 0;
 	    char z = 0;
 	    uint16 spool = 0;
+	    uint32 dirTime = 0;
 
 	    h.exp = 0;
-	    spool = GetSpool(msgid, nglist, size, arttype, HLabel, &interval, &CompressLvl);
+	    spool = GetSpool(msgid, nglist, size, arttype, HLabel, &interval, &CompressLvl, &dirTime);
 	    if (interval && t - SpoolAllocTime >= interval) {
 		if (DebugOpt)
 		    printf("Allocating new spools\n");
@@ -4053,10 +4054,20 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		    exit(-1);
 		}
 		spool = GetSpool(msgid, nglist, size, arttype,
-						HLabel, NULL, &CompressLvl);
+						HLabel, NULL, &CompressLvl, &dirTime);
 	    }
-	    h.gmt = SpoolDirTime();
-	    if (spool <= 100) {
+	    if (spool <= 100 && dirTime == 0) {
+		/*
+		 * The metaspool's directory time is 0 (see AllocateSpools()):
+		 * there is no directory to store under.  Tell the peer to
+		 * try again, as for a spool that cannot be written, instead
+		 * of a 235 without a history record.
+		 */
+		logit(LOG_ERR, "%s: spool %02x has directory time 0, not stored",
+							msgid, (unsigned)spool);
+		artError |= LAERR_IO;
+	    } else if (spool <= 100) {
+		h.gmt = dirTime;
 		h.exp = spool + 100;
 		h.bsize = bsize(buffer) + sizeof(artHdr);
 		artFd = ArticleFile(&h, &bpos);
