@@ -1,0 +1,1 @@
+- `dreaderd`: the overview lookup by Message-ID (`XHDR`, `XOVER`, `HDR`, `OVER`) and a cancel compare only the last `Message-ID:` header of an article, the one its index entry is made from. For an article fed with two `Message-ID:` headers whose last one collides with the Message-ID of another article, a lookup or a cancel for the first header's ID could take the wrong article.
