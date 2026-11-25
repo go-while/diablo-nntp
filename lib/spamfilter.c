@@ -80,7 +80,7 @@ int		FilterMax  = 100;
 
 void initSpamData(FilterInfo *f, const char *fname, int *fd);
 void termSpamData(FilterInfo *filter);
-int newFilterFile(FilterInfo *fi, const char *fname);
+int newFilterFile(FilterInfo *fi, const char *fname, const struct stat *old);
 int openFilterFile(FilterInfo *f, const char *fname);
 int spamFilterTable(time_t t, FilterInfo *f, hash_t mhv, md5hash_t *hv, int lines);
 void dumpSpamFilterMem(FILE *fo, FilterInfo *fi, char *stype, int raw);
@@ -244,10 +244,11 @@ SetSpamFilterOpt(void)
 
 /*
  * newFilterFile() - write an empty cache of fi->Hsize entries to a new
- *		     file and rename it over fname.  Returns its fd, or -1.
+ *		     file with the owner and mode of the file it replaces
+ *		     (old) and rename it over fname.  Returns its fd, or -1.
  */
 int
-newFilterFile(FilterInfo *fi, const char *fname)
+newFilterFile(FilterInfo *fi, const char *fname, const struct stat *old)
 {
     char path[PATH_MAX];
     char tmp[PATH_MAX];
@@ -267,6 +268,17 @@ newFilterFile(FilterInfo *fi, const char *fname)
               tmp, strerror(errno));
         return(-1);
     }
+    /*
+     * Keep the owner and mode, as the rewrite in place did: else, e.g.,
+     * dspaminfo run as root would leave a file the daemon cannot open.
+     * Not as root, another owner gives EPERM; the mode is still kept.
+     */
+    if (fchown(fd, old->st_uid, old->st_gid) < 0 && errno != EPERM)
+        logit(LOG_ERR, "Unable to set the owner of spam cache file %s: %s",
+              tmp, strerror(errno));
+    if (fchmod(fd, old->st_mode & 07777) < 0)
+        logit(LOG_ERR, "Unable to set the mode of spam cache file %s: %s",
+              tmp, strerror(errno));
     for (i = 0; i < fi->Hsize; ++i) {
         const char *ptr = (const char *)&empty;
         size_t remaining = sizeof(empty);
@@ -323,7 +335,7 @@ openFilterFile(FilterInfo *fi, const char *fname)
              * (SIGBUS when they touch the cut part, D-283); they keep
              * the old file until they exit.
              */
-            int nfd = newFilterFile(fi, fname);
+            int nfd = newFilterFile(fi, fname, &st);
 
             if (nfd < 0)
                 goto fail;
