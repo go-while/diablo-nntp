@@ -79,8 +79,8 @@ typedef struct NewsFeed {
     char		*nf_MaxInboundRate;	/* maximum B/s per conn */
     char		*nf_Dist;		/* distribution		*/
     char		*nf_NoDist;		/* !distribution	*/
-    char		nf_PerLineFlushOpt;
-    char		nf_NoMisMatch;
+    signed char		nf_PerLineFlushOpt;	/* rtflush 1, nortflush -1 (D-266) */
+    signed char		nf_NoMisMatch;		/* nomismatch 1, domismatch -1 */
     char		nf_SpamFeedOpt;
     char		nf_Resolved;
     int			nf_ThrottleDelay;
