@@ -80,6 +80,8 @@ int		FilterMax  = 100;
 
 void initSpamData(FilterInfo *f, const char *fname, int *fd);
 void termSpamData(FilterInfo *filter);
+int writeEmptyCache(FilterInfo *fi, int fd, const char *name);
+int newFilterFile(FilterInfo *fi, const char *fname, const struct stat *old);
 int openFilterFile(FilterInfo *f, const char *fname);
 int spamFilterTable(time_t t, FilterInfo *f, hash_t mhv, md5hash_t *hv, int lines);
 void dumpSpamFilterMem(FILE *fo, FilterInfo *fi, char *stype, int raw);
@@ -241,6 +243,99 @@ SetSpamFilterOpt(void)
  *		      spam cache into the shared memory segment.
  */
 
+/*
+ * writeEmptyCache() - write fi->Hsize empty entries to fd at its offset.
+ *		       Returns 0, or -1 (logged with name).
+ */
+int
+writeEmptyCache(FilterInfo *fi, int fd, const char *name)
+{
+    Filter empty = {{ 0 }};
+    int i;
+
+    for (i = 0; i < fi->Hsize; ++i) {
+        const char *ptr = (const char *)&empty;
+        size_t remaining = sizeof(empty);
+
+        while (remaining != 0) {
+            ssize_t n = write(fd, ptr, remaining);
+            if (n < 0 && errno == EINTR)
+                continue;
+            if (n <= 0) {
+                int error = (n == 0) ? EIO : errno;
+                logit(LOG_ERR, "Unable to initialize spam cache file %s: %s",
+                      name, strerror(error));
+                return(-1);
+            }
+            ptr += n;
+            remaining -= (size_t)n;
+        }
+    }
+    return(0);
+}
+
+/*
+ * newFilterFile() - write an empty cache of fi->Hsize entries to a new
+ *		     file with the owner and mode of the file it replaces
+ *		     (old) and rename it over fname.  Returns its fd, or -1.
+ */
+int
+newFilterFile(FilterInfo *fi, const char *fname, const struct stat *old)
+{
+    char path[PATH_MAX];
+    char tmp[PATH_MAX];
+    int fd;
+
+    snprintf(path, sizeof(path), "%s", PatDbExpand(fname));
+    if (snprintf(tmp, sizeof(tmp), "%s.new.%d", path, (int)getpid()) >=
+							(int)sizeof(tmp)) {
+        logit(LOG_ERR, "Spam cache file name too long: %s", path);
+        return(-1);
+    }
+    unlink(tmp);	/* left by a process of this pid that died */
+    if ((fd = open(tmp, O_RDWR|O_CREAT|O_EXCL, 0644)) < 0) {
+        logit(LOG_ERR, "Unable to create spam cache file %s: %s",
+              tmp, strerror(errno));
+        return(-1);
+    }
+    /*
+     * Keep the owner and mode, as the rewrite in place did: else, e.g.,
+     * dspaminfo run as root would leave a file the daemon cannot open.
+     * When they cannot be kept, the old file stays and this process
+     * runs without the filter.  fchown() failing is fine when the new
+     * file already has the old owner (not root, our own file).
+     */
+    if (fchown(fd, old->st_uid, old->st_gid) < 0) {
+        int error = errno;
+        struct stat nst;
+
+        if (fstat(fd, &nst) < 0 || nst.st_uid != old->st_uid ||
+						nst.st_gid != old->st_gid) {
+            logit(LOG_ERR, "Unable to keep the owner %d:%d of spam cache file %s: %s",
+                  (int)old->st_uid, (int)old->st_gid, path, strerror(error));
+            goto fail;
+        }
+    }
+    if (fchmod(fd, old->st_mode & 07777) < 0) {
+        logit(LOG_ERR, "Unable to keep the mode %04o of spam cache file %s: %s",
+              (unsigned int)(old->st_mode & 07777), path, strerror(errno));
+        goto fail;
+    }
+    if (writeEmptyCache(fi, fd, tmp) < 0)
+        goto fail;
+    if (rename(tmp, path) < 0) {
+        logit(LOG_ERR, "Unable to replace spam cache file %s: %s",
+              path, strerror(errno));
+        goto fail;
+    }
+    return(fd);
+
+fail:
+    close(fd);
+    unlink(tmp);
+    return(-1);
+}
+
 int
 openFilterFile(FilterInfo *fi, const char *fname)
 {
@@ -258,33 +353,27 @@ openFilterFile(FilterInfo *fi, const char *fname)
                   PatDbExpand(fname), strerror(errno));
             goto fail;
         }
-        if (st.st_size != (off_t)length) {
-            Filter empty = {{ 0 }};
-            int i;
-
-            if (ftruncate(fi->Fd, 0) < 0 || lseek(fi->Fd, 0, SEEK_SET) < 0) {
-                logit(LOG_ERR, "Unable to reset spam cache file %s: %s",
-                      PatDbExpand(fname), strerror(errno));
+        if (st.st_size == 0) {
+            /*
+             * Empty (just created): no process has a table in it, so
+             * it is filled in place (the fd was just opened, at 0).
+             */
+            if (writeEmptyCache(fi, fi->Fd, PatDbExpand(fname)) < 0)
                 goto fail;
-            }
-            for (i = 0; i < fi->Hsize; ++i) {
-                const char *ptr = (const char *)&empty;
-                size_t remaining = sizeof(empty);
+        } else if (st.st_size != (off_t)length) {
+            /*
+             * Another size: a new, empty file is renamed into place.
+             * Truncating this one would cut the map of the feeder
+             * processes that still have it mapped at the old size
+             * (SIGBUS when they touch the cut part, D-283); they keep
+             * the old file until they exit.
+             */
+            int nfd = newFilterFile(fi, fname, &st);
 
-                while (remaining != 0) {
-                    ssize_t n = write(fi->Fd, ptr, remaining);
-                    if (n < 0 && errno == EINTR)
-                        continue;
-                    if (n <= 0) {
-                        int error = (n == 0) ? EIO : errno;
-                        logit(LOG_ERR, "Unable to initialize spam cache file %s: %s",
-                              PatDbExpand(fname), strerror(error));
-                        goto fail;
-                    }
-                    ptr += n;
-                    remaining -= (size_t)n;
-                }
-            }
+            if (nfd < 0)
+                goto fail;
+            close(fi->Fd);
+            fi->Fd = nfd;
         }
         fi->HashAry = xmap(
                 NULL,
@@ -521,6 +610,13 @@ spamFilterTable(time_t t, FilterInfo *fi, hash_t mhv, md5hash_t *hv, int lines)
 		t0 += 60;
 		dt -= 60;
 	    }
+	    /*
+	     * Decayed to 0: the slot starts again from now.  Keeping
+	     * the idle minutes left in dt would decay one hit per copy
+	     * for each of them, so that many copies would pass (D-282).
+	     */
+	    if (f->f_HitCount + dhits <= 0)
+		t0 = t;
 	    /*
 	     * Check for duplicate message-id.  If not a duplicate,
 	     * enable write-back and bump dhits.
