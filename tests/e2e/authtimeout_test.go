@@ -359,7 +359,8 @@ func TestAuthTimeoutPerlSlowLoad(t *testing.T) {
 }
 
 // pamShimSource replaces the PAM calls of dreaderd: pam_authenticate never returns for user
-// "x", accepts "ok" and refuses everyone else.
+// "x", accepts "ok" and refuses everyone else; pam_set_item and the account phase
+// (pam_acct_mgmt) accept everything.
 const pamShimSource = `#include <string.h>
 #include <unistd.h>
 
@@ -382,6 +383,20 @@ pam_authenticate(void *pamh, int flags)
 	for (;;)
 	    pause();
     return strcmp(shimUser, "ok") == 0 ? 0 : 7;
+}
+
+int
+pam_set_item(void *pamh, int item, const void *value)
+{
+    (void)pamh; (void)item; (void)value;
+    return 0;
+}
+
+int
+pam_acct_mgmt(void *pamh, int flags)
+{
+    (void)pamh; (void)flags;
+    return 0;
 }
 
 int
