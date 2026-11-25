@@ -4006,7 +4006,12 @@ LoadArticle(Buffer *bi, const char *msgid, int noWrite, int headerOnly, char *re
 		}
 		spamInfo.Lines = bodyLines;
 		spamInfo.MsgIdHash = msgidhash(msgid);
-		rv = SpamFilter(t, &spamInfo, &how);
+		/*
+		 * The time now, not t (when the article began to come in):
+		 * a slot time more than 10 s after t resets the slot, so a
+		 * slow transfer would clear a tripped slot (D-281).
+		 */
+		rv = SpamFilter(time(NULL), &spamInfo, &how);
 	    }
 
 	    if (rv < 0) {
