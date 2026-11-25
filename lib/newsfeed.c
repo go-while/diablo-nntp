@@ -156,6 +156,7 @@ int cbWildCmpNoStop(Node *node, const void *data, int *pabort, int def);
 int cbFeedGroupQuery(Node *node, const void *data, int *pabort, int def);
 int cbFilterRequireGroups(Node *node, const void *data, int *pabort, int def);
 int recursiveScan(NewsFeed *feed, int off, const void *data, int (*callback)(Node *node, const void *data, int *pabort, int def), int def);
+static int scanFeedList(NewsFeed *feed, int off, const void *data, int (*callback)(Node *node, const void *data, int *pabort, int def), int def);
 
 /*
  * FEEDADD()  - given message-id, history file data, newsgroup list, pathlist,
@@ -2494,15 +2495,34 @@ resolveDefaults(NewsFeed *nf, Node *no)
     }
 }
 
+/*
+ * recursiveScan() - run callback over one list of a label (off), GLOBAL's
+ *		     list first, then the label's own with its grouprefs.
+ *
+ *	GLOBAL is applied once, here at the top: applied again at the
+ *	start of every groupref it overrode what the label had set before
+ *	that groupref (D-263).
+ */
 int
 recursiveScan(NewsFeed *feed, int off, const void *data, int (*callback)(Node *node, const void *data, int *pabort, int def), int def)
 {
     int r = def;
-    int abortMe = 0;
-    Node *node;
 
     if (NFGlob && NFGlob != feed)
-	r = recursiveScan(NFGlob, off, data, callback, r);
+	r = scanFeedList(NFGlob, off, data, callback, r);
+    return(scanFeedList(feed, off, data, callback, r));
+}
+
+/*
+ * scanFeedList() - run callback over one list of a label or groupdef,
+ *		    and into its grouprefs.
+ */
+static int
+scanFeedList(NewsFeed *feed, int off, const void *data, int (*callback)(Node *node, const void *data, int *pabort, int def), int def)
+{
+    int r = def;
+    int abortMe = 0;
+    Node *node;
 
     for (node = *(Node **)((char *)feed + off); node; node = node->no_Next) {
 	if (node->no_Value == 2) {
@@ -2513,7 +2533,7 @@ recursiveScan(NewsFeed *feed, int off, const void *data, int (*callback)(Node *n
 		}
 	    } else {
 		if (node->no_Data != NULL)
-		    r = recursiveScan(node->no_Data, off, data, callback, r);
+		    r = scanFeedList(node->no_Data, off, data, callback, r);
 	    } 
 	    --RecurCount;
 	} else {
