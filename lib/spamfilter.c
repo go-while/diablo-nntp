@@ -271,14 +271,26 @@ newFilterFile(FilterInfo *fi, const char *fname, const struct stat *old)
     /*
      * Keep the owner and mode, as the rewrite in place did: else, e.g.,
      * dspaminfo run as root would leave a file the daemon cannot open.
-     * Not as root, another owner gives EPERM; the mode is still kept.
+     * When they cannot be kept, the old file stays and this process
+     * runs without the filter.  fchown() failing is fine when the new
+     * file already has the old owner (not root, our own file).
      */
-    if (fchown(fd, old->st_uid, old->st_gid) < 0 && errno != EPERM)
-        logit(LOG_ERR, "Unable to set the owner of spam cache file %s: %s",
-              tmp, strerror(errno));
-    if (fchmod(fd, old->st_mode & 07777) < 0)
-        logit(LOG_ERR, "Unable to set the mode of spam cache file %s: %s",
-              tmp, strerror(errno));
+    if (fchown(fd, old->st_uid, old->st_gid) < 0) {
+        int error = errno;
+        struct stat nst;
+
+        if (fstat(fd, &nst) < 0 || nst.st_uid != old->st_uid ||
+						nst.st_gid != old->st_gid) {
+            logit(LOG_ERR, "Unable to keep the owner %d:%d of spam cache file %s: %s",
+                  (int)old->st_uid, (int)old->st_gid, path, strerror(error));
+            goto fail;
+        }
+    }
+    if (fchmod(fd, old->st_mode & 07777) < 0) {
+        logit(LOG_ERR, "Unable to keep the mode %04o of spam cache file %s: %s",
+              (unsigned int)(old->st_mode & 07777), path, strerror(errno));
+        goto fail;
+    }
     for (i = 0; i < fi->Hsize; ++i) {
         const char *ptr = (const char *)&empty;
         size_t remaining = sizeof(empty);
