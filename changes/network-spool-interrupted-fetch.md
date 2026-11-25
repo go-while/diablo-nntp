@@ -1,1 +1,1 @@
-- When a network spool connection is terminated after fast-copy has queued part of its reply to the client, dreaderd finishes that reply rather than fetching the article again.
+- When a network spool connection is terminated after fast-copy has queued part of its reply to the client, dreaderd finishes that reply rather than fetching the article again. An article cut off by the end of the spool connection before any of it was queued to the client is fetched again, also with fast copy on.

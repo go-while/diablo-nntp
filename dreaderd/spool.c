@@ -802,24 +802,17 @@ NNSpoolResponse3(Connection *conn)
     conn->co_State = "spres3";
 
     for (;;) {
-	int error = 0;
-
 	len = MBReadLine(&conn->co_RMBuf, &buf);
 
 	/*
-	 * Termination retries a buffered request and finishes one whose
-	 * fast-copy output was published. For EOF before the first fast
-	 * copy, keep the existing simulated ending and cache abort below.
+	 * EOF: termination retries a request that has sent nothing to the
+	 * client (the lines read so far sit only in the client's ArtBuf)
+	 * and finishes one whose fast-copy output was published.
 	 */
 
 	if (len < 0) {
-	    if (FastCopyOpt == 0 || sreq->sr_SpoolOutput) {
-		NNServerTerminate(conn);
-		return;
-	    }
-	    len = 3;
-	    buf = ".\r";
-	    error = 1;
+	    NNServerTerminate(conn);
+	    return;
 	}
 
 	/*
@@ -841,7 +834,7 @@ NNSpoolResponse3(Connection *conn)
 	    }
 	    if (sreq->sr_Cache) {
 		fflush(sreq->sr_Cache);
-		if (ferror(sreq->sr_Cache) || error)
+		if (ferror(sreq->sr_Cache))
 		    AbortCache(fileno(sreq->sr_Cache), sreq->sr_MsgId, 0);
 		else
 		    CommitCache(conn, 0);
@@ -859,10 +852,7 @@ NNSpoolResponse3(Connection *conn)
 		case COM_BODYWVF:
 		case COM_BODYNOSTAT:
 		case COM_HEAD:
-		    if (error)
-			NNFinishInterruptedSpool(conn);
-		    else
-			NNFinishSReq(conn, ".\r\n", 0);
+		    NNFinishSReq(conn, ".\r\n", 0);
 		    break;
 		case COM_STAT:
 		    NNFinishSReq(conn, "", 0);
@@ -871,15 +861,6 @@ NNSpoolResponse3(Connection *conn)
 		    NNFinishSReq(conn, "(something blew up in the spool code)\r\n.\r\n", 0);
 		    break;
 		}
-	    }
-
-	    /*
-	     * If an error occured ( can only happen if we were in FastCopyOpt
-	     * mode ), we have to terminate the server now, after we've
-	     * finished processing the client request.
-	     */
-	    if (error) {
-		NNServerTerminate(conn);
 	    }
 	    return;
 	}

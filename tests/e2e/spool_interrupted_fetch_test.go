@@ -38,7 +38,7 @@ func TestSpoolInterruptedFetch(t *testing.T) {
 	if i < 0 || j <= i {
 		t.Fatal("network fast-copy block not found")
 	}
-	prog := interruptedFetchDriver + "\nstatic void publish(ServReq *sreq) {\n" + response[i:j] + "}\n"
+	prog := interruptedFetchDriver + response + "\nstatic void publish(ServReq *sreq) {\n" + response[i:j] + "}\n"
 	if strings.Contains(spool, "\nNNFinishInterruptedSpool(") {
 		prog += function(spool, "NNFinishInterruptedSpool")
 	}
@@ -58,7 +58,7 @@ func TestSpoolInterruptedFetch(t *testing.T) {
 	if out, err := run(wmCC(t), "-o", bin, src); err != nil {
 		t.Fatalf("build queue driver: %v\n%s", err, out)
 	}
-	for _, mode := range []string{"staged", "article", "stat", "overview"} {
+	for _, mode := range []string{"staged", "article", "stat", "overview", "eof"} {
 		t.Run(mode, func(t *testing.T) {
 			if out, err := run(bin, mode); err != nil {
 				t.Fatalf("network spool shutdown: %v: %s", err, out)
@@ -73,22 +73,32 @@ const interruptedFetchDriver = `
 #include <string.h>
 #include <time.h>
 enum { COF_CLOSESERVER=1, COF_ININIT=2, COF_INPROGRESS=4,
-       THREAD_POST=1, THREAD_LIMSIZE=1000, COM_STAT=1 };
+       THREAD_POST=1, THREAD_LIMSIZE=1000,
+       COM_ARTICLE=0, COM_STAT=1, COM_BODY=2, COM_BODYWVF=3,
+       COM_BODYNOSTAT=4, COM_HEAD=5, LOG_ERR=3 };
+#define logit(...) ((void)0)
 typedef struct { int mh_Bytes; } Buf;
-typedef struct { int d_Count, d_Type; } Desc;
+typedef struct { int d_Count, d_Type, d_Timeout; const char *d_Id; } Desc;
 typedef struct Connection Connection;
 typedef struct ServReq {
     struct ServReq *sr_Next;
     Connection *sr_CConn, *sr_SConn;
     time_t sr_Time;
-    int sr_SpoolOutput, cacheOpen;
+    int sr_SpoolOutput, cacheOpen, sr_Denied;
+    FILE *sr_Cache;
+    const char *sr_MsgId;
 } ServReq;
 struct Connection {
     int co_Flags, co_ArtMode;
+    int co_ServerByteCount, co_ServerArticleCount;
+    const char *co_State;
+    void (*co_Func)(Connection *);
     Desc *co_Desc;
     ServReq *co_SReq;
-    Buf co_ArtBuf, co_TMBuf;
+    Buf co_ArtBuf, co_TMBuf, co_RMBuf;
 };
+void NNServerTerminate(Connection *conn);
+void NNFinishInterruptedSpool(Connection *conn);
 static int NReadServAct=2, NReadServers=1, NWriteServers, NWriteServAct;
 static int FastCopyOpt, ServersTerminated, finished;
 static ServReq *reads, *writes, **PSRead=&reads, **PSWrite=&writes;
@@ -97,8 +107,17 @@ static void MBCopy(Buf *from, Buf *to) {
     to->mh_Bytes += from->mh_Bytes;
     from->mh_Bytes = 0;
 }
+/* the spool server's socket is at EOF */
+static int MBReadLine(Buf *b, char **p) { *p = NULL; return -1; }
+static void MBWrite(Buf *b, const char *p, int len) { b->mh_Bytes += len; }
+static void AbortCache(int fd, const char *id, int x) { abort(); }
+static void CommitCache(Connection *c, int x) { abort(); }
+static const char *ArtDeniedReply(Connection *c) { abort(); }
 static void NNFinishSReq(Connection *conn, const char *text, int retry) {
-    if (retry || !(conn->co_Flags & COF_CLOSESERVER)) abort();
+    if (retry || !(conn->co_Flags & COF_CLOSESERVER)) {
+        puts("request was finished while its server was still open");
+        exit(1);
+    }
     conn->co_SReq = conn->co_SReq->sr_Next;
     --conn->co_Desc->d_Count;
     --NReadServAct;
@@ -119,6 +138,7 @@ int main(int argc, char **argv) {
     int staged = !strcmp(argv[1], "staged");
     int overview = !strcmp(argv[1], "overview");
     int stat = !strcmp(argv[1], "stat");
+    int eof = !strcmp(argv[1], "eof");
     server.co_Desc = &desc;
     server.co_SReq = &first;
     first.sr_Next = &next;
@@ -129,13 +149,17 @@ int main(int argc, char **argv) {
     client.co_TMBuf.mh_Bytes = overview ? 10 : 0;
     client.co_ArtBuf.mh_Bytes = overview ? 0 : 3;
     FastCopyOpt = !staged;
-    publish(&first);
-    if (!staged && !overview) {
+    if (!eof)  /* eof: the 3 bytes in ArtBuf were read, none published */
+        publish(&first);
+    if (!staged && !overview && !eof) {
         client.co_TMBuf.mh_Bytes = 0;  /* output already flushed */
         client.co_ArtBuf.mh_Bytes = stat ? 0 : 2;
     }
-    NNServerTerminate(&server);
-    if (staged || overview) {
+    if (eof)
+        NNSpoolResponse3(&server);  /* EOF with fast copy on, nothing published */
+    else
+        NNServerTerminate(&server);
+    if (staged || overview || eof) {
         if (finished || reads != &first || first.sr_Next != &next) {
             puts("request with no published spool output lost its retry");
             return 1;
@@ -158,6 +182,10 @@ int main(int argc, char **argv) {
             puts("pending article data lost at completion");
             return 1;
         }
+    }
+    if (eof && client.co_TMBuf.mh_Bytes) {
+        puts("EOF before any output published data to the client");
+        return 1;
     }
     if (first.cacheOpen || NReadServAct || NReadServers || writes || next.sr_Next ||
         server.co_SReq || ServersTerminated != 1) {
