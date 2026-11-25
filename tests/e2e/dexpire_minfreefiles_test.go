@@ -13,7 +13,8 @@ import (
 // statfsZeroSource answers every statfs() (statvfs() where dexpire uses it: NetBSD, illumos)
 // as a file system without a fixed number of inodes does (btrfs): f_files and f_ffree 0. The
 // free space is made up as well: 1 TiB of 4 KB blocks, all free, or STATFSZERO_BAVAIL blocks
-// free. The path asked about is appended to the file STATFSZERO_MARK. The real call is never
+// free. With STATFSZERO_FFREE set, the file system has 1 Mi inodes and that many free instead
+// (the control: an inode count is known). The path asked about is appended to the file STATFSZERO_MARK. The real call is never
 // made, so the shim needs no symbol name of it (NetBSD renames statvfs() in <sys/statvfs.h>;
 // the definition here gets that name from the header).
 const statfsZeroSource = `#define _GNU_SOURCE
@@ -53,14 +54,28 @@ avail(void)
     return a != NULL ? strtoull(a, NULL, 10) : FAKEBLOCKS;
 }
 
+static unsigned long long
+files(void)
+{
+    return getenv("STATFSZERO_FFREE") != NULL ? (1ULL << 20) : 0;
+}
+
+static unsigned long long
+ffree(void)
+{
+    const char *a = getenv("STATFSZERO_FFREE");
+
+    return a != NULL ? strtoull(a, NULL, 10) : 0;
+}
+
 #define FILL(st) do {					\
 	memset((st), 0, sizeof(*(st)));			\
 	(st)->f_bsize = 4096;				\
 	(st)->f_blocks = FAKEBLOCKS;			\
 	(st)->f_bfree = avail();			\
 	(st)->f_bavail = avail();			\
-	(st)->f_files = 0;				\
-	(st)->f_ffree = 0;				\
+	(st)->f_files = files();			\
+	(st)->f_ffree = ffree();			\
     } while (0)
 
 #ifdef FAKE_STATVFS
