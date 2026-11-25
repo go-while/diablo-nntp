@@ -5,7 +5,7 @@ Your work should save them time, not cost it.
 If in doubt, send less, later, and better checked.
 
 The maintainer may decline AI-prepared work at any time; this file does
-not ask him to accept it. How the AI-assisted work behind some pull
+not ask them to accept it. How the AI-assisted work behind some pull
 requests is done is described in [AI-TEAM-PROCESS.md](AI-TEAM-PROCESS.md).
 
 ## A person is responsible for everything you send
@@ -54,11 +54,9 @@ Follow [SECURITY.md](SECURITY.md).
   there is none) that fails without the fix and passes with it (see [tests/e2e/README.md](tests/e2e/README.md): a row
   for the test, and `ci/durations` for a slow one). Say which hosts and
   systems it ran on. Do not lower a threshold to make a flaky test pass.
-- Add a one-line file to `changes/` for a user-visible change.
-- Behaviour, defaults and protocol replies are the maintainer's decision.
-  Unless the maintainer explicitly chooses otherwise, a new check or
-  refusal is an administrator option, off by default. Ask before you
-  change one.
+- Add a short file in `changes/` for a user-visible change.
+- Behaviour and defaults are the maintainer's decision; say in the pull
+  request which default you chose and why.
 - The maintainer asks that the "Last updated" line of ISSUES.md is not
   edited in these pull requests and that each issue gets its D-number;
   credit the reviewer who raised a finding first.
