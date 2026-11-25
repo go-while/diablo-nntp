@@ -56,6 +56,9 @@ func TestFeedNoXrefLongXRefHost(t *testing.T) {
 
 	r2 := s2.Reader(t)
 	r2.ExpectCmd(211, "GROUP e2e.test")
+	// The overview line carries the 120 KiB host; nntp-testkit v0.14.1 and later stop a
+	// client at Conn.MaxLine (64 KiB by default).
+	r2.MaxLine = 256 << 10
 	if over := overOne(t, r2); !strings.Contains(over, "Xref: "+longHost) {
 		t.Errorf("OVER 1 does not carry the %d byte Xref host", hostLen)
 	}
