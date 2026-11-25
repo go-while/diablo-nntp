@@ -274,12 +274,12 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-258](#d-258-a-look-ahead-dnewslink-takes-a-queue-file-before-the-master-flushes-it) | Low | A look-ahead dnewslink takes a queue file before the master flushes it | open |
 | [D-259](#d-259-one-failed-fork-stops-host-cache-rebuilds-until-a-restart) | Low | One failed fork stops host cache rebuilds until a restart | open |
 | [D-260](#d-260-a-peer-that-repeats-feedrset-and-feedcommit-starves-the-dnewsfeeds-reload) | Low | A peer that repeats feedrset and feedcommit starves the dnewsfeeds reload | open |
-| [D-261](#d-261-altfeed-clears-the-labels-requiregroup-list) | Low | AltFeed clears the label's requiregroup list | open |
-| [D-262](#d-262-groupref-inside-ifilter-ispam-and-espam-is-ignored) | Low | groupref inside IFILTER, ISPAM and ESPAM is ignored | open |
-| [D-263](#d-263-global-is-applied-again-at-every-groupref) | Low | GLOBAL is applied again at every groupref | open |
+| [D-261](#d-261-altfeed-clears-the-labels-requiregroup-list) | Low | AltFeed clears the label's requiregroup list | fixed (#477) |
+| [D-262](#d-262-groupref-inside-ifilter-ispam-and-espam-is-ignored) | Low | groupref inside IFILTER, ISPAM and ESPAM is ignored | fixed (#477) |
+| [D-263](#d-263-global-is-applied-again-at-every-groupref) | Low | GLOBAL is applied again at every groupref | fixed (#477) |
 | [D-264](#d-264-the-host-cache-rebuild-child-keeps-the-listening-socket) | Low | The host cache rebuild child keeps the listening socket | open |
 | [D-265](#d-265-a-nul-in-newsgroups-hides-the-names-after-it) | Low | A NUL in Newsgroups hides the names after it | open |
-| [D-266](#d-266-nortflush-and-domismatch-do-the-opposite-on-unsigned-char-platforms) | Low | nortflush and domismatch do the opposite on unsigned char platforms | open |
+| [D-266](#d-266-nortflush-and-domismatch-do-the-opposite-on-unsigned-char-platforms) | Low | nortflush and domismatch do the opposite on unsigned char platforms | fixed (#477) |
 | [D-267](#d-267-dexpire-keeps-history-entries-of-directories-removed-in-a-later-pass) | Low | dexpire keeps history entries of directories removed in a later pass | fixed (#438) |
 | [D-268](#d-268-a-failed-opendir-or-readdir-in-dexpire-marks-the-whole-spool-expired) | Low | A failed opendir or readdir in dexpire marks the whole spool expired | fixed (#437) |
 | [D-269](#d-269-record-updates-during-the-dhisexpire-copy-pass-are-lost) | Low | Record updates during the dhisexpire copy pass are lost | open |
@@ -1635,14 +1635,17 @@ Plan: touch dnewsfeeds only on a real change, and do not rebuild the host cache 
 ### D-261 AltFeed clears the label's requiregroup list
 `lib/newsfeed.c:2195` and `:2239`: when a peer feed table exists, AltFeed drops the label's requiregroup list, so articles go out that should be held back. Who: the local admin (config). Crash: none. Effect: feed rules not applied as written. Conditions: AltFeed with a peer feed table. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
 Plan: walk `prNode` to the end of the list, as for `pgNode` and `psNode`.
+Fixed (#477): `AltFeed()` walks `prNode` to the end of the list too, so a peer feed table adds its requiregroup lines to the label's instead of emptying (or replacing) them. Test: `TestDnewsfeedsPeerTableRequiregroup`, `TestDnewsfeedsRulesReload`.
 
 ### D-262 groupref inside IFILTER, ISPAM and ESPAM is ignored
 `lib/newsfeed.c:2029-2034`, `:2108-2129` and `:2498-2499` never resolve a groupref in those feeds; it is silently ignored. Who: the local admin (config). Crash: none. Effect: feed rules not applied as written. Conditions: that construct in dnewsfeeds. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
 Plan: resolve the group lists of the IFILTER, ISPAM and ESPAM feeds too (grouprefs there then take effect).
+Fixed (#477): `LoadNewsFeed()` resolves the group lists of IFILTER, ISPAM and ESPAM too (`resolveFeedGroupLists()`); the simple defaults of a groupdef (`resolveDefaults()`) still do not apply to those labels. Test: `TestDnewsfeedsGrouprefIncomingFilter`, `TestDnewsfeedsGrouprefSpamLabels`.
 
 ### D-263 GLOBAL is applied again at every groupref
 `lib/newsfeed.c:2487-2488` applies GLOBAL again at the start of the scan inside every groupref, so it overrides the rules the label set before that groupref. Who: the local admin (config). Crash: none. Effect: feed rules not applied as written. Conditions: GLOBAL together with grouprefs. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
 Plan: apply GLOBAL only at the top level of the scan.
+Fixed (#477): `recursiveScan()` applies GLOBAL once, then the label's list; `scanFeedList()` walks the grouprefs without GLOBAL. A groupref in GLOBAL no longer recurses to the limit ("Infinite recursion in dnewsfeeds file!"). Test: `TestDnewsfeedsGlobalOnceInGroupref`, `TestDnewsfeedsRulesReload`.
 
 ### D-264 The host cache rebuild child keeps the listening socket
 `lib/hostauth.c:103-192` and `util/diablo.c:742-783`: the rebuild child inherits the listening socket, so a restart during a DNS outage fails to bind while the child waits for DNS. Who: nobody (a restart during a DNS outage). Crash: none. Effect: the restart fails. Conditions: a DNS outage at restart. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
@@ -1655,6 +1658,7 @@ Plan: take a NUL as a name separator in the internal group list (stored bytes un
 ### D-266 nortflush and domismatch do the opposite on unsigned char platforms
 `lib/newsfeed.c:82-83`, `:1507`, `:1527`, `:826` and `util/diablo.c:1572` keep the option values in plain `char` and test them for -1, so on arm64, ppc64le and s390x `nortflush` and `domismatch` do the opposite. Who: the local admin (config). Crash: none. Effect: wrong behaviour. Conditions: an unsigned char platform: arm64, ppc64le, s390x. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
 Plan: `signed char` for `nf_PerLineFlushOpt` and `nf_NoMisMatch`; test by building with `-funsigned-char` on an x86 test host.
+Fixed (#477): `nf_PerLineFlushOpt` and `nf_NoMisMatch` are `signed char`; verified with a `-funsigned-char` build on x86 (the test fails on main built that way). Test: `TestDnewsfeedsNortflushDomismatch`.
 
 ### D-267 dexpire keeps history entries of directories removed in a later pass
 `util/dexpire.c:1415`, `:1459` and `:312-320`: `NodeAry` is not cleared between passes, so directories removed in pass 2 or later keep their history entries unexpired. Who: the local admin or cron. Crash: none. Effect: wrong data. Conditions: dexpire with more than one pass. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
