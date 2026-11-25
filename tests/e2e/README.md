@@ -561,7 +561,9 @@ The tests that preload a shim (the DNS and reader IPC tests, and every test that
 Faster: run the suite in several processes at once, as CI does. Each process
 gets its own set of tests, balanced by `ci/durations`; the tests matched by
 `ci/serial-tests` (they measure time, or wait for a worker under load) run
-alone afterwards. N defaults to the CPU count, at most 4.
+alone afterwards. N defaults to two parts per CPU, at most 12
+(`E2E_SHARDS_PER_CPU`, `E2E_SHARDS_MAX`): the tests mostly wait, so more parts
+than CPUs still go faster (see the header of `ci/run-shards`).
 
 ```sh
 go test -c -o e2e.test . && DIABLO_BIN=$PWD/../../dbin ./ci/run-shards ./e2e.test [N] [-test.v ...]
