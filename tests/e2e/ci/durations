@@ -336,11 +336,16 @@ TestDKPTrimRenameFailure 0.03
 TestDlockhistoryAllGrows 4.01
 TestDlockhistorySleepOption 1.51
 TestDnewsfeedsDirectiveWithoutArgument 0.03
+TestDnewsfeedsGlobalNotReappliedInGroupref 0.04
+TestDnewsfeedsGrouprefIncomingFilter 0.12
+TestDnewsfeedsGrouprefSpamLabels 2.74
 TestDnewsfeedsHashfeedFiltersByMessageID 0.07
 TestDnewsfeedsLimitsDfeedtest 0.02
 TestDnewsfeedsLimitsLive 0.08
 TestDnewsfeedsLogAfter 0.01
 TestDnewsfeedsMaxconnect 0.01
+TestDnewsfeedsNortflushDomismatch 0.11
+TestDnewsfeedsPeerTableRequiregroup 0.05
 TestDnewsfeedsReloadWithoutArgument 58.00
 TestDnewsfeedsRulesReload 66.00
 TestDnewslinkBadCompressLevel 3.01
