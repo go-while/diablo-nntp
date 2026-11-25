@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -147,6 +148,159 @@ func TestDexpirecacheNoInodeCount(t *testing.T) {
 				t.Errorf("message %q given %d times, want once", msg, c)
 			} else if !tc.message && c != 0 {
 				t.Errorf("message %q given, want none", msg)
+			}
+			if t.Failed() {
+				t.Logf("dexpirecache %s: err=%v\n%s", strings.Join(args, " "), err, out)
+			}
+		})
+	}
+}
+
+// TestDexpirecacheInodeOrder (D-302): dexpirecache -i N should remove the N oldest empty
+// cache files and symbolic links (by ctime, oldest first), ties in the order of their names.
+// addSLink() kept its sorted list's end at the first entry met in directory order and left out
+// every newer entry, and an entry with the same ctime as the list's end was never linked in,
+// while a full list kept N+1 entries. So -i N removed only the first entry met and the older
+// ones, at most N+1.
+//
+// In four, one and all the cache has seven empty files and links made in three seconds:
+// 00/a1 (empty file) and 01/a2 (link) in the first, 00/b1, 00/b2 and 01/b3 (empty files) in
+// the second, 00/c1 (empty file) and 01/c2 (link) in the third. Two cache files with content
+// are an hour old, and a preloaded library reports 1 Mi inodes, none free, so that all N
+// inodes are needed.
+//   - four: -i 4 removes ./00/a1, ./01/a2, ./00/b1, ./00/b2, in that order. Fails before the
+//     fix whatever the directory order: 1, 3 or 5 entries are removed (the first met is in
+//     the first, second or third second).
+//   - one: -i 1 removes ./00/a1 only.
+//   - all: -i 10 removes all seven, oldest first.
+//   - same: five made in one second instead (00/s1, 00/s2, 00/s5 empty files, 01/s3 a link,
+//     01/s4 an empty file): -i 3 removes ./00/s1, ./00/s2, ./00/s5, in the order of the names.
+//     Fails before the fix whatever the directory order: one entry is removed (the first met;
+//     the others have its ctime and were never linked in).
+//
+// The two cache files with content stay in each case (-i does not remove them).
+func TestDexpirecacheInodeOrder(t *testing.T) {
+	so := preloadShim(t, "statfszero", statfsZeroSource)
+	threeSeconds := [][]string{{"00/a1", "01/a2"}, {"00/b1", "00/b2", "01/b3"}, {"00/c1", "01/c2"}}
+	links := map[string]bool{"01/a2": true, "01/c2": true, "01/s3": true}
+	for _, tc := range []struct {
+		name   string
+		groups [][]string // made one second after another, in each the order of the names
+		n      int
+	}{
+		{"four", threeSeconds, 4},
+		{"one", threeSeconds, 1},
+		{"all", threeSeconds, 10},
+		{"same", [][]string{{"00/s1", "00/s2", "00/s5", "01/s3", "01/s4"}}, 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			groups := tc.groups
+			var order []string // oldest first
+			for _, g := range groups {
+				order = append(order, g...)
+			}
+			s := NewSite(t, SiteOptions{NoStart: true})
+			cache := filepath.Join(s.Dir, "spool", "cache")
+			for _, d := range []string{"00", "01"} {
+				if err := os.MkdirAll(filepath.Join(cache, d), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			old := time.Now().Add(-time.Hour)
+			var files []string
+			for _, n := range []string{"00/f1", "01/f2"} {
+				p := filepath.Join(cache, n)
+				f, err := os.Create(p)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, err = f.Write([]byte(strings.Repeat("article line\r\n", 600)))
+				if err == nil {
+					err = f.Sync()
+				}
+				if cerr := f.Close(); err == nil {
+					err = cerr
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chtimes(p, old, old); err != nil {
+					t.Fatal(err)
+				}
+				// dexpirecache counts a regular file with no blocks as an empty one
+				if st, err := os.Lstat(p); err != nil || st.Sys().(*syscall.Stat_t).Blocks == 0 {
+					t.Skipf("%s shows no blocks on this file system (%v)", p, err)
+				}
+				files = append(files, p)
+			}
+			// Each group is made just after a whole second; a new file's mtime is its
+			// ctime, so the mtimes show that each group shares one ctime second.
+			var secs []int64
+			for _, g := range groups {
+				now := time.Now()
+				time.Sleep(now.Truncate(time.Second).Add(time.Second + 100*time.Millisecond).Sub(now))
+				for _, n := range g {
+					p := filepath.Join(cache, n)
+					var err error
+					if links[n] {
+						err = os.Symlink("f1", p)
+					} else {
+						err = os.WriteFile(p, nil, 0o644)
+					}
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				for _, n := range g {
+					st, err := os.Lstat(filepath.Join(cache, n))
+					if err != nil {
+						t.Fatal(err)
+					}
+					secs = append(secs, st.ModTime().Unix())
+				}
+			}
+			for i, k := 0, 0; i < len(groups); i++ {
+				for j := range groups[i] {
+					if secs[k+j] != secs[k] || (k > 0 && secs[k] <= secs[k-1]) {
+						t.Fatalf("setup: the groups are not in one second each: %v", secs)
+					}
+				}
+				k += len(groups[i])
+			}
+
+			mark := filepath.Join(t.TempDir(), "statfs")
+			base := s.Env
+			s.Env = append(slices.Clone(base), lockFaultEnv(so), "STATFSZERO_MARK="+mark, "STATFSZERO_FFREE=0")
+			args := []string{"-d", cache, "-v", "-i", strconv.Itoa(tc.n)}
+			out, err := s.TryRun("dexpirecache", args...)
+			s.Env = base
+			if b, rerr := os.ReadFile(mark); rerr != nil || len(b) == 0 {
+				t.Fatalf("the shim was never asked (%v):\n%s", rerr, out)
+			}
+			if err != nil {
+				t.Errorf("dexpirecache %s: %v", strings.Join(args, " "), err)
+			}
+
+			want := order[:min(tc.n, len(order))]
+			var removed []string
+			for _, l := range strings.Split(out, "\n") {
+				if r, ok := strings.CutPrefix(l, "Removing ./"); ok {
+					removed = append(removed, r)
+				}
+			}
+			if !slices.Equal(removed, want) {
+				t.Errorf("removed %q, want %q", removed, want)
+			}
+			gone := func(p string) bool { _, err := os.Lstat(p); return err != nil }
+			for _, n := range order {
+				if g, w := gone(filepath.Join(cache, n)), slices.Contains(want, n); g != w {
+					t.Errorf("%s removed: %v, want %v", n, g, w)
+				}
+			}
+			for _, p := range files {
+				if gone(p) {
+					t.Errorf("cache file %s removed, want kept", filepath.Base(p))
+				}
 			}
 			if t.Failed() {
 				t.Logf("dexpirecache %s: err=%v\n%s", strings.Join(args, " "), err, out)
