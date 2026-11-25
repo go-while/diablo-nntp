@@ -6,14 +6,18 @@ package e2e
 // new slot 3 are stored.
 
 import (
+	"context"
 	"encoding/binary"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
+	testkit "github.com/go-while/nntp-testkit"
 	"github.com/go-while/nntp-testkit/client"
 )
 
@@ -227,5 +231,62 @@ func TestSpamFilterResizeKeepsMode(t *testing.T) {
 	}
 	if m := st.Mode().Perm(); m != 0o664 {
 		t.Errorf("spam.body.cache has mode %04o after the size change, want 0664 (the mode it had)", m)
+	}
+}
+
+// TestSpamFilterResizeRefusedWithoutOwner (D-283): a cache file of another size whose owner
+// the process cannot give to a new file is left as it is. Needs root: the test makes a
+// 4096-byte spam.body.cache owned by uid/gid 4242 (mode 0666) and runs "dspaminfo -B -l" as
+// uid/gid 4343, which cannot chown to 4242. Expected: spam.body.cache is unchanged (4096
+// bytes, 4242:4242, 0666), no spam.body.cache.new.* is left, and the general log says the
+// owner could not be kept. Fails on main 7e157f5c (the file is rewritten in place at 65536
+// entries) and at 0747695b (the new file, owned by 4343, replaced it).
+func TestSpamFilterResizeRefusedWithoutOwner(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root: makes a cache owned by another uid and runs dspaminfo as a third")
+	}
+	const owner, runner = 4242, 4343
+	s := NewSite(t, SiteOptions{NoStart: true, Config: map[string]string{"internalfilter": "B4"}})
+	cache := filepath.Join(s.Dir, "spam.body.cache")
+	if err := os.WriteFile(cache, make([]byte, 4096), 0o666); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chown(cache, owner, owner); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(cache, 0o666); err != nil {
+		t.Fatal(err)
+	}
+	// the runner reaches the site and may write its directory and log
+	for _, d := range []string{filepath.Dir(s.Dir), s.Dir, filepath.Join(s.Dir, "log")} {
+		if err := os.Chmod(d, 0o777); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), testkit.Deadline())
+	defer cancel()
+	cmd := exec.CommandContext(ctx, filepath.Join(s.Bin, "dspaminfo"), "-B", "-l")
+	cmd.Dir = s.Dir
+	cmd.Env = append(os.Environ(), s.Env...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: runner, Gid: runner}}
+	out, err := cmd.CombinedOutput()
+	t.Logf("dspaminfo -B -l as %d: err=%v\n%s", runner, err, out)
+
+	st, err := os.Stat(cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sys, ok := st.Sys().(*syscall.Stat_t); ok && (sys.Uid != owner || sys.Gid != owner) {
+		t.Errorf("spam.body.cache is owned by %d:%d, want %d:%d (the file it had)", sys.Uid, sys.Gid, owner, owner)
+	}
+	if st.Size() != 4096 || st.Mode().Perm() != 0o666 {
+		t.Errorf("spam.body.cache is %d bytes, mode %04o, want 4096 bytes, 0666 (unchanged)", st.Size(), st.Mode().Perm())
+	}
+	if left, _ := filepath.Glob(cache + ".new.*"); len(left) != 0 {
+		t.Errorf("left behind: %v", left)
+	}
+	if want := "Unable to keep the owner 4242:4242 of spam cache file"; !strings.Contains(generalLog(s), want) {
+		t.Errorf("general log has no %q:\n%s", want, generalLog(s))
 	}
 }

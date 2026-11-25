@@ -533,6 +533,7 @@ sharing: they contain system/process names and test-site log contents.
 | `TestSpamFilterDecayRestartsFromNow` | diablo | internalfilter B4: 6 copies of a body (3 stored), the slot time moved back 3500 s in `spam.body.cache`, then 10 copies: 3 are stored, as on a new slot. Skipped on OpenBSD (D-171). **Fails** on main: all 10 stored, the decay kept the idle minutes as credit (D-282) |
 | `TestSpamFilterResizeKeepsMappedCache` | diablo, dicmd | internalfilter B4, a peer connection open, then `dicmd config internalfilter B4s1024`: `spam.body.cache` has 1024 entries, 4 articles on the old connection get 235, a new connection stores 3 of 8 copies of one body. **Fails** on main: the old connection is closed (EOF) at the first article, its feeder process had the truncated file mapped (D-283) |
 | `TestSpamFilterResizeKeepsMode` | diablo, dicmd | internalfilter B4, `spam.body.cache` set to 0664, then `dicmd config internalfilter B4s1024`: the new 1024-entry file has mode 0664. **Fails** on the first D-283 fix (#476 at 8e0c769f): mode 0644; passes on main, which rewrote the file in place (D-283) |
+| `TestSpamFilterResizeRefusedWithoutOwner` | dspaminfo | root only (skipped otherwise): a 4096-byte `spam.body.cache` owned by 4242:4242, mode 0666, and `dspaminfo -B -l` run as 4343:4343: the file is unchanged, no `spam.body.cache.new.*` is left, and the general log says the owner could not be kept. **Fails** on main (rewritten in place at 65536 entries) and at #476 0747695b (replaced by a file owned by 4343) (D-283) |
 
 ## Running
 
