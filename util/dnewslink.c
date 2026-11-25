@@ -266,6 +266,7 @@ typedef struct ArtMap {
 const char *spoolArtPath(const char *relPath);
 int spoolFaultNote(char *msgId, const char *relPath, const char *stage);
 void keepQueueLine(FILE **pfo, const char *path, int *keepOld, const char *line);
+static void putQueueLine(FILE *fo, const char *line);
 int ArticleCheck(const char *relPath);
 int MapArticle(const char *relPath, off_t off, int size, int cSize, int lines, ArtMap *am);
 void UnmapArticle(ArtMap *am);
@@ -1275,12 +1276,6 @@ main(int ac, char **av)
 		    case T_REQUEUE:
 			++connectCount;
 			keepQueueLine(&fo, path, &keepOld, buf);
-			if (fo != NULL) {
-			    size_t len = strlen(buf);
-			    /* readline may have cut the terminating newline. */
-			    if (len > 0 && buf[len - 1] != '\n')
-				fputc('\n', fo);
-			}
 			doArtLog("defer", msgId,
 			    (PipeOpt && fo == NULL) ? "not kept" : "kept", stage, reason);
 			break;
@@ -1360,7 +1355,7 @@ main(int ac, char **av)
 
 				(void)RefilePendingStreams(fo);
 				if (!bufInval && !inStream)
-				    fputs(buf, fo);
+				    putQueueLine(fo, buf);
 			    } else {
 				keepOld = 1;
 			    }
@@ -1485,7 +1480,7 @@ main(int ac, char **av)
 		}
 		while (deferbegin < deferend) {
 		    if (fo != NULL)
-			fputs(deferbuf[deferbegin], fo);
+			putQueueLine(fo, deferbuf[deferbegin]);
 		    zfreeStr(&SysMemPool, &deferbuf[deferbegin++]);
 		}
 
@@ -1521,7 +1516,7 @@ main(int ac, char **av)
 		    } else {
 			if (more) {
 			    do {
-				fputs(buf, fo);
+				putQueueLine(fo, buf);
 			    } while (readline(fd, buf, sizeof(buf), TimeNow) == 0);
 			}
 			if (fflush(fo) != 0 || ferror(fo)) {
@@ -2417,9 +2412,26 @@ spoolFaultNote(char *msgId, const char *relPath, const char *stage)
 }
 
 /*
+ * putQueueLine() - write a queue line read by readline().  readline()
+ * copies at most size - 1 bytes of a line and drops its newline when the
+ * line is that long: add it, or the next line written is glued on and
+ * lost at the next run.
+ */
+static void
+putQueueLine(FILE *fo, const char *line)
+{
+    size_t len = strlen(line);
+
+    fputs(line, fo);
+    if (len > 0 && line[len - 1] != '\n')
+	fputc('\n', fo);
+}
+
+/*
  * keepQueueLine() - put a queue line back into the queue: into the
  * rewrite of the batch file, which is opened if it is not open yet.  A
- * realtime feed cannot rewrite its queue.
+ * realtime feed cannot rewrite its queue.  The line gets its newline if
+ * readline() cut it.
  */
 void
 keepQueueLine(FILE **pfo, const char *path, int *keepOld, const char *line)
@@ -2431,7 +2443,7 @@ keepQueueLine(FILE **pfo, const char *path, int *keepOld, const char *line)
     if (*pfo == NULL && *keepOld == 0)
 	*pfo = rewriteBatchFile(path, PipeOpt);
     if (*pfo != NULL)
-	fputs(line, *pfo);
+	putQueueLine(*pfo, line);
     else
 	*keepOld = 1;
 }
