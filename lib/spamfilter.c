@@ -80,6 +80,7 @@ int		FilterMax  = 100;
 
 void initSpamData(FilterInfo *f, const char *fname, int *fd);
 void termSpamData(FilterInfo *filter);
+int newFilterFile(FilterInfo *fi, const char *fname);
 int openFilterFile(FilterInfo *f, const char *fname);
 int spamFilterTable(time_t t, FilterInfo *f, hash_t mhv, md5hash_t *hv, int lines);
 void dumpSpamFilterMem(FILE *fo, FilterInfo *fi, char *stype, int raw);
@@ -241,6 +242,62 @@ SetSpamFilterOpt(void)
  *		      spam cache into the shared memory segment.
  */
 
+/*
+ * newFilterFile() - write an empty cache of fi->Hsize entries to a new
+ *		     file and rename it over fname.  Returns its fd, or -1.
+ */
+int
+newFilterFile(FilterInfo *fi, const char *fname)
+{
+    char path[PATH_MAX];
+    char tmp[PATH_MAX];
+    Filter empty = {{ 0 }};
+    int fd;
+    int i;
+
+    snprintf(path, sizeof(path), "%s", PatDbExpand(fname));
+    if (snprintf(tmp, sizeof(tmp), "%s.new.%d", path, (int)getpid()) >=
+							(int)sizeof(tmp)) {
+        logit(LOG_ERR, "Spam cache file name too long: %s", path);
+        return(-1);
+    }
+    unlink(tmp);	/* left by a process of this pid that died */
+    if ((fd = open(tmp, O_RDWR|O_CREAT|O_EXCL, 0644)) < 0) {
+        logit(LOG_ERR, "Unable to create spam cache file %s: %s",
+              tmp, strerror(errno));
+        return(-1);
+    }
+    for (i = 0; i < fi->Hsize; ++i) {
+        const char *ptr = (const char *)&empty;
+        size_t remaining = sizeof(empty);
+
+        while (remaining != 0) {
+            ssize_t n = write(fd, ptr, remaining);
+            if (n < 0 && errno == EINTR)
+                continue;
+            if (n <= 0) {
+                int error = (n == 0) ? EIO : errno;
+                logit(LOG_ERR, "Unable to initialize spam cache file %s: %s",
+                      tmp, strerror(error));
+                goto fail;
+            }
+            ptr += n;
+            remaining -= (size_t)n;
+        }
+    }
+    if (rename(tmp, path) < 0) {
+        logit(LOG_ERR, "Unable to replace spam cache file %s: %s",
+              path, strerror(errno));
+        goto fail;
+    }
+    return(fd);
+
+fail:
+    close(fd);
+    unlink(tmp);
+    return(-1);
+}
+
 int
 openFilterFile(FilterInfo *fi, const char *fname)
 {
@@ -259,32 +316,19 @@ openFilterFile(FilterInfo *fi, const char *fname)
             goto fail;
         }
         if (st.st_size != (off_t)length) {
-            Filter empty = {{ 0 }};
-            int i;
+            /*
+             * Another size: a new, empty file is renamed into place.
+             * Truncating this one would cut the map of the feeder
+             * processes that still have it mapped at the old size
+             * (SIGBUS when they touch the cut part, D-283); they keep
+             * the old file until they exit.
+             */
+            int nfd = newFilterFile(fi, fname);
 
-            if (ftruncate(fi->Fd, 0) < 0 || lseek(fi->Fd, 0, SEEK_SET) < 0) {
-                logit(LOG_ERR, "Unable to reset spam cache file %s: %s",
-                      PatDbExpand(fname), strerror(errno));
+            if (nfd < 0)
                 goto fail;
-            }
-            for (i = 0; i < fi->Hsize; ++i) {
-                const char *ptr = (const char *)&empty;
-                size_t remaining = sizeof(empty);
-
-                while (remaining != 0) {
-                    ssize_t n = write(fi->Fd, ptr, remaining);
-                    if (n < 0 && errno == EINTR)
-                        continue;
-                    if (n <= 0) {
-                        int error = (n == 0) ? EIO : errno;
-                        logit(LOG_ERR, "Unable to initialize spam cache file %s: %s",
-                              PatDbExpand(fname), strerror(error));
-                        goto fail;
-                    }
-                    ptr += n;
-                    remaining -= (size_t)n;
-                }
-            }
+            close(fi->Fd);
+            fi->Fd = nfd;
         }
         fi->HashAry = xmap(
                 NULL,
