@@ -179,16 +179,16 @@ func TestDnewsfeedsGrouprefSpamLabels(t *testing.T) {
 	})
 }
 
-// TestDnewsfeedsGlobalOnceInGroupref (D-263): GLOBAL is applied before the label's own lines,
-// once. Inside a groupref it is not applied again, so it does not override what the label
-// set before that groupref. With GLOBAL "delgroup e2e.junk.*", a label "addgroup
-// e2e.junk.wanted" then "groupref std" gets e2e.junk.wanted, as the same label without the
-// groupref does; with GLOBAL "addgroup e2e.*", a label "delgroup e2e.private" then "groupref
-// std" does not get e2e.private. A groupref in GLOBAL itself is applied to every label, and
-// scanned once: no "Infinite recursion" in the log. Fails before the fix: GLOBAL, applied again at the
-// start of std, held e2e.junk.wanted back and fed e2e.private, and a groupref in GLOBAL
+// TestDnewsfeedsGlobalNotReappliedInGroupref (D-263): GLOBAL is applied before the label's own
+// lines and not again inside a groupref, so it does not override what the label set before
+// that groupref. With GLOBAL "delgroup e2e.junk.*", a label "addgroup e2e.junk.wanted" then
+// "groupref std" gets e2e.junk.wanted, as the same label without the groupref does; with
+// GLOBAL "addgroup e2e.*", a label "delgroup e2e.private" then "groupref std" does not get
+// e2e.private. A groupref in GLOBAL itself is applied to every label without recursing through
+// GLOBAL: no "Infinite recursion" in the log. Fails before the fix: GLOBAL, applied again at
+// the start of std, held e2e.junk.wanted back and fed e2e.private, and a groupref in GLOBAL
 // recursed through GLOBAL again until the recursion limit.
-func TestDnewsfeedsGlobalOnceInGroupref(t *testing.T) {
+func TestDnewsfeedsGlobalNotReappliedInGroupref(t *testing.T) {
 	const std = "groupdef std\n    addgroup e2e.comp.*\nend\n"
 	for _, c := range []struct {
 		name      string
