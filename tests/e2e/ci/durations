@@ -338,8 +338,10 @@ TestDlockhistorySleepOption 1.51
 TestDnewsfeedsDirectiveWithoutArgument 0.03
 TestDnewsfeedsGlobalNotReappliedInGroupref 0.04
 TestDnewsfeedsGrouprefIncomingFilter 0.12
+TestDnewsfeedsGrouprefSelf 0.02
 TestDnewsfeedsGrouprefSpamLabels 2.74
 TestDnewsfeedsHashfeedFiltersByMessageID 0.07
+TestDnewsfeedsLabelWithoutEnd 1.09
 TestDnewsfeedsLimitsDfeedtest 0.02
 TestDnewsfeedsLimitsLive 0.08
 TestDnewsfeedsLogAfter 0.01
