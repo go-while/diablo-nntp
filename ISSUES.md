@@ -294,9 +294,9 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-278](#d-278-with--c-n-refused-connections-stay-counted-and-switch-listeners-off) | Low | With -c N refused connections stay counted and switch listeners off | open |
 | [D-279](#d-279-addrealm-of-one-access-line-rewrites-the-user-name-for-later-lines) | Low | addrealm of one access line rewrites the user name for later lines | open |
 | [D-280](#d-280-with-realm--one-user-counts-as-separate-users-for-maxconnperuser) | Low | With realm * one user counts as separate users for maxconnperuser | open |
-| [D-281](#d-281-a-slow-transfer-resets-a-tripped-spam-filter-slot) | Low | A slow transfer resets a tripped spam filter slot | open |
-| [D-282](#d-282-the-spam-filter-decay-keeps-idle-minutes-as-credit) | Low | The spam filter decay keeps idle minutes as credit | open |
-| [D-283](#d-283-a-new-spam-filter-cache-size-truncates-the-mapped-cache) | Low | A new spam filter cache size truncates the mapped cache | open |
+| [D-281](#d-281-a-slow-transfer-resets-a-tripped-spam-filter-slot) | Low | A slow transfer resets a tripped spam filter slot | fixed (#476) |
+| [D-282](#d-282-the-spam-filter-decay-keeps-idle-minutes-as-credit) | Low | The spam filter decay keeps idle minutes as credit | fixed (#476) |
+| [D-283](#d-283-a-new-spam-filter-cache-size-truncates-the-mapped-cache) | Low | A new spam filter cache size truncates the mapped cache | fixed (#476) |
 | [D-284](#d-284-dcancel--a-and--s-rewrite-a-spool-file-a-feeder-still-appends-to) | Low | dcancel -a and -s rewrite a spool file a feeder still appends to | open |
 | [D-285](#d-285-doverctl-clean-deletes-the-overview-of-a-group-created-after-its-scan) | Low | doverctl clean deletes the overview of a group created after its scan | open |
 | [D-286](#d-286-dcancel--r-leaks-two-descriptors-and-a-map-per-line) | Low | dcancel -r leaks two descriptors and a map per line | fixed (#436) |
@@ -1719,14 +1719,17 @@ Plan: compare the user without the realm for `maxconnperuser`.
 ### D-281 A slow transfer resets a tripped spam filter slot
 `util/diablo.c:3161`, `:3959` and `lib/spamfilter.c:501-511` pass the article's start time, so a transfer slower than 10 s resets a tripped slot and copies pass again. Who: a peer (a slow transfer). Crash: none. Effect: the rate filter lets copies through. Conditions: the internal spam filter on. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
 Plan: pass `time(NULL)` at the call.
+Fixed (#476): `LoadArticle()` passes `time(NULL)` to `SpamFilter()` instead of the time the article began to come in; the `dt < -10` reset in `spamFilterTable()` stays for a clock that steps back. Test: `TestSpamFilterSlowTransferKeepsTrip` (a copy that began 13 s before its slot was made and ends after it tripped gets 437, the copies after it are refused too).
 
 ### D-282 The spam filter decay keeps idle minutes as credit
 `lib/spamfilter.c:519-523` and `:550-557` stop the decay at 0 but keep the idle minutes, so after a quiet hour about 59 plus the trip value copies pass. Who: content via feeds (copies sent after a quiet hour). Crash: none. Effect: the rate filter lets copies through. Conditions: the internal spam filter on. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
 Plan: set `t0 = t` when the decay loop reaches 0.
+Fixed (#476): when the decay brings the count to 0, `spamFilterTable()` sets `t0 = t`, so the slot counts like a new one. Test: `TestSpamFilterDecayRestartsFromNow` (the slot time moved back 3500 s in the cache file: 3 of 10 copies stored, as on a new slot; skipped on OpenBSD, D-171).
 
 ### D-283 A new spam filter cache size truncates the mapped cache
 `lib/spamfilter.c:261-287`: `dicmd config internalfilter` with a new size (or dspaminfo with another size) truncates the cache file that feeder processes have mapped; by reading, they get SIGBUS. Who: the local admin. Crash: feeder processes, possibly the master (SIGBUS), by reading. Effect: lost service. Conditions: a size change at runtime. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: M.
 Plan: never truncate a mapped cache: write a new file and rename it.
+Fixed (#476): `openFilterFile()` writes a cache of another size to `<file>.new.<pid>` (`newFilterFile()`) and renames it over the file; feeder processes forked before the change keep the old, unlinked file until they exit, the master and later children use the new one. Test: `TestSpamFilterResizeKeepsMappedCache` (`dicmd config internalfilter B4s1024` with a connection open: it still gets 235, the filter works at 1024 entries). Not tested: the `dspaminfo` path with another size, and SIGBUS itself (by reading; the test sees the connection close).
 
 ### D-284 dcancel -a and -s rewrite a spool file a feeder still appends to
 `util/dcancel.c:476-489`, `:560-579` and `:664` rewrite a spool file that a feeder child still appends to, so other articles in it are lost or misaddressed. The man page warns about it. Who: the local admin (`dcancel -a/-s`). Crash: none. Effect: wrong data. Conditions: a spool file still being written. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: M.
