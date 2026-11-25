@@ -24,9 +24,28 @@ func histDrvBuild(t *testing.T) string {
 	return libdiabloDriver(t, histDriver, "histdrv", "history driver")
 }
 
+// flagsOf returns the fields of s that start with one of the prefixes and hold no
+// quote or backslash: configure writes a few values (-DRADCLI_DICTIONARY=\"...\") with
+// shell quoting, which exec does not undo.
+func flagsOf(s string, prefixes ...string) []string {
+	var out []string
+	for _, f := range strings.Fields(s) {
+		if strings.ContainsAny(f, "\"'\\") {
+			continue
+		}
+		for _, p := range prefixes {
+			if strings.HasPrefix(f, p) {
+				out = append(out, f)
+				break
+			}
+		}
+	}
+	return out
+}
+
 // libdiabloDriver compiles the C source src against the tree's obj/libdiablo.a
-// (skipped when it is not built) and returns the executable. It uses the flags
-// and libraries the Makefile builds libdiablo.a with: the driver must agree with
+// (skipped when it is not built) and returns the executable. It uses the config.mk
+// flags and libraries (see below; not all of the Makefile's): the driver must agree with
 // it on off_t (a History record holds one) and link what it needs. config.mk
 // lists the libraries of the optional features (libcanlock, PAM, ...).
 func libdiabloDriver(t *testing.T, src, name, what string) string {
@@ -53,8 +72,31 @@ func libdiabloDriver(t *testing.T, src, name, what string) string {
 	}
 	if b, err := os.ReadFile(filepath.Join(root, "config.mk")); err == nil {
 		for _, l := range strings.Split(string(b), "\n") {
-			if v, ok := strings.CutPrefix(strings.TrimSpace(l), "LDLIBS +="); ok {
+			l = strings.TrimSpace(l)
+			if v, ok := strings.CutPrefix(l, "LDLIBS +="); ok {
 				libs = append(libs, strings.Fields(v)...)
+			}
+			// The config.mk flags the Makefile builds libdiablo.a and the programs with:
+			// the compiler (CC); from CPPFLAGS the -I and -D options and the -specs= of
+			// Perl's ccopts; from LDFLAGS the -L and run-time -Wl,-rpath of the optional
+			// libraries (/opt/local, /opt/ooce, /usr/local); Perl's ldopts are in LDLIBS,
+			// which is taken whole above. Observed: on EL 9 the driver failed to link with
+			// R_X86_64_32 (the hardened-ld spec links a PIE); a small C file reproduces it
+			// without the hardened-cc1 spec and links with it. The driver's own compile and
+			// link lines were not logged, so that cause is inferred. configure writes no
+			// -specs= to LDFLAGS today; that entry matches nothing. A value with shell
+			// quoting (-DRADCLI_DICTIONARY=\"...\") is left out. The rest of the Makefile's
+			// flags (-DVERS, DEBUG_ALLOC, CFLAGS, the other ccopts) are not passed.
+			if v, ok := strings.CutPrefix(l, "CC ="); ok {
+				if p, err := exec.LookPath(strings.TrimSpace(v)); err == nil {
+					cc = p
+				}
+			}
+			if v, ok := strings.CutPrefix(l, "CPPFLAGS +="); ok {
+				cflags = append(cflags, flagsOf(v, "-specs=", "-I", "-D")...)
+			}
+			if v, ok := strings.CutPrefix(l, "LDFLAGS +="); ok {
+				libs = append(libs, flagsOf(v, "-specs=", "-L", "-Wl,")...)
 			}
 		}
 	}
