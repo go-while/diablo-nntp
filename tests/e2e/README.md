@@ -532,6 +532,7 @@ sharing: they contain system/process names and test-site log contents.
 | `TestSpamFilterSlowTransferKeepsTrip` | diablo | internalfilter B4: a copy's IHAVE and head, 13 s pause, then 5 copies of the body on another connection (3 stored, the slot trips), then the rest of the slow copy and 3 more copies: the slow copy gets 437 and none of the 4 is stored. **Fails** on main: the spam check used the article's start time, the slot (more than 10 s later) was reset, the slow copy got 235 and the 3 after it were stored (D-281) |
 | `TestSpamFilterDecayRestartsFromNow` | diablo | internalfilter B4: 6 copies of a body (3 stored), the slot time moved back 3500 s in `spam.body.cache`, then 10 copies: 3 are stored, as on a new slot. Skipped on OpenBSD (D-171). **Fails** on main: all 10 stored, the decay kept the idle minutes as credit (D-282) |
 | `TestSpamFilterResizeKeepsMappedCache` | diablo, dicmd | internalfilter B4, a peer connection open, then `dicmd config internalfilter B4s1024`: `spam.body.cache` has 1024 entries, 4 articles on the old connection get 235, a new connection stores 3 of 8 copies of one body. **Fails** on main: the old connection is closed (EOF) at the first article, its feeder process had the truncated file mapped (D-283) |
+| `TestSpamFilterResizeKeepsMode` | diablo, dicmd | internalfilter B4, `spam.body.cache` set to 0664, then `dicmd config internalfilter B4s1024`: the new 1024-entry file has mode 0664. **Fails** on the first D-283 fix (#476 at 8e0c769f): mode 0644; passes on main, which rewrote the file in place (D-283) |
 
 ## Running
 

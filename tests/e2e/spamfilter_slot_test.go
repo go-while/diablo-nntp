@@ -195,3 +195,37 @@ func TestSpamFilterResizeKeepsMappedCache(t *testing.T) {
 		t.Errorf("8 copies on a new connection after the size change: %d stored, want %d", got, spamTrip-1)
 	}
 }
+
+// TestSpamFilterResizeKeepsMode (D-283): the cache file written for a new size has the mode
+// of the file it replaces. Input: spam.body.cache set to 0664 while diablo runs, then "dicmd
+// config internalfilter B4s1024". Expected: spam.body.cache has 1024 entries and mode 0664.
+// Fails on the first D-283 fix (#476 at 8e0c769f): the new file got 0644 (the create mode),
+// so a cache whose owner or group is the daemon's could become one it cannot open. Passes
+// on main 7e157f5c, which rewrote the file in place. The owner is kept the same way; that
+// part needs root and is not tested here.
+func TestSpamFilterResizeKeepsMode(t *testing.T) {
+	s := spamSite(t, "B4")
+	cache := filepath.Join(s.Dir, "spam.body.cache")
+	st, err := os.Stat(cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldSize := st.Size()
+	if err := os.Chmod(cache, 0o664); err != nil {
+		t.Fatal(err)
+	}
+
+	out := s.Dicmd(t, "config", "internalfilter", "B4s1024")
+	if !strings.Contains(out, "Set 'internalfilter' to 'B4s1024'") {
+		t.Fatalf("dicmd config internalfilter B4s1024: %q", out)
+	}
+	if st, err = os.Stat(cache); err != nil {
+		t.Fatal(err)
+	}
+	if st.Size()*64 != oldSize {
+		t.Errorf("spam.body.cache is %d bytes after the change, want %d", st.Size(), oldSize/64)
+	}
+	if m := st.Mode().Perm(); m != 0o664 {
+		t.Errorf("spam.body.cache has mode %04o after the size change, want 0664 (the mode it had)", m)
+	}
+}
