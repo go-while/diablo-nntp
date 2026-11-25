@@ -286,7 +286,7 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-270](#d-270-an-unreadable-dexpirectl-at-its-reload-stops-every-reader-process) | Low | An unreadable dexpire.ctl at its reload stops every reader process | fixed (#458) |
 | [D-271](#d-271-compresslvl-0-stores-gzip-records-that-the-spool-reads-as-plain) | Low | compresslvl 0 stores gzip records that the spool reads as plain | open |
 | [D-272](#d-272-dirtime-is-one-global-for-all-metaspools) | Low | DirTime is one global for all metaspools | open |
-| [D-273](#d-273-minfreefiles-on-btrfs-removes-every-directory-but-the-newest) | Low | minfreefiles on btrfs removes every directory but the newest | fixed (#PR) |
+| [D-273](#d-273-minfreefiles-on-btrfs-removes-every-directory-but-the-newest) | Low | minfreefiles on btrfs removes every directory but the newest | fixed (#481) |
 | [D-274](#d-274-the-t-size-suffix-in-dspoolctl-multiplies-only-once) | Low | The t size suffix in dspool.ctl multiplies only once | fixed (#462) |
 | [D-275](#d-275-an-unconfirmed-ptr-name-becomes-the-readers-host-name) | Low | An unconfirmed PTR name becomes the reader's host name | open |
 | [D-276](#d-276-a-vserver-accessfile-uses-only-the-first-pattern-of-a-comma-list) | Low | A vserver accessfile uses only the first pattern of a comma list | open |
@@ -1690,7 +1690,7 @@ Plan: keep the directory time per metaspool or spool object.
 ### D-273 minfreefiles on btrfs removes every directory but the newest
 `util/dexpire.c:726` and `:1580-1581` read `f_ffree` 0 on btrfs as no free inodes, so every directory but the newest is removed at each run. Who: the local admin (config). Crash: none. Effect: data loss. Conditions: btrfs and `minfreefiles` (non-default). Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
 Plan: take `f_files == 0` as unknown and skip minfreefiles.
-Fixed (#PR): `freeSpaceOn()` (`util/dexpire.c`) leaves the free files unknown (-1) when `statfs()`/`statvfs()` reports `f_files` 0; `cleanupDirectories()` then does not apply `minfreefiles` to that file system and says "reports no inode count: not expiring for minfreefiles there" once per file system and pass, while `minfree`, `maxsize` and `keeptime` still apply. Test: `TestDexpireMinFreeFilesNoInodeCount`. Not changed: `dexpirecache -i` reads `f_ffree` the same way (`util/dexpirecache.c`).
+Fixed (#481): `freeSpaceOn()` (`util/dexpire.c`) leaves the free files unknown (-1) when `statfs()`/`statvfs()` reports `f_files` 0; `cleanupDirectories()` then does not apply `minfreefiles` to that file system and says "reports no inode count: not expiring for minfreefiles there" once per file system and pass, while `minfree`, `maxsize` and `keeptime` still apply. Test: `TestDexpireMinFreeFilesNoInodeCount`. Not changed: `dexpirecache -i` reads `f_ffree` the same way (`util/dexpirecache.c`).
 
 ### D-274 The t size suffix in dspool.ctl multiplies only once
 `lib/subs.c:782-803` stops after one step for `t`, so `maxsize 4t` is 4 MB and the spool is emptied every hour. Who: the local admin (a valid suffix). Crash: none. Effect: data loss. Conditions: a `t` size suffix in dspool.ctl. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
