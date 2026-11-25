@@ -1730,8 +1730,9 @@ OutputOverRange(OverInfo *ov, Connection *conn)
  *
  *	The overview index stores only the hash of the Message-ID, and two
  *	Message-IDs can have the same hash (D-210).  The overview data holds
- *	the article's header, so the Message-ID: header is compared with
- *	msgid byte for byte (CacheMsgIdMatches(), dreaderd/cache.c).
+ *	the article's header, so its last Message-ID: header (the one the
+ *	index hash is made from) is compared with msgid byte for byte
+ *	(CacheMsgIdMatches(), dreaderd/cache.c).
  *
  *	Returns 1 if the header is read and has msgid, 0 if the header is
  *	read and has another Message-ID (a collision: not this article), and
@@ -1759,26 +1760,31 @@ OverMsgIdCheck(OverInfo *ov, artno_t artNo, const char *msgid)
     int hlen = 0;
     int off;
     int nl;
+    int last = -1;
 
     if ((data = GetOverRecord(ov, artNo, &hlen, NULL, NULL, NULL, NULL)) == NULL ||
 	hlen <= 0)
 	return(OMC_UNKNOWN);
     /*
      * An article fed with two Message-ID: headers is indexed by the hash
-     * of the last one (NNFeedOverview()), and CacheMsgIdMatches() reads the
-     * first one it is given, so try each Message-ID: header of the record,
-     * every one that starts a line, until the blank line.  POST refuses
-     * such an article (post.c), a feed does not.
+     * of the last one (NNFeedOverview()), so only the last Message-ID:
+     * header, one that starts a line before the blank line, is compared:
+     * the compare then matches the index, and a first header that equals
+     * the Message-ID of another article does not make this one match.
+     * CacheMsgIdMatches() reads the first header it is given, so it gets
+     * the last one.  POST refuses such an article (post.c), a feed does
+     * not.
      */
     for (off = 0; off < hlen; off = nl + 1) {
 	for (nl = off; nl < hlen && data[nl] != '\n'; ++nl)
 	    ;
 	if (nl == off || (nl == off + 1 && data[off] == '\r'))
 	    break;
-	if (nl - off >= 11 && strncasecmp(data + off, "Message-ID:", 11) == 0 &&
-	    CacheMsgIdMatches(data + off, hlen - off, msgid))
-	    return(OMC_MATCH);
+	if (nl - off >= 11 && strncasecmp(data + off, "Message-ID:", 11) == 0)
+	    last = off;
     }
+    if (last >= 0 && CacheMsgIdMatches(data + last, hlen - last, msgid))
+	return(OMC_MATCH);
     return(OMC_OTHER);
 }
 
@@ -1865,7 +1871,7 @@ FindCanceledMsg(const char *group, const char *msgid, artno_t *partNo, int *pval
 /*
  * FindMsgInGroup() - the article number of msgid in group, for a reader
  *		      command by message-id (XHDR/XOVER/HDR/OVER, D-193), or
- *		      NULL (*partNo -1).  Unlike FindCanceledMsg() it reads NB
+ *		      NULL (*partNo -1).  Like FindCanceledMsg() it reads NB
  *		      and NE under the record lock and walks the overview index
  *		      after unlocking (an article added meanwhile is simply not
  *		      found).  An entry with the hash of msgid counts only if
