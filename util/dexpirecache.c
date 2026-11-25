@@ -434,7 +434,15 @@ main(int ac, char **av)
 		} else {
 			freeblocks = 0;
 		}
-		if ((long long)fs.f_ffree<freeinodes) {
+		/*
+		 * A file system that has no fixed number of inodes (btrfs)
+		 * reports f_files and f_ffree as 0: its free inodes are
+		 * unknown, not none, so -i is not applied there.  -f still is.
+		 */
+		if (freeinodes && fs.f_files == 0) {
+			fprintf(stderr, "dexpirecache: %s reports no inode count: not expiring for -i there\n", basepath);
+			freeinodes = 0;
+		} else if ((long long)fs.f_ffree<freeinodes) {
 			freeinodes -= fs.f_ffree;
 		} else {
 			freeinodes = 0;
