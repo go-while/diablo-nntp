@@ -2499,12 +2499,14 @@ resolveDefaults(NewsFeed *nf, Node *no)
  * recursiveScan() - run callback over one list of a label (off), GLOBAL's
  *		     list first, then the label's own with its grouprefs.
  *
- *	GLOBAL is applied here, at the top, and not again inside the
- *	grouprefs: applied at the start of every groupref, it overrode what
- *	the label had set before that groupref (D-263).  A label (not a
- *	groupdef) also has a "GLOBAL" groupref at the head of its lists
- *	(LoadNewsFeed()), so GLOBAL's list runs twice at the top; both runs
- *	come before the label's own lines and give the same result.
+ *	GLOBAL is applied here, at the top, and not again at the start of
+ *	the label's explicit grouprefs: applied there, it overrode what the
+ *	label had set before that groupref (D-263).  A label (not a
+ *	groupdef) also has an implicit "GLOBAL" groupref at the head of its
+ *	group, alias, spam, requiregroup, filter and offerfilter lists (not
+ *	spamalias, LoadNewsFeed()); that groupref does apply GLOBAL, so in
+ *	those lists GLOBAL's list runs twice at the top, both times before
+ *	the label's own lines, with the same result.
  */
 int
 recursiveScan(NewsFeed *feed, int off, const void *data, int (*callback)(Node *node, const void *data, int *pabort, int def), int def)

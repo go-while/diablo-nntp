@@ -184,8 +184,9 @@ func TestDnewsfeedsGrouprefSpamLabels(t *testing.T) {
 // that groupref. With GLOBAL "delgroup e2e.junk.*", a label "addgroup e2e.junk.wanted" then
 // "groupref std" gets e2e.junk.wanted, as the same label without the groupref does; with
 // GLOBAL "addgroup e2e.*", a label "delgroup e2e.private" then "groupref std" does not get
-// e2e.private. A groupref in GLOBAL itself is applied to every label without recursing through
-// GLOBAL: no "Infinite recursion" in the log. Fails before the fix: GLOBAL, applied again at
+// e2e.private. A groupref in GLOBAL to a groupdef is applied to every label without recursing
+// through GLOBAL: no "Infinite recursion" in the log (a "groupref GLOBAL" inside GLOBAL still
+// refers to itself and is not tested here). Fails before the fix: GLOBAL, applied again at
 // the start of std, held e2e.junk.wanted back and fed e2e.private, and a groupref in GLOBAL
 // recursed through GLOBAL again until the recursion limit.
 func TestDnewsfeedsGlobalNotReappliedInGroupref(t *testing.T) {
