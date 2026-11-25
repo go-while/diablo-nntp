@@ -144,6 +144,7 @@ int feedOfferFilterQuery(NewsFeed *feed, const char *msgid);
 
 void resolveGroupList(const char *label, Node *scan);
 static void resolveFeedGroupLists(NewsFeed *nf);
+static void closeFeed(NewsFeed *nf, int inGroupDef, FILE **paltFi);
 void AltFeed(NewsFeed *nf, FILE *fi);
 int TooNear(time_t t);
 void setLinkGLOBAL(NewslinkInfo *nf);
@@ -1399,22 +1400,7 @@ LoadNewsFeed(time_t t, int force, const char *hlabel)
 			    }
 #endif  /* USE_OFFER_FILTER */
 
-			    if (nf) {
-				if (inGroupDef) {
-				    nf->nf_Next = GRBase;
-				    GRBase = nf;
-				} else if (strcmp(nf->nf_Label, "ISPAM") != 0 &&
-					strcmp(nf->nf_Label, "ESPAM") != 0 &&
-					strcmp(nf->nf_Label, "IFILTER") != 0) {
-				    nf->nf_Next = NFBase;
-				    NFBase = nf;
-				}
-				if (altFi) {
-				    AltFeed(nf, altFi);
-				    fclose(altFi);
-				    altFi = NULL;
-				}
-			    }
+			    closeFeed(nf, inGroupDef, &altFi);
 			    nf = NULL;
 			}
 
@@ -1642,20 +1628,7 @@ LoadNewsFeed(time_t t, int force, const char *hlabel)
 			    }
 #endif  /* USE_OFFER_FILTER */
 
-			    if (inGroupDef) {
-				nf->nf_Next = GRBase;
-				GRBase = nf;
-			    } else if (strcmp(nf->nf_Label, "ISPAM") != 0 &&
-					strcmp(nf->nf_Label, "ESPAM") != 0 &&
-					strcmp(nf->nf_Label, "IFILTER") != 0) {
-				nf->nf_Next = NFBase;
-				NFBase = nf;
-			    }
-			    if (altFi) {
-				AltFeed(nf, altFi);
-				fclose(altFi);
-				altFi = NULL;
-			    }
+			    closeFeed(nf, inGroupDef, &altFi);
 			    nf = NULL;
 			}
 
@@ -2024,21 +1997,7 @@ LoadNewsFeed(time_t t, int force, const char *hlabel)
 			    pofNode = NULL;
 #endif  /* USE_OFFER_FILTER */
 
-			    if (inGroupDef ||
-					strcmp(nf->nf_Label, "GLOBAL") == 0) {
-				nf->nf_Next = GRBase;
-				GRBase = nf;
-			    } else if (strcmp(nf->nf_Label, "ISPAM") != 0 &&
-					strcmp(nf->nf_Label, "ESPAM") != 0 &&
-					strcmp(nf->nf_Label, "IFILTER") != 0) {
-				nf->nf_Next = NFBase;
-				NFBase = nf;
-			    }
-			    if (altFi) {
-				AltFeed(nf, altFi);
-				fclose(altFi);
-				altFi = NULL;
-			    }
+			    closeFeed(nf, inGroupDef, &altFi);
 			    nf = NULL;
 			    err = 0;
 			}
@@ -2060,6 +2019,15 @@ LoadNewsFeed(time_t t, int force, const char *hlabel)
 		    }
 		}
 		if (nf) {
+		    /*
+		     * close the last label or groupdef as 'end' would: GLOBAL
+		     * was linked as a feed, and the label's peer feed table
+		     * was not read (D-300)
+		     */
+		    logit(LOG_CRIT,
+			"Newsfeed config line %d, no end before the end of the file!\n",
+			lineNo
+		    );
 		    *paNode = NULL;
 		    *psaNode = NULL;
 		    *pgNode = NULL;
@@ -2080,15 +2048,7 @@ LoadNewsFeed(time_t t, int force, const char *hlabel)
 		    pofNode = NULL;
 #endif  /* USE_OFFER_FILTER */
 
-		    if (inGroupDef) {
-			nf->nf_Next = GRBase;
-			GRBase = nf;
-		    } else if (strcmp(nf->nf_Label, "ISPAM") != 0 &&
-				strcmp(nf->nf_Label, "ESPAM") != 0 &&
-				strcmp(nf->nf_Label, "IFILTER") != 0) {
-			nf->nf_Next = NFBase;
-			NFBase = nf;
-		    }
+		    closeFeed(nf, inGroupDef, &altFi);
 		    nf = NULL;
 		}
 		if (altFi) {
@@ -2157,6 +2117,37 @@ LoadNewsFeed(time_t t, int force, const char *hlabel)
 		TBAllMTime = NFMTime;
 	    }
 	}
+    }
+}
+
+/*
+ * closeFeed() - link a finished label or groupdef (nf) into its list and
+ *		 read the label's peer feed table (feeds/<label>), at its
+ *		 'end' or where it was left open: before the next label or
+ *		 groupdef, or at the end of the file.
+ *
+ *	GLOBAL goes to GRBase, where the implicit "GLOBAL" groupref of
+ *	every label finds it, and never to NFBase: a GLOBAL left open was
+ *	linked there as a feed of its own, matched articles by its own
+ *	group lines and made every label log "grouplist GLOBAL does not
+ *	exist" (D-300).  IFILTER, ISPAM and ESPAM are in neither list.
+ */
+static void
+closeFeed(NewsFeed *nf, int inGroupDef, FILE **paltFi)
+{
+    if (inGroupDef || strcmp(nf->nf_Label, "GLOBAL") == 0) {
+	nf->nf_Next = GRBase;
+	GRBase = nf;
+    } else if (strcmp(nf->nf_Label, "ISPAM") != 0 &&
+		strcmp(nf->nf_Label, "ESPAM") != 0 &&
+		strcmp(nf->nf_Label, "IFILTER") != 0) {
+	nf->nf_Next = NFBase;
+	NFBase = nf;
+    }
+    if (*paltFi) {
+	AltFeed(nf, *paltFi);
+	fclose(*paltFi);
+	*paltFi = NULL;
     }
 }
 
