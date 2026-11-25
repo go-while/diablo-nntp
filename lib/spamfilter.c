@@ -522,6 +522,13 @@ spamFilterTable(time_t t, FilterInfo *fi, hash_t mhv, md5hash_t *hv, int lines)
 		dt -= 60;
 	    }
 	    /*
+	     * Decayed to 0: the slot starts again from now.  Keeping
+	     * the idle minutes left in dt would decay one hit per copy
+	     * for each of them, so that many copies would pass (D-282).
+	     */
+	    if (f->f_HitCount + dhits <= 0)
+		t0 = t;
+	    /*
 	     * Check for duplicate message-id.  If not a duplicate,
 	     * enable write-back and bump dhits.
 	     */
