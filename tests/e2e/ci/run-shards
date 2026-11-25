@@ -1,15 +1,25 @@
 #!/bin/sh
 # run-shards TESTBIN [N] [extra test flags...]
 #
-# Run the e2e suite in N processes at once (default: the CPU count, at most
-# 4), then the tests of ci/serial-tests alone. Each process gets a disjoint
-# set of top-level tests, balanced by the run times in ci/durations (a test
-# not listed counts 2 s). Prints each part's output after it ends, so the
-# lines of one process stay together. Exits non-zero if any part failed.
+# Run the e2e suite in N processes at once, then the tests of ci/serial-tests
+# alone. Each process gets a disjoint set of top-level tests, balanced by the
+# run times in ci/durations (a test not listed counts 2 s). Prints each part's
+# output after it ends, so the lines of one process stay together. Exits
+# non-zero if any part failed.
+#
+# Without N: E2E_SHARDS_PER_CPU (default 2) parts per on-line CPU, at most
+# E2E_SHARDS_MAX (default 12). More parts than CPUs pay off because most of
+# the suite's time is spent waiting (timeouts, reloads, daemons starting), not
+# computing: on a 6-CPU Debian VM the CPUs stayed 87-92% idle with 4, 8 and 12
+# parts, the parallel phase took 626, 409 and 278 s, and no test failed at
+# any of them. E2E_SHARDS_PER_CPU=1 E2E_SHARDS_MAX=4 gives the old default.
 #
 # The tests stay what they are; they only share the machine with other tests,
 # like on a busy host. A test that cannot (it measures time, or waits for a
 # worker under load) goes in ci/serial-tests.
+#
+# Keep TMPDIR short: a test's site lives below it, and a long path makes the
+# daemons' unix-domain socket paths too long ("socket path too long").
 set -u
 bin=$1; shift
 here=$(cd "$(dirname "$0")" && pwd)
@@ -32,9 +42,13 @@ ncpu() {
 n=${1:-}
 case $n in
 ''|*[!0-9]*) cpus=$(ncpu)
-	     n=${cpus%% *}
-	     echo "run-shards: $n CPUs (${cpus#* })" >&2
-	     [ "$n" -gt 4 ] 2>/dev/null && n=4 ;;
+	     per=${E2E_SHARDS_PER_CPU:-2}
+	     max=${E2E_SHARDS_MAX:-12}
+	     case $per in ''|*[!0-9]*|0) per=2 ;; esac
+	     case $max in ''|*[!0-9]*|0) max=12 ;; esac
+	     n=$((${cpus%% *} * per))
+	     [ "$n" -gt "$max" ] && n=$max
+	     echo "run-shards: ${cpus%% *} CPUs (${cpus#* }), $per parts per CPU, at most $max: $n parts" >&2 ;;
 *) shift ;;
 esac
 [ "$n" -ge 1 ] 2>/dev/null || n=2
