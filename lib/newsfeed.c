@@ -79,8 +79,8 @@ typedef struct NewsFeed {
     char		*nf_MaxInboundRate;	/* maximum B/s per conn */
     char		*nf_Dist;		/* distribution		*/
     char		*nf_NoDist;		/* !distribution	*/
-    char		nf_PerLineFlushOpt;
-    char		nf_NoMisMatch;
+    signed char		nf_PerLineFlushOpt;	/* rtflush 1, nortflush -1 (D-266) */
+    signed char		nf_NoMisMatch;		/* nomismatch 1, domismatch -1 */
     char		nf_SpamFeedOpt;
     char		nf_Resolved;
     int			nf_ThrottleDelay;
@@ -143,6 +143,7 @@ int feedOfferFilterQuery(NewsFeed *feed, const char *msgid);
 #endif  /* USE_OFFER_FILTER */
 
 void resolveGroupList(const char *label, Node *scan);
+static void resolveFeedGroupLists(NewsFeed *nf);
 void AltFeed(NewsFeed *nf, FILE *fi);
 int TooNear(time_t t);
 void setLinkGLOBAL(NewslinkInfo *nf);
@@ -155,6 +156,7 @@ int cbWildCmpNoStop(Node *node, const void *data, int *pabort, int def);
 int cbFeedGroupQuery(Node *node, const void *data, int *pabort, int def);
 int cbFilterRequireGroups(Node *node, const void *data, int *pabort, int def);
 int recursiveScan(NewsFeed *feed, int off, const void *data, int (*callback)(Node *node, const void *data, int *pabort, int def), int def);
+static int scanFeedList(NewsFeed *feed, int off, const void *data, int (*callback)(Node *node, const void *data, int *pabort, int def), int def);
 
 /*
  * FEEDADD()  - given message-id, history file data, newsgroup list, pathlist,
@@ -2105,28 +2107,20 @@ LoadNewsFeed(time_t t, int force, const char *hlabel)
 	{
 	    NewsFeed *nf;
 
-	    for (nf = NFBase; nf; nf = nf->nf_Next) {
-		resolveGroupList(nf->nf_Label, nf->nf_PathAliasBase);
-		resolveGroupList(nf->nf_Label, nf->nf_SpamPathAliasBase);
-		resolveGroupList(nf->nf_Label, nf->nf_GroupAcceptBase);
-		resolveGroupList(nf->nf_Label, nf->nf_FilterBase);
-		resolveGroupList(nf->nf_Label, nf->nf_SpamBase);
-		resolveGroupList(nf->nf_Label, nf->nf_RequireGroupsBase);
-#if USE_OFFER_FILTER
-		resolveGroupList(nf->nf_Label, nf->nf_OfferFilterBase);
-#endif  /* USE_OFFER_FILTER */
-	    }
-	    for (nf = GRBase; nf; nf = nf->nf_Next) {
-		resolveGroupList(nf->nf_Label, nf->nf_PathAliasBase);
-		resolveGroupList(nf->nf_Label, nf->nf_SpamPathAliasBase);
-		resolveGroupList(nf->nf_Label, nf->nf_GroupAcceptBase);
-		resolveGroupList(nf->nf_Label, nf->nf_FilterBase);
-		resolveGroupList(nf->nf_Label, nf->nf_SpamBase);
-		resolveGroupList(nf->nf_Label, nf->nf_RequireGroupsBase);
-#if USE_OFFER_FILTER
-		resolveGroupList(nf->nf_Label, nf->nf_OfferFilterBase);
-#endif  /* USE_OFFER_FILTER */
-	    }
+	    for (nf = NFBase; nf; nf = nf->nf_Next)
+		resolveFeedGroupLists(nf);
+	    for (nf = GRBase; nf; nf = nf->nf_Next)
+		resolveFeedGroupLists(nf);
+	    /*
+	     * IFILTER, ISPAM and ESPAM are in neither list: without this
+	     * a groupref in them was never resolved and so ignored (D-262)
+	     */
+	    if (IFBase)
+		resolveFeedGroupLists(IFBase);
+	    if (ISBase)
+		resolveFeedGroupLists(ISBase);
+	    if (ESBase)
+		resolveFeedGroupLists(ESBase);
 
 	    /*
 	     * This recursively resolves defaults for all groupdef's, we
@@ -2166,6 +2160,24 @@ LoadNewsFeed(time_t t, int force, const char *hlabel)
     }
 }
 
+/*
+ * resolveFeedGroupLists() - resolve the grouprefs in every list of a label
+ *			     or groupdef.
+ */
+static void
+resolveFeedGroupLists(NewsFeed *nf)
+{
+    resolveGroupList(nf->nf_Label, nf->nf_PathAliasBase);
+    resolveGroupList(nf->nf_Label, nf->nf_SpamPathAliasBase);
+    resolveGroupList(nf->nf_Label, nf->nf_GroupAcceptBase);
+    resolveGroupList(nf->nf_Label, nf->nf_FilterBase);
+    resolveGroupList(nf->nf_Label, nf->nf_SpamBase);
+    resolveGroupList(nf->nf_Label, nf->nf_RequireGroupsBase);
+#if USE_OFFER_FILTER
+    resolveGroupList(nf->nf_Label, nf->nf_OfferFilterBase);
+#endif  /* USE_OFFER_FILTER */
+}
+
 void
 resolveGroupList(const char *label, Node *scan)
 {
@@ -2194,10 +2206,16 @@ AltFeed(NewsFeed *nf, FILE *fi)
     Node **psNode = &nf->nf_SpamBase;
     Node **prNode = &nf->nf_RequireGroupsBase;
 
+    /*
+     * Append to the lists of the label: the requiregroup list too, or
+     * the '*prNode = NULL' below cut it off at its head (D-261).
+     */
     while (*pgNode)
 	pgNode = &(*pgNode)->no_Next;
     while (*psNode)
 	psNode = &(*psNode)->no_Next;
+    while (*prNode)
+	prNode = &(*prNode)->no_Next;
 
     int tooLong;
 
@@ -2477,15 +2495,39 @@ resolveDefaults(NewsFeed *nf, Node *no)
     }
 }
 
+/*
+ * recursiveScan() - run callback over one list of a label (off), GLOBAL's
+ *		     list first, then the label's own with its grouprefs.
+ *
+ *	GLOBAL is applied here, at the top, and not again at the start of
+ *	the label's explicit grouprefs: applied there, it overrode what the
+ *	label had set before that groupref (D-263).  A label (not a
+ *	groupdef) also has an implicit "GLOBAL" groupref at the head of its
+ *	group, alias, spam, requiregroup, filter and offerfilter lists (not
+ *	spamalias, LoadNewsFeed()); that groupref does apply GLOBAL, so in
+ *	those lists GLOBAL's list runs twice at the top, both times before
+ *	the label's own lines, with the same result.
+ */
 int
 recursiveScan(NewsFeed *feed, int off, const void *data, int (*callback)(Node *node, const void *data, int *pabort, int def), int def)
 {
     int r = def;
-    int abortMe = 0;
-    Node *node;
 
     if (NFGlob && NFGlob != feed)
-	r = recursiveScan(NFGlob, off, data, callback, r);
+	r = scanFeedList(NFGlob, off, data, callback, r);
+    return(scanFeedList(feed, off, data, callback, r));
+}
+
+/*
+ * scanFeedList() - run callback over one list of a label or groupdef,
+ *		    and into its grouprefs.
+ */
+static int
+scanFeedList(NewsFeed *feed, int off, const void *data, int (*callback)(Node *node, const void *data, int *pabort, int def), int def)
+{
+    int r = def;
+    int abortMe = 0;
+    Node *node;
 
     for (node = *(Node **)((char *)feed + off); node; node = node->no_Next) {
 	if (node->no_Value == 2) {
@@ -2496,7 +2538,7 @@ recursiveScan(NewsFeed *feed, int off, const void *data, int (*callback)(Node *n
 		}
 	    } else {
 		if (node->no_Data != NULL)
-		    r = recursiveScan(node->no_Data, off, data, callback, r);
+		    r = scanFeedList(node->no_Data, off, data, callback, r);
 	    } 
 	    --RecurCount;
 	} else {
