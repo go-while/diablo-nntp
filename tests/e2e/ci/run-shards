@@ -13,6 +13,8 @@
 # computing: on a 6-CPU Debian VM the CPUs stayed 87-92% idle with 4, 8 and 12
 # parts, the parallel phase took 626, 409 and 278 s, and no test failed at
 # any of them. E2E_SHARDS_PER_CPU=1 E2E_SHARDS_MAX=4 gives the old default.
+# A value that is not a positive number without leading zeros (08, 0, x)
+# falls back to its default: shell arithmetic would read 08 as octal.
 #
 # The tests stay what they are; they only share the machine with other tests,
 # like on a busy host. A test that cannot (it measures time, or waits for a
@@ -44,8 +46,8 @@ case $n in
 ''|*[!0-9]*) cpus=$(ncpu)
 	     per=${E2E_SHARDS_PER_CPU:-2}
 	     max=${E2E_SHARDS_MAX:-12}
-	     case $per in ''|*[!0-9]*|0) per=2 ;; esac
-	     case $max in ''|*[!0-9]*|0) max=12 ;; esac
+	     case $per in ''|*[!0-9]*|0*) per=2 ;; esac
+	     case $max in ''|*[!0-9]*|0*) max=12 ;; esac
 	     n=$((${cpus%% *} * per))
 	     [ "$n" -gt "$max" ] && n=$max
 	     echo "run-shards: ${cpus%% *} CPUs (${cpus#* }), $per parts per CPU, at most $max: $n parts" >&2 ;;
