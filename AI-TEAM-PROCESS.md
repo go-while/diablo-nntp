@@ -1,4 +1,4 @@
-# How the AI-assisted work on Diablo is done
+# How go-while's AI-assisted contributions are prepared
 
 For the maintainer and other Diablo developers. State: 2026-11-25.
 Written by the lead agent session (Claude Code) for go-while, who read it
@@ -68,7 +68,9 @@ when OpenAI models are not used, the score line says `openai: n/a`.
    (`kvm` or `lxc`) followed by the job id, never by its address. Where timing or a race matters, the test is run several
    times on both heads.
 4. Review: several reviewers read the same brief, then fresh reviewers
-   from two model families (at most six findings each, a score 1-10 for
+   from two model families when both are available (if one is not, the
+   review says so, for example `openai: n/a`, and the other family reviews
+   alone) (at most six findings each, a score 1-10 for
    that head only, and what they did not check). Reviewers who only read
    say so. The lead re-checks every finding against the code.
 5. A draft and a list of evidence for each statement; a fact check marks
