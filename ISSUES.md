@@ -274,12 +274,12 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-258](#d-258-a-look-ahead-dnewslink-takes-a-queue-file-before-the-master-flushes-it) | Low | A look-ahead dnewslink takes a queue file before the master flushes it | open |
 | [D-259](#d-259-one-failed-fork-stops-host-cache-rebuilds-until-a-restart) | Low | One failed fork stops host cache rebuilds until a restart | open |
 | [D-260](#d-260-a-peer-that-repeats-feedrset-and-feedcommit-starves-the-dnewsfeeds-reload) | Low | A peer that repeats feedrset and feedcommit starves the dnewsfeeds reload | open |
-| [D-261](#d-261-altfeed-clears-the-labels-requiregroup-list) | Low | AltFeed clears the label's requiregroup list | open |
-| [D-262](#d-262-groupref-inside-ifilter-ispam-and-espam-is-ignored) | Low | groupref inside IFILTER, ISPAM and ESPAM is ignored | open |
-| [D-263](#d-263-global-is-applied-again-at-every-groupref) | Low | GLOBAL is applied again at every groupref | open |
+| [D-261](#d-261-altfeed-clears-the-labels-requiregroup-list) | Low | AltFeed clears the label's requiregroup list | fixed (#477) |
+| [D-262](#d-262-groupref-inside-ifilter-ispam-and-espam-is-ignored) | Low | groupref inside IFILTER, ISPAM and ESPAM is ignored | fixed (#477) |
+| [D-263](#d-263-global-is-applied-again-at-every-groupref) | Low | GLOBAL is applied again at every groupref | fixed (#477) |
 | [D-264](#d-264-the-host-cache-rebuild-child-keeps-the-listening-socket) | Low | The host cache rebuild child keeps the listening socket | open |
 | [D-265](#d-265-a-nul-in-newsgroups-hides-the-names-after-it) | Low | A NUL in Newsgroups hides the names after it | open |
-| [D-266](#d-266-nortflush-and-domismatch-do-the-opposite-on-unsigned-char-platforms) | Low | nortflush and domismatch do the opposite on unsigned char platforms | open |
+| [D-266](#d-266-nortflush-and-domismatch-do-the-opposite-on-unsigned-char-platforms) | Low | nortflush and domismatch do the opposite on unsigned char platforms | fixed (#477) |
 | [D-267](#d-267-dexpire-keeps-history-entries-of-directories-removed-in-a-later-pass) | Low | dexpire keeps history entries of directories removed in a later pass | fixed (#438) |
 | [D-268](#d-268-a-failed-opendir-or-readdir-in-dexpire-marks-the-whole-spool-expired) | Low | A failed opendir or readdir in dexpire marks the whole spool expired | fixed (#437) |
 | [D-269](#d-269-record-updates-during-the-dhisexpire-copy-pass-are-lost) | Low | Record updates during the dhisexpire copy pass are lost | open |
@@ -294,9 +294,9 @@ advisory), #45 with its tests in #56, #53 to #55, #57 to #61, #63 to #65.
 | [D-278](#d-278-with--c-n-refused-connections-stay-counted-and-switch-listeners-off) | Low | With -c N refused connections stay counted and switch listeners off | open |
 | [D-279](#d-279-addrealm-of-one-access-line-rewrites-the-user-name-for-later-lines) | Low | addrealm of one access line rewrites the user name for later lines | open |
 | [D-280](#d-280-with-realm--one-user-counts-as-separate-users-for-maxconnperuser) | Low | With realm * one user counts as separate users for maxconnperuser | open |
-| [D-281](#d-281-a-slow-transfer-resets-a-tripped-spam-filter-slot) | Low | A slow transfer resets a tripped spam filter slot | open |
-| [D-282](#d-282-the-spam-filter-decay-keeps-idle-minutes-as-credit) | Low | The spam filter decay keeps idle minutes as credit | open |
-| [D-283](#d-283-a-new-spam-filter-cache-size-truncates-the-mapped-cache) | Low | A new spam filter cache size truncates the mapped cache | open |
+| [D-281](#d-281-a-slow-transfer-resets-a-tripped-spam-filter-slot) | Low | A slow transfer resets a tripped spam filter slot | fixed (#476) |
+| [D-282](#d-282-the-spam-filter-decay-keeps-idle-minutes-as-credit) | Low | The spam filter decay keeps idle minutes as credit | fixed (#476) |
+| [D-283](#d-283-a-new-spam-filter-cache-size-truncates-the-mapped-cache) | Low | A new spam filter cache size truncates the mapped cache | fixed (#476) |
 | [D-284](#d-284-dcancel--a-and--s-rewrite-a-spool-file-a-feeder-still-appends-to) | Low | dcancel -a and -s rewrite a spool file a feeder still appends to | open |
 | [D-285](#d-285-doverctl-clean-deletes-the-overview-of-a-group-created-after-its-scan) | Low | doverctl clean deletes the overview of a group created after its scan | open |
 | [D-286](#d-286-dcancel--r-leaks-two-descriptors-and-a-map-per-line) | Low | dcancel -r leaks two descriptors and a map per line | fixed (#436) |
@@ -1635,14 +1635,17 @@ Plan: touch dnewsfeeds only on a real change, and do not rebuild the host cache 
 ### D-261 AltFeed clears the label's requiregroup list
 `lib/newsfeed.c:2195` and `:2239`: when a peer feed table exists, AltFeed drops the label's requiregroup list, so articles go out that should be held back. Who: the local admin (config). Crash: none. Effect: feed rules not applied as written. Conditions: AltFeed with a peer feed table. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
 Plan: walk `prNode` to the end of the list, as for `pgNode` and `psNode`.
+Fixed (#477): `AltFeed()` walks `prNode` to the end of the list too, so a peer feed table adds its requiregroup lines to the label's instead of emptying (or replacing) them. Test: `TestDnewsfeedsPeerTableRequiregroup`, `TestDnewsfeedsRulesReload`.
 
 ### D-262 groupref inside IFILTER, ISPAM and ESPAM is ignored
 `lib/newsfeed.c:2029-2034`, `:2108-2129` and `:2498-2499` never resolve a groupref in those feeds; it is silently ignored. Who: the local admin (config). Crash: none. Effect: feed rules not applied as written. Conditions: that construct in dnewsfeeds. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
 Plan: resolve the group lists of the IFILTER, ISPAM and ESPAM feeds too (grouprefs there then take effect).
+Fixed (#477): `LoadNewsFeed()` resolves the group lists of IFILTER, ISPAM and ESPAM too (`resolveFeedGroupLists()`); the simple defaults of a groupdef (`resolveDefaults()`) still do not apply to those labels. Test: `TestDnewsfeedsGrouprefIncomingFilter`, `TestDnewsfeedsGrouprefSpamLabels`.
 
 ### D-263 GLOBAL is applied again at every groupref
 `lib/newsfeed.c:2487-2488` applies GLOBAL again at the start of the scan inside every groupref, so it overrides the rules the label set before that groupref. Who: the local admin (config). Crash: none. Effect: feed rules not applied as written. Conditions: GLOBAL together with grouprefs. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
 Plan: apply GLOBAL only at the top level of the scan.
+Fixed (#477): `recursiveScan()` applies GLOBAL at the top of the scan and `scanFeedList()` walks the label's explicit grouprefs without applying it again, so GLOBAL no longer overrides what the label set before a groupref (at the top GLOBAL's list still runs twice, once more through the implicit "GLOBAL" groupref at the head of a label's group, alias, spam, requiregroup, filter and offerfilter lists (not spamalias), both before the label's own lines). A groupref in GLOBAL to a groupdef no longer recurses to the limit ("Infinite recursion in dnewsfeeds file!"); a `groupref GLOBAL` inside GLOBAL refers to itself and still does. Test: `TestDnewsfeedsGlobalNotReappliedInGroupref`, `TestDnewsfeedsRulesReload`.
 
 ### D-264 The host cache rebuild child keeps the listening socket
 `lib/hostauth.c:103-192` and `util/diablo.c:742-783`: the rebuild child inherits the listening socket, so a restart during a DNS outage fails to bind while the child waits for DNS. Who: nobody (a restart during a DNS outage). Crash: none. Effect: the restart fails. Conditions: a DNS outage at restart. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
@@ -1655,6 +1658,7 @@ Plan: take a NUL as a name separator in the internal group list (stored bytes un
 ### D-266 nortflush and domismatch do the opposite on unsigned char platforms
 `lib/newsfeed.c:82-83`, `:1507`, `:1527`, `:826` and `util/diablo.c:1572` keep the option values in plain `char` and test them for -1, so on arm64, ppc64le and s390x `nortflush` and `domismatch` do the opposite. Who: the local admin (config). Crash: none. Effect: wrong behaviour. Conditions: an unsigned char platform: arm64, ppc64le, s390x. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
 Plan: `signed char` for `nf_PerLineFlushOpt` and `nf_NoMisMatch`; test by building with `-funsigned-char` on an x86 test host.
+Fixed (#477): `nf_PerLineFlushOpt` and `nf_NoMisMatch` are `signed char`; verified with a `-funsigned-char` build on x86 (the test fails on main built that way). Test: `TestDnewsfeedsNortflushDomismatch`.
 
 ### D-267 dexpire keeps history entries of directories removed in a later pass
 `util/dexpire.c:1415`, `:1459` and `:312-320`: `NodeAry` is not cleared between passes, so directories removed in pass 2 or later keep their history entries unexpired. Who: the local admin or cron. Crash: none. Effect: wrong data. Conditions: dexpire with more than one pass. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
@@ -1720,14 +1724,18 @@ Plan: compare the user without the realm for `maxconnperuser`.
 ### D-281 A slow transfer resets a tripped spam filter slot
 `util/diablo.c:3161`, `:3959` and `lib/spamfilter.c:501-511` pass the article's start time, so a transfer slower than 10 s resets a tripped slot and copies pass again. Who: a peer (a slow transfer). Crash: none. Effect: the rate filter lets copies through. Conditions: the internal spam filter on. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
 Plan: pass `time(NULL)` at the call.
+Fixed (#476): `LoadArticle()` passes `time(NULL)` to `SpamFilter()` instead of the time the article began to come in; the `dt < -10` reset in `spamFilterTable()` stays for a clock that steps back. Test: `TestSpamFilterSlowTransferKeepsTrip` (a copy that began 13 s before its slot was made and ends after it tripped gets 437, the copies after it are refused too).
 
 ### D-282 The spam filter decay keeps idle minutes as credit
 `lib/spamfilter.c:519-523` and `:550-557` stop the decay at 0 but keep the idle minutes, so after a quiet hour about 59 plus the trip value copies pass. Who: content via feeds (copies sent after a quiet hour). Crash: none. Effect: the rate filter lets copies through. Conditions: the internal spam filter on. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: S.
 Plan: set `t0 = t` when the decay loop reaches 0.
+Fixed (#476): when the decay brings the count to 0, `spamFilterTable()` sets `t0 = t`, so the slot counts like a new one. Test: `TestSpamFilterDecayRestartsFromNow` (the slot time moved back 3500 s in the cache file: 3 of 10 copies stored, as on a new slot; skipped on OpenBSD, D-171).
 
 ### D-283 A new spam filter cache size truncates the mapped cache
 `lib/spamfilter.c:261-287`: `dicmd config internalfilter` with a new size (or dspaminfo with another size) truncates the cache file that feeder processes have mapped; by reading, they get SIGBUS. Who: the local admin. Crash: feeder processes, possibly the master (SIGBUS), by reading. Effect: lost service. Conditions: a size change at runtime. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: M.
 Plan: never truncate a mapped cache: write a new file and rename it.
+Fixed (#476): `openFilterFile()` writes a cache of another size to `<file>.new.<pid>` (`newFilterFile()`) and renames it over the file (an empty file, as at the first start, is filled in place as before: no process can have a table in it); feeder processes forked before the change keep the old, unlinked file until they exit, the master and later children use the new one. Test: `TestSpamFilterResizeKeepsMappedCache` (`dicmd config internalfilter B4s1024` with a connection open: it still gets 235, the filter works at 1024 entries). On main the old process dies of SIGBUS (`BUS_ADRERR`, seen with strace on Debian 13; the test sees the connection close). The build maps the cache file: `lib/config.h` sets `USE_SPAM_SHM`, but `lib/spamfilter.c` undefines it. The new file gets the old one's owner and mode (`fchown()`, `fchmod()`). When they cannot be kept (`fchown()` fails and the new file's owner differs from the old one's, or `fchmod()` fails), the resize is refused: logged at LOG_ERR, the temp file removed, the old file left in place, and that process runs without the filter. Tests: `TestSpamFilterResizeKeepsMode` (the mode), `TestSpamFilterResizeRefusedWithoutOwner` (root only, skipped otherwise). A symlinked cache path is replaced by a regular file, and a directory diablo cannot write to now makes the resize fail (the filter is then off, logged). A `<file>.new.<pid>` is left behind if the process dies between create and rename.
+Still open: `dspaminfo` takes the size from diablo.config, so after a size set only with `dicmd config internalfilter` (not in diablo.config), `dspaminfo -l` or `-c` replaces the cache file with an empty one of the configured size (seen on Debian 13: 49152 -> 3145728 bytes). Before #476 it truncated the live file; now running diablo processes keep theirs and only the file on disk (dspaminfo, the next start) is reset.
 
 ### D-284 dcancel -a and -s rewrite a spool file a feeder still appends to
 `util/dcancel.c:476-489`, `:560-579` and `:664` rewrite a spool file that a feeder child still appends to, so other articles in it are lost or misaddressed. The man page warns about it. Who: the local admin (`dcancel -a/-s`). Crash: none. Effect: wrong data. Conditions: a spool file still being written. Found in go-while's deep review round 2 of main 1c80d48f; shown from the code, not run. Effort: M.
