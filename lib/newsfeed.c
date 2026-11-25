@@ -143,6 +143,7 @@ int feedOfferFilterQuery(NewsFeed *feed, const char *msgid);
 #endif  /* USE_OFFER_FILTER */
 
 void resolveGroupList(const char *label, Node *scan);
+static void resolveFeedGroupLists(NewsFeed *nf);
 void AltFeed(NewsFeed *nf, FILE *fi);
 int TooNear(time_t t);
 void setLinkGLOBAL(NewslinkInfo *nf);
@@ -2105,28 +2106,20 @@ LoadNewsFeed(time_t t, int force, const char *hlabel)
 	{
 	    NewsFeed *nf;
 
-	    for (nf = NFBase; nf; nf = nf->nf_Next) {
-		resolveGroupList(nf->nf_Label, nf->nf_PathAliasBase);
-		resolveGroupList(nf->nf_Label, nf->nf_SpamPathAliasBase);
-		resolveGroupList(nf->nf_Label, nf->nf_GroupAcceptBase);
-		resolveGroupList(nf->nf_Label, nf->nf_FilterBase);
-		resolveGroupList(nf->nf_Label, nf->nf_SpamBase);
-		resolveGroupList(nf->nf_Label, nf->nf_RequireGroupsBase);
-#if USE_OFFER_FILTER
-		resolveGroupList(nf->nf_Label, nf->nf_OfferFilterBase);
-#endif  /* USE_OFFER_FILTER */
-	    }
-	    for (nf = GRBase; nf; nf = nf->nf_Next) {
-		resolveGroupList(nf->nf_Label, nf->nf_PathAliasBase);
-		resolveGroupList(nf->nf_Label, nf->nf_SpamPathAliasBase);
-		resolveGroupList(nf->nf_Label, nf->nf_GroupAcceptBase);
-		resolveGroupList(nf->nf_Label, nf->nf_FilterBase);
-		resolveGroupList(nf->nf_Label, nf->nf_SpamBase);
-		resolveGroupList(nf->nf_Label, nf->nf_RequireGroupsBase);
-#if USE_OFFER_FILTER
-		resolveGroupList(nf->nf_Label, nf->nf_OfferFilterBase);
-#endif  /* USE_OFFER_FILTER */
-	    }
+	    for (nf = NFBase; nf; nf = nf->nf_Next)
+		resolveFeedGroupLists(nf);
+	    for (nf = GRBase; nf; nf = nf->nf_Next)
+		resolveFeedGroupLists(nf);
+	    /*
+	     * IFILTER, ISPAM and ESPAM are in neither list: without this
+	     * a groupref in them was never resolved and so ignored (D-262)
+	     */
+	    if (IFBase)
+		resolveFeedGroupLists(IFBase);
+	    if (ISBase)
+		resolveFeedGroupLists(ISBase);
+	    if (ESBase)
+		resolveFeedGroupLists(ESBase);
 
 	    /*
 	     * This recursively resolves defaults for all groupdef's, we
@@ -2164,6 +2157,24 @@ LoadNewsFeed(time_t t, int force, const char *hlabel)
 	    }
 	}
     }
+}
+
+/*
+ * resolveFeedGroupLists() - resolve the grouprefs in every list of a label
+ *			     or groupdef.
+ */
+static void
+resolveFeedGroupLists(NewsFeed *nf)
+{
+    resolveGroupList(nf->nf_Label, nf->nf_PathAliasBase);
+    resolveGroupList(nf->nf_Label, nf->nf_SpamPathAliasBase);
+    resolveGroupList(nf->nf_Label, nf->nf_GroupAcceptBase);
+    resolveGroupList(nf->nf_Label, nf->nf_FilterBase);
+    resolveGroupList(nf->nf_Label, nf->nf_SpamBase);
+    resolveGroupList(nf->nf_Label, nf->nf_RequireGroupsBase);
+#if USE_OFFER_FILTER
+    resolveGroupList(nf->nf_Label, nf->nf_OfferFilterBase);
+#endif  /* USE_OFFER_FILTER */
 }
 
 void
