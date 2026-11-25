@@ -2194,10 +2194,16 @@ AltFeed(NewsFeed *nf, FILE *fi)
     Node **psNode = &nf->nf_SpamBase;
     Node **prNode = &nf->nf_RequireGroupsBase;
 
+    /*
+     * Append to the lists of the label: the requiregroup list too, or
+     * the '*prNode = NULL' below cut it off at its head (D-261).
+     */
     while (*pgNode)
 	pgNode = &(*pgNode)->no_Next;
     while (*psNode)
 	psNode = &(*psNode)->no_Next;
+    while (*prNode)
+	prNode = &(*prNode)->no_Next;
 
     int tooLong;
 
