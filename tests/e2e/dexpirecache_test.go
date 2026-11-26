@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -300,6 +301,167 @@ func TestDexpirecacheInodeOrder(t *testing.T) {
 			for _, p := range files {
 				if gone(p) {
 					t.Errorf("cache file %s removed, want kept", filepath.Base(p))
+				}
+			}
+			if t.Failed() {
+				t.Logf("dexpirecache %s: err=%v\n%s", strings.Join(args, " "), err, out)
+			}
+		})
+	}
+}
+
+// TestDexpirecacheReport (D-303): the statistics at the end of a run. The empty cache files and
+// symbolic links that -i removes (removeLinks()), and those addSLink() removes because their
+// ctime is more than two days old, were not counted anywhere: a run that removed only those
+// said "0 files have been cleaned". And a run that removed no cache file with content printed
+// "Oldest removed file was created 0 days 0 hrs 0 min 0 sec ago" and "Newest removed file was
+// created 20783 days 0 hrs 13 min 28 sec ago" (on 2026-11-26: newestremoved starts at 0, the
+// epoch). Now a line "* N empty files and links removed" counts each entry removed once, and
+// the two age lines are printed only when a cache file with content was removed.
+//
+// The cache has two empty files and a symbolic link (made now), and in all but none two cache
+// files with content an hour old. A preloaded library answers statfs() (no free blocks with
+// -f, no free inodes of 1 Mi with -i) and in old_* moves time() three days ahead
+// (timeShiftSource). Every case fails before the fix, as there was no "empty files and links
+// removed" line; inodes, none and old_inodes also because both age lines were printed.
+//   - inodes: -i 3: the three entries go; 0 files cleaned, 3 empty files and links removed, no
+//     age lines.
+//   - space: -f 1000: the two cache files go, the entries stay; 2 files cleaned, 0 empty files
+//     and links removed, both age lines (less than a day).
+//   - none: -f 1000 with no cache file with content: nothing goes; 0 and 0, no age lines.
+//   - old_space: -f 1000, three days on: the cache files go (-f) and so do the entries
+//     (addSLink()'s two-day rule, not changed here); 2 cleaned, 3 empty files and links
+//     removed, both age lines (3 days).
+//   - old_inodes: -i 3, three days on: the two-day rule removes the entries before
+//     removeLinks() does; they are counted once: 3.
+func TestDexpirecacheReport(t *testing.T) {
+	so := preloadShim(t, "statfstime", statfsZeroSource+withMark(timeShiftSource))
+	for _, tc := range []struct {
+		name        string
+		args        []string
+		env         []string
+		shifted     bool // time() three days ahead
+		content     bool // two cache files with content, an hour old
+		contentGone bool
+		entriesGone bool
+		cleaned     int    // "files have been cleaned"
+		links       int    // "empty files and links removed"
+		ages        string // the age lines must begin so ("" = no age lines)
+	}{
+		{"inodes", []string{"-i", "3"}, []string{"STATFSZERO_FFREE=0"}, false, true, false, true, 0, 3, ""},
+		{"space", []string{"-f", "1000"}, []string{"STATFSZERO_BAVAIL=0"}, false, true, true, false, 2, 0, "0 days "},
+		{"none", []string{"-f", "1000"}, []string{"STATFSZERO_BAVAIL=0"}, false, false, false, false, 0, 0, ""},
+		{"old_space", []string{"-f", "1000"}, []string{"STATFSZERO_BAVAIL=0"}, true, true, true, true, 2, 3, "3 days "},
+		{"old_inodes", []string{"-i", "3"}, []string{"STATFSZERO_FFREE=0"}, true, true, false, true, 0, 3, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := NewSite(t, SiteOptions{NoStart: true})
+			cache := filepath.Join(s.Dir, "spool", "cache")
+			for _, d := range []string{"00", "01"} {
+				if err := os.MkdirAll(filepath.Join(cache, d), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var files []string
+			if tc.content {
+				old := time.Now().Add(-time.Hour)
+				for _, n := range []string{"00/f1", "01/f2"} {
+					p := filepath.Join(cache, n)
+					f, err := os.Create(p)
+					if err != nil {
+						t.Fatal(err)
+					}
+					_, err = f.Write([]byte(strings.Repeat("article line\r\n", 600)))
+					if err == nil {
+						err = f.Sync()
+					}
+					if cerr := f.Close(); err == nil {
+						err = cerr
+					}
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Chtimes(p, old, old); err != nil {
+						t.Fatal(err)
+					}
+					// dexpirecache counts a regular file with no blocks as an empty one
+					if st, err := os.Lstat(p); err != nil || st.Sys().(*syscall.Stat_t).Blocks == 0 {
+						t.Skipf("%s shows no blocks on this file system (%v)", p, err)
+					}
+					files = append(files, p)
+				}
+			}
+			var entries []string
+			for _, n := range []string{"00/e1", "00/e2", "01/l1"} {
+				p := filepath.Join(cache, n)
+				var err error
+				if n == "01/l1" {
+					err = os.Symlink("f2", p)
+				} else {
+					err = os.WriteFile(p, nil, 0o644)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				entries = append(entries, p)
+			}
+
+			tmp := t.TempDir()
+			mark := filepath.Join(tmp, "statfs")
+			env := append([]string{lockFaultEnv(so), "STATFSZERO_MARK=" + mark}, tc.env...)
+			if tc.shifted {
+				shift := filepath.Join(tmp, "shift")
+				if err := os.WriteFile(shift, []byte("259200\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				env = append(env, "TIMESHIFT_FILE="+shift)
+			}
+			base := s.Env
+			s.Env = append(slices.Clone(base), env...)
+			args := append([]string{"-d", cache, "-v"}, tc.args...)
+			out, err := s.TryRun("dexpirecache", args...)
+			s.Env = base
+			if b, rerr := os.ReadFile(mark); rerr != nil || len(b) == 0 {
+				t.Fatalf("the shim was never asked (%v):\n%s", rerr, out)
+			}
+			if err != nil {
+				t.Errorf("dexpirecache %s: %v", strings.Join(args, " "), err)
+			}
+			if tc.shifted && !strings.Contains(out, "Oldest file found was created 3 days ") {
+				t.Fatalf("time() was not moved three days on:\n%s", out)
+			}
+
+			gone := func(p string) bool { _, err := os.Lstat(p); return err != nil }
+			for _, p := range files {
+				if g := gone(p); g != tc.contentGone {
+					t.Errorf("cache file %s removed: %v, want %v", filepath.Base(p), g, tc.contentGone)
+				}
+			}
+			for _, p := range entries {
+				if g := gone(p); g != tc.entriesGone {
+					t.Errorf("entry %s removed: %v, want %v", filepath.Base(p), g, tc.entriesGone)
+				}
+			}
+			for _, want := range []string{
+				fmt.Sprintf("* %7d files have been cleaned\n", tc.cleaned),
+				fmt.Sprintf("* %7d empty files and links removed\n", tc.links),
+			} {
+				if !strings.Contains(out, want) {
+					t.Errorf("no line %q", strings.TrimSuffix(want, "\n"))
+				}
+			}
+			for _, l := range []string{"Oldest removed file was created ", "Newest removed file was created "} {
+				var got []string
+				for _, line := range strings.Split(out, "\n") {
+					if strings.HasPrefix(line, l) {
+						got = append(got, line)
+					}
+				}
+				switch {
+				case tc.ages == "" && len(got) > 0:
+					t.Errorf("age line printed with no cache file removed: %q", got)
+				case tc.ages != "" && (len(got) != 1 || !strings.HasPrefix(got[0], l+tc.ages)):
+					t.Errorf("age lines %q, want one beginning %q", got, l+tc.ages)
 				}
 			}
 			if t.Failed() {
