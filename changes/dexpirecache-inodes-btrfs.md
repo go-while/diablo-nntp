@@ -1,0 +1,1 @@
+- `dexpirecache`: on a file system without a fixed number of inodes (btrfs reports `f_files` and `f_ffree` as 0), `-i` read the 0 as "no free inodes" and removed empty cache files and symbolic links at every run. The free inodes are now unknown there: `-i` is not applied (a message says so), while `-f` still is (D-299). Test: `TestDexpirecacheNoInodeCount`.

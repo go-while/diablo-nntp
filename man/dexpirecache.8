@@ -55,7 +55,12 @@ Use this diablo.config instead of the default.
 Keep at least this many kilobytes free.
 .TP
 .BI \-i " inodes"
-Keep at least this many inodes free.
+Keep at least this many inodes free.  A file system without a fixed
+number of inodes (btrfs) reports no inode count; there
+.B \-i
+is not applied and a message says so, while
+.B \-f
+still is.
 .TP
 .B \-t
 Truncate cache files to zero length instead of removing them.
