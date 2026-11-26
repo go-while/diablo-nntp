@@ -722,12 +722,17 @@ cleanupDirectories(void)
 	/*
 	 * A failed statfs() leaves the free space unknown (< 0): that is not
 	 * "full", and must not make dexpire remove directories down to the
-	 * newest one.  The limits on size and age still apply.
+	 * newest one.  The limits on size and age still apply.  So does a
+	 * file system without a fixed number of inodes (btrfs): its free
+	 * files are unknown, while its free space is known.
 	 */
 	if ((part->minfree && spacefree < 0) ||
 				(part->minfreefiles && freefiles < 0)) {
 	    if (!part->filesys->fswarned) {
-		fprintf(stderr, "dexpire: free space of %s is unknown: not expiring for minfree there\n", part->partname);
+		if (spacefree < 0)
+		    fprintf(stderr, "dexpire: free space of %s is unknown: not expiring for minfree there\n", part->partname);
+		else
+		    fprintf(stderr, "dexpire: %s reports no inode count: not expiring for minfreefiles there\n", part->partname);
 		part->filesys->fswarned = 1;
 	    }
 	}
@@ -1655,7 +1660,8 @@ getAge(char *dirname)
 
 /*
  * freeSpaceOn() - return the space free (MB) in a directory/partition, or
- * -1 when it cannot be found out (*freefiles is then -1 too)
+ * -1 when it cannot be found out (*freefiles is then -1 too).  *freefiles
+ * is also -1 when the file system reports no inode count (f_files 0).
  *
  */
 
@@ -1698,7 +1704,11 @@ freeSpaceOn(char *path, int syncit, long *freefiles)
 	return(-1.0);		/* unknown: callers must not read it as "full" */
     }
     avail = stmp.f_bavail * 1.0 * stmp.f_bsize;
-    if (freefiles != NULL)
+    /*
+     * A file system that has no fixed number of inodes (btrfs) reports
+     * f_files and f_ffree as 0: the free files are unknown, not none.
+     */
+    if (freefiles != NULL && stmp.f_files != 0)
 	*freefiles = stmp.f_ffree;
     if (DebugOpt)
 	printf("Tested fs avail: %s (%ld inodes)\n", ftos(avail), (long)stmp.f_ffree);

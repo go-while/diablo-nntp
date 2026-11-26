@@ -2,7 +2,8 @@ package e2e
 
 // How the rules of dnewsfeeds combine: a label with a peer feed table (feeds/<label>), grouprefs
 // in the IFILTER, ISPAM and ESPAM labels, GLOBAL and grouprefs, the options set to -1
-// (nortflush, domismatch), and a reload that changes them (D-261, D-262, D-263, D-266).
+// (nortflush, domismatch), a reload that changes them, a GLOBAL label without "end" and a
+// groupref to its own label (D-261, D-262, D-263, D-266, D-300, D-301).
 
 import (
 	"maps"
@@ -375,4 +376,114 @@ func TestDnewsfeedsRulesReload(t *testing.T) {
 		{"e2e.extra.y,e2e.need", []string{"keep", "added"}},
 		{"e2e.global.x,e2e.need", []string{"keep", "added"}},
 	})
+}
+
+// TestDnewsfeedsLabelWithoutEnd (D-300): a label left open (no "end" before the next label,
+// the next groupdef or the end of the file) is closed as "end" closes it. A GLOBAL left open
+// stays GLOBAL: its "addgroup e2e.global.*" reaches every label (out gets e2e.global.x), it is
+// no feed of its own (dfeedtest matches no "GLOBAL"), the labels find it ("grouplist GLOBAL
+// does not exist" is not logged), and the missing "end" is logged. A label left open at the
+// end of the file gets its peer feed table (feeds/out adds e2e.extra.*). Fails before the fix:
+// GLOBAL left open was linked as a feed (Matched: GLOBAL for e2e.global.x) and every label
+// logged that GLOBAL does not exist; at the end of the file nothing was logged and feeds/out
+// was not read.
+func TestDnewsfeedsLabelWithoutEnd(t *testing.T) {
+	const openGlobal = "label GLOBAL\n    addgroup e2e.global.*\n"
+	out := []string{"out"}
+	withGlobal := map[string][]string{"e2e.global.x": out, "e2e.comp.x": out, "e2e.other": nil}
+	for _, c := range []struct {
+		name      string
+		newsfeeds string
+		table     string // feeds/out; "" = no table
+		logged    string
+		cases     map[string][]string
+	}{
+		{"GLOBAL before a label",
+			openGlobal + outLabel("out", "    addgroup e2e.comp.*\n"), "",
+			"no end before new label", withGlobal},
+		{"GLOBAL before a groupdef",
+			openGlobal + "groupdef std\n    addgroup e2e.comp.*\nend\n" + outLabel("out", "    groupref std\n"), "",
+			"no end before new groupdef", withGlobal},
+		{"GLOBAL at the end of the file",
+			outLabel("out", "    addgroup e2e.comp.*\n") + openGlobal, "",
+			"no end before the end of the file", withGlobal},
+		{"label with a peer feed table at the end of the file",
+			GlobalLabel + strings.TrimSuffix(outLabel("out", "    addgroup e2e.comp.*\n"), "end\n"), "addgroup e2e.extra.*\n",
+			"no end before the end of the file",
+			map[string][]string{"e2e.comp.x": out, "e2e.extra.x": out, "e2e.other": nil}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := NewSite(t, SiteOptions{Newsfeeds: c.newsfeeds, NoStart: true})
+			if c.table != "" {
+				s.WriteFile(t, "feeds/out", c.table)
+			}
+			for _, groups := range slices.Sorted(maps.Keys(c.cases)) {
+				if got := matched(t, s, groups, 100, "x"); !slices.Equal(got, c.cases[groups]) {
+					t.Errorf("Newsgroups %s: matched %v, want %v", groups, got, c.cases[groups])
+				}
+			}
+			g := generalLog(s)
+			if strings.Contains(g, "grouplist GLOBAL does not exist") {
+				t.Errorf("the labels did not find GLOBAL:\n%s", g)
+			}
+			if !strings.Contains(g, c.logged) {
+				t.Errorf("no %q in the log:\n%s", c.logged, g)
+			}
+		})
+	}
+
+	// the same on a running diablo: GLOBAL left open before the next label gets no queue file
+	t.Run("running diablo", func(t *testing.T) {
+		s := NewSite(t, SiteOptions{Newsfeeds: openGlobal + peerLabel + outLabel("out", "    addgroup e2e.comp.*\n")})
+		id := msgID(t)
+		injectLines(t, s, id, newArticle(id, "e2e.global.x", "GLOBAL left open", "body"))
+		waitQueued(t, s, []string{id}, func(int) []string { return out })
+		if q := s.queue(t, "GLOBAL"); len(q) != 0 {
+			t.Errorf("dqueue/GLOBAL: %q, want no queue for GLOBAL", q)
+		}
+	})
+}
+
+// TestDnewsfeedsGrouprefSelf (D-301): a groupref to its own label ("groupref GLOBAL" inside
+// GLOBAL, "groupref std" inside groupdef std) is ignored, logged once per line ("refers to
+// itself, ignored"), and the rest of the label applies as before: out gets e2e.global.x from
+// GLOBAL and e2e.comp.x from std. Fails before the fix: the groupref was followed into the
+// same list down to the recursion limit, and "Infinite recursion in dnewsfeeds file!" was
+// logged (the matches were the same).
+func TestDnewsfeedsGrouprefSelf(t *testing.T) {
+	out := []string{"out"}
+	for _, c := range []struct {
+		name      string
+		newsfeeds string
+		warning   string
+		lines     int // self-references in the file
+		cases     map[string][]string
+	}{
+		{"GLOBAL",
+			"label GLOBAL\n    groupref GLOBAL\n    addgroup e2e.global.*\n    groupref GLOBAL\nend\n" +
+				outLabel("out", "    addgroup e2e.comp.*\n"),
+			"groupref GLOBAL in GLOBAL refers to itself, ignored", 2,
+			map[string][]string{"e2e.global.x": out, "e2e.comp.x": out, "e2e.other": nil}},
+		{"groupdef",
+			GlobalLabel + "groupdef std\n    groupref std\n    addgroup e2e.comp.*\nend\n" + outLabel("out", "    groupref std\n"),
+			"groupref std in std refers to itself, ignored", 1,
+			map[string][]string{"e2e.comp.x": out, "e2e.other": nil}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := NewSite(t, SiteOptions{Newsfeeds: c.newsfeeds, NoStart: true})
+			for _, groups := range slices.Sorted(maps.Keys(c.cases)) {
+				if got := matched(t, s, groups, 100, "x"); !slices.Equal(got, c.cases[groups]) {
+					t.Errorf("Newsgroups %s: matched %v, want %v", groups, got, c.cases[groups])
+				}
+			}
+			g := generalLog(s)
+			if strings.Contains(g, "Infinite recursion") {
+				t.Errorf("the self-reference was followed:\n%s", g)
+			}
+			// dfeedtest loads dnewsfeeds once per run
+			if n, want := strings.Count(g, c.warning), c.lines*len(c.cases); n != want {
+				t.Errorf("%q logged %d times in %d loads, want %d (once per line):\n%s", c.warning, n, len(c.cases), want, g)
+			}
+		})
+	}
 }
