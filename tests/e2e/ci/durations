@@ -795,6 +795,7 @@ TestReaderRadiusMessageAuthenticator 0.12
 TestReaderRadiusNativeConfig 0.14
 TestReaderRadiusServerDown 2.29
 TestReaderRangeBeyondLimit 0.07
+TestReaderReadErrorLogged 0.20
 TestReaderReadsGzipData 0.14
 TestReaderRepeatedGroupNotActive 0.06
 TestReaderRepeatedGroupOneNumber 0.09

@@ -49,4 +49,45 @@ func TestReaderEOFBeforeFirstCommand(t *testing.T) {
 	if n, e, q := count("$ connection ended before first command"), count("$ exit articles"), count("] < QUIT"); n != 1 || e != q+1 {
 		t.Fatalf("EOF messages %d (want 1), exit lines %d, QUIT commands %d (want exit = QUIT + 1):\n%s", n, e, q, generalLog(s))
 	}
+	// a plain close is not a read error
+	if n := count("$ read error: "); n != 0 {
+		t.Fatalf("%d read error lines after plain closes, want 0:\n%s", n, generalLog(s))
+	}
+}
+
+// TestReaderReadErrorLogged: a client that reads the greeting and then resets the
+// connection (SO_LINGER 0) gets "$ read error: <strerror> (taken as EOF)" in the reader's
+// command log, with its address and [pid/slot] like the other "$" lines, next to
+// "$ connection ended before first command". Fails on main: the line does not exist.
+func TestReaderReadErrorLogged(t *testing.T) {
+	_, spool := spoolStore(t)
+	s := NewReaderSite(t, ReaderOptions{Spool: spool, Config: map[string]string{"readerdetaillog": "on"}})
+
+	nc, err := net.DialTimeout("tcp", s.Addr, testkit.Deadline())
+	if err != nil {
+		t.Fatal(err)
+	}
+	nc.SetReadDeadline(time.Now().Add(testkit.Deadline()))
+	greeting, err := bufio.NewReader(nc).ReadString('\n')
+	if err != nil || !strings.HasPrefix(greeting, "200 ") && !strings.HasPrefix(greeting, "201 ") {
+		t.Fatalf("greeting: %q %v", greeting, err)
+	}
+	if err := nc.(*net.TCPConn).SetLinger(0); err != nil {
+		t.Fatal(err)
+	}
+	nc.Close()
+	var line string
+	testkit.WaitFor(t, 10*time.Second, "a read error line", func() bool {
+		for _, l := range strings.Split(generalLog(s), "\n") {
+			if strings.Contains(l, "$ read error: ") {
+				line = l
+				return true
+			}
+		}
+		return false
+	})
+	if !strings.Contains(line, "(taken as EOF)") || !strings.Contains(line, "127.0.0.1 [") {
+		t.Fatalf("read error line %q: want the client address, [pid/slot] and \"(taken as EOF)\"", line)
+	}
+	t.Logf("%s", line)
 }
