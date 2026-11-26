@@ -460,8 +460,11 @@ main(int ac, char **av)
 		removeLinks();
 		printf("\nStats :\n* %7i cache files found\n\t%7i reread\n\t%7i unread\n* %7i pre-cache files found\n* %7i files have been cleaned\n\t%7i reread\n\t%7i unread\n\t%7i pre-cache\n", filled, reread, unread, lazy, cleaned, readremoved, unreadremoved, lazyremoved);
 		printf("* %7i empty files and links removed\n", linksremoved);
-		printf("Oldest removed file was created %s ago\n", dtlenstr(now-oldestremoved));
-		printf("Newest removed file was created %s ago\n", dtlenstr(now-newestremoved));
+		/* the ages are kept only for removed cache files with content */
+		if (readremoved + unreadremoved) {
+			printf("Oldest removed file was created %s ago\n", dtlenstr(now-oldestremoved));
+			printf("Newest removed file was created %s ago\n", dtlenstr(now-newestremoved));
+		}
 		printf("Oldest file found was created %s ago\n", dtlenstr(now-oldest));
 		printf("DexpireCache has run for %is\n",(int)(time(NULL)-now));
 	} else {
