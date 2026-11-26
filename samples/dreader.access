@@ -254,6 +254,9 @@
 #
 # The pam option specifies a PAM service for username/pass authentication.
 # This option needs to be enabled at compile time - see lib/vendor.h
+# A login must pass the service's auth and account phases, so the service
+# needs an account line (without one the login is refused: Linux-PAM uses
+# 'other', often pam_deny; OpenPAM fails the account phase).
 #
 # The perl option specifies a perl script to be executed for username
 # and password authentication.

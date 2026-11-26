@@ -423,6 +423,7 @@ typedef struct MBufHead {
     char	mh_LongLine;	/* MBReadLine() dropped a long line */
     char	mh_LongCR;	/* the dropped long line ended with CR LF */
     char	mh_NoNL;	/* its last line ended at EOF, not with a newline */
+    int		mh_RErrno;	/* errno of a read() error taken as EOF, 0 = none */
 } MBufHead;
 
 /*
@@ -586,6 +587,7 @@ typedef struct Connection {
     unsigned long	co_ClientGroupArticleCount;
     unsigned long	co_ClientPostCount;
     unsigned long	co_ClientGroupCount;
+    unsigned long	co_CommandCount;	/* command lines read from the client */
     int 		co_ByteCountType; /* Temp for by-type byte count */
 
     MBufHead	co_ArtBuf;	/* article buffer		*/
@@ -679,6 +681,7 @@ typedef struct ServReq {
     int		sr_AccIn;	/* 1: in an Xref or Newsgroups line, for continuations */
     int		sr_AccCut;	/* 1: such a line was left out: the check fails closed */
     int		sr_Denied;	/* D-195: the reader may not read this article */
+    int		sr_SpoolOutput;	/* network fetch moved data to the client's transmit buffer */
     int		sr_Post;	/* 1: a POST (SWrite, post servers), 0: a fetch */
 } ServReq;
 

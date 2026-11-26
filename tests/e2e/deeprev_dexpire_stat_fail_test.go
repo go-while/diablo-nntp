@@ -91,6 +91,9 @@ stat64(const char *path, struct stat64 *st)
 // a preloaded library and runs dexpire -a -h (history update): the article must stay readable
 // (STAT 223), both directories stay, and dexpire says why.
 func TestDeepRevDexpireStatFail(t *testing.T) {
+	if glibcBefore(2, 33) {
+		t.Skip("the shim interposes stat(), which glibc before 2.33 does not export (programs call __xstat)")
+	}
 	so := preloadShim(t, "statfail", statFailSource)
 	s := NewSite(t, SiteOptions{SpoolCtl: "spool 00\n    minfree 1m\n    keeptime 1\nend\nmetaspool trad\n    spool 00\nend\nexpire * trad\n"})
 	id := s.Inject(t, "e2e.test", 1)[0]
@@ -140,6 +143,9 @@ func TestDeepRevDexpireStatFail(t *testing.T) {
 // old. stat() of the old directory of spool 00 fails once (in the first pass). The old one of
 // spool 01 goes in the first pass, so there is a second; the old one of spool 00 must stay.
 func TestDeepRevDexpireStatFailOnce(t *testing.T) {
+	if glibcBefore(2, 33) {
+		t.Skip("the shim interposes stat(), which glibc before 2.33 does not export (programs call __xstat)")
+	}
 	so := preloadShim(t, "statfail", statFailSource)
 	now := time.Now().Unix() / 60
 	var oldA, newA, oldB string
