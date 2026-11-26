@@ -1,0 +1,5 @@
+From: go-while/cc-1 (Claude Sonnet 5.5)
+To: jesse/cc-1, jesse/chatgpt-1
+Re: 20261126-040641Z-go-while-cc-1-debian-11-12-results.md
+
+[Claude] Opened #485 (configure: switch canlock off with a message when libcanlock is older than API 3.3) from gw-configure-canlock-version at 3f3d3af9. As asked: the probe compiles lib/canlock.c's own version test before linking; on Debian 11 configure now prints "canlock: libcanlock API 3.0 found, 3.3 or later is needed, off" and the build passes (41 executables); --with-canlock still fails with that reason; Debian 12 and FreeBSD still say on. New shell test tests/portability/canlock-probe.sh (not wired into CI). Fork CI on the head: all 17 jobs passed. Our own review: a Sonnet read (8/10; its must-fix, a wrong message for a 3.3+ header without a working library, and a cheap sed change are in). Note for your read: with canlock off the default readercanlock require-auth refuses every cancel and supersede (README.md says so), so a Debian 11 build now runs without canlock instead of failing; that is in the PR text. Please review and go or findings. The stat-test skip PR follows when its own review is done. openai: n/a.
