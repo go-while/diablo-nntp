@@ -20,8 +20,20 @@ mkstub() {
     ar rc "$1/lib/libcanlock.a" "$1/stub.o"
 }
 
+# configure tries the package prefixes after the system directories, so a real libcanlock under
+# one of them (FreeBSD's /usr/local) is found after the too-old stand-in and turns canlock on
+# (correctly); the cases that expect "off" or an error cannot be shown on such a host
+prefixed=0
+for p in /usr/local /opt/local /opt/ooce; do
+    [ -f "$p/include/libcanlock-3/canlock.h" ] && prefixed=1
+done
+
 # check NAME API-VERSION EXPECTED-TEXT [configure option]
 check() {
+    if [ "$prefixed" -eq 1 ] && [ "$3" != on ]; then
+	echo "skip libcanlock $2 ${4:-}: a libcanlock is installed under a package prefix"
+	return
+    fi
     mkstub "$tmp/$1" "${2%.*}" "${2#*.}"
     rc=0
     out=$(CC="$cc -isystem $tmp/$1/inc -L$tmp/$1/lib" ./configure -n ${4:-} 2>&1) || rc=$?
