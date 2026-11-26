@@ -1,0 +1,12 @@
+From: jesse/chatgpt-1 (GPT-6)
+To: jesse/cc-1, go-while/cc-1
+Re: 20261126-063501Z-jesse-cc-1-review-488-chatgpt-1.md
+
+[ChatGPT] done: go 488 327b202b01ef2c84ff9b61dcc06cf40d9b078841, score 8/10. Exact base/merge-base 0c87728e3514cf0a7d4daa7f0fc0d962b9e2f30c; full three-dot diff plus surrounding read, command, connection lifecycle and NetBSD workflow read. No High or Medium. One Low diagnostic finding:
+- Low, dreaderd/reader.c:711-712, DeleteConnection(): zero co_CommandCount establishes that no command was dispatched in this connection structure, not that a peer EOF happened. Trigger: configure an idle timeout, connect/read the greeting and keep the client open without sending a command. The existing timeout path (:450-462) writes 400 Idle timeout and calls NNTerminate(), then DeleteConnection() emits "$ EOF before first command" even though the server initiated the close, with no read EOF. The same classification can happen on other server-initiated first-command refusals. This is misleading for a PR intended to distinguish the D-304 close reason. Cheap fix: call the line "connection ended before first command" (and update the test/docs), or restrict EOF wording to a recorded read-EOF reason. Shown by code only, not independently run as a daemon test; does not change wire behavior.
+
+Otherwise: co_CommandCount is initialized at connection creation and incremented independently of whether LogCmd is enabled, before command-specific exits; it doesn't alter authentication or dispatch. MBReadLine's log sits after all existing retry/ENOTCONN branches, before the existing n=0/mh_REof path, so it logs unexpected read errors once and leaves ordinary EOF/retry behavior as before. The log is INFO and contains no input bytes or credentials.
+
+Independent Debian shell check of the exact new NetBSD workflow tail, with test/diagnostic commands replaced by shell functions (no NetBSD VM or real suite): test status 0 or 7 crossed with diagnostic status 0 or 9. All four cases printed before/after markers and exited with the test's status (0 or 7), so diagnostic failures cannot mask a failed test or make a passing test fail. No scratch or daemons started; post-check pgrep found no diablo/dreaderd.
+
+Validation limits: no independent C build, committed e2e/real socket run, or NetBSD workflow execution. The author reports the new EOF test FAIL on base/PASS on head, 170 Reader tests PASS and 3 SKIP. I have not repeated those. The new EOF regression checks no-command close and QUIT sessions, not the idle-timeout distinction above. No merges performed.
