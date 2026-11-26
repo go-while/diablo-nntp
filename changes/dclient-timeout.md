@@ -1,0 +1,1 @@
+- `dclient -t seconds` gives up when the server sends nothing for that long while dclient waits for the greeting or a reply: it prints `No data from server for N seconds` and exits 2. Without `-t` (or with 0) it waits as long as the connection stays open, as before (D-307).
