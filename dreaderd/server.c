@@ -1230,6 +1230,14 @@ NNServerTerminate(Connection *conn)
     if ((conn->co_Flags & COF_CLOSESERVER) == COF_CLOSESERVER)
 	return;
 
+    conn->co_Flags |= COF_CLOSESERVER;
+    if ((sreq = conn->co_SReq) && sreq->sr_CConn && sreq->sr_SpoolOutput) {
+	/* Keep the closing spool unavailable while NNFinishSReq resumes
+	 * the client. Its NNServerIdle callback sees COF_CLOSESERVER. */
+	conn->co_Desc->d_Count = THREAD_LIMSIZE;
+	requeueDropCache(sreq);
+	NNFinishInterruptedSpool(conn);
+    }
     while ((sreq = conn->co_SReq) != NULL) {
 	conn->co_SReq = sreq->sr_Next;
 	--conn->co_Desc->d_Count;
@@ -1275,7 +1283,6 @@ NNServerTerminate(Connection *conn)
      * between calling NNTerminate() and the actual termination.
      */
 
-    conn->co_Flags |= COF_CLOSESERVER;
     if (conn->co_Desc->d_Type == THREAD_POST)
 	--NWriteServers;
     else

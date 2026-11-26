@@ -715,6 +715,12 @@ MBReadLine(MBufHead *mh, char **pptr)
 			FD_SET(mh->mh_Fd, &RFds);
 			break;	/* break while */
 		    }
+		    /*
+		     * Any other error (ECONNRESET, ...) is treated as EOF; keep
+		     * which one, so the owner can tell a reset from a plain
+		     * close (the reader logs it with the client's address).
+		     */
+		    mh->mh_RErrno = errno;
 		    n = 0;
 		}
 		if (n == 0) {

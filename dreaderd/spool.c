@@ -10,6 +10,7 @@
 #include "defs.h"
 
 Prototype void NNSpoolCommand1(Connection *conn);
+Prototype void NNFinishInterruptedSpool(Connection *conn);
 
 void NNSpoolResponse1(Connection *conn);
 void NNSpoolResponse2(Connection *conn);
@@ -801,28 +802,17 @@ NNSpoolResponse3(Connection *conn)
     conn->co_State = "spres3";
 
     for (;;) {
-	int error = 0;
-
 	len = MBReadLine(&conn->co_RMBuf, &buf);
 
 	/*
-	 * If an error occurs and we are not in FastCopyOpt mode,
-	 * we can simply terminate the server and the request will be
-	 * retried.  If we are an FastCopyOpt mode we have already 
-	 * started writing the article back to the client and cannot
-	 * simply cut things off.  We simulate an ending, make sure
-	 * we do not commit the article to the cache, and *then*
-	 * terminate the server.
+	 * EOF: termination retries a request that has sent nothing to the
+	 * client (the lines read so far sit only in the client's ArtBuf)
+	 * and finishes one whose fast-copy output was published.
 	 */
 
 	if (len < 0) {
-	    if (FastCopyOpt == 0) {
-		NNServerTerminate(conn);
-		return;
-	    }
-	    len = 3;
-	    buf = ".\r";
-	    error = 1;
+	    NNServerTerminate(conn);
+	    return;
 	}
 
 	/*
@@ -844,7 +834,7 @@ NNSpoolResponse3(Connection *conn)
 	    }
 	    if (sreq->sr_Cache) {
 		fflush(sreq->sr_Cache);
-		if (ferror(sreq->sr_Cache) || error)
+		if (ferror(sreq->sr_Cache))
 		    AbortCache(fileno(sreq->sr_Cache), sreq->sr_MsgId, 0);
 		else
 		    CommitCache(conn, 0);
@@ -862,8 +852,6 @@ NNSpoolResponse3(Connection *conn)
 		case COM_BODYWVF:
 		case COM_BODYNOSTAT:
 		case COM_HEAD:
-		    if (error)
-			MBPrintf(&sreq->sr_CConn->co_TMBuf, "(spool server died prior to completion of the article dump)\r\n");
 		    NNFinishSReq(conn, ".\r\n", 0);
 		    break;
 		case COM_STAT:
@@ -873,15 +861,6 @@ NNSpoolResponse3(Connection *conn)
 		    NNFinishSReq(conn, "(something blew up in the spool code)\r\n.\r\n", 0);
 		    break;
 		}
-	    }
-
-	    /*
-	     * If an error occured ( can only happen if we were in FastCopyOpt
-	     * mode ), we have to terminate the server now, after we've
-	     * finished processing the client request.
-	     */
-	    if (error) {
-		NNServerTerminate(conn);
 	    }
 	    return;
 	}
@@ -901,7 +880,8 @@ NNSpoolResponse3(Connection *conn)
 	if (sreq->sr_Cache)
 	    fwrite(buf, 1, len, sreq->sr_Cache);
     }
-    if (FastCopyOpt && sreq->sr_CConn) {
+    if (FastCopyOpt && sreq->sr_CConn && sreq->sr_CConn->co_ArtBuf.mh_Bytes) {
+	sreq->sr_SpoolOutput = 1;
         MBCopy(
             &sreq->sr_CConn->co_ArtBuf,
             &sreq->sr_CConn->co_TMBuf
@@ -915,6 +895,19 @@ NNSpoolResponse3(Connection *conn)
 	    NNServerTerminate(conn);
 	}
     }
+}
+
+/* Use NNSpoolResponse3's interrupted-body ending (formerly spool.c:865-871).
+ * STAT has already sent its single status line. */
+void
+NNFinishInterruptedSpool(Connection *conn)
+{
+    Connection *client = conn->co_SReq->sr_CConn;
+
+    if (client->co_ArtBuf.mh_Bytes)
+	MBCopy(&client->co_ArtBuf, &client->co_TMBuf);
+    NNFinishSReq(conn, client->co_ArtMode == COM_STAT ? "" :
+	"(spool server died prior to completion of the article dump)\r\n.\r\n", 0);
 }
 
 void

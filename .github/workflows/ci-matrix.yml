@@ -419,4 +419,11 @@ jobs:
             cd tests/e2e
             # dbin is at the repo root ($root/dbin), two levels up from here.
             # /tmp is a small tmpfs here; TestKPDBTooLarge needs 2 GB for its sparse file
-            su -m news -c "env TMPDIR=/var/tmp DIABLO_BIN=$root/dbin NNTP_TEST_DEADLINE=30s ./ci/run-shards ./e2e.test -test.v -test.count=1 -test.timeout=1200s"
+            # D-304 diagnostics: TCP counters ("no space to build PCB") and the port algorithm
+            # before and after the run; the test status is kept.
+            netstat_diag() { echo "=== netstat -s -p tcp ($1) ==="; netstat -s -p tcp || true; /sbin/sysctl net.inet.ip.anonportalgo.selected || true; }
+            netstat_diag before
+            rc=0
+            su -m news -c "env TMPDIR=/var/tmp DIABLO_BIN=$root/dbin NNTP_TEST_DEADLINE=30s ./ci/run-shards ./e2e.test -test.v -test.count=1 -test.timeout=1200s" || rc=$?
+            netstat_diag after
+            exit $rc
