@@ -295,15 +295,13 @@ addSLink(char *name, time_t ctime) {
 	int s;
 	long n;
 
-	/* only when -i applies: with -f alone empty files and links stay */
-	if (!freeinodes)
-		return;
-
 	if (ctime < time(NULL)-2*24*3600) {
 		if (unlink(name) == 0)
 			linksremoved++;
 	}
 
+	if (!freeinodes)
+		return;
 	/* the list is full and this one is not older than the newest in it */
 	if (inodeLen >= freeinodes && !inodeOlder(ctime, name, inodeEnd))
 		return;
