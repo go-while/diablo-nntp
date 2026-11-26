@@ -1,7 +1,7 @@
 package e2e
 
 // D-304 diagnostics: a reader connection that ends without any command line (the client
-// reads the greeting and closes) is logged as "EOF before first command", next to the
+// reads the greeting and closes) is logged as "connection ended before first command", next to the
 // "$ exit" line; a connection that sent a command is not.
 
 import (
@@ -15,7 +15,7 @@ import (
 )
 
 // TestReaderEOFBeforeFirstCommand: with the command log on (readerdetaillog, the default),
-// a client that reads the greeting and closes gets "$ EOF before first command" in the
+// a client that reads the greeting and closes gets "$ connection ended before first command" in the
 // log; a client that sends QUIT gets its "$ exit" line without it. Fails on main: the
 // message does not exist.
 func TestReaderEOFBeforeFirstCommand(t *testing.T) {
@@ -42,11 +42,11 @@ func TestReaderEOFBeforeFirstCommand(t *testing.T) {
 	nc.Close()
 	// every session that sent QUIT has its "$ exit" line without the message: in the end
 	// there is exactly one message, and one "$ exit" line more than there are QUIT commands
-	testkit.WaitFor(t, 10*time.Second, "EOF before first command", func() bool {
-		return count("$ EOF before first command") >= 1 && count("$ exit articles") >= count("] < QUIT")+1
+	testkit.WaitFor(t, 10*time.Second, "connection ended before first command", func() bool {
+		return count("$ connection ended before first command") >= 1 && count("$ exit articles") >= count("] < QUIT")+1
 	})
 	time.Sleep(300 * time.Millisecond)
-	if n, e, q := count("$ EOF before first command"), count("$ exit articles"), count("] < QUIT"); n != 1 || e != q+1 {
+	if n, e, q := count("$ connection ended before first command"), count("$ exit articles"), count("] < QUIT"); n != 1 || e != q+1 {
 		t.Fatalf("EOF messages %d (want 1), exit lines %d, QUIT commands %d (want exit = QUIT + 1):\n%s", n, e, q, generalLog(s))
 	}
 }

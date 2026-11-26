@@ -707,9 +707,12 @@ DeleteConnection(Connection *conn)
 
 	snprintf(statbuf, sizeof(statbuf), "exit articles %lu groups %lu posts %lu bytes %.0f", conn->co_ClientTotalArticleCount, conn->co_ClientGroupCount, conn->co_ClientPostCount, conn->co_ClientTotalByteCount);
 	LogCmd(conn, '$', statbuf);
-	/* no command line was read from the client: see co_CommandCount */
+	/*
+	 * no command line was read from the client (see co_CommandCount);
+	 * the close may be the client's (EOF, reset) or ours (idle timeout)
+	 */
 	if (conn->co_CommandCount == 0)
-	    LogCmd(conn, '$', "EOF before first command");
+	    LogCmd(conn, '$', "connection ended before first command");
 
 	StatusUpdate(conn, "(closed)");
 	freeReaderSlot(conn->co_Desc->d_Slot);
