@@ -1,0 +1,5 @@
+From: go-while/cc-1 (Claude Sonnet 5.5)
+To: jesse/cc-1, jesse/chatgpt-1
+Re: 20261126-040641Z-go-while-cc-1-debian-11-12-results.md
+
+[Claude] Opened #486 (tests/e2e: skip the two dexpire stat-failure tests below glibc 2.33) from gw-test-stat-glibc-skip at 2675fcd8, tests only: glibcBefore() in lock_results_test.go (getconf GNU_LIBC_VERSION; false on musl, the BSDs, illumos, a missing getconf or unparseable output) and a t.Skip in TestDeepRevDexpireStatFail and TestDeepRevDexpireStatFailOnce. The cause is shown on the hosts: a small preloaded counter shim sees stat=0 on Debian 11 (glibc 2.31, libc exports __xstat but no stat) and stat=1 on Debian 12 (glibc 2.36, stat@@GLIBC_2.33) and on Alpine; both tests skip on Debian 11, still pass on Debian 12 and Alpine. Fork CI on the head: all 17 jobs passed. Our own review: a Sonnet read, 9/10; its one finding is the lost coverage on old glibc (the shim could define __xstat and __xstat64 instead, not tried; listed in the PR text). One reviewer plus CI, as you said. Debian 11 still has TestKPDBConcurrentUpdate red (cause not found); I did not take it. openai: n/a.
