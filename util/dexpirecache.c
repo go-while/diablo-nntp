@@ -40,6 +40,7 @@ char *basepath=NULL;
 int freeblocks=0, freeinodes=0, treeblocks=0;
 time_t oldest,oldestremoved,newestremoved=0, now=0;
 int unread=0,reread=0,unreadremoved=0,readremoved=0,filled=0,lazy=0,lazyremoved=0,cleaned=0;
+int linksremoved=0;	/* empty files and links unlinked (-i, two days old) */
 int verbose=0, trnct=0;
 
 struct FileQueue {
@@ -98,7 +99,9 @@ removeLinks(void) {
 	
 	while(i) {
 		if (verbose) printf("Removing %s\n", i->name);
-		unlink(i->name);
+		/* one already gone (two days old, addSLink()) is not counted again */
+		if (unlink(i->name) == 0)
+			linksremoved++;
 		i = i->next;
 	}
 }
@@ -292,8 +295,10 @@ addSLink(char *name, time_t ctime) {
 	int s;
 	long n;
 
-	if (ctime < time(NULL)-2*24*3600)
-		unlink(name);
+	if (ctime < time(NULL)-2*24*3600) {
+		if (unlink(name) == 0)
+			linksremoved++;
+	}
 
 	if (!freeinodes)
 		return;
@@ -454,8 +459,12 @@ main(int ac, char **av)
 		removeFiles(fileBeg,0);
 		removeLinks();
 		printf("\nStats :\n* %7i cache files found\n\t%7i reread\n\t%7i unread\n* %7i pre-cache files found\n* %7i files have been cleaned\n\t%7i reread\n\t%7i unread\n\t%7i pre-cache\n", filled, reread, unread, lazy, cleaned, readremoved, unreadremoved, lazyremoved);
-		printf("Oldest removed file was created %s ago\n", dtlenstr(now-oldestremoved));
-		printf("Newest removed file was created %s ago\n", dtlenstr(now-newestremoved));
+		printf("* %7i empty files and links removed\n", linksremoved);
+		/* the ages are kept only for removed cache files with content */
+		if (readremoved + unreadremoved) {
+			printf("Oldest removed file was created %s ago\n", dtlenstr(now-oldestremoved));
+			printf("Newest removed file was created %s ago\n", dtlenstr(now-newestremoved));
+		}
 		printf("Oldest file found was created %s ago\n", dtlenstr(now-oldest));
 		printf("DexpireCache has run for %is\n",(int)(time(NULL)-now));
 	} else {
