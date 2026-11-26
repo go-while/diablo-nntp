@@ -38,10 +38,19 @@ until enough space is free.  Otherwise it does nothing.
 The order depends on access times, so the cache file system should not
 be mounted with noatime.
 .PP
+Whenever it scans the cache, it also removes every empty cache file
+(other than *.tmp) and symbolic link more than two days old (by ctime).
+dreaderd keeps an article it does not cache (outside cachemin or
+cachemax, or emptied by
+.BR \-t )
+as an empty file and does not cache it again while that file exists,
+so such an article can be cached again after two days.
+.PP
 At the end it prints how many cache files it found and removed, split
 into files read again after they were cached, files never read again,
-and empty pre-cache files, and the age of the oldest and newest removed
-file.  Run it from cron, for example every hour.
+and empty pre-cache files, how many empty files and symbolic links it
+removed, and, when it removed a cache file with content, the age of the
+oldest and newest one removed.  Run it from cron, for example every hour.
 .SH OPTIONS
 .TP
 .BI \-d " cachedir"
@@ -55,7 +64,12 @@ Use this diablo.config instead of the default.
 Keep at least this many kilobytes free.
 .TP
 .BI \-i " inodes"
-Keep at least this many inodes free.
+Keep at least this many inodes free.  A file system without a fixed
+number of inodes (btrfs) reports no inode count; there
+.B \-i
+is not applied and a message says so, while
+.B \-f
+still is.
 .TP
 .B \-t
 Truncate cache files to zero length instead of removing them.

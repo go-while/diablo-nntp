@@ -423,6 +423,7 @@ typedef struct MBufHead {
     char	mh_LongLine;	/* MBReadLine() dropped a long line */
     char	mh_LongCR;	/* the dropped long line ended with CR LF */
     char	mh_NoNL;	/* its last line ended at EOF, not with a newline */
+    int		mh_RErrno;	/* errno of a read() error taken as EOF, 0 = none */
 } MBufHead;
 
 /*
@@ -586,6 +587,7 @@ typedef struct Connection {
     unsigned long	co_ClientGroupArticleCount;
     unsigned long	co_ClientPostCount;
     unsigned long	co_ClientGroupCount;
+    unsigned long	co_CommandCount;	/* command lines read from the client */
     int 		co_ByteCountType; /* Temp for by-type byte count */
 
     MBufHead	co_ArtBuf;	/* article buffer		*/

@@ -40,6 +40,7 @@ char *basepath=NULL;
 int freeblocks=0, freeinodes=0, treeblocks=0;
 time_t oldest,oldestremoved,newestremoved=0, now=0;
 int unread=0,reread=0,unreadremoved=0,readremoved=0,filled=0,lazy=0,lazyremoved=0,cleaned=0;
+int linksremoved=0;	/* empty files and links unlinked (-i, two days old) */
 int verbose=0, trnct=0;
 
 struct FileQueue {
@@ -58,6 +59,7 @@ struct InodeQueue {
 
 struct FileQueue *fileBeg=NULL, *fileFree=NULL;
 struct InodeQueue *inodeBeg=NULL, *inodeEnd=NULL;
+long inodeLen=0;
 time_t fileEnd;
 
 int
@@ -97,7 +99,9 @@ removeLinks(void) {
 	
 	while(i) {
 		if (verbose) printf("Removing %s\n", i->name);
-		unlink(i->name);
+		/* one already gone (two days old, addSLink()) is not counted again */
+		if (unlink(i->name) == 0)
+			linksremoved++;
 		i = i->next;
 	}
 }
@@ -271,16 +275,35 @@ addFile(char *name, long size, time_t atime, time_t mtime) {
 	}
 }
 
+/*
+ * The order of the -i list: by ctime, oldest first, and by name where the
+ * ctimes are the same, so that ties do not depend on the directory order.
+ */
+static int
+inodeOlder(time_t ctime, const char *name, const struct InodeQueue *e)
+{
+	return ctime < e->ctime || (ctime == e->ctime && strcmp(name, e->name) < 0);
+}
+
+/*
+ * Keep the freeinodes oldest empty files and symbolic links in the list
+ * (inodeBeg, oldest first; inodeEnd the newest kept, inodeLen how many).
+ */
 void
 addSLink(char *name, time_t ctime) {
-	struct InodeQueue *itmp, *i;
+	struct InodeQueue *itmp, *i, **pp;
 	int s;
-	long inodes=0;
+	long n;
 
-	if (ctime < time(NULL)-2*24*3600)
-		unlink(name);
+	if (ctime < time(NULL)-2*24*3600) {
+		if (unlink(name) == 0)
+			linksremoved++;
+	}
 
-	if (!freeinodes || (inodeEnd && (ctime > inodeEnd->ctime)))
+	if (!freeinodes)
+		return;
+	/* the list is full and this one is not older than the newest in it */
+	if (inodeLen >= freeinodes && !inodeOlder(ctime, name, inodeEnd))
 		return;
 
 	s = strlen(name)+1;
@@ -290,43 +313,25 @@ addSLink(char *name, time_t ctime) {
 	memcpy(itmp->name, name, s);
 	itmp->ctime = ctime;
 
-	if (!inodeBeg) {
-		inodeBeg = itmp;
-		inodeEnd = itmp;
-		itmp->next = NULL;
-		return;
-	} else if (ctime<inodeBeg->ctime) {
-		itmp->next = inodeBeg;
-		inodeBeg = itmp;
-		i = itmp;
-	} else {
-		i = inodeBeg;
-		while (i->next) {
-			inodes++;
-			if(ctime<i->next->ctime) {
-				itmp->next = i->next;
-				i->next = itmp;
-				i = i->next;
-				break;
-			}
-			i = i->next;
-		}
-	}
+	/* insert before the first entry it is older than: entry n */
+	n = 1;
+	for (pp = &inodeBeg; *pp && !inodeOlder(ctime, name, *pp); pp = &(*pp)->next)
+		n++;
+	itmp->next = *pp;
+	*pp = itmp;
+
+	/* the entries after the freeinodes-th are not needed */
+	for (i = itmp; i->next && n < freeinodes; n++)
+		i = i->next;
+	inodeEnd = i;
+	inodeLen = n;
+	i = i->next;
+	inodeEnd->next = NULL;
 	while (i) {
-		inodes++;
-		if (inodes>freeinodes) break;
-		i = i->next;
-	}
-	if (i) {
-		inodeEnd = i;
-		i = i->next;
-		inodeEnd->next=NULL;
-		while (i) {
-			struct InodeQueue *j;
-			j = i; i = i->next;
-			free(j->name);
-			free(j);
-		}
+		struct InodeQueue *j;
+		j = i; i = i->next;
+		free(j->name);
+		free(j);
 	}
 }
 
@@ -434,7 +439,15 @@ main(int ac, char **av)
 		} else {
 			freeblocks = 0;
 		}
-		if ((long long)fs.f_ffree<freeinodes) {
+		/*
+		 * A file system that has no fixed number of inodes (btrfs)
+		 * reports f_files and f_ffree as 0: its free inodes are
+		 * unknown, not none, so -i is not applied there.  -f still is.
+		 */
+		if (freeinodes && fs.f_files == 0) {
+			fprintf(stderr, "dexpirecache: %s reports no inode count: not expiring for -i there\n", basepath);
+			freeinodes = 0;
+		} else if ((long long)fs.f_ffree<freeinodes) {
 			freeinodes -= fs.f_ffree;
 		} else {
 			freeinodes = 0;
@@ -446,8 +459,12 @@ main(int ac, char **av)
 		removeFiles(fileBeg,0);
 		removeLinks();
 		printf("\nStats :\n* %7i cache files found\n\t%7i reread\n\t%7i unread\n* %7i pre-cache files found\n* %7i files have been cleaned\n\t%7i reread\n\t%7i unread\n\t%7i pre-cache\n", filled, reread, unread, lazy, cleaned, readremoved, unreadremoved, lazyremoved);
-		printf("Oldest removed file was created %s ago\n", dtlenstr(now-oldestremoved));
-		printf("Newest removed file was created %s ago\n", dtlenstr(now-newestremoved));
+		printf("* %7i empty files and links removed\n", linksremoved);
+		/* the ages are kept only for removed cache files with content */
+		if (readremoved + unreadremoved) {
+			printf("Oldest removed file was created %s ago\n", dtlenstr(now-oldestremoved));
+			printf("Newest removed file was created %s ago\n", dtlenstr(now-newestremoved));
+		}
 		printf("Oldest file found was created %s ago\n", dtlenstr(now-oldest));
 		printf("DexpireCache has run for %is\n",(int)(time(NULL)-now));
 	} else {
