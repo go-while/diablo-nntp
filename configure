@@ -125,9 +125,14 @@ EOT
     for p in "" $prefixes; do
 	if [ -z "$p" ]; then cpp=""; else [ -d "$p/include" ] || continue; cpp="-I$p/include"; fi
 	# shellcheck disable=SC2086
-	v=$($CC -E $cpp "$tmp/clv.c" 2>/dev/null | grep -v '^#' | tr '\n' ' ' | sed -n 's/.*diablo_canlock_version[^0-9]*\([0-9][0-9]*\)[^0-9]*\([0-9][0-9]*\).*/\1.\2/p')
+	v=$($CC -E $cpp "$tmp/clv.c" 2>/dev/null | sed -n '/diablo_canlock_version/,$p' | grep -v '^#' | tr '\n' ' ' | sed -n 's/.*diablo_canlock_version[^0-9]*\([0-9][0-9]*\)[^0-9]*\([0-9][0-9]*\).*/\1.\2/p')
 	if [ -n "$v" ]; then
-	    canlock_why="libcanlock API $v found, 3.3 or later is needed"
+	    maj=${v%.*}; min=${v#*.}
+	    if [ "$maj" -lt 3 ] || { [ "$maj" -eq 3 ] && [ "$min" -lt 3 ]; }; then
+		canlock_why="libcanlock API $v found, 3.3 or later is needed"
+	    else
+		canlock_why="libcanlock API $v headers found but -lcanlock does not link"
+	    fi
 	    break
 	fi
     done
