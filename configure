@@ -106,11 +106,37 @@ EOT
 }
 
 probe_canlock() {
+    canlock_why=""
     cat > "$tmp/cl.c" <<'EOT'
 #include <libcanlock-3/canlock.h>
+/* the same test as lib/canlock.c: cl_verify_multi came with 3.3.0 */
+#if CL_API_MAJOR < 3 || (CL_API_MAJOR == 3 && CL_API_MINOR < 3)
+#error "libcanlock 3.3.0 or later is needed"
+#endif
 int main(void) { void *volatile p = (void *)cl_get_key; return p == 0; }
 EOT
-    try_link canlock "$tmp/cl.c" "-lcanlock"
+    try_link canlock "$tmp/cl.c" "-lcanlock" && return 0
+    # Not usable: when the header is there, say which API version it has (preprocess only;
+    # the API version is not the package version: libcanlock 3.2.2 has API 3.0)
+    cat > "$tmp/clv.c" <<'EOT'
+#include <libcanlock-3/canlock.h>
+diablo_canlock_version CL_API_MAJOR CL_API_MINOR
+EOT
+    for p in "" $prefixes; do
+	if [ -z "$p" ]; then cpp=""; else [ -d "$p/include" ] || continue; cpp="-I$p/include"; fi
+	# shellcheck disable=SC2086
+	v=$($CC -E $cpp "$tmp/clv.c" 2>/dev/null | sed -n '/diablo_canlock_version/,$p' | grep -v '^#' | tr '\n' ' ' | sed -n 's/.*diablo_canlock_version[^0-9]*\([0-9][0-9]*\)[^0-9]*\([0-9][0-9]*\).*/\1.\2/p')
+	if [ -n "$v" ]; then
+	    maj=${v%.*}; min=${v#*.}
+	    if [ "$maj" -lt 3 ] || { [ "$maj" -eq 3 ] && [ "$min" -lt 3 ]; }; then
+		canlock_why="libcanlock API $v found, 3.3 or later is needed"
+	    else
+		canlock_why="libcanlock API $v headers found but -lcanlock does not link"
+	    fi
+	    break
+	fi
+    done
+    return 1
 }
 
 # Berkeley DB with the 1.85 interface, dbopen(): <db.h> in the C library on FreeBSD, <db_185.h>
@@ -290,11 +316,12 @@ decide() {
 	off) note "$f: off (--without-$f)"; return 1 ;;
 	on|auto)
 	    if "$probe"; then return 0; fi
+	    eval "why=\$${f}_why"
 	    if [ "$mode" = on ]; then
-		note "configure: --with-$f: cannot build $f here" >&2
+		note "configure: --with-$f: cannot build $f here${why:+ ($why)}" >&2
 		rc=1
 	    else
-		note "$f: not found, off"
+		note "$f: ${why:-not found}, off"
 	    fi
 	    return 1 ;;
     esac

@@ -135,6 +135,16 @@ func TestDclientReplyLineBoundaries(t *testing.T) {
 						server <- fmt.Errorf("dclient did not print the QUIT reply prefix")
 						return
 					}
+					// Let dclient's TCP stack acknowledge the reply first. On
+					// FreeBSD (seen on 15.1) a reset sent before the delayed ACK
+					// (100 ms) is ignored, the answer is a challenge ACK, and the
+					// reset the server's kernel owes to that ACK can go missing
+					// while the machine sends many closed-port resets (probably
+					// the reset rate limit). dclient has no read timeout and then
+					// waits until the test's 15 s run out. 300 ms is three
+					// delayed-ACK times there; the wait is time based, the server
+					// has no portable way to see the ACK.
+					time.Sleep(300 * time.Millisecond)
 					server <- c.SetLinger(0)
 					return
 				}

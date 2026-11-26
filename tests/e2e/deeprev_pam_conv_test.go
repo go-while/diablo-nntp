@@ -12,7 +12,7 @@ import (
 // questions the way a PAM stack may: one conversation call with a text message, a prompt
 // for the user name and one for the password. It accepts the login only when the answer
 // array has an entry for each message and each answer is at the index of its message, and
-// marks what it got.
+// marks what it got. pam_set_item and the account phase accept everything.
 const pamConvSource = `#define _GNU_SOURCE
 #define __EXTENSIONS__
 #include <fcntl.h>
@@ -89,6 +89,20 @@ pam_authenticate(pam_handle_t *pamh, int flags)
     free(resp);
     shim_mark("answers %s", ok ? "right" : "wrong");
     return ok ? PAM_SUCCESS : PAM_AUTH_ERR;
+}
+
+int
+pam_set_item(pam_handle_t *pamh, int item, const void *value)
+{
+    (void)pamh; (void)item; (void)value;
+    return PAM_SUCCESS;
+}
+
+int
+pam_acct_mgmt(pam_handle_t *pamh, int flags)
+{
+    (void)pamh; (void)flags;
+    return PAM_SUCCESS;
 }
 
 int
