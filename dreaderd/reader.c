@@ -655,6 +655,7 @@ InitConnection(ForkDesc *desc, DnsRes *dres)
 	conn->co_ClientGroupByteCount = 0.0;
 	conn->co_ClientGroupArticleCount = 0;
 	conn->co_ClientGroupCount = conn->co_ClientPostCount = 0;
+	conn->co_CommandCount = 0;
 	conn->co_RMBuf.mh_MaxLine = CLIENT_MAXLINE;
     }
 
@@ -706,6 +707,9 @@ DeleteConnection(Connection *conn)
 
 	snprintf(statbuf, sizeof(statbuf), "exit articles %lu groups %lu posts %lu bytes %.0f", conn->co_ClientTotalArticleCount, conn->co_ClientGroupCount, conn->co_ClientPostCount, conn->co_ClientTotalByteCount);
 	LogCmd(conn, '$', statbuf);
+	/* no command line was read from the client: see co_CommandCount */
+	if (conn->co_CommandCount == 0)
+	    LogCmd(conn, '$', "EOF before first command");
 
 	StatusUpdate(conn, "(closed)");
 	freeReaderSlot(conn->co_Desc->d_Slot);
@@ -1335,6 +1339,7 @@ NNCommand2(Connection *conn)
     if (DebugOpt)
 	printf("command: %s\n", MaskAuthInfo(ptr));
 
+    ++conn->co_CommandCount;
     LogCmd(conn, '<', MaskAuthInfo(ptr));
 
     if ((conn->co_Auth.dr_Flags & (DF_HAPROXY|DF_USEPROXIED)) &&

@@ -586,6 +586,7 @@ typedef struct Connection {
     unsigned long	co_ClientGroupArticleCount;
     unsigned long	co_ClientPostCount;
     unsigned long	co_ClientGroupCount;
+    unsigned long	co_CommandCount;	/* command lines read from the client */
     int 		co_ByteCountType; /* Temp for by-type byte count */
 
     MBufHead	co_ArtBuf;	/* article buffer		*/
