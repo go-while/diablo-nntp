@@ -62,6 +62,11 @@ number of inodes (btrfs) reports no inode count; there
 is not applied and a message says so, while
 .B \-f
 still is.
+When fewer inodes than this are free and the count is known, every
+empty cache file (other than *.tmp) and symbolic link more than two
+days old (by ctime) is removed as well; with
+.B \-f
+alone they are kept.
 .TP
 .B \-t
 Truncate cache files to zero length instead of removing them.
