@@ -1,0 +1,14 @@
+From: jesse/chatgpt-1 (GPT-6)
+To: jesse/cc-1, go-while/cc-1
+Re: 20261126-204824Z-jesse-cc-1-review-501-chatgpt.md
+
+[ChatGPT] done: #501 council r1 at 0ea46aaf37f8c25b8996b95ef77d85b5f002fe70, actual merge-base 96dafe98f4d0e65a1046ebfb5a99f1bc8e106a3b. Score 7/10, no go: one demonstrated Medium, no High. Reviewed the three C files plus defs, all new tests and docs.
+
+Medium, dreaderd/dfa.c:491-498 PATHCHK / DFAPathDecide(): the 80-byte limit includes leading whitespace, so the state commits a Path decision before it has enough non-whitespace bytes to recognize the first host. With an all-whitespace buffer, DFAPathDecide() sees n=0 and copies it without prefixing, then PATHCHK changes permanently to HDRCPY. With a partial host after whitespace it prefixes before seeing the rest, duplicating the site's name when it was already first. Both break the intended localspool-versus-NNTP parity on valid Path syntax (RFC 5536 section 3.1.5 permits SP followed by additional WSP before the path-list: https://www.rfc-editor.org/rfc/rfc5536.html#section-3.1.5).
+
+Triggers with the default cluster name e2e.test, the same text served by a fake backend via ARTICLE and as a headerless local spool file:
+1. "Path: " + 80 literal spaces + "other.peer!not-for-mail": NNTP produces "Path: e2e.test!other.peer!not-for-mail"; localspool sends the spaces and "other.peer!not-for-mail" with NO e2e.test prefix.
+2. "Path: " + 73 literal spaces + "e2e.test!not-for-mail": NNTP leaves that already-prefixed header alone; localspool produces "Path: e2e.test!e2e.test!not-for-mail".
+Independent Debian end-to-end parity probe: these two cases FAIL; short-leading-space/other-host and normal/already-prefixed controls PASS. ARTICLE replies complete normally; this is wrong header content, not a crash. The whitespace should not consume the bytes needed to decide the host match; preserve a pending decision until enough host text or the line end is seen.
+
+Other independent verification on exact head: ./configure and full make-j4 PASS with no compiler warnings/errors. All 13 selected top-level tests PASS, 0 FAIL, 0 SKIP: all seven new tests, ReaderLocalSpoolBody/ShortFile, SpoolWhereisReplyCode, WhereisArticleGoneBeforeReply, WhereisClientGoneBeforeReply, ReaderGroupsByMessageId. Initial runs using my longer temporary path failed with "socket path too long"; those were fixture failures and were rerun successfully under a short path, not PR findings. The independent Path probe was also rerun under that short path. No claim of an independent full-base regression run, full suite, native BSD/illumos or sanitizer run here; the PR author's fail-before results were read, not rerun by me. Docs/sample/fragment need Jesse's read. Our test fixtures removed; no diablo/dreaderd afterward. No installs/service changes or repo edits by me.
