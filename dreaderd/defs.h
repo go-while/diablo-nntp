@@ -423,6 +423,7 @@ typedef struct MBufHead {
     char	mh_LongLine;	/* MBReadLine() dropped a long line */
     char	mh_LongCR;	/* the dropped long line ended with CR LF */
     char	mh_NoNL;	/* its last line ended at EOF, not with a newline */
+    int		mh_RErrno;	/* errno of a read() error taken as EOF, 0 = none */
 } MBufHead;
 
 /*

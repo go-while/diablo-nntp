@@ -716,12 +716,11 @@ MBReadLine(MBufHead *mh, char **pptr)
 			break;	/* break while */
 		    }
 		    /*
-		     * Any other error (ECONNRESET, ...) is treated as EOF; say
-		     * which one, so a reset can be told from a plain close.
-		     * Once: mh_REof stops further reads.
+		     * Any other error (ECONNRESET, ...) is treated as EOF; keep
+		     * which one, so the owner can tell a reset from a plain
+		     * close (the reader logs it with the client's address).
 		     */
-		    logit(LOG_INFO, "read error on fd %d: %s (treated as EOF)",
-			mh->mh_Fd, strerror(errno));
+		    mh->mh_RErrno = errno;
 		    n = 0;
 		}
 		if (n == 0) {

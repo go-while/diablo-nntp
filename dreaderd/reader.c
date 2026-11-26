@@ -713,6 +713,10 @@ DeleteConnection(Connection *conn)
 	 */
 	if (conn->co_CommandCount == 0)
 	    LogCmd(conn, '$', "connection ended before first command");
+	if (conn->co_RMBuf.mh_RErrno != 0) {
+	    snprintf(statbuf, sizeof(statbuf), "read error: %s (taken as EOF)", strerror(conn->co_RMBuf.mh_RErrno));
+	    LogCmd(conn, '$', statbuf);
+	}
 
 	StatusUpdate(conn, "(closed)");
 	freeReaderSlot(conn->co_Desc->d_Slot);
