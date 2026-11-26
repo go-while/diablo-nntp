@@ -135,14 +135,15 @@ func TestDclientReplyLineBoundaries(t *testing.T) {
 						server <- fmt.Errorf("dclient did not print the QUIT reply prefix")
 						return
 					}
-					// Let dclient's TCP stack acknowledge the reply first. BSD
-					// kernels accept a reset only if its sequence number is the
-					// last one they acknowledged; sent before the delayed ACK
-					// (FreeBSD: 100 ms) it is ignored, the answer is a challenge
-					// ACK, and the reset the server's kernel owes to that ACK can
-					// be dropped by the closed-port reset rate limit. dclient
-					// has no read timeout and then waits until the test's 15 s
-					// run out. 300 ms is three delayed-ACK times.
+					// Let dclient's TCP stack acknowledge the reply first. On
+					// FreeBSD (seen on 15.1) a reset sent before the delayed ACK
+					// (100 ms) is ignored, the answer is a challenge ACK, and the
+					// reset the server's kernel owes to that ACK can go missing
+					// while the machine sends many closed-port resets (probably
+					// the reset rate limit). dclient has no read timeout and then
+					// waits until the test's 15 s run out. 300 ms is three
+					// delayed-ACK times there; the wait is time based, the server
+					// has no portable way to see the ACK.
 					time.Sleep(300 * time.Millisecond)
 					server <- c.SetLinger(0)
 					return
@@ -162,8 +163,7 @@ func TestDclientReplyLineBoundaries(t *testing.T) {
 			wantExit := 0
 			if abortQuit {
 				wantExit = 2
-				// The reset can discard bytes still in flight (and see the comment above
-				// on why the server waits before it sends it).
+				// The reset can discard bytes still in flight.
 				want = tc.greeting + ">>STDIN\r\n" + tc.reply + date + "205 "
 			}
 			if cmd.ProcessState == nil || cmd.ProcessState.ExitCode() != wantExit ||
