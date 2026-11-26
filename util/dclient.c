@@ -46,15 +46,19 @@ int response;
 int numarts;
 int lowmark;
 int highmark;
+int readtimeout = 0;	/* -t: seconds a read may wait, 0 = no limit (at most a day:
+			   FreeBSD refuses an SO_RCVTIMEO past its tick counter) */
 
 void
 usage(char *progname) {
-    printf("Usage: %s [-f filename] [-p port] [-v] hostname [command]\n\n", progname);
+    printf("Usage: %s [-f filename] [-p port] [-t seconds] [-v] hostname [command]\n\n", progname);
     printf(" Execute a command on an NNTP server and write output to stdout\n");
     printf(" If no command is specified then read commands from STDIN\n\n");
     printf("\t-f file = read NNTP commands from a file and send them to server\n");
     printf("\t-v      = be more verbose in output\n");
     printf("\t-p port = specify the remote port (default: 119)\n");
+    printf("\t-t secs = give up when the server sends nothing for this long\n");
+    printf("\t          (0 to 86400, default: 0, no limit)\n");
     exit(1);
 }
 
@@ -88,8 +92,14 @@ ReadReplyLine(char *line, int size, int show)
     if (show && len)
 	fwrite(part, 1, len, stdout);
     /* A clean EOF may end a final fragment, but a read error is not a reply. */
-    if (ferror(fp))
+    if (ferror(fp)) {
+	/* -t: the receive timeout of the socket ran out */
+	if (readtimeout > 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+	    printf("No data from server for %d seconds\n", readtimeout);
+	    exit(2);
+	}
 	return(-1);
+    }
     return(seen);
 }
 
@@ -122,6 +132,16 @@ connectnews(char *hostname, char *port) {
     if (s < 0) {
 	perror("connect");
 	exit(1);
+    }
+    if (readtimeout > 0) {
+	struct timeval tv;
+
+	tv.tv_sec = readtimeout;
+	tv.tv_usec = 0;
+	if (setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
+	    perror("setsockopt SO_RCVTIMEO");
+	    exit(1);
+	}
     }
     if ((fp = fdopen(s, "r+")) == NULL) {
 	perror("fdopen");
@@ -298,13 +318,25 @@ main(int argc, char **argv) {
     progname = *argv;
 
     optind = 1;
-    while ((ch = getopt(argc, argv, "f:p:Vv")) != -1) {
+    while ((ch = getopt(argc, argv, "f:p:t:Vv")) != -1) {
 	switch(ch) {
 	    case 'f':
 		dumpfile = optarg;
 		break;
 	    case 'p':
 		port  = optarg;
+		break;
+	    case 't':
+		{
+		    char *end;
+		    long v;
+
+		    errno = 0;
+		    v = strtol(optarg, &end, 10);
+		    if (errno || end == optarg || *end || v < 0 || v > 86400)
+			usage(argv[0]);
+		    readtimeout = (int)v;
+		}
 		break;
 	    case 'V':
 		PrintVersion();
