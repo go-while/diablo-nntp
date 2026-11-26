@@ -12,6 +12,10 @@ dclient \- send NNTP commands to a news server and print the replies
 .I port
 ]
 [
+.B \-t
+.I seconds
+]
+[
 .B \-v
 ]
 [
@@ -45,6 +49,14 @@ Send the lines of \fIfile\fP instead of a command.
 .TP
 .BI \-p " port"
 Connect to this port (default 119).
+.TP
+.BI \-t " seconds"
+Give up when the server sends nothing for this many seconds while
+dclient waits for the greeting or a reply: print
+\(lqNo data from server for \fIseconds\fP seconds\(rq and exit with
+status 2.  At most 86400 (a day).  Without it (or with 0) dclient waits
+as long as the connection stays open, also when the server is gone and
+the system never learns of it.
 .TP
 .B \-v
 Also print the command sent and the connect, command and total times.
