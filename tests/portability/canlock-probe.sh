@@ -70,6 +70,6 @@ check newer 3.4 on
 check too-old-required 3.2 fail --with-canlock
 check nolib33-nolib 3.3 nolink
 check nolib34-nolib 3.4 nolink
-check nolib34-nolib-required 3.4 nolinkfail --with-canlock
+check nolib34-required-nolib 3.4 nolinkfail --with-canlock
 [ "$fail" -eq 0 ] && echo "canlock probe checks passed"
 exit "$fail"
