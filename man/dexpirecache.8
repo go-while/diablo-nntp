@@ -38,6 +38,14 @@ until enough space is free.  Otherwise it does nothing.
 The order depends on access times, so the cache file system should not
 be mounted with noatime.
 .PP
+Whenever it scans the cache, it also removes every empty cache file
+(other than *.tmp) and symbolic link more than two days old (by ctime).
+dreaderd keeps an article it does not cache (outside cachemin or
+cachemax, or emptied by
+.BR \-t )
+as an empty file and does not cache it again while that file exists,
+so such an article can be cached again after two days.
+.PP
 At the end it prints how many cache files it found and removed, split
 into files read again after they were cached, files never read again,
 and empty pre-cache files, how many empty files and symbolic links it
@@ -62,11 +70,6 @@ number of inodes (btrfs) reports no inode count; there
 is not applied and a message says so, while
 .B \-f
 still is.
-When fewer inodes than this are free and the count is known, every
-empty cache file (other than *.tmp) and symbolic link more than two
-days old (by ctime) is removed as well; with
-.B \-f
-alone they are kept.
 .TP
 .B \-t
 Truncate cache files to zero length instead of removing them.
