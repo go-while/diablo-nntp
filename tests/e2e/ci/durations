@@ -697,6 +697,7 @@ TestReaderDNSQueueAuthPairing 0.09
 TestReaderDNSQueueLimit 0.09
 TestReaderDNSQueueOptions 2.21
 TestReaderDNSQueueStreamIPC 0.24
+TestReaderEOFBeforeFirstCommand 0.20
 TestReaderFeedAndRead 0.06
 TestReaderFeedBareLFControlInBody 0.06
 TestReaderFeedBareLFDotIsData 0.06
@@ -794,6 +795,7 @@ TestReaderRadiusMessageAuthenticator 0.12
 TestReaderRadiusNativeConfig 0.14
 TestReaderRadiusServerDown 2.29
 TestReaderRangeBeyondLimit 0.07
+TestReaderReadErrorLogged 0.20
 TestReaderReadsGzipData 0.14
 TestReaderRepeatedGroupNotActive 0.06
 TestReaderRepeatedGroupOneNumber 0.09
