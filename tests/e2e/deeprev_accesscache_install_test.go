@@ -57,6 +57,12 @@ const installFaultSource = `#define _GNU_SOURCE
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
+/* illumos: /proc/self/path/<fd> can be empty for the first open after a rename (the
+   access file is written to a temporary name and renamed), so take the names open()
+   and fopen() were given instead */
+#if defined(__sun)
+#define FDPATH_TRACK 1
+#endif
 /*FDPATH*/
 /*MARK*/
 static int
@@ -549,6 +555,23 @@ const accessCut1 = `vserverdef DEFAULT
 end
 `
 
+// writeAccessAtomic puts content in place as dreader.access in one step: a new file in the
+// same directory and a rename(2). s.WriteFile truncates the file and writes it afterwards,
+// and dreaderd (its main loop runs on its own, not only with the clients) may open it in
+// between and read an empty or a short file: the fault injector then has no line to refuse
+// (the read ends before the nth line), and the file read is judged as a whole.
+// Hardening: seen once on a loaded 12-shard run, not reproduced since (80 of 80 passes).
+func writeAccessAtomic(t *testing.T, s *Site, content string) {
+	t.Helper()
+	path := filepath.Join(s.Dir, "dreader.access")
+	if err := os.WriteFile(path+".next", []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(path+".next", path); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestDeepRevAccessCacheSourceReadCut (A4): a read error in the middle of
 // dreader.access (the injector makes the read() of the line after n lines fail with EBADF).
 // The part read must not be installed, and it must not be judged either: a cut file is not
@@ -579,7 +602,7 @@ func TestDeepRevAccessCacheSourceReadCut(t *testing.T) {
 			if err := os.WriteFile(flag, nil, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			s.WriteFile(t, "dreader.access", c.content)
+			writeAccessAtomic(t, s, c.content)
 			n := hammer(s.Addr, retryWindow)
 			wantTries(t, "Unable to read dreader.access", logLines(s, "Unable to read", "dreader.access"), n)
 			if got := len(shimMarked(mark, "refused fgets")); got < 2 {
