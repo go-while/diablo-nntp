@@ -89,7 +89,7 @@ char * PerlAuthenticate(char *user, char *pass, char *conf);
 #endif
 #ifdef PAM_ENABLED
 #include <security/pam_appl.h>
-char *PamAuthenticate(char *user, char *pass, char *conf);
+char *PamAuthenticate(char *user, char *pass, char *conf, const char *rhost);
 #endif
 
 int DFd = -1;
@@ -370,7 +370,7 @@ AuthBackend(int how, AuthArgs *a)
 #endif
 #ifdef PAM_ENABLED
     case AC_PAM:
-	return(PamAuthenticate(a->user, a->pass, a->conf));
+	return(PamAuthenticate(a->user, a->pass, a->conf, a->ipname));
 #endif
     default:
 	break;
@@ -1763,7 +1763,16 @@ static struct pam_conv conv = {
     PAM_conv, NULL
 };
 
-char *PamAuthenticate(char *user, char *pass, char *conf)
+/*
+ * PamAuthenticate() - user/pass through the PAM service conf (the authdef's
+ * pam option), for the client at rhost (its address).  A login needs both
+ * the auth phase (pam_authenticate) and the account phase (pam_acct_mgmt):
+ * a right password is not enough for an account that PAM refuses (expired,
+ * disabled, denied by pam_access or pam_time).  PAM_NEW_AUTHTOK_REQD (the
+ * password has expired) refuses the login too: an NNTP client cannot
+ * change its password.
+ */
+char *PamAuthenticate(char *user, char *pass, char *conf, const char *rhost)
 {
     static char result[DEFNAMELEN + 16];
     pam_handle_t *pamh = NULL;
@@ -1775,8 +1784,23 @@ char *PamAuthenticate(char *user, char *pass, char *conf)
 
     retval = pam_start(conf, PAM_user, &conv, &pamh);
 
+    /* the client's address, for pam_access and the PAM modules' logs */
+    if (retval == PAM_SUCCESS && rhost != NULL && *rhost) {
+	retval = pam_set_item(pamh, PAM_RHOST, rhost);
+	if (retval != PAM_SUCCESS)
+	    logit(LOG_ERR, "PAM: cannot set PAM_RHOST for %s from %s: %s, login refused",
+		    user, rhost, pam_strerror(pamh, retval));
+    }
+
     if (retval == PAM_SUCCESS)
 	retval = pam_authenticate(pamh, 0);
+
+    if (retval == PAM_SUCCESS) {
+	retval = pam_acct_mgmt(pamh, 0);
+	if (retval != PAM_SUCCESS)
+	    logit(LOG_NOTICE, "PAM account check for %s from %s: %s, login refused",
+		    user, rhost ? rhost : "?", pam_strerror(pamh, retval));
+    }
 
     if (retval == PAM_SUCCESS) {
 	strcpy(result, "100 Success");

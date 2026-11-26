@@ -315,6 +315,25 @@ func preloadHost(withIllumos bool) bool {
 	return false
 }
 
+// glibcBefore reports whether the C library of this Linux system is glibc older than
+// major.minor, from `getconf GNU_LIBC_VERSION` ("glibc 2.31"). It is false on every other
+// system (musl, the BSDs, illumos have no such getconf variable), and when the answer cannot
+// be read.
+func glibcBefore(major, minor int) bool {
+	if runtime.GOOS != "linux" {
+		return false
+	}
+	out, err := exec.Command("getconf", "GNU_LIBC_VERSION").Output()
+	if err != nil {
+		return false
+	}
+	var maj, mnr int
+	if n, _ := fmt.Sscanf(strings.TrimSpace(string(out)), "glibc %d.%d", &maj, &mnr); n != 2 {
+		return false
+	}
+	return maj < major || (maj == major && mnr < minor)
+}
+
 // shimLibs is what a shim links with: dlsym() is in libc on the BSDs, which need no libdl.
 func shimLibs() []string {
 	if runtime.GOOS == "freebsd" || runtime.GOOS == "netbsd" {
