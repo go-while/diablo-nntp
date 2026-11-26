@@ -2,7 +2,8 @@ package e2e
 
 // D-307: dclient -t SECONDS gives up when the server sends nothing for that long while dclient
 // waits for the greeting or a reply ("No data from server for N seconds", exit 2). Without -t
-// it waits as before. Fails on main: there is no -t (usage, exit 1).
+// it waits as before. Fails on main: there is no -t (usage, exit 1). After part of a line
+// the message starts a line of its own (partial, partial-greeting: fail before the follow-up).
 
 import (
 	"bufio"
@@ -77,6 +78,10 @@ func TestDclientReadTimeout(t *testing.T) {
 		{"reply", []step{{"", greeting, 0}}, []string{"-t", "1"}, 2, "No data from server for 1 seconds\n", 900 * time.Millisecond},
 		// DATE answered, then no reply to QUIT
 		{"quit", []step{{"", greeting, 0}, {"DATE", date, 0}}, []string{"-t", "1"}, 2, date + "No data from server for 1 seconds\n", 900 * time.Millisecond},
+		// part of a reply line, then nothing: the message starts a line of its own
+		{"partial", []step{{"", greeting, 0}, {"DATE", "111 2026", 0}}, []string{"-t", "1"}, 2, "111 2026\nNo data from server for 1 seconds\n", 900 * time.Millisecond},
+		// the same for a greeting printed with -v
+		{"partial-greeting", []step{{"", "200 rea", 0}}, []string{"-v", "-t", "1"}, 2, "200 rea\nNo data from server for 1 seconds\n", 900 * time.Millisecond},
 		// the limit is per read, not for the whole session: two replies 1.2 s apart with -t 2
 		{"slow", []step{{"", greeting, 0}, {"DATE", date, 1200 * time.Millisecond}, {"QUIT", "205 bye\r\n", 1200 * time.Millisecond}},
 			[]string{"-t", "2"}, 0, date, 2 * time.Second},

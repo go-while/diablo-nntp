@@ -74,6 +74,7 @@ ReadReplyLine(char *line, int size, int show)
     int kept = 0;
     int ch;
     int seen = 0;
+    int rerrno;
 
     while ((ch = fgetc(fp)) != EOF) {
 	seen = 1;
@@ -88,13 +89,18 @@ ReadReplyLine(char *line, int size, int show)
 	if (ch == '\n')
 	    break;
     }
+    /* the read's errno, before the writes below can change it */
+    rerrno = ferror(fp) ? errno : 0;
     line[kept] = 0;
     if (show && len)
 	fwrite(part, 1, len, stdout);
     /* A clean EOF may end a final fragment, but a read error is not a reply. */
     if (ferror(fp)) {
 	/* -t: the receive timeout of the socket ran out */
-	if (readtimeout > 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+	if (readtimeout > 0 && (rerrno == EAGAIN || rerrno == EWOULDBLOCK)) {
+	    /* after part of a line: the message on a line of its own */
+	    if (show && seen)
+		putchar('\n');
 	    printf("No data from server for %d seconds\n", readtimeout);
 	    exit(2);
 	}
