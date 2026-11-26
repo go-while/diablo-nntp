@@ -57,6 +57,12 @@ const installFaultSource = `#define _GNU_SOURCE
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
+/* illumos: /proc/self/path/<fd> can be empty for the first open after a rename (the
+   access file is written to a temporary name and renamed), so take the names open()
+   and fopen() were given instead */
+#if defined(__sun)
+#define FDPATH_TRACK 1
+#endif
 /*FDPATH*/
 /*MARK*/
 static int
