@@ -329,9 +329,10 @@ func TestDexpirecacheInodeOrder(t *testing.T) {
 //   - space: -f 1000: the two cache files go, the entries stay; 2 files cleaned, 0 empty files
 //     and links removed, both age lines (less than a day).
 //   - none: -f 1000 with no cache file with content: nothing goes; 0 and 0, no age lines.
-//   - old_space: -f 1000, three days on: the cache files go (-f) and so do the entries
-//     (addSLink()'s two-day rule, not changed here); 2 cleaned, 3 empty files and links
-//     removed, both age lines (3 days).
+//   - old_space: -f 1000, three days on: the cache files go (-f), the entries stay (the
+//     two-day rule in addSLink() is part of -i now; before, it removed them with -f alone too);
+//     2 cleaned, 0 empty files and links removed, both age lines (3 days). Fails before the
+//     change as the entries were removed and counted (3).
 //   - old_inodes: -i 3, three days on: the two-day rule removes the entries before
 //     removeLinks() does; they are counted once: 3.
 func TestDexpirecacheReport(t *testing.T) {
@@ -351,7 +352,7 @@ func TestDexpirecacheReport(t *testing.T) {
 		{"inodes", []string{"-i", "3"}, []string{"STATFSZERO_FFREE=0"}, false, true, false, true, 0, 3, ""},
 		{"space", []string{"-f", "1000"}, []string{"STATFSZERO_BAVAIL=0"}, false, true, true, false, 2, 0, "0 days "},
 		{"none", []string{"-f", "1000"}, []string{"STATFSZERO_BAVAIL=0"}, false, false, false, false, 0, 0, ""},
-		{"old_space", []string{"-f", "1000"}, []string{"STATFSZERO_BAVAIL=0"}, true, true, true, true, 2, 3, "3 days "},
+		{"old_space", []string{"-f", "1000"}, []string{"STATFSZERO_BAVAIL=0"}, true, true, true, false, 2, 0, "3 days "},
 		{"old_inodes", []string{"-i", "3"}, []string{"STATFSZERO_FFREE=0"}, true, true, false, true, 0, 3, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
