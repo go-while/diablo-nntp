@@ -116,7 +116,8 @@ probe_canlock() {
 int main(void) { void *volatile p = (void *)cl_get_key; return p == 0; }
 EOT
     try_link canlock "$tmp/cl.c" "-lcanlock" && return 0
-    # Not usable: when the header is there, say which version it is (preprocess only)
+    # Not usable: when the header is there, say which API version it has (preprocess only;
+    # the API version is not the package version: libcanlock 3.2.2 has API 3.0)
     cat > "$tmp/clv.c" <<'EOT'
 #include <libcanlock-3/canlock.h>
 diablo_canlock_version CL_API_MAJOR CL_API_MINOR
@@ -124,9 +125,9 @@ EOT
     for p in "" $prefixes; do
 	if [ -z "$p" ]; then cpp=""; else [ -d "$p/include" ] || continue; cpp="-I$p/include"; fi
 	# shellcheck disable=SC2086
-	v=$($CC -E $cpp "$tmp/clv.c" 2>/dev/null | sed -n 's/^diablo_canlock_version \([0-9][0-9]*\) \([0-9][0-9]*\).*/\1.\2/p' | head -1)
+	v=$($CC -E $cpp "$tmp/clv.c" 2>/dev/null | grep -v '^#' | tr '\n' ' ' | sed -n 's/.*diablo_canlock_version[^0-9]*\([0-9][0-9]*\)[^0-9]*\([0-9][0-9]*\).*/\1.\2/p')
 	if [ -n "$v" ]; then
-	    canlock_why="libcanlock $v found, 3.3 or later is needed"
+	    canlock_why="libcanlock API $v found, 3.3 or later is needed"
 	    break
 	fi
     done

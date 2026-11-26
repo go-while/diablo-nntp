@@ -20,16 +20,16 @@ mkstub() {
     ar rc "$1/lib/libcanlock.a" "$1/stub.o"
 }
 
-# check NAME VERSION EXPECTED-TEXT [configure option]
+# check NAME API-VERSION EXPECTED-TEXT [configure option]
 check() {
     mkstub "$tmp/$1" "${2%.*}" "${2#*.}"
     rc=0
-    out=$(CC="$cc -I$tmp/$1/inc -L$tmp/$1/lib" ./configure -n ${4:-} 2>&1) || rc=$?
+    out=$(CC="$cc -isystem $tmp/$1/inc -L$tmp/$1/lib" ./configure -n ${4:-} 2>&1) || rc=$?
     line=$(printf '%s\n' "$out" | grep -i canlock | head -1)
     case $3 in
 	on) text="canlock: on" ;;
-	off) text="canlock: libcanlock $2 found, 3.3 or later is needed, off" ;;
-	fail) text="cannot build canlock here (libcanlock $2 found, 3.3 or later is needed)" ;;
+	off) text="canlock: libcanlock API $2 found, 3.3 or later is needed, off" ;;
+	fail) text="cannot build canlock here (libcanlock API $2 found, 3.3 or later is needed)" ;;
     esac
     case $line in
 	*"$text"*) ;;
