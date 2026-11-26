@@ -58,6 +58,7 @@ struct InodeQueue {
 
 struct FileQueue *fileBeg=NULL, *fileFree=NULL;
 struct InodeQueue *inodeBeg=NULL, *inodeEnd=NULL;
+long inodeLen=0;
 time_t fileEnd;
 
 int
@@ -271,16 +272,33 @@ addFile(char *name, long size, time_t atime, time_t mtime) {
 	}
 }
 
+/*
+ * The order of the -i list: by ctime, oldest first, and by name where the
+ * ctimes are the same, so that ties do not depend on the directory order.
+ */
+static int
+inodeOlder(time_t ctime, const char *name, const struct InodeQueue *e)
+{
+	return ctime < e->ctime || (ctime == e->ctime && strcmp(name, e->name) < 0);
+}
+
+/*
+ * Keep the freeinodes oldest empty files and symbolic links in the list
+ * (inodeBeg, oldest first; inodeEnd the newest kept, inodeLen how many).
+ */
 void
 addSLink(char *name, time_t ctime) {
-	struct InodeQueue *itmp, *i;
+	struct InodeQueue *itmp, *i, **pp;
 	int s;
-	long inodes=0;
+	long n;
 
 	if (ctime < time(NULL)-2*24*3600)
 		unlink(name);
 
-	if (!freeinodes || (inodeEnd && (ctime > inodeEnd->ctime)))
+	if (!freeinodes)
+		return;
+	/* the list is full and this one is not older than the newest in it */
+	if (inodeLen >= freeinodes && !inodeOlder(ctime, name, inodeEnd))
 		return;
 
 	s = strlen(name)+1;
@@ -290,43 +308,25 @@ addSLink(char *name, time_t ctime) {
 	memcpy(itmp->name, name, s);
 	itmp->ctime = ctime;
 
-	if (!inodeBeg) {
-		inodeBeg = itmp;
-		inodeEnd = itmp;
-		itmp->next = NULL;
-		return;
-	} else if (ctime<inodeBeg->ctime) {
-		itmp->next = inodeBeg;
-		inodeBeg = itmp;
-		i = itmp;
-	} else {
-		i = inodeBeg;
-		while (i->next) {
-			inodes++;
-			if(ctime<i->next->ctime) {
-				itmp->next = i->next;
-				i->next = itmp;
-				i = i->next;
-				break;
-			}
-			i = i->next;
-		}
-	}
+	/* insert before the first entry it is older than: entry n */
+	n = 1;
+	for (pp = &inodeBeg; *pp && !inodeOlder(ctime, name, *pp); pp = &(*pp)->next)
+		n++;
+	itmp->next = *pp;
+	*pp = itmp;
+
+	/* the entries after the freeinodes-th are not needed */
+	for (i = itmp; i->next && n < freeinodes; n++)
+		i = i->next;
+	inodeEnd = i;
+	inodeLen = n;
+	i = i->next;
+	inodeEnd->next = NULL;
 	while (i) {
-		inodes++;
-		if (inodes>freeinodes) break;
-		i = i->next;
-	}
-	if (i) {
-		inodeEnd = i;
-		i = i->next;
-		inodeEnd->next=NULL;
-		while (i) {
-			struct InodeQueue *j;
-			j = i; i = i->next;
-			free(j->name);
-			free(j);
-		}
+		struct InodeQueue *j;
+		j = i; i = i->next;
+		free(j->name);
+		free(j);
 	}
 }
 

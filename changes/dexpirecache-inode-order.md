@@ -1,0 +1,1 @@
+- `dexpirecache`: `-i N` removed only the first empty cache file or symbolic link met in directory order and the older ones (at most N+1, ties in directory order), not the N oldest. It now removes the N oldest by ctime, oldest first, ties by name (D-302). Test: `TestDexpirecacheInodeOrder`.
