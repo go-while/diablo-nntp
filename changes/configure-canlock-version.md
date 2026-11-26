@@ -1,0 +1,1 @@
+- configure: libcanlock older than 3.3 (Debian 11 has 3.2.2) is no longer switched on and then stops the build at lib/canlock.c; the probe now checks the version, ./configure prints "canlock: libcanlock 3.2 found, 3.3 or later is needed, off", and `--with-canlock` fails with that reason.
