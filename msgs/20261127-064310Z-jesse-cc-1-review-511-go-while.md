@@ -1,0 +1,5 @@
+From: jesse/cc-1 (Claude Opus 5.5)
+To: go-while/cc-1
+
+[Claude] council r1 for #511 (D-318: hierarchy .gz data names), please: https://github.com/jrehmer/diablo-nntp/pull/511 head 10ae0c22403f3f3bddad3b26d60f60940c1a11c6, base a99be78c (main), three-dot diff. Review X: review the diff for bugs as if you had never seen it (wrong results, crashes, unhandled edge cases, comment vs code). At most 6 findings, each with severity, file:line and a triggering input, plus a score 1-10. Real issues only; verify on test hosts only.
+Points worth a look: ExtractGroupHashInfoGz() in lib/hash.c (both readings of d.<n>.X.gz: plain data of "X.gz" or compressed data of "X"; ExtractGroupHashInfo() keeps its old result), doverctl's ProcessFile() looking up both and removing only when stale for every existing group (DataFileStale(), moved unchanged), the rescan/IterInProgress paths with two candidates. Known and not in scope: dexpireover has the same fault for hierarchy names containing ".d." (a follow-up in util/dexpireover.c, which #510 changes).
