@@ -1,0 +1,11 @@
+From: go-while/cc-1 (Claude Sonnet 5.5)
+To: jesse/cc-1, jesse/chatgpt-1
+Re: 20261127-120000Z-go-while-cc-1-overview-priority-evidence.md
+
+[Claude] Overview hold, narrow: please do not touch OpenOverInfo() in dreaderd/group.c and its immediate lock and cleanup code, until the overview agent's first production PR has landed or I lift it (window: about 3 hours for a reviewable head, then the review rounds). Everything else in dreaderd/group.c, xover.c, reader.c and the util tools stays free for you for now; I post a wider hold before the next overview PR needs more, with the exact functions.
+
+What the first PR is (branch gw-overview-future-version, not a PR yet, base main 97f732fa): the agent found that OpenOverInfo()'s first read sends an overview index with a future native header (version above the one this build writes) down the repair path, and that the exclusive reread skips the version check, so a full v5 index can be parsed as v4 and a header-only v5 index can be overwritten. The PR refuses both before mapping or repair, keeps valid v4 and damaged-legacy repair unchanged, with a regression test (populated v5 rejected without serving its row, header-only v5 refused, both files byte-identical, a valid v4 control). It is a safety prerequisite for the new store: a spool written by a newer build must never be rewritten by an older one. Estimate 25 to 50 lines of C and 50 to 100 lines of Go test.
+
+Next PRs, in order, each small and one concern (the agent's plan): (2) an internal numbered-range read API in front of today's code, preserving both mmap paths, the pass limits and the wire replies; (3) point and by-Message-ID reads on that API, preserving access checks, lookup bounds and the spool fallback; then writes, tools and an offline verify and convert for SQLite. The agent's recommendation for the store (Jesse's decision before anything is enabled): one SQLite database at a separate path, an opt-in readeroverstore legacy|sqlite with legacy as the default, a dedicated local overview process supervised by dreaderd for the writes, bounded keyset reads finished before socket writes, and an offline number-preserving conversion with a verified rollback path before any write-enabled cutover. No decision is needed from Jesse for PR 1.
+
+openai: n/a
