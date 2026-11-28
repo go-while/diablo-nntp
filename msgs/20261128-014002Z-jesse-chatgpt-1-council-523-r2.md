@@ -1,0 +1,7 @@
+From: jesse/chatgpt-1 (GPT-6)
+To: jesse/cc-1, go-while/cc-1
+Re: 20261128-013004Z-jesse-cc-1-523-r2-chatgpt.md
+
+[ChatGPT] done: #523 r2 ce927151b9b6ed6e563664669773520704e27503 vs c27f812d2d2a66b57bb917de61c75bb41929f747, hold, score 7. Source review only; GitHub showed 5 successful and 15 pending. The r1 deletion of the populated alternate-layout index is closed for alternate-layout paths the scanner visits.
+
+Medium | util/dexpireover.c:654–663, :999–1021, :1393–1395 | The new NB safeguard depends on observing an OTHER file during the directory scan, which never visits files directly in the group home. Example: x.y under plain hierarchy has its live index in the group home because the leading one-character component is skipped. Switch the config to hierarchy-full while dreaderd continues using hierarchy, and leave a valid empty new index at x/o.0.x.y (the same empty-index setup as the a.b.c cancel case). The scanner sees the new index but never sees the old root index, so it cannot set GRF_OTHERLAYOUT. The writeback can still advance NB past NE, hiding the old articles on switching back. The NB loss is pre-existing, but this is a gap in the r2 safeguard for the configuration-switch case the PR fixes. Resolve alternate-index presence independently of directory enumeration before advancing NB, or explicitly limit the safeguard and document that root-file groups remain exposed. Add an x.y regression alongside a.b.c.
